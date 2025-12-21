@@ -273,6 +273,14 @@ export function getStateViewAddress(networkModeOverride?: NetworkMode): Address 
   return getAddress(getPoolsConfig(networkModeOverride).contracts.stateView);
 }
 
+export function getPoolManagerAddress(networkModeOverride?: NetworkMode): Address {
+  return getAddress(getPoolsConfig(networkModeOverride).contracts.poolManager);
+}
+
+export function getHooksAddress(networkModeOverride?: NetworkMode): Address {
+  return getAddress(getPoolsConfig(networkModeOverride).hooks.alphixHookId);
+}
+
 // Token definitions type for network-aware components
 export type TokenDefinitions = Record<string, {
   address: string;

@@ -4,7 +4,6 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { unstable_cache } from 'next/cache';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress, getNetworkModeFromRequest } from '@/lib/pools-config';
 import { batchGetTokenPrices, calculateTotalUSD } from '@/lib/price-service';
 import { formatUnits, parseAbi } from 'viem';
@@ -15,52 +14,46 @@ import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/redis-keys';
 import type { NetworkMode } from '@/lib/network-mode';
 
-// Fetch 7 days of daily data for accurate APR calculation
-// Dynamic limit: poolCount * 10 (7 days + buffer per pool)
+// Combined query: pools (TVL) + poolHourDatas (24h volume) in single request
+// poolHourDatas: 24 hours * poolCount entries max
 const buildPoolsQuery = (poolCount: number) => `
-  query GetPoolsSimplified($poolIds: [String!]!, $cutoffDays: Int!) {
+  query GetPoolsWithVolume($poolIds: [String!]!, $hourCutoff: Int!) {
     pools(where: { id_in: $poolIds }) {
       id
       totalValueLockedToken0
       totalValueLockedToken1
     }
-    poolDayDatas(
-      first: ${Math.max(poolCount * 10, 20)}
-      where: { pool_in: $poolIds, date_gte: $cutoffDays }
-      orderBy: date
+    poolHourDatas(
+      first: ${Math.max(poolCount * 25, 50)}
+      where: { pool_in: $poolIds, periodStartUnix_gte: $hourCutoff }
+      orderBy: periodStartUnix
       orderDirection: desc
     ) {
       pool { id }
-      date
+      periodStartUnix
       volumeToken0
-      volumeToken1
     }
   }
 `;
 
-interface BatchPoolStatsMinimal {
+interface BatchPoolStats {
   poolId: string;
   tvlUSD: number;
-  tvlYesterdayUSD?: number;
-  volume7dUSD: number;
-  volumeAvgDailyUSD?: number;
-  fees7dUSD?: number;
-  feesAvgDailyUSD?: number;
-  dynamicFeeBps?: number;
-  apr7d?: number;
-  daysWithData?: number;
+  volume24hUSD: number;
+  fees24hUSD: number;
+  dynamicFeeBps: number;
+  apr: number;
 }
 
 // Get testnet subgraph URLs (used only on testnet)
 const getTestnetSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
 const getTestnetDaiSubgraphUrl = () => process.env.SUBGRAPH_URL_DAI as string | undefined;
 
-// SIMPLIFIED: Direct fetch without rate limiting wrapper (Satsuma handles its own rate limits)
 async function fetchSubgraphDirect(
   url: string,
   query: string,
   variables: any,
-  timeoutMs: number = 20000  // 20s timeout to allow slow queries to complete
+  timeoutMs: number = 20000
 ): Promise<{ success: boolean; data: any; error?: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -71,7 +64,7 @@ async function fetchSubgraphDirect(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, variables }),
       signal: controller.signal,
-      cache: 'no-store', // Let Redis handle all caching
+      cache: 'no-store',
     });
 
     clearTimeout(timeout);
@@ -99,9 +92,6 @@ async function fetchSubgraphDirect(
 async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   const isMainnet = isMainnetSubgraphMode(networkMode);
 
-  // Get the appropriate subgraph URL(s)
-  // Mainnet: Use Uniswap v4 subgraph for Pool/PoolDayData
-  // Testnet: Use our full subgraph (with DAI pool separation)
   const POOL_SUBGRAPH_URL = isMainnet ? getUniswapV4SubgraphUrl(networkMode) : getTestnetSubgraphUrl();
   const TESTNET_DAI_URL = !isMainnet ? getTestnetDaiSubgraphUrl() : undefined;
 
@@ -115,7 +105,6 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   const targetPoolIds = allPools.map((pool) => getPoolSubgraphId(pool.id, networkMode) || pool.id);
 
   // Separate pools into DAI and non-DAI pools (testnet only)
-  // Mainnet: all pools go to single Uniswap v4 subgraph
   const daiPoolIds: string[] = [];
   const nonDaiPoolIds: string[] = [];
 
@@ -138,39 +127,31 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   const poolIdToConfig = new Map<string, { symbol0: string; symbol1: string; dec0: number; dec1: number }>();
   for (const p of allPools) {
     const id = (getPoolSubgraphId(p.id, networkMode) || p.id).toLowerCase();
-    const symbol0 = p.currency0.symbol;
-    const symbol1 = p.currency1.symbol;
     poolIdToConfig.set(id, {
-      symbol0,
-      symbol1,
-      dec0: getTokenDecimals(symbol0, networkMode) || 18,
-      dec1: getTokenDecimals(symbol1, networkMode) || 18,
+      symbol0: p.currency0.symbol,
+      symbol1: p.currency1.symbol,
+      dec0: getTokenDecimals(p.currency0.symbol, networkMode) || 18,
+      dec1: getTokenDecimals(p.currency1.symbol, networkMode) || 18,
     });
   }
 
+  // 24h cutoff timestamp (rolling window)
   const nowSec = Math.floor(Date.now() / 1000);
-  const dayStart = Math.floor(nowSec / 86400) * 86400;
+  const hourCutoff = nowSec - 86400; // 24 hours ago
 
-  // IMPORTANT: Subgraph stores dates as TIMESTAMPS (seconds), not day counts
-  // Fetch 7 days of data for stable APR calculation
-  const todayTimestamp = dayStart; // Today at 00:00 UTC (seconds)
-  const sevenDaysAgoTimestamp = dayStart - (7 * 86400); // 7 days ago at 00:00 UTC
-  const cutoffDays = Math.floor(sevenDaysAgoTimestamp / 86400); // For subgraph query (day count)
-
-  // SIMPLIFIED: Only TVL and daily data needed
   const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
-  const dailyByPoolId = new Map<string, Array<any>>();
+  const hourlyByPoolId = new Map<string, Array<{ periodStartUnix: number; volumeToken0: string }>>();
   const errors: string[] = [];
   const stateViewAddress = getStateViewAddress(networkMode);
   const client = createNetworkClient(networkMode);
 
-  // RUN EVERYTHING IN PARALLEL: Prices, fees, and subgraph queries have zero dependencies
+  // RUN EVERYTHING IN PARALLEL
   console.time('[PERF] All data fetches (parallel)');
   const [tokenPrices, feeResults, combinedResult, combinedResultDai] = await Promise.all([
-    // 1. Token prices via quote API (~3-4s)
+    // 1. Token prices
     batchGetTokenPrices(Array.from(tokenSymbols)),
 
-    // 2. Fee multicall (~1s)
+    // 2. Fee multicall
     (async () => {
       try {
         const feeCalls = targetPoolIds.map(poolId => ({
@@ -189,28 +170,24 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
       }
     })(),
 
-    // 3. Main subgraph query (~5-6s) - dynamic limit based on pool count
-    // Mainnet: queries Uniswap v4 subgraph
-    // Testnet: queries our full subgraph (non-DAI pools)
+    // 3. Main subgraph query (pools + poolHourDatas in single request)
     nonDaiPoolIds.length > 0
       ? fetchSubgraphDirect(POOL_SUBGRAPH_URL, buildPoolsQuery(nonDaiPoolIds.length), {
           poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()),
-          cutoffDays,
+          hourCutoff,
         })
-      : Promise.resolve({ success: true, data: { data: { pools: [], poolDayDatas: [] } } }),
+      : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [] } } }),
 
-    // 4. DAI subgraph query (testnet only, runs parallel with #3)
-    // Mainnet: skip (no DAI pool separation)
+    // 4. DAI subgraph query (testnet only)
     daiPoolIds.length > 0 && TESTNET_DAI_URL
       ? fetchSubgraphDirect(TESTNET_DAI_URL, buildPoolsQuery(daiPoolIds.length), {
           poolIds: daiPoolIds.map((id) => id.toLowerCase()),
-          cutoffDays,
+          hourCutoff,
         })
-      : Promise.resolve({ success: true, data: { data: { pools: [], poolDayDatas: [] } } }),
+      : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [] } } }),
   ]);
   console.timeEnd('[PERF] All data fetches (parallel)');
 
-  // ERROR ACCUMULATION: Track failures to distinguish from empty data
   if (!combinedResult.success && 'error' in combinedResult) {
     errors.push(`Combined query failed: ${combinedResult.error}`);
   }
@@ -226,18 +203,18 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
     tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
   }
 
-  // Process daily results (today + yesterday for volume)
-  for (const d of combinedResult.data?.data?.poolDayDatas || []) {
-    const id = String(d?.pool?.id || '').toLowerCase();
+  // Process hourly volume data
+  for (const h of combinedResult.data?.data?.poolHourDatas || []) {
+    const id = String(h?.pool?.id || '').toLowerCase();
     if (!id) continue;
-    if (!dailyByPoolId.has(id)) dailyByPoolId.set(id, []);
-    dailyByPoolId.get(id)!.push(d);
+    if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
+    hourlyByPoolId.get(id)!.push({ periodStartUnix: h.periodStartUnix, volumeToken0: h.volumeToken0 });
   }
-  for (const d of combinedResultDai.data?.data?.poolDayDatas || []) {
-    const id = String(d?.pool?.id || '').toLowerCase();
+  for (const h of combinedResultDai.data?.data?.poolHourDatas || []) {
+    const id = String(h?.pool?.id || '').toLowerCase();
     if (!id) continue;
-    if (!dailyByPoolId.has(id)) dailyByPoolId.set(id, []);
-    dailyByPoolId.get(id)!.push(d);
+    if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
+    hourlyByPoolId.get(id)!.push({ periodStartUnix: h.periodStartUnix, volumeToken0: h.volumeToken0 });
   }
 
   // Process fee results from multicall
@@ -247,39 +224,33 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
       if (result.status === 'success') {
         const slot0 = result.result as readonly [bigint, number, number, number];
         const lpFeeRaw = Number(slot0?.[3] ?? 3000);
-        // Preserve hundredths of a basis point
         const bps = Math.max(0, Math.round((((lpFeeRaw / 1_000_000) * 10_000) * 100)) / 100);
         dynamicFeesByPoolId.set(targetPoolIds[index].toLowerCase(), bps);
       }
     });
   }
 
-  // Report errors if any occurred (but continue execution)
   if (errors.length > 0) {
     console.warn('[Batch] Subgraph errors:', errors);
   }
 
-  // PERF OPTIMIZATION: Skip previous-day TVL query (saves ~1.4s)
-  // Trade-off: TVL change % will be unavailable, but load time is critical
-  const prevTvlByPoolId = new Map<string, { tvl0: number; tvl1: number }>();
-
-  // NOTE: Fee multicall now runs in parallel with first batch (moved above)
+  // Calculate pool stats
   console.time('[PERF] Calculate pool stats');
-  const poolsStats: BatchPoolStatsMinimal[] = [];
+  const poolsStats: BatchPoolStats[] = [];
+
   for (const pool of allPools) {
     try {
       const poolId = (getPoolSubgraphId(pool.id, networkMode) || pool.id).toLowerCase();
-      const symbol0 = pool.currency0.symbol;
-      const symbol1 = pool.currency1.symbol;
-      const token0Price = tokenPrices[symbol0];
-      const token1Price = tokenPrices[symbol1];
+      const cfg = poolIdToConfig.get(poolId)!;
+      const token0Price = tokenPrices[cfg.symbol0];
+      const token1Price = tokenPrices[cfg.symbol1];
 
       const safeToken0Price = typeof token0Price === 'number' ? token0Price : 0;
       const safeToken1Price = typeof token1Price === 'number' ? token1Price : 0;
 
-      const cfg = poolIdToConfig.get(poolId)!;
-      const tvlEntry = tvlById.get(poolId);
+      // Calculate TVL
       let tvlUSD = 0;
+      const tvlEntry = tvlById.get(poolId);
       if (tvlEntry) {
         const toHuman = (val: any, decimals: number) => {
           try {
@@ -295,70 +266,48 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
         tvlUSD = calculateTotalUSD(amt0, amt1, safeToken0Price, safeToken1Price);
       }
 
-      // Aggregate 7 days of volume data for stable APR
-      const allDays = dailyByPoolId.get(poolId) || [];
-      // Filter to last 7 days (excluding today which may be incomplete)
-      const last7Days = allDays.filter(d => {
-        const date = Number(d?.date);
-        return date >= sevenDaysAgoTimestamp && date < todayTimestamp;
-      });
-
-      // Calculate 7-day volume total
-      let volume7dToken0 = 0;
-      for (const day of last7Days) {
-        volume7dToken0 += Number(day?.volumeToken0) || 0;
+      // Calculate 24h volume from hourly data (true rolling 24h window)
+      const hourlyData = hourlyByPoolId.get(poolId) || [];
+      let volume24hToken0 = 0;
+      for (const h of hourlyData) {
+        // Double-check timestamp is within 24h (subgraph already filters, but be safe)
+        if (h.periodStartUnix >= hourCutoff) {
+          volume24hToken0 += Number(h.volumeToken0) || 0;
+        }
       }
-      const volume7dUSD = volume7dToken0 * safeToken0Price;
-      const daysWithData = last7Days.length || 1; // Avoid division by zero
-      const volumeAvgDailyUSD = volume7dUSD / daysWithData;
+      const volume24hUSD = volume24hToken0 * safeToken0Price;
 
-      let tvlYesterdayUSD = 0;
-      const prevEntry = prevTvlByPoolId.get(poolId);
-      if (prevEntry) {
-        const amt0Prev = Number(prevEntry.tvl0) || 0;
-        const amt1Prev = Number(prevEntry.tvl1) || 0;
-        tvlYesterdayUSD = calculateTotalUSD(amt0Prev, amt1Prev, safeToken0Price, safeToken1Price);
-      }
-
-      // Calculate 7-day fees and APR
-      const dynamicFeeBps = dynamicFeesByPoolId.get(poolId) || 30; // default 0.30%
+      // Calculate 24h fees and APR
+      const dynamicFeeBps = dynamicFeesByPoolId.get(poolId) || 30;
       const feeRate = dynamicFeeBps / 10_000;
-      const fees7dUSD = volume7dUSD * feeRate;
-      const feesAvgDailyUSD = fees7dUSD / daysWithData;
+      const fees24hUSD = volume24hUSD * feeRate;
 
-      // 7-day APR calculation (annualized from daily average)
-      let apr7d = 0;
-      if (tvlUSD > 0 && feesAvgDailyUSD > 0) {
-        const annualFees = feesAvgDailyUSD * 365;
-        apr7d = (annualFees / tvlUSD) * 100;
-        if (!isFinite(apr7d) || apr7d < 0) apr7d = 0;
+      // APR: annualized from 24h fees
+      let apr = 0;
+      if (tvlUSD > 0 && fees24hUSD > 0) {
+        const annualFees = fees24hUSD * 365;
+        apr = (annualFees / tvlUSD) * 100;
+        if (!isFinite(apr) || apr < 0) apr = 0;
       }
 
       poolsStats.push({
         poolId,
         tvlUSD,
-        tvlYesterdayUSD,
-        volume7dUSD,
-        volumeAvgDailyUSD,
-        fees7dUSD,
-        feesAvgDailyUSD,
+        volume24hUSD,
+        fees24hUSD,
         dynamicFeeBps,
-        apr7d,
-        daysWithData,
+        apr,
       });
     } catch {}
   }
   console.timeEnd('[PERF] Calculate pool stats');
 
-  const payload = {
+  return {
     success: true,
     pools: poolsStats,
     timestamp: Date.now(),
-    errors: errors.length > 0 ? errors : undefined // Include errors for cache validation
+    errors: errors.length > 0 ? errors : undefined
   };
-
-  // NOTE: Caching is now handled in GET handler to prevent caching invalid data
-  return payload;
 }
 
 export async function GET(request: Request) {
@@ -368,27 +317,22 @@ export async function GET(request: Request) {
     const networkParam = requestUrl.searchParams.get('network')
     const networkFromQuery = networkParam === 'mainnet' || networkParam === 'testnet' ? networkParam : null
 
-    // Get network mode from cookies (App Router pattern)
     const cookieHeader = request.headers.get('cookie') || '';
     const networkMode = (networkFromQuery ?? getNetworkModeFromRequest(cookieHeader)) as NetworkMode;
 
-    // Network mode now selected via ?network= or cookies (for legacy callers)
-
-    // Cache key includes network mode to separate mainnet and testnet data
-    const cacheKey = poolKeys.batch('v1', networkMode);
-    const ttl = { fresh: 5 * 60, stale: 60 * 60 } // 5min fresh, 1hr stale
+    const cacheKey = poolKeys.batch('v2', networkMode); // Bumped version for new schema
+    const ttl = { fresh: 5 * 60, stale: 60 * 60 }
 
     const shouldCache = (payload: any): boolean => {
       const hasErrors = payload?.errors && payload.errors.length > 0
       if (!payload?.success || hasErrors) return false
 
-      // Guard against caching obviously bogus "all zeros" snapshots
       const pools = payload?.pools
       if (!Array.isArray(pools) || pools.length === 0) return false
       const looksAllZero = pools.every((p: any) =>
         Number(p?.tvlUSD ?? 0) === 0 &&
-        Number(p?.volume7dUSD ?? 0) === 0 &&
-        Number(p?.fees7dUSD ?? 0) === 0
+        Number(p?.volume24hUSD ?? 0) === 0 &&
+        Number(p?.fees24hUSD ?? 0) === 0
       )
       return !looksAllZero
     }
@@ -416,12 +360,11 @@ export async function GET(request: Request) {
       result = cached
     }
 
-    // Set cache headers for consistency with other endpoints
     const headers: HeadersInit = {}
     const isCdnCacheable = !!networkFromQuery && !forceRefresh
     headers['Cache-Control'] = isCdnCacheable
       ? 'public, s-maxage=30, stale-while-revalidate=300'
-      : 'no-store' // prevent cookie-variant caching; forceRefresh should never be cached
+      : 'no-store'
     headers['X-Network-Mode'] = networkMode
     if (result.isStale) {
       headers['X-Cache-Status'] = 'stale';
@@ -433,5 +376,3 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: false, message: error?.message || 'Unknown error' }, { status: 500 });
   }
 }
-
-

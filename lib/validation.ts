@@ -32,14 +32,10 @@ export const PoolStatsSchema = z.object({
   pools: z.array(z.object({
     poolId: z.string(),
     tvlUSD: z.number(),
-    volume7dUSD: z.number(),
-    volumeAvgDailyUSD: z.number().optional(),
-    tvlYesterdayUSD: z.number().optional(),
-    fees7dUSD: z.number().optional(),
-    feesAvgDailyUSD: z.number().optional(),
-    apr7d: z.number().optional(),
-    dynamicFeeBps: z.number().optional(),
-    daysWithData: z.number().optional(),
+    volume24hUSD: z.number(),
+    fees24hUSD: z.number(),
+    dynamicFeeBps: z.number(),
+    apr: z.number(),
   })),
 });
 

@@ -1,18 +1,19 @@
-import { getAddress, parseAbi, type Address, type Hex, type Chain, type Abi } from 'viem';
+import { getAddress, parseAbi, type Address, type Chain, type Abi } from 'viem';
 import { position_manager_abi } from './abis/PositionManager_abi';
-import { getStoredNetworkMode, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from './network-mode';
-
-// Get current network mode - use env var for server-side default
-// On server: use env var default (mainnet for production)
-// On client: check localStorage, then env var
-const networkMode = typeof window === 'undefined'
-  ? (process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet')
-  : getStoredNetworkMode();
-const isMainnet = networkMode === 'mainnet';
+import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from './network-mode';
+import {
+  getChainId,
+  getChainName,
+  getTokenDefinitions,
+  getPositionManagerAddress,
+  getHooksAddress,
+  type TokenDefinitions,
+} from './pools-config';
 
 // --- Blockchain & Network Configuration ---
-export const CHAIN_ID = isMainnet ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
-export const CHAIN_NAME = isMainnet ? 'Base' : 'Base Sepolia';
+// These are now imported from pools-config.ts which reads from pools.json
+export const CHAIN_ID = getChainId();
+export const CHAIN_NAME = getChainName();
 export const NATIVE_CURRENCY_NAME = 'Ether';
 export const NATIVE_CURRENCY_SYMBOL = 'ETH';
 export const NATIVE_CURRENCY_DECIMALS = 18;
@@ -21,65 +22,14 @@ export const NATIVE_CURRENCY_DECIMALS = 18;
 export const PERMIT2_ADDRESS_RAW = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 export const PERMIT2_ADDRESS: Address = getAddress(PERMIT2_ADDRESS_RAW);
 
-// --- TOKEN DEFINITIONS (Testnet) ---
-const TESTNET_TOKEN_DEFINITIONS = {
-    'aUSDC': {
-        addressRaw: '0x663cf82e49419a3dc88eec65c2155b4b2d0fa335',
-        decimals: 6,
-        symbol: 'aUSDC'
-    },
-    'aUSDT': {
-        addressRaw: '0xbaabfa3ac2ed3d0154e9e2002f94d8550a79bfa8',
-        decimals: 6,
-        symbol: 'aUSDT'
-    },
-    'aETH': {
-        addressRaw: '0x28c00749cb9066d240fe1270b6d7f294b8b34d99',
-        decimals: 18,
-        symbol: 'aETH'
-    },
-    'aBTC': {
-        addressRaw: '0x13c26fb69d48ed5a72ce3302fc795082e2427f4d',
-        decimals: 8,
-        symbol: 'aBTC'
-    },
-    'ETH': {
-        addressRaw: '0x0000000000000000000000000000000000000000',
-        decimals: 18,
-        symbol: 'ETH'
-    }
-} as const;
+// --- TOKEN DEFINITIONS ---
+// Now imported from pools-config.ts which reads from pools.json
+// Use getTokenDefinitions() for dynamic network support
+export const TOKEN_DEFINITIONS = getTokenDefinitions();
 
-// --- TOKEN DEFINITIONS (Mainnet) ---
-// TODO: Replace with actual mainnet token addresses when deployed
-const MAINNET_TOKEN_DEFINITIONS = {
-    'USDC': {
-        addressRaw: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Base USDC
-        decimals: 6,
-        symbol: 'USDC'
-    },
-    'USDbC': {
-        addressRaw: '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA', // Base bridged USDC
-        decimals: 6,
-        symbol: 'USDbC'
-    },
-    'WETH': {
-        addressRaw: '0x4200000000000000000000000000000000000006', // Base WETH
-        decimals: 18,
-        symbol: 'WETH'
-    },
-    'ETH': {
-        addressRaw: '0x0000000000000000000000000000000000000000',
-        decimals: 18,
-        symbol: 'ETH'
-    }
-} as const;
-
-// Export network-specific token definitions
-export const TOKEN_DEFINITIONS = isMainnet ? MAINNET_TOKEN_DEFINITIONS : TESTNET_TOKEN_DEFINITIONS;
-
-// Define a type for the token symbols for better type safety
-export type TokenSymbol = keyof typeof TESTNET_TOKEN_DEFINITIONS | keyof typeof MAINNET_TOKEN_DEFINITIONS;
+// Re-export types for backwards compatibility
+export type { TokenDefinitions };
+export type TokenSymbol = string;
 
 // Explicitly define the type for a single token definition
 export interface TokenDefinition {
@@ -89,15 +39,14 @@ export interface TokenDefinition {
 }
 
 // --- V4 Pool Configuration ---
-export const V4_POOL_FEE = 2000; // Updated to match new fee from pools.json
-export const V4_POOL_TICK_SPACING = 60;
+// Note: Fee and tick spacing vary per pool - use pool config for specific values
+// These are kept as defaults for legacy compatibility
+export const V4_POOL_FEE = 8388608; // Dynamic fee flag (0x800000)
+export const V4_POOL_TICK_SPACING = 1; // Default, varies per pool
 
-// Hooks addresses differ per network
-const TESTNET_HOOKS_ADDRESS = '0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000';
-const MAINNET_HOOKS_ADDRESS = '0x450F6EbABFed98B3A60A98Be0a7DF43B03B1ffFF'; // Alphix Hook on Base mainnet
-
-export const V4_POOL_HOOKS_RAW = isMainnet ? MAINNET_HOOKS_ADDRESS : TESTNET_HOOKS_ADDRESS;
-export const V4_POOL_HOOKS: Address = getAddress(V4_POOL_HOOKS_RAW);
+// Hooks address - imported from pools-config.ts which reads from pools.json
+export const V4_POOL_HOOKS: Address = getHooksAddress();
+export const V4_POOL_HOOKS_RAW = V4_POOL_HOOKS;
 
 // Permit2 expiration durations - matching Uniswap's approach
 export const PERMIT_EXPIRATION_DURATION_SECONDS = 60 * 60 * 24 * 30; // 30 days for on-chain permit
@@ -166,12 +115,9 @@ export const getTargetChain = (rpcUrl: string) => ({
 } as const satisfies Chain);
 
 // --- V4 Position Manager Configuration ---
-// These constants are needed for the burn liquidity functionality
-const TESTNET_POSITION_MANAGER_ADDRESS = '0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80';
-const MAINNET_POSITION_MANAGER_ADDRESS = '0x7c5f5a4bbd8fd63184577525326123b519429bdc'; // Uniswap V4 Position Manager on Base mainnet
-
-export const V4_POSITION_MANAGER_ADDRESS_RAW = isMainnet ? MAINNET_POSITION_MANAGER_ADDRESS : TESTNET_POSITION_MANAGER_ADDRESS;
-export const V4_POSITION_MANAGER_ADDRESS: Address = getAddress(V4_POSITION_MANAGER_ADDRESS_RAW);
+// Now imported from pools-config.ts which reads from pools.json
+export const V4_POSITION_MANAGER_ADDRESS: Address = getPositionManagerAddress();
+export const V4_POSITION_MANAGER_ADDRESS_RAW = V4_POSITION_MANAGER_ADDRESS;
 
 // --- V4 Quoter Configuration ---
 // Use pools-config.getQuoterAddress() instead of hardcoding here

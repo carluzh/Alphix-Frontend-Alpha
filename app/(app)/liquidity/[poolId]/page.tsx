@@ -599,14 +599,10 @@ export default function PoolDetailPage() {
                 if (match) {
                   return {
                     tvlUSD: Number(match.tvlUSD) || 0,
-                    volume7dUSD: Number(match.volume7dUSD) || 0,
-                    volumeAvgDailyUSD: Number(match.volumeAvgDailyUSD) || 0,
-                    tvlYesterdayUSD: Number(match.tvlYesterdayUSD) || 0,
-                    fees7dUSD: Number(match.fees7dUSD) || 0,
-                    feesAvgDailyUSD: Number(match.feesAvgDailyUSD) || 0,
-                    apr7d: Number(match.apr7d) || 0,
+                    volume24hUSD: Number(match.volume24hUSD) || 0,
+                    fees24hUSD: Number(match.fees24hUSD) || 0,
+                    apr: Number(match.apr) || 0,
                     dynamicFeeBps: typeof match.dynamicFeeBps === 'number' ? match.dynamicFeeBps : null,
-                    daysWithData: Number(match.daysWithData) || 0,
                   };
                 }
               }
@@ -714,29 +710,20 @@ export default function PoolDetailPage() {
 
         // Process pool stats and update pool data
         if (poolStatsResult) {
-          // Use daily average for display (from 7d data)
-          const volDaily = poolStatsResult.volumeAvgDailyUSD || 0;
+          const vol24h = poolStatsResult.volume24hUSD || 0;
+          const fees24h = poolStatsResult.fees24hUSD || 0;
           const tvlNow = poolStatsResult.tvlUSD || 0;
           const dynamicFeeBps = poolStatsResult.dynamicFeeBps ?? null;
 
-          // Use fees from batch API if available (daily average from 7d)
-          const feesDaily = typeof poolStatsResult.feesAvgDailyUSD === 'number'
-            ? poolStatsResult.feesAvgDailyUSD
-            : (() => {
-                const feeRate = (typeof dynamicFeeBps === 'number' && dynamicFeeBps >= 0) ? dynamicFeeBps / 10_000 : 0;
-                return volDaily * feeRate;
-              })();
-
-          // Format APY helper function
+          // Format APR helper function
           const formatAPR = (aprValue: number) => {
             if (!isFinite(aprValue)) return '0.00%';
             if (aprValue < 1000) return `${aprValue.toFixed(2)}%`;
             return `${(aprValue / 1000).toFixed(2)}K%`;
           };
 
-          // Use 7-day APR from batch API
-          const calculatedApr = typeof poolStatsResult.apr7d === 'number' && poolStatsResult.apr7d > 0
-            ? formatAPR(poolStatsResult.apr7d)
+          const calculatedApr = typeof poolStatsResult.apr === 'number' && poolStatsResult.apr > 0
+            ? formatAPR(poolStatsResult.apr)
             : '0.00%';
 
           const combinedPoolData = {
@@ -745,8 +732,8 @@ export default function PoolDetailPage() {
             apr: calculatedApr,
             dynamicFeeBps: dynamicFeeBps,
             tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
-            volume24h: isFinite(volDaily) ? formatUSD(volDaily) : poolInfo.volume24h,
-            fees24h: isFinite(feesDaily) ? formatUSD(feesDaily) : poolInfo.fees24h,
+            volume24h: isFinite(vol24h) ? formatUSD(vol24h) : poolInfo.volume24h,
+            fees24h: isFinite(fees24h) ? formatUSD(fees24h) : poolInfo.fees24h,
             liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : poolInfo.liquidity,
             highlighted: false,
           };

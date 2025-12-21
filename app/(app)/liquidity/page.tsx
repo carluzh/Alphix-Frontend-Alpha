@@ -140,22 +140,19 @@ export default function LiquidityPage() {
           const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
 
           if (batchPoolData) {
-            const { tvlUSD, volume7dUSD, fees7dUSD, apr7d, volumeAvgDailyUSD, feesAvgDailyUSD } = batchPoolData;
+            const { tvlUSD, volume24hUSD, fees24hUSD, apr } = batchPoolData;
 
             // Handle APR: show 0.00% for pools with no volume, Loading... only if undefined
             let aprStr = 'Loading...';
-            if (typeof apr7d === 'number') {
-              aprStr = apr7d > 0 ? formatAPR(apr7d) : '0.00%';
+            if (typeof apr === 'number') {
+              aprStr = apr > 0 ? formatAPR(apr) : '0.00%';
             }
 
             return {
               ...pool,
               tvlUSD,
-              volume7dUSD,
-              fees7dUSD,
-              // Map daily averages to 24h fields for UI compatibility
-              volume24hUSD: volumeAvgDailyUSD,
-              fees24hUSD: feesAvgDailyUSD,
+              volume24hUSD,
+              fees24hUSD,
               apr: aprStr,
             };
           }
@@ -165,7 +162,7 @@ export default function LiquidityPage() {
         const numericPools = updatedPools.filter((p: any) => typeof p?.tvlUSD === 'number');
         const looksAllZero =
           numericPools.length > 0 &&
-          numericPools.every((p: any) => p.tvlUSD === 0 && p.volume7dUSD === 0 && p.fees7dUSD === 0);
+          numericPools.every((p: any) => p.tvlUSD === 0 && p.volume24hUSD === 0 && p.fees24hUSD === 0);
 
         if (looksAllZero) {
           throw new Error('All-zero pool stats response');
@@ -208,18 +205,16 @@ export default function LiquidityPage() {
         const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
 
         if (batchPoolData) {
-          const { tvlUSD, volume7dUSD, fees7dUSD, apr7d, volumeAvgDailyUSD, feesAvgDailyUSD } = batchPoolData;
+          const { tvlUSD, volume24hUSD, fees24hUSD, apr } = batchPoolData;
           let aprStr = 'Loading...';
-          if (typeof apr7d === 'number') {
-            aprStr = apr7d > 0 ? formatAPR(apr7d) : '0.00%';
+          if (typeof apr === 'number') {
+            aprStr = apr > 0 ? formatAPR(apr) : '0.00%';
           }
           return {
             ...pool,
             tvlUSD,
-            volume7dUSD,
-            fees7dUSD,
-            volume24hUSD: volumeAvgDailyUSD,
-            fees24hUSD: feesAvgDailyUSD,
+            volume24hUSD,
+            fees24hUSD,
             apr: aprStr,
           };
         }
@@ -229,7 +224,7 @@ export default function LiquidityPage() {
       const numericPools = updatedPools.filter((p: any) => typeof p?.tvlUSD === 'number');
       const looksAllZero =
         numericPools.length > 0 &&
-        numericPools.every((p: any) => p.tvlUSD === 0 && p.volume7dUSD === 0 && p.fees7dUSD === 0);
+        numericPools.every((p: any) => p.tvlUSD === 0 && p.volume24hUSD === 0 && p.fees24hUSD === 0);
       if (looksAllZero) return;
 
       setPoolsData(updatedPools as Pool[]);

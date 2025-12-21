@@ -13,9 +13,16 @@
     "stateView": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71"
   },
   "hooks": {
-    "alphixHookId": "0x450F6EbABFed98B3A60A98Be0a7DF43B03B1ffFF"
+    "alphixHookId": "0xc025186214711638070aF4e27B57B3D4B10B7Fff"
   },
   "tokens": {
+    "ETH": {
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "address": "0x0000000000000000000000000000000000000000",
+      "decimals": 18,
+      "icon": "/tokens/ETH.png"
+    },
     "USDC": {
       "symbol": "USDC",
       "name": "USD Coin",
@@ -38,7 +45,7 @@
       "id": "usdc-usdt",
       "name": "USDC/USDT",
       "description": "Stablecoin pair with dynamic fees",
-      "subgraphId": "0x98b4a18fe487edf4622a9069ac9b2ec2739689b2288c4b41392cc2f570fd60a8",
+      "subgraphId": "0x7f9704e6f22b3aaf8315c7bceffb63c8a1b06de964020efe6be2cb27ea20e632",
       "currency0": {
         "symbol": "USDC",
         "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
@@ -49,10 +56,30 @@
       },
       "fee": 8388608,
       "tickSpacing": 1,
-      "hooks": "0x450F6EbABFed98B3A60A98Be0a7DF43B03B1ffFF",
+      "hooks": "0xc025186214711638070aF4e27B57B3D4B10B7Fff",
       "enabled": true,
       "featured": true,
       "type": "Stable"
+    },
+    {
+      "id": "eth-usdc",
+      "name": "ETH/USDC",
+      "description": "ETH/USDC pair with dynamic fees",
+      "subgraphId": "0xa92784c3030d9c4743dfdbc4da540d3f0f9d2742a47b83304d6d2d5eee45fb3b",
+      "currency0": {
+        "symbol": "ETH",
+        "address": "0x0000000000000000000000000000000000000000"
+      },
+      "currency1": {
+        "symbol": "USDC",
+        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+      },
+      "fee": 8388608,
+      "tickSpacing": 10,
+      "hooks": "0xc025186214711638070aF4e27B57B3D4B10B7Fff",
+      "enabled": true,
+      "featured": true,
+      "type": "Volatile"
     }
   ],
   "fees": {

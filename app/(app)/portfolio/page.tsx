@@ -751,7 +751,7 @@ function usePortfolio(networkMode: 'mainnet' | 'testnet', refreshKey: number = 0
         if (!data?.success || !Array.isArray(data.pools)) return;
         const map: Record<string, string> = {};
         for (const p of data.pools as any[]) {
-          const apr = typeof p.apr7d === 'number' && isFinite(p.apr7d) && p.apr7d > 0 ? `${p.apr7d.toFixed(2)}%` : 'N/A';
+          const apr = typeof p.apr === 'number' && isFinite(p.apr) && p.apr > 0 ? `${p.apr.toFixed(2)}%` : 'N/A';
           if (p.poolId) map[String(p.poolId).toLowerCase()] = apr;
         }
         setAprByPoolId(map);
