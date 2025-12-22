@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/nextjs';
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import React from 'react';
 import { OctagonX, BadgeCheck } from 'lucide-react';
@@ -29,6 +30,19 @@ const safeParseUnits = (amount: string, decimals: number): bigint => {
   return parseUnits(cleaned, decimals);
 };
 import JSBI from 'jsbi';
+
+type LiquidityOperation = 'liquidity_decrease' | 'liquidity_burn' | 'liquidity_collect_fees';
+
+const captureError = (
+  error: unknown,
+  operation: LiquidityOperation,
+  context: Record<string, unknown>
+) => {
+  Sentry.captureException(error, {
+    tags: { operation },
+    extra: context
+  });
+};
 
 interface UseDecreaseLiquidityProps {
   onLiquidityDecreased?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
@@ -668,7 +682,24 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     } catch (error: any) {
       console.error(`Error preparing ${actionName} transaction:`, error);
       const errorMessage = error.message || `Could not prepare the ${actionName} transaction.`;
-      toast.error("Preparation Error", { 
+
+      const isUserRejection =
+        errorMessage?.toLowerCase().includes('user rejected') ||
+        errorMessage?.toLowerCase().includes('user denied') ||
+        error.code === 4001;
+
+      if (!isUserRejection) {
+        captureError(error, positionData.isFullBurn ? 'liquidity_burn' : 'liquidity_decrease', {
+          step: 'prepare_transaction',
+          tokenId: positionData.tokenId,
+          token0Symbol: positionData.token0Symbol,
+          token1Symbol: positionData.token1Symbol,
+          isFullBurn: positionData.isFullBurn,
+          collectOnly: positionData.collectOnly,
+        });
+      }
+
+      toast.error("Preparation Error", {
         icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
         description: errorMessage,
         action: {
@@ -683,8 +714,19 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   useEffect(() => {
     if (decreaseSendError) {
       const message = decreaseSendError instanceof BaseError ? decreaseSendError.shortMessage : decreaseSendError.message;
-      toast.error("Transaction Failed", { 
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+      const isUserRejection =
+        message?.toLowerCase().includes('user rejected') ||
+        message?.toLowerCase().includes('user denied');
+
+      if (!isUserRejection) {
+        Sentry.captureException(decreaseSendError, {
+          tags: { operation: 'liquidity_decrease' },
+          extra: { step: 'transaction_send', message }
+        });
+      }
+
+      toast.error("Transaction Failed", {
+        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
         description: message,
         action: {
           label: "Copy Error",

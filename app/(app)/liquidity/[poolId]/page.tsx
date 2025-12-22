@@ -2442,6 +2442,7 @@ export default function PoolDetailPage() {
                         valueUSD={calculatePositionUsd(position)}
                         getUsdPriceForSymbol={getUsdPriceForSymbol}
                         convertTickToPrice={boundConvertTickToPrice}
+                        poolType={getPoolById(poolId)?.type}
                         onClick={() => {
                           setUserPositions(prev => prev.map(p =>
                             p.positionId === position.positionId

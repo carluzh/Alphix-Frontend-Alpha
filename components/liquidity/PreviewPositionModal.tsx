@@ -84,6 +84,7 @@ export function PreviewPositionModal({
   const { chainId } = useAccount();
   const { networkMode, chainId: targetChainId } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+  const poolType = selectedPoolId ? getPoolById(selectedPoolId, networkMode)?.type : undefined;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -451,6 +452,7 @@ export function PreviewPositionModal({
                   onClick={() => {}}
                   getUsdPriceForSymbol={getUsdPriceForSymbol}
                   convertTickToPrice={convertTickToPrice}
+                  poolType={poolType}
                   poolContext={{
                     currentPrice,
                     currentPoolTick,

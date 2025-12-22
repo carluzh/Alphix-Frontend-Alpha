@@ -53,6 +53,7 @@ interface PositionCardCompactProps {
     onClick: () => void;
     getUsdPriceForSymbol: (symbol?: string) => number;
     convertTickToPrice: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
+    poolType?: string;
     poolContext: {
         currentPrice: string | null;
         currentPoolTick: number | null;
@@ -79,6 +80,7 @@ export function PositionCardCompact({
     onClick,
     getUsdPriceForSymbol,
     convertTickToPrice,
+    poolType,
     poolContext,
     fees,
     showMenuButton = false,
@@ -320,34 +322,23 @@ export function PositionCardCompact({
                     {isFullRange ? (
                         <div className="text-xs font-medium font-mono">Full range</div>
                     ) : (
-                        <div className="text-xs text-foreground truncate font-mono flex items-center gap-1">
-                            <span>{(() => {
-                                const decimals = getDecimalsForDenomination(denominationBase);
-                                const v = parseFloat(minPrice);
-                                if (!isFinite(v)) return '∞';
-                                const threshold = Math.pow(10, -decimals);
-                                if (v > 0 && v < threshold) return `<${threshold.toFixed(decimals)}`;
-                                const formatted = v.toLocaleString('en-US', {
-                                    maximumFractionDigits: decimals,
-                                    minimumFractionDigits: Math.min(2, decimals)
-                                });
-                                if (formatted === '0.00' && v > 0) return `<${threshold.toFixed(decimals)}`;
-                                return formatted;
-                            })()}</span>
-                            <span className="text-muted-foreground">-</span>
-                            <span>{(() => {
-                                const decimals = getDecimalsForDenomination(denominationBase);
-                                const v = parseFloat(maxPrice);
-                                if (!isFinite(v)) return '∞';
-                                const threshold = Math.pow(10, -decimals);
-                                if (v > 0 && v < threshold) return `<${threshold.toFixed(decimals)}`;
-                                const formatted = v.toLocaleString('en-US', {
-                                    maximumFractionDigits: decimals,
-                                    minimumFractionDigits: Math.min(2, decimals)
-                                });
-                                if (formatted === '0.00' && v > 0) return `<${threshold.toFixed(decimals)}`;
-                                return formatted;
-                            })()}</span>
+                        <div className="text-xs text-foreground truncate font-mono">
+                            {(() => {
+                                const decimals = getDecimalsForDenomination(denominationBase, poolType);
+                                const formatPrice = (price: string) => {
+                                    const v = parseFloat(price);
+                                    if (!isFinite(v)) return '∞';
+                                    const threshold = Math.pow(10, -decimals);
+                                    if (v > 0 && v < threshold) return `<${threshold.toFixed(decimals)}`;
+                                    const formatted = v.toLocaleString('en-US', {
+                                        maximumFractionDigits: decimals,
+                                        minimumFractionDigits: Math.min(2, decimals)
+                                    });
+                                    if (formatted === '0.00' && v > 0) return `<${threshold.toFixed(decimals)}`;
+                                    return formatted;
+                                };
+                                return `${formatPrice(minPrice)} - ${formatPrice(maxPrice)}`;
+                            })()}
                         </div>
                     )}
                     <div className="text-[10px] text-muted-foreground">Range</div>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { TransactionStepper } from '@/components/ui/transaction-stepper';
 import { cn } from '@/lib/utils';
@@ -119,11 +119,14 @@ export function TransactionFlowPanel({
   });
 
   // Initialize flow when it becomes active
+  const wasActiveRef = useRef(false);
   useEffect(() => {
-    if (isActive && !state.currentStep && state.currentStep === 'idle') {
+    const wasActive = wasActiveRef.current;
+    if (isActive && !wasActive) {
       actions.startFlow();
     }
-  }, [isActive, state.currentStep, actions]);
+    wasActiveRef.current = isActive;
+  }, [isActive, actions]);
 
   useEffect(() => {
     if (isDepositSuccess && !state.completedSteps.has('executing')) {

@@ -9,6 +9,27 @@ const stateViewAbi = parseAbi([
   'function getLiquidity(bytes32 poolId) external view returns (uint128 liquidity)'
 ]);
 
+const Q96n = 1n << 96n;
+const Q192n = Q96n * Q96n;
+
+const pow10 = (exp: number): bigint => {
+  if (exp <= 0) return 1n;
+  let r = 1n;
+  for (let i = 0; i < exp; i++) r *= 10n;
+  return r;
+};
+
+const formatFixed = (value: bigint, decimals: number): string => {
+  const negative = value < 0n;
+  const v = negative ? -value : value;
+  if (decimals <= 0) return `${negative ? '-' : ''}${v.toString()}`;
+  const base = pow10(decimals);
+  const whole = v / base;
+  const frac = v % base;
+  let fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');
+  return `${negative ? '-' : ''}${whole.toString()}${fracStr ? `.${fracStr}` : ''}`;
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
@@ -39,9 +60,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const [sqrtPriceX96, tick, protocolFee, lpFee] = slot0;
 
-    const twoPow96 = 2 ** 96;
-    const sqrtAsNumber = Number(sqrtPriceX96) / twoPow96;
-    let currentPrice = Number.isFinite(sqrtAsNumber) ? (sqrtAsNumber * sqrtAsNumber) : 0;
+    // Compute price using bigint math (Number(sqrtPriceX96) loses precision; stable pools show as 1.00)
+    // Uniswap convention: price = token1/token0 in Q192: (sqrtPriceX96^2) / 2^192
+    const scale = 18; // enough precision for stable pools, cheap enough for API
+    const sqrt = BigInt(sqrtPriceX96);
+    let numerator = sqrt * sqrt * pow10(scale);
+    let denominator = Q192n;
 
     try {
       const allPools = getAllPools(networkMode);
@@ -57,12 +81,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const sorted0 = addr0 < addr1 ? token0Cfg : token1Cfg;
           const sorted1 = addr0 < addr1 ? token1Cfg : token0Cfg;
           const exp = (sorted0.decimals ?? 0) - (sorted1.decimals ?? 0);
-          currentPrice = currentPrice * Math.pow(10, exp);
+          if (exp > 0) {
+            numerator *= pow10(exp);
+          } else if (exp < 0) {
+            denominator *= pow10(-exp);
+          }
         }
       }
     } catch {
       // ignore decimals adjustment failure; fallback to raw ratio
     }
+
+    const priceScaled = denominator === 0n ? 0n : numerator / denominator;
+    const currentPrice = formatFixed(priceScaled, scale);
 
     const responseData = {
       poolId: subgraphId,
@@ -72,7 +103,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       lpFee,
       liquidity: liquidity.toString(),
       currentPoolTick: tick,
-      currentPrice: String(currentPrice),
+      currentPrice,
     };
 
     const validated = validateApiResponse(PoolStateSchema, responseData, 'get-pool-state');

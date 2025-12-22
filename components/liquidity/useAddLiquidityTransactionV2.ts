@@ -1,4 +1,5 @@
 // Refactored Add Liquidity Transaction Hook (Uniswap-style)
+import * as Sentry from '@sentry/nextjs';
 import { useCallback, useState, useRef } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, useBalance, usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
@@ -15,6 +16,19 @@ import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { useCheckLiquidityApprovals } from './useCheckLiquidityApprovals';
 import { useCheckZapApprovals } from './useCheckZapApprovals';
 import { isInfiniteApprovalEnabled } from '@/hooks/useUserSettings';
+
+type LiquidityOperation = 'liquidity_mint' | 'liquidity_zap' | 'liquidity_approve';
+
+const captureError = (
+  error: unknown,
+  operation: LiquidityOperation,
+  context: Record<string, unknown>
+) => {
+  Sentry.captureException(error, {
+    tags: { operation },
+    extra: context
+  });
+};
 
 export interface UseAddLiquidityTransactionV2Props {
   token0Symbol: TokenSymbol;
@@ -99,26 +113,38 @@ export function useAddLiquidityTransactionV2({
   );
 
   // Check approvals for zap mode using React Query
+  const zapInputAmount = zapInputToken === 'token0' ? amount0 : amount1;
+  const zapTickLower = Number.parseInt(tickLower);
+  const zapTickUpper = Number.parseInt(tickUpper);
+  const hasValidZapRange =
+    Number.isFinite(zapTickLower) &&
+    Number.isFinite(zapTickUpper) &&
+    zapTickLower < zapTickUpper;
   const {
     data: zapApprovalData,
     isLoading: isCheckingZapApprovals,
     refetch: refetchZapApprovals,
   } = useCheckZapApprovals(
-    accountAddress && chainId && calculatedData && isZapMode
+    accountAddress && chainId && isZapMode
       ? {
           userAddress: accountAddress,
           token0Symbol,
           token1Symbol,
           inputTokenSymbol: zapInputToken,
-          inputAmount: zapInputToken === 'token0' ? amount0 : amount1,
+          inputAmount: zapInputAmount,
           chainId,
-          tickLower: calculatedData.finalTickLower ?? parseInt(tickLower),
-          tickUpper: calculatedData.finalTickUpper ?? parseInt(tickUpper),
+          // Zap approvals don't depend on calculatedData; they depend on the chosen range and input amount.
+          tickLower: zapTickLower,
+          tickUpper: zapTickUpper,
           slippageToleranceBps: zapSlippageToleranceBps,
         }
       : undefined,
     {
-      enabled: isZapMode && Boolean(accountAddress && chainId && calculatedData),
+      enabled:
+        isZapMode &&
+        Boolean(accountAddress && chainId) &&
+        hasValidZapRange &&
+        Boolean(zapInputAmount && parseFloat(zapInputAmount) > 0),
       staleTime: 5000,
     }
   );
@@ -542,6 +568,13 @@ export function useAddLiquidityTransactionV2({
               types,
               valuesToSign,
             });
+            captureError(signError, 'liquidity_zap', {
+              step: 'batch_permit_signature',
+              token0Symbol,
+              token1Symbol,
+              tickLower: tl,
+              tickUpper: tu,
+            });
             throw signError;
           }
 
@@ -781,6 +814,16 @@ export function useAddLiquidityTransactionV2({
             description: 'The request was rejected in your wallet.',
           });
         } else {
+          captureError(error, isZapMode ? 'liquidity_zap' : 'liquidity_mint', {
+            step: 'deposit',
+            token0Symbol,
+            token1Symbol,
+            amount0,
+            amount1,
+            tickLower,
+            tickUpper,
+            isZapMode,
+          });
           toast.error('Transaction Failed', {
             icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
             description: error.message || 'Unknown error',

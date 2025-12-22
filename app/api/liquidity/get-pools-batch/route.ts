@@ -14,10 +14,9 @@ import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/redis-keys';
 import type { NetworkMode } from '@/lib/network-mode';
 
-// Combined query: pools (TVL) + poolHourDatas (24h volume) in single request
-// poolHourDatas: 24 hours * poolCount entries max
+// Combined query: pools (TVL) + poolHourDatas (24h volume) + poolDayDatas (7d yield) in single request
 const buildPoolsQuery = (poolCount: number) => `
-  query GetPoolsWithVolume($poolIds: [String!]!, $hourCutoff: Int!) {
+  query GetPoolsWithVolume($poolIds: [String!]!, $hourCutoff: Int!, $dayCutoff: Int!) {
     pools(where: { id_in: $poolIds }) {
       id
       totalValueLockedToken0
@@ -31,6 +30,16 @@ const buildPoolsQuery = (poolCount: number) => `
     ) {
       pool { id }
       periodStartUnix
+      volumeToken0
+    }
+    poolDayDatas(
+      first: ${Math.max(poolCount * 8, 20)}
+      where: { pool_in: $poolIds, date_gte: $dayCutoff }
+      orderBy: date
+      orderDirection: desc
+    ) {
+      pool { id }
+      date
       volumeToken0
     }
   }
@@ -135,12 +144,14 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
     });
   }
 
-  // 24h cutoff timestamp (rolling window)
+  // Cutoff timestamps
   const nowSec = Math.floor(Date.now() / 1000);
-  const hourCutoff = nowSec - 86400; // 24 hours ago
+  const hourCutoff = nowSec - 86400; // 24 hours ago (for volume)
+  const dayCutoff = nowSec - 7 * 86400; // 7 days ago as Unix timestamp (for yield)
 
   const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
   const hourlyByPoolId = new Map<string, Array<{ periodStartUnix: number; volumeToken0: string }>>();
+  const dailyByPoolId = new Map<string, Array<{ date: number; volumeToken0: string }>>();
   const errors: string[] = [];
   const stateViewAddress = getStateViewAddress(networkMode);
   const client = createNetworkClient(networkMode);
@@ -170,21 +181,23 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
       }
     })(),
 
-    // 3. Main subgraph query (pools + poolHourDatas in single request)
+    // 3. Main subgraph query (pools + poolHourDatas + poolDayDatas in single request)
     nonDaiPoolIds.length > 0
       ? fetchSubgraphDirect(POOL_SUBGRAPH_URL, buildPoolsQuery(nonDaiPoolIds.length), {
           poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()),
           hourCutoff,
+          dayCutoff,
         })
-      : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [] } } }),
+      : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [], poolDayDatas: [] } } }),
 
     // 4. DAI subgraph query (testnet only)
     daiPoolIds.length > 0 && TESTNET_DAI_URL
       ? fetchSubgraphDirect(TESTNET_DAI_URL, buildPoolsQuery(daiPoolIds.length), {
           poolIds: daiPoolIds.map((id) => id.toLowerCase()),
           hourCutoff,
+          dayCutoff,
         })
-      : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [] } } }),
+      : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [], poolDayDatas: [] } } }),
   ]);
   console.timeEnd('[PERF] All data fetches (parallel)');
 
@@ -203,7 +216,7 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
     tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
   }
 
-  // Process hourly volume data
+  // Process hourly volume data (for 24h volume)
   for (const h of combinedResult.data?.data?.poolHourDatas || []) {
     const id = String(h?.pool?.id || '').toLowerCase();
     if (!id) continue;
@@ -215,6 +228,20 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
     if (!id) continue;
     if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
     hourlyByPoolId.get(id)!.push({ periodStartUnix: h.periodStartUnix, volumeToken0: h.volumeToken0 });
+  }
+
+  // Process daily volume data (for 7d yield)
+  for (const d of combinedResult.data?.data?.poolDayDatas || []) {
+    const id = String(d?.pool?.id || '').toLowerCase();
+    if (!id) continue;
+    if (!dailyByPoolId.has(id)) dailyByPoolId.set(id, []);
+    dailyByPoolId.get(id)!.push({ date: d.date, volumeToken0: d.volumeToken0 });
+  }
+  for (const d of combinedResultDai.data?.data?.poolDayDatas || []) {
+    const id = String(d?.pool?.id || '').toLowerCase();
+    if (!id) continue;
+    if (!dailyByPoolId.has(id)) dailyByPoolId.set(id, []);
+    dailyByPoolId.get(id)!.push({ date: d.date, volumeToken0: d.volumeToken0 });
   }
 
   // Process fee results from multicall
@@ -277,15 +304,26 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
       }
       const volume24hUSD = volume24hToken0 * safeToken0Price;
 
-      // Calculate 24h fees and APR
+      // Calculate 24h fees (for display)
       const dynamicFeeBps = dynamicFeesByPoolId.get(poolId) || 30;
       const feeRate = dynamicFeeBps / 10_000;
       const fees24hUSD = volume24hUSD * feeRate;
 
-      // APR: annualized from 24h fees
+      // Calculate 7d volume from daily data (for yield calculation)
+      const dailyData = dailyByPoolId.get(poolId) || [];
+      let volume7dToken0 = 0;
+      for (const d of dailyData) {
+        if (d.date >= dayCutoff) {
+          volume7dToken0 += Number(d.volumeToken0) || 0;
+        }
+      }
+      const volume7dUSD = volume7dToken0 * safeToken0Price;
+      const fees7dUSD = volume7dUSD * feeRate;
+
+      // APR: annualized from 7d fees (365/7 ≈ 52.14 weeks per year)
       let apr = 0;
-      if (tvlUSD > 0 && fees24hUSD > 0) {
-        const annualFees = fees24hUSD * 365;
+      if (tvlUSD > 0 && fees7dUSD > 0) {
+        const annualFees = fees7dUSD * (365 / 7);
         apr = (annualFees / tvlUSD) * 100;
         if (!isFinite(apr) || apr < 0) apr = 0;
       }

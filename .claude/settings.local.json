@@ -73,7 +73,9 @@
       "Bash(npx sharp-cli:*)",
       "Bash(git log:*)",
       "Bash(git diff:*)",
-      "Bash(npx tsc --noEmit)"
+      "Bash(npx tsc --noEmit)",
+      "Skill(deslop)",
+      "Skill(deslop:*)"
     ],
     "deny": [],
     "ask": []

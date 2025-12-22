@@ -74,6 +74,7 @@ import { formatUSD } from "@/lib/format";
 import { calculateUserPositionAPY, calculatePositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/apy-calculator";
 import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
 import { getOptimalBaseToken, getDecimalsForDenomination, convertTickToPrice as convertTickToPriceUtil } from "@/lib/denomination-utils";
+import * as Sentry from '@sentry/nextjs';
 
 // Utility functions
 const getTokenIcon = (symbol?: string) => {
@@ -229,6 +230,7 @@ export function AddLiquidityForm({
 
   // Cache pool metrics and state (fetched once per pool)
   const [cachedPoolMetrics, setCachedPoolMetrics] = useState<{ poolId: string; metrics: any; poolLiquidity: string } | null>(null);
+  const fetchedPoolMetricsRef = useRef<string | null>(null);
 
   // Zap mode state
   const [isZapMode, setIsZapMode] = useState(false);
@@ -1970,11 +1972,13 @@ export function AddLiquidityForm({
   const hasRangeSelected = (activePreset !== null || initialDefaultApplied) && tickLower !== "" && tickUpper !== "";
 
   // Fetch pool metrics for APY calculation (cached per pool)
-  // Wait for poolState.liquidity to be available before caching to avoid race condition
+  // Uses ref to track fetched pool, avoiding circular dependency with cachedPoolMetrics state
   useEffect(() => {
     const liquidity = poolState?.liquidity;
     if (!selectedPoolId || !liquidity) return;
-    if (cachedPoolMetrics?.poolId === selectedPoolId && cachedPoolMetrics.poolLiquidity !== "0") return;
+    if (fetchedPoolMetricsRef.current === selectedPoolId) return;
+
+    fetchedPoolMetricsRef.current = selectedPoolId;
 
     (async () => {
       try {
@@ -1991,9 +1995,11 @@ export function AddLiquidityForm({
             poolLiquidity: liquidity
           });
         }
-      } catch {}
+      } catch {
+        fetchedPoolMetricsRef.current = null;
+      }
     })();
-  }, [selectedPoolId, cachedPoolMetrics, poolState?.liquidity]);
+  }, [selectedPoolId, poolState?.liquidity]);
 
   // APY calculation effect
   useEffect(() => {
@@ -2354,6 +2360,7 @@ export function AddLiquidityForm({
                   isInverted={isInverted}
                   initialFocusField={modalInitialFocusField}
                   poolMetricsData={cachedPoolMetrics}
+                  poolType={selectedPoolId ? getPoolById(selectedPoolId)?.type : undefined}
                 />
               )}
 
@@ -3064,18 +3071,44 @@ export function AddLiquidityForm({
                           const error = await response.json();
                           setPriceImpact(null);
                           setZapQuote(null);
-                          // Show error but don't prevent showing transaction steps
+                          // Show error and prevent showing transaction steps for zap failures
                           if (error.message?.includes('Price impact') || error.message?.includes('slippage')) {
                             showErrorToast('Slippage Protection', error.message);
                           } else {
                             showErrorToast('Failed to calculate zap quote', error.message);
                           }
+                          Sentry.captureMessage('Zap quote API failed', {
+                            level: 'warning',
+                            tags: { operation: 'zap_quote' },
+                            extra: {
+                              token0Symbol,
+                              token1Symbol,
+                              inputToken: zapInputToken === 'token0' ? token0Symbol : token1Symbol,
+                              inputAmount: zapInputToken === 'token0' ? amount0 : amount1,
+                              tickLower,
+                              tickUpper,
+                              apiError: error.message,
+                            }
+                          });
+                          return;
                         }
                       } catch (error: any) {
                         console.error('[AddLiquidityForm] Error calculating zap quote on Deposit:', error);
                         setPriceImpact(null);
                         setZapQuote(null);
                         showErrorToast('Failed to calculate zap quote', error.message);
+                        Sentry.captureException(error, {
+                          tags: { operation: 'zap_quote' },
+                          extra: {
+                            token0Symbol,
+                            token1Symbol,
+                            inputToken: zapInputToken === 'token0' ? token0Symbol : token1Symbol,
+                            inputAmount: zapInputToken === 'token0' ? amount0 : amount1,
+                            tickLower,
+                            tickUpper,
+                          }
+                        });
+                        return;
                       } finally {
                         setIsCalculating(false);
                       }

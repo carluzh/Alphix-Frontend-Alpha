@@ -2571,6 +2571,7 @@ export default function PortfolioPage() {
                               {(isSinglePosition || isExpanded) && (
                                 <div className={cn("flex flex-col gap-3 lg:gap-4", !isSinglePosition && "pl-4 border-l border-dashed border-sidebar-border/60 ml-4")}>
                                   {items.map((position) => {
+                                    const poolCfgForCard = getAllPools().find(p => p.subgraphId?.toLowerCase() === position.poolId.toLowerCase());
                                     const valueUSD = (() => {
                                       const sym0 = position?.token0?.symbol as string | undefined;
                                       const sym1 = position?.token1?.symbol as string | undefined;
@@ -2595,6 +2596,7 @@ export default function PortfolioPage() {
                                         }}
                                         getUsdPriceForSymbol={getUsdPriceForSymbol}
                                         convertTickToPrice={convertTickToPrice}
+                                        poolType={poolCfgForCard?.type}
                                         poolContext={{
                                           currentPrice: null,
                                           currentPoolTick: null,

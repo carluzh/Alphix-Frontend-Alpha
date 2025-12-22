@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/nextjs';
 import React, { useState, useCallback, useEffect } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
@@ -426,6 +427,23 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
     } catch (error: any) {
       console.error("Error preparing increase transaction:", error);
       const msg = (error?.message || '').toString();
+      const isUserRejection =
+        msg?.toLowerCase().includes('user rejected') ||
+        msg?.toLowerCase().includes('user denied') ||
+        error.code === 4001;
+
+      if (!isUserRejection) {
+        Sentry.captureException(error, {
+          tags: { operation: 'liquidity_increase' },
+          extra: {
+            step: 'prepare_transaction',
+            tokenId: positionData.tokenId,
+            token0Symbol: positionData.token0Symbol,
+            token1Symbol: positionData.token1Symbol,
+          }
+        });
+      }
+
       if ((error as any)?.__zero || msg.includes('ZERO_LIQUIDITY')) {
         toast.error("Try a larger Amount", { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }), action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
       } else {
@@ -438,8 +456,18 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
   useEffect(() => {
     if (increaseSendError) {
       const message = increaseSendError instanceof BaseError ? increaseSendError.shortMessage : increaseSendError.message;
+      const isUserRejection =
+        message?.toLowerCase().includes('user rejected') ||
+        message?.toLowerCase().includes('user denied');
+
+      if (!isUserRejection) {
+        Sentry.captureException(increaseSendError, {
+          tags: { operation: 'liquidity_increase' },
+          extra: { step: 'transaction_send', message }
+        });
+      }
+
       toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message, action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(message || '') } });
-      try { console.error('[increase] send error', increaseSendError); } catch {}
       setIsIncreasing(false);
     }
   }, [increaseSendError]);

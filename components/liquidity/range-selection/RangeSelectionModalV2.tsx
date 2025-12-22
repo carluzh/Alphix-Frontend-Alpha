@@ -51,6 +51,7 @@ interface RangeSelectionModalV2Props {
   isInverted?: boolean;
   initialFocusField?: 'min' | 'max' | null;
   poolMetricsData?: { poolId: string; metrics: any; poolLiquidity: string } | null;
+  poolType?: string;
 }
 
 const abbreviateDecimal = (value: string, maxDecimals: number = 10): string => {
@@ -75,7 +76,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     xDomain, onXDomainChange, poolToken0, poolToken1, presetOptions,
     isInverted = false,
     initialFocusField = null,
-    poolMetricsData = null
+    poolMetricsData = null,
+    poolType
   } = props;
 
   const isMobile = useIsMobile();
@@ -203,7 +205,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const quoteTokenSymbol = denominationBase === token0Symbol ? token1Symbol : token0Symbol;
 
   const isUSDDenom = ['aUSDT', 'aUSDC', 'USDT', 'USDC', 'aDAI', 'DAI'].includes(denominationBase);
-  const poolPriceDecimals = isUSDDenom ? 2 : 6;
+  const isStablePool = poolType?.toLowerCase() === 'stable';
+  const poolPriceDecimals = isUSDDenom ? (isStablePool ? 5 : 2) : 6;
 
   const pricePerText = `${denominationBase} per ${quoteTokenSymbol}`;
 
@@ -220,7 +223,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     const currentPriceNum = parseFloat(currentPrice);
     const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
 
-    let price = shouldInvert 
+    let price = shouldInvert
       ? 1 / (currentPriceNum * priceDelta)
       : currentPriceNum * priceDelta;
 
@@ -228,6 +231,30 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
     const decimals = denominationToken?.decimals ?? 18;
     return price.toFixed(decimals);
+  };
+
+  const convertPriceToTick = (priceStr: string, isMinPrice: boolean): number | null => {
+    if (!currentPrice || currentPoolTick === null) return null;
+    const price = parseFloat(priceStr);
+    const currentPriceNum = parseFloat(currentPrice);
+    if (!isFinite(price) || price <= 0 || !isFinite(currentPriceNum) || currentPriceNum <= 0) return null;
+
+    let rawTick: number;
+    if (shouldInvert) {
+      rawTick = currentPoolTick + Math.log(1 / (price * currentPriceNum)) / Math.log(1.0001);
+    } else {
+      rawTick = currentPoolTick + Math.log(price / currentPriceNum) / Math.log(1.0001);
+    }
+
+    if (!isFinite(rawTick)) return null;
+
+    // Snap to tick spacing - for min price round down, for max price round up
+    const snappedTick = isMinPrice
+      ? Math.floor(rawTick / defaultTickSpacing) * defaultTickSpacing
+      : Math.ceil(rawTick / defaultTickSpacing) * defaultTickSpacing;
+
+    // Clamp to valid range
+    return Math.max(sdkMinTick, Math.min(sdkMaxTick, snappedTick));
   };
 
   const detectedPreset = useMemo(() => {
@@ -261,8 +288,10 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
   const activePreset = selectedPreset !== undefined ? selectedPreset : detectedPreset;
 
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (isOpen) {
+    const wasOpen = wasOpenRef.current;
+    if (isOpen && !wasOpen) {
       setLocalTickLower(initialTickLower);
       setLocalTickUpper(initialTickUpper);
       setLocalXDomain(xDomain);
@@ -282,7 +311,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       setMinPriceInput(abbreviateDecimal(minPrice));
       setMaxPriceInput(abbreviateDecimal(maxPrice));
     }
-  }, [isOpen, initialTickLower, initialTickUpper, initialActivePreset, xDomain, token1Symbol]);
+    wasOpenRef.current = isOpen;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- calculatePriceFromTick is intentionally excluded (unstable ref, deps captured via currentPrice/shouldInvert)
+  }, [isOpen, initialTickLower, initialTickUpper, initialActivePreset, xDomain, token0Symbol, token1Symbol, currentPrice, baseTokenSymbol, shouldInvert]);
 
   useEffect(() => {
     if (isOpen && initialFocusField) {
@@ -763,8 +794,31 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     }}
                     onBlur={() => {
                       setIsMinPriceFocused(false);
-                      // Re-abbreviate on blur
-                      setMinPriceInput(abbreviateDecimal(minPriceFullPrecision));
+                      // Convert typed price to tick and update state
+                      const newTick = convertPriceToTick(minPriceFullPrecision, !shouldInvert);
+                      if (newTick !== null) {
+                        const targetTick = shouldInvert ? localTickLower : localTickUpper;
+                        const isValid = shouldInvert
+                          ? newTick > parseInt(targetTick)
+                          : newTick < parseInt(targetTick);
+                        if (isValid) {
+                          if (shouldInvert) {
+                            setLocalTickUpper(newTick.toString());
+                          } else {
+                            setLocalTickLower(newTick.toString());
+                          }
+                          setSelectedPreset(null);
+                          const snappedPrice = calculatePriceFromTick(newTick);
+                          setMinPriceFullPrecision(snappedPrice);
+                          setMinPriceInput(abbreviateDecimal(snappedPrice));
+                          return;
+                        }
+                      }
+                      // If conversion failed or invalid, revert to current tick's price
+                      const currentTick = shouldInvert ? parseInt(localTickUpper) : parseInt(localTickLower);
+                      const revertedPrice = calculatePriceFromTick(currentTick);
+                      setMinPriceFullPrecision(revertedPrice);
+                      setMinPriceInput(abbreviateDecimal(revertedPrice));
                     }}
                     className="font-semibold border-0 bg-transparent px-0 py-2 focus-visible:ring-0 focus-visible:ring-offset-0 cursor-text min-h-[44px] touch-manipulation"
                     style={{ fontSize: isMobile ? '16px' : '18px' }}
@@ -822,8 +876,31 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     }}
                     onBlur={() => {
                       setIsMaxPriceFocused(false);
-                      // Re-abbreviate on blur
-                      setMaxPriceInput(abbreviateDecimal(maxPriceFullPrecision));
+                      // Convert typed price to tick and update state
+                      const newTick = convertPriceToTick(maxPriceFullPrecision, shouldInvert);
+                      if (newTick !== null) {
+                        const targetTick = shouldInvert ? localTickUpper : localTickLower;
+                        const isValid = shouldInvert
+                          ? newTick < parseInt(targetTick)
+                          : newTick > parseInt(targetTick);
+                        if (isValid) {
+                          if (shouldInvert) {
+                            setLocalTickLower(newTick.toString());
+                          } else {
+                            setLocalTickUpper(newTick.toString());
+                          }
+                          setSelectedPreset(null);
+                          const snappedPrice = calculatePriceFromTick(newTick);
+                          setMaxPriceFullPrecision(snappedPrice);
+                          setMaxPriceInput(abbreviateDecimal(snappedPrice));
+                          return;
+                        }
+                      }
+                      // If conversion failed or invalid, revert to current tick's price
+                      const currentTick = shouldInvert ? parseInt(localTickLower) : parseInt(localTickUpper);
+                      const revertedPrice = calculatePriceFromTick(currentTick);
+                      setMaxPriceFullPrecision(revertedPrice);
+                      setMaxPriceInput(abbreviateDecimal(revertedPrice));
                     }}
                     className="font-semibold border-0 bg-transparent px-0 py-2 focus-visible:ring-0 focus-visible:ring-offset-0 cursor-text min-h-[44px] touch-manipulation"
                     style={{ fontSize: isMobile ? '16px' : '18px' }}
