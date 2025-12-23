@@ -714,8 +714,30 @@ export function useAddLiquidityTransaction({
           }
         }
 
-        const inputAmount = finalAmount0 && parseFloat(finalAmount0) > 0 ? finalAmount0 : finalAmount1;
-        const inputTokenSymbol = finalAmount0 && parseFloat(finalAmount0) > 0 ? token0Symbol : token1Symbol;
+        // Use activeInputSide to determine which token the user actually entered
+        // This is critical for the API to build the position correctly
+        let inputAmount: string;
+        let inputTokenSymbol: TokenSymbol;
+
+        if (activeInputSide === 'amount0') {
+          inputAmount = finalAmount0;
+          inputTokenSymbol = token0Symbol;
+        } else if (activeInputSide === 'amount1') {
+          inputAmount = finalAmount1;
+          inputTokenSymbol = token1Symbol;
+        } else {
+          // Fallback: pick whichever has a value (for OOR positions where only one token is needed)
+          inputAmount = finalAmount0 && parseFloat(finalAmount0) > 0 ? finalAmount0 : finalAmount1;
+          inputTokenSymbol = finalAmount0 && parseFloat(finalAmount0) > 0 ? token0Symbol : token1Symbol;
+        }
+
+        // DEBUG: Log all input values
+        console.log('[handleDeposit] === DEBUG START ===');
+        console.log('[handleDeposit] Form values:', { amount0, amount1, activeInputSide });
+        console.log('[handleDeposit] Final amounts after OOR check:', { finalAmount0, finalAmount1 });
+        console.log('[handleDeposit] Selected input:', { inputAmount, inputTokenSymbol });
+        console.log('[handleDeposit] calculatedData:', calculatedData);
+        console.log('[handleDeposit] Permit batch data:', regularApprovalData?.permitBatchData);
 
         // Choose the endpoint based on zap mode
         // In zap mode, after swap is complete, use the mint-after-swap endpoint
@@ -747,6 +769,8 @@ export function useAddLiquidityTransaction({
           requestBody.permitBatchData = regularApprovalData.permitBatchData;
         }
 
+        console.log('[handleDeposit] Request body:', JSON.stringify(requestBody, null, 2));
+
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -759,6 +783,8 @@ export function useAddLiquidityTransaction({
         }
 
         const result = await response.json();
+        console.log('[handleDeposit] API response:', JSON.stringify(result, null, 2));
+        console.log('[handleDeposit] === DEBUG END ===');
 
         // In the new flow, batch permits are signed before calling handleDeposit
         // So we should not encounter needsApproval here

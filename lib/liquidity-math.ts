@@ -192,9 +192,16 @@ export async function calculateLiquidityParameters(
     position = V4Position.fromAmount1({ pool: v4Pool, tickLower, tickUpper, amount1: JSBI.BigInt(parsedInputAmount.toString()) });
   }
 
-  const finalAmount0 = position.amount0.quotient.toString();
-  const finalAmount1 = position.amount1.quotient.toString();
+  // SDK returns amounts in sorted order - map back to form's token order
+  const sortedAmount0 = position.amount0.quotient.toString();
+  const sortedAmount1 = position.amount1.quotient.toString();
   const liquidityStr = position.liquidity.toString();
+
+  // Check if form order matches sorted order
+  const isSortedOrder = sdkToken0.sortsBefore(sdkToken1);
+  // Return amounts in form token order (token0Symbol, token1Symbol), not sorted order
+  const finalAmount0 = isSortedOrder ? sortedAmount0 : sortedAmount1;
+  const finalAmount1 = isSortedOrder ? sortedAmount1 : sortedAmount0;
 
   const currentPrice = calculatePriceString(currentSqrtPriceX96_JSBI, sortedToken0, sortedToken1, sdkToken1, sdkToken0);
   const sqrtPriceLowerX96 = JSBI.BigInt(TickMath.getSqrtRatioAtTick(tickLower).toString());

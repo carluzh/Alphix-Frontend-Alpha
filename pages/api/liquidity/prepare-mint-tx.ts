@@ -336,9 +336,29 @@ export default async function handler(
         const { permitSignature: batchPermitSignature, permitBatchData } = req.body;
         const hasBatchPermit = batchPermitSignature && permitBatchData;
 
+        // DEBUG: Log received request
+        console.log('[prepare-mint-tx] === DEBUG START ===');
+        console.log('[prepare-mint-tx] Received:', {
+            inputAmount,
+            inputTokenSymbol,
+            token0Symbol,
+            token1Symbol,
+            userTickLower,
+            userTickUpper,
+            hasBatchPermit,
+        });
+        console.log('[prepare-mint-tx] Parsed input:', {
+            parsedInputAmount: parsedInputAmount_BigInt.toString(),
+            sdkInputToken: sdkInputToken.symbol,
+            sortedToken0: sortedToken0.symbol,
+            sortedToken1: sortedToken1.symbol,
+            isInputToken0: sdkInputToken.address === sortedToken0.address,
+        });
+
         // Build initial position from input amount
         let position: V4Position;
         if (sdkInputToken.address === sortedToken0.address) {
+            console.log('[prepare-mint-tx] Building position from amount0 (token0 is input)');
             position = V4Position.fromAmount0({
                 pool: v4PoolForCalc,
                 tickLower: tickLower,
@@ -347,6 +367,7 @@ export default async function handler(
                 useFullPrecision: true
             });
         } else {
+            console.log('[prepare-mint-tx] Building position from amount1 (token1 is input)');
             position = V4Position.fromAmount1({
                 pool: v4PoolForCalc,
                 tickLower: tickLower,
@@ -355,8 +376,21 @@ export default async function handler(
             });
         }
 
-        // If permit signature provided, reconstruct position using exact permit amounts
-        // to avoid InsufficientAllowance from pool state changes between signature and execution
+        console.log('[prepare-mint-tx] Position built:', {
+            liquidity: position.liquidity.toString(),
+            mintAmounts: {
+                amount0: position.mintAmounts.amount0.toString(),
+                amount1: position.mintAmounts.amount1.toString(),
+            },
+            amount0Quotient: position.amount0.quotient.toString(),
+            amount1Quotient: position.amount1.quotient.toString(),
+        });
+
+        // NOTE: We do NOT rebuild the position from permit amounts.
+        // The position is already correctly built from inputAmount above.
+        // The permit is just for authorization - rebuilding from permit amounts
+        // can introduce precision issues or incorrect amounts.
+        // The permit batch values are extracted below only for use in mintOptions.
         const permitBatchValues = hasBatchPermit ? (permitBatchData.values || {
             details: permitBatchData.details || [],
             spender: permitBatchData.spender || POSITION_MANAGER_ADDRESS,
@@ -364,41 +398,17 @@ export default async function handler(
         }) : null;
 
         if (permitBatchValues) {
-            let permitAmount0: bigint | null = null;
-            let permitAmount1: bigint | null = null;
-
-            permitBatchValues.details.forEach((detail: any) => {
-                const tokenAddress = getAddress(detail.token);
-                const permitAmount = BigInt(detail.amount);
-
-                if (tokenAddress === getAddress(sortedToken0.address)) {
-                    permitAmount0 = permitAmount;
-                } else if (tokenAddress === getAddress(sortedToken1.address)) {
-                    permitAmount1 = permitAmount;
-                }
-            });
-
-            // Reconstruct position with exact permit amounts
-            // For OOR (single-sided) positions, only one amount will be present in permit
-            if (permitAmount0 !== null || permitAmount1 !== null) {
-                // Use permit amounts where available, fallback to original calculation for the other token
-                const amount0Str = String(permitAmount0 ?? JSBI.BigInt(position.mintAmounts.amount0.toString()));
-                const amount1Str = String(permitAmount1 ?? JSBI.BigInt(position.mintAmounts.amount1.toString()));
-
-                position = V4Position.fromAmounts({
-                    pool: v4PoolForCalc,
-                    tickLower: tickLower,
-                    tickUpper: tickUpper,
-                    amount0: JSBI.BigInt(amount0Str),
-                    amount1: JSBI.BigInt(amount1Str),
-                    useFullPrecision: true
-                });
-            }
+            console.log('[prepare-mint-tx] Permit batch details:', permitBatchValues.details);
         }
 
         const liquidity = position.liquidity;
         let amount0 = BigInt(position.mintAmounts.amount0.toString());
         let amount1 = BigInt(position.mintAmounts.amount1.toString());
+
+        console.log('[prepare-mint-tx] Final amounts (before MAX check):', {
+            amount0: amount0.toString(),
+            amount1: amount1.toString(),
+        });
 
         // SDK returns maxUint256 for amounts not needed in single-sided (OOR) positions - treat as 0
         const MAX_UINT256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
@@ -571,6 +581,13 @@ export default async function handler(
                 sigDeadline: String(permitBatchValues.sigDeadline),
             };
 
+            // DEBUG: Log what we're passing to SDK
+            console.log('[prepare-mint-tx] batchPermit being passed to SDK:', {
+                owner: getAddress(userAddress),
+                permitBatchDetails: permitBatchForSDK.details,
+                signature: batchPermitSignature?.slice(0, 20) + '...',
+            });
+
             mintOptions = {
                 ...mintOptions,
                 batchPermit: {
@@ -581,22 +598,55 @@ export default async function handler(
             };
         }
 
+        // DEBUG: Log position amounts vs what SDK will use
+        console.log('[prepare-mint-tx] Position for SDK:', {
+            liquidity: position.liquidity.toString(),
+            amount0: position.amount0.quotient.toString(),
+            amount1: position.amount1.quotient.toString(),
+            mintAmount0: position.mintAmounts.amount0.toString(),
+            mintAmount1: position.mintAmounts.amount1.toString(),
+        });
+
+        // DEBUG: Log slippage calculations to diagnose summed amounts issue
+        const slippageAmounts = position.mintAmountsWithSlippage(mintOptions.slippageTolerance);
+        console.log('[prepare-mint-tx] SDK mintAmountsWithSlippage:', {
+            amount0: slippageAmounts.amount0.toString(),
+            amount1: slippageAmounts.amount1.toString(),
+            slippageTolerance: mintOptions.slippageTolerance.toFixed(4),
+        });
+        console.log('[prepare-mint-tx] Pool state for position:', {
+            token0: v4PoolForCalc.token0.symbol,
+            token1: v4PoolForCalc.token1.symbol,
+            tickCurrent: v4PoolForCalc.tickCurrent,
+            sqrtRatioX96: v4PoolForCalc.sqrtRatioX96.toString(),
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            isInRange: currentTick >= tickLower && currentTick < tickUpper,
+        });
+
         const methodParameters = V4PositionManager.addCallParameters(position, mintOptions);
         const encodedModifyLiquiditiesCallDataViem = methodParameters.calldata;
         const transactionValue = methodParameters.value ?? "0";
+
+        console.log('[prepare-mint-tx] Returning transaction with amounts:', {
+            token0: { symbol: sortedToken0.symbol, amount: amount0.toString() },
+            token1: { symbol: sortedToken1.symbol, amount: amount1.toString() },
+            liquidity: liquidity.toString(),
+        });
+        console.log('[prepare-mint-tx] === DEBUG END ===');
 
         return res.status(200).json({
             needsApproval: false,
             transaction: {
                 to: POSITION_MANAGER_ADDRESS,
-                data: encodedModifyLiquiditiesCallDataViem, 
+                data: encodedModifyLiquiditiesCallDataViem,
                 value: transactionValue
             },
             deadline: deadlineBigInt.toString(),
             details: {
                 token0: { address: sortedToken0.address, symbol: (getToken(sortedToken0.symbol as TokenSymbol, networkMode)?.symbol || sortedToken0.symbol) as TokenSymbol, amount: amount0.toString() },
                 token1: { address: sortedToken1.address, symbol: (getToken(sortedToken1.symbol as TokenSymbol, networkMode)?.symbol || sortedToken1.symbol) as TokenSymbol, amount: amount1.toString() },
-                liquidity: liquidity.toString(), 
+                liquidity: liquidity.toString(),
                 finalTickLower: tickLower,
                 finalTickUpper: tickUpper
             }
