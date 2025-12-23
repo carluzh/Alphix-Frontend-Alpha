@@ -1015,12 +1015,15 @@ export function AddLiquidityForm({
                         if (preset === "Full Range") return "Full Range";
                         if (preset === "Wide") return isStablePool ? "±3%" : "±15%";
                         if (preset === "Narrow") return isStablePool ? "±0.5%" : "±3%";
-                        return null; // Custom
+                        return "Custom"; // Custom
                       })();
 
-                      // No button is active when activePreset is null (initial state)
-                      const isActive = activePreset !== null && activePreset === presetValue;
                       const isCustom = preset === "Custom";
+                      // Custom is active when user has interacted and activePreset doesn't match any standard preset
+                      const standardPresets = ["Full Range", isStablePool ? "±3%" : "±15%", isStablePool ? "±0.5%" : "±3%"];
+                      const isActive = isCustom
+                        ? (hasUserInteracted && initialDefaultApplied && !standardPresets.includes(activePreset || ""))
+                        : (activePreset !== null && activePreset === presetValue);
 
                       return (
                         <button

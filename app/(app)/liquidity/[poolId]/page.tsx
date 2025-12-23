@@ -375,14 +375,6 @@ export default function PoolDetailPage() {
   const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
   const [addLiquidityFormOpen, setAddLiquidityFormOpen] = useState(false);
 
-  // State for range info from the AddLiquidityForm (mirrors form's visual state)
-  const [formRangeInfo, setFormRangeInfo] = useState<{
-    preset: string | null;
-    label: string;
-    estimatedApy: string;
-    hasUserInteracted: boolean;
-    isCalculating: boolean;
-  } | null>(null);
 
   // Collect all position IDs that need fee data (table positions + modal positions)
   const allPositionIds = React.useMemo(() => {
@@ -594,7 +586,8 @@ export default function PoolDetailPage() {
               if (resp.ok) {
                 const data = await resp.json();
                 const poolIdLc = String(subgraphIdForHist || '').toLowerCase();
-                const match = Array.isArray(data?.pools) ? data.pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc) : null;
+                const pools = Array.isArray(data?.pools) ? data.pools : [];
+                const match = pools.find((p: any) => String(p.poolId || '').toLowerCase() === poolIdLc);
 
                 if (match) {
                   return {
@@ -709,37 +702,25 @@ export default function PoolDetailPage() {
         setApiChartData(finalMerged);
 
         // Process pool stats and update pool data
-        if (poolStatsResult) {
-          const vol24h = poolStatsResult.volume24hUSD || 0;
-          const fees24h = poolStatsResult.fees24hUSD || 0;
-          const tvlNow = poolStatsResult.tvlUSD || 0;
-          const dynamicFeeBps = poolStatsResult.dynamicFeeBps ?? null;
+        const vol24h = poolStatsResult?.volume24hUSD || 0;
+        const fees24h = poolStatsResult?.fees24hUSD || 0;
+        const tvlNow = poolStatsResult?.tvlUSD || 0;
+        const dynamicFeeBps = poolStatsResult?.dynamicFeeBps ?? null;
+        const aprRaw = poolStatsResult?.apr || 0;
+        const aprFormatted = isFinite(aprRaw) && aprRaw > 0
+          ? (aprRaw < 1000 ? `${aprRaw.toFixed(2)}%` : `${(aprRaw / 1000).toFixed(2)}K%`)
+          : '0.00%';
 
-          // Format APR helper function
-          const formatAPR = (aprValue: number) => {
-            if (!isFinite(aprValue)) return '0.00%';
-            if (aprValue < 1000) return `${aprValue.toFixed(2)}%`;
-            return `${(aprValue / 1000).toFixed(2)}K%`;
-          };
-
-          const calculatedApr = typeof poolStatsResult.apr === 'number' && poolStatsResult.apr > 0
-            ? formatAPR(poolStatsResult.apr)
-            : '0.00%';
-
-          const combinedPoolData = {
-            ...poolInfo,
-            ...poolStatsResult,
-            apr: calculatedApr,
-            dynamicFeeBps: dynamicFeeBps,
-            tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
-            volume24h: isFinite(vol24h) ? formatUSD(vol24h) : poolInfo.volume24h,
-            fees24h: isFinite(fees24h) ? formatUSD(fees24h) : poolInfo.fees24h,
-            liquidity: isFinite(tvlNow) ? formatUSD(tvlNow) : poolInfo.liquidity,
-            highlighted: false,
-          };
-
-          setCurrentPoolData(combinedPoolData);
-        }
+        setCurrentPoolData({
+          ...poolInfo,
+          apr: aprFormatted,
+          dynamicFeeBps,
+          tickSpacing: getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING,
+          volume24h: isFinite(vol24h) && vol24h > 0 ? formatUSD(vol24h) : '$0.00',
+          fees24h: isFinite(fees24h) && fees24h > 0 ? formatUSD(fees24h) : '$0.00',
+          liquidity: isFinite(tvlNow) && tvlNow > 0 ? formatUSD(tvlNow) : '$0.00',
+          highlighted: false,
+        });
 
         if (!keepLoading) setIsLoadingChartData(false);
       } catch (error: any) {
@@ -1463,45 +1444,21 @@ export default function PoolDetailPage() {
                         </div>
                       </div>
                     </div>
-                    {/* APY with Dynamic Range Badge */}
-                    <UITooltipProvider delayDuration={0}>
-                      <UITooltip>
-                        <UITooltipTrigger asChild>
-                          <div className={`rounded-lg bg-muted/30 cursor-default ${
-                            formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—"
-                              ? 'border border-sidebar-primary'
-                              : 'border border-sidebar-border/60'
-                          }`}>
-                            <div className="px-3 md:px-4 h-7 md:h-9 flex items-center justify-between">
-                              <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">APY</h2>
-                              {formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" && formRangeInfo.label !== "Select Range" && (
-                                <span className="inline-flex items-center px-1 py-0.5 rounded text-[8px] md:text-[10px] font-medium bg-sidebar-primary/20 text-sidebar-primary border border-sidebar-primary/40">
-                                  {formRangeInfo.label}
-                                </span>
-                              )}
-                            </div>
-                            <div className="px-3 md:px-4 py-1">
-                              <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
-                                {currentPoolData.apr === "Loading..." ? (
-                                  <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" />
-                                ) : formRangeInfo?.isCalculating ? (
-                                  <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" />
-                                ) : formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" ? (
-                                  `${formRangeInfo.estimatedApy}%`
-                                ) : (
-                                  currentPoolData.apr
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </UITooltipTrigger>
-                        <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs max-w-[240px]">
-                          <div className="font-medium text-foreground">
-                            Average over last 7 days
-                          </div>
-                        </UITooltipContent>
-                      </UITooltip>
-                    </UITooltipProvider>
+                    {/* APY */}
+                    <div className="rounded-lg bg-muted/30 border border-sidebar-border/60">
+                      <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
+                        <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">APY</h2>
+                      </div>
+                      <div className="px-3 md:px-4 py-1">
+                        <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
+                          {currentPoolData.apr === "Loading..." ? (
+                            <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" />
+                          ) : (
+                            currentPoolData.apr
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1650,45 +1607,21 @@ export default function PoolDetailPage() {
                     </div>
                   </div>
 
-                      {/* APY (always) - fixed width with Dynamic Range Badge */}
-                      <UITooltipProvider delayDuration={0}>
-                        <UITooltip>
-                          <UITooltipTrigger asChild>
-                            <div className={`flex-1 min-w-[100px] max-w-[200px] rounded-lg bg-muted/30 cursor-default flex flex-col ${
-                              formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—"
-                                ? 'border-2 border-sidebar-primary'
-                                : 'border border-sidebar-border/60'
-                            }`}>
-                              <div className="flex items-center justify-between px-3 h-9">
-                                <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
-                                {formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" && formRangeInfo.label !== "Select Range" && (
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-sidebar-primary/20 text-sidebar-primary border border-sidebar-primary/40">
-                                    {formRangeInfo.label}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="px-3 py-1">
-                                <div className="text-lg font-medium truncate">
-                                  {currentPoolData.apr === "Loading..." ? (
-                                    <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
-                                  ) : formRangeInfo?.isCalculating ? (
-                                    <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
-                                  ) : formRangeInfo?.hasUserInteracted && formRangeInfo.estimatedApy !== "0.00" && formRangeInfo.estimatedApy !== "—" ? (
-                                    `${formRangeInfo.estimatedApy}%`
-                                  ) : (
-                                    currentPoolData.apr
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </UITooltipTrigger>
-                          <UITooltipContent side="bottom" sideOffset={6} className="px-2 py-1 text-xs max-w-[240px]">
-                            <div className="font-medium text-foreground">
-                              Average over last 7 days
-                            </div>
-                          </UITooltipContent>
-                        </UITooltip>
-                      </UITooltipProvider>
+                      {/* APY */}
+                      <div className="flex-1 min-w-[100px] max-w-[200px] rounded-lg bg-muted/30 border border-sidebar-border/60 flex flex-col">
+                        <div className="flex items-center justify-between px-3 h-9">
+                          <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">APY</h2>
+                        </div>
+                        <div className="px-3 py-1">
+                          <div className="text-lg font-medium truncate">
+                            {currentPoolData.apr === "Loading..." ? (
+                              <span className="inline-block h-5 w-20 bg-muted/60 rounded animate-pulse" />
+                            ) : (
+                              currentPoolData.apr
+                            )}
+                          </div>
+                        </div>
+                      </div>
                 </div>
               </div>
             </div>
@@ -2382,7 +2315,6 @@ export default function PoolDetailPage() {
                       sdkMaxTick={SDK_MAX_TICK}
                       defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
                       activeTab={'deposit'}
-                      onRangeChange={setFormRangeInfo}
                       poolState={poolState ? {
                         currentPrice: String(poolState.currentPrice),
                         currentPoolTick: Number(poolState.currentPoolTick),
@@ -2569,7 +2501,6 @@ export default function PoolDetailPage() {
             sdkMaxTick={SDK_MAX_TICK}
             defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
             activeTab="deposit"
-            onRangeChange={setFormRangeInfo}
             poolState={poolState ? {
               currentPrice: String(poolState.currentPrice),
               currentPoolTick: Number(poolState.currentPoolTick),

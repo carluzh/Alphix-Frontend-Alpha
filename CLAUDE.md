@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Alphix is a decentralized Automated Market Maker (AMM) built on top of Uniswap V4 infrastructure. This is the frontend application that enables users to swap tokens, provide liquidity, and interact with Alphix pools on Fantom testnet. The project leverages Uniswap's Universal Router SDK and V4 SDK while implementing custom pool configurations and liquidity management features.
+Alphix is a decentralized Automated Market Maker (AMM) built on top of Uniswap V4 infrastructure. This is the frontend application that enables users to swap tokens, provide liquidity, and interact with Alphix pools on Base. The project leverages Uniswap's Universal Router SDK and V4 SDK while implementing custom pool configurations and liquidity management features.
 
 **IMPORTANT**: The `interface/` folder contains publicly accessible Uniswap repositories and should be excluded from modifications unless explicitly required. All Alphix-specific development occurs outside this folder.
 
@@ -282,13 +282,13 @@ Based on recent commits, follow this style:
 2. **Manual testing**: Test critical paths (swap, liquidity add/remove, wallet connection)
 3. **Security review**: Verify no sensitive data from `.env.local` is exposed
 4. **File review**: Examine all modified files in git diff
-5. **Fantom testnet verification**: Confirm changes work on testnet before merging to production
+5. **Base verification**: Confirm changes work on Base before merging to production
 
 ### Pull Requests
 
 - Target branch: `master`
 - Ensure all CI checks pass (if configured)
-- Test on Fantom testnet before merging to production
+- Test on Base before merging to production
 - Small, focused PRs are preferred; request review early if risky
 - Rebase small local fixups before opening PR; prefer merge commits for release branches
 
@@ -347,7 +347,7 @@ const data = await request(SUBGRAPH_URL, query)
 ### Debugging Web3 Transactions
 
 1. Check wallet connection: Verify AppKit is properly initialized
-2. Check network: Ensure user is on Fantom testnet
+2. Check network: Ensure user is on Base
 3. Check RPC: Monitor `lib/rpcClient.ts` for rate limiting
 4. Check contract ABIs: Located in `lib/abis/`
 5. Use browser console and wallet transaction history

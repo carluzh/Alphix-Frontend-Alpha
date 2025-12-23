@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { PlusIcon, BadgeCheck, OctagonX, Info as InfoIcon, RefreshCw as RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,15 +14,15 @@ import { useNetwork } from "@/lib/network-context";
 import { useIncreaseLiquidity, type IncreasePositionData, providePreSignedIncreaseBatchPermit } from "./useIncreaseLiquidity";
 import { motion, useAnimation } from "framer-motion";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
-import { useAllPrices } from "@/components/data/hooks";
-import { sanitizeDecimalInput, cn, getTokenSymbolByAddress } from "@/lib/utils";
+import { sanitizeDecimalInput, cn } from "@/lib/utils";
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
-import { formatUnits } from "viem";
 import {
-  getTokenIcon, formatCalculatedAmount, getUSDPriceForSymbol,
-  calculateCorrespondingAmount, PERMIT2_ADDRESS, MAX_UINT256, PERCENTAGE_OPTIONS
+  getTokenIcon, formatCalculatedAmount,
+  PERMIT2_ADDRESS, MAX_UINT256, PERCENTAGE_OPTIONS
 } from './liquidity-form-utils';
 import { getExplorerTxUrl } from '@/lib/wagmiConfig';
+import { useDerivedIncreaseInfo } from './hooks/useDerivedIncreaseInfo';
+import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
 
 interface AddLiquidityFormPanelProps {
   position: ProcessedPosition;
@@ -50,7 +50,10 @@ export function AddLiquidityFormPanel({
   // Always use network context chainId for queries (not wallet chainId)
   const tokenDefinitions = React.useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { signTypedDataAsync } = useSignTypedData();
-  const { data: allPrices } = useAllPrices();
+
+  // USD prices using mid-price quotes (replaces deprecated useAllPrices)
+  const { price: token0USDPrice } = useTokenUSDPrice(position.token0.symbol as TokenSymbol);
+  const { price: token1USDPrice } = useTokenUSDPrice(position.token1.symbol as TokenSymbol);
 
   const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
   const [increaseAmount1, setIncreaseAmount1] = useState<string>("");
@@ -65,7 +68,30 @@ export function AddLiquidityFormPanel({
   const [increaseCompletedERC20ApprovalsCount, setIncreaseCompletedERC20ApprovalsCount] = useState(0);
   const [increaseInvolvedTokensCount, setIncreaseInvolvedTokensCount] = useState(0);
   const [increaseAlreadyApprovedCount, setIncreaseAlreadyApprovedCount] = useState(0);
-  const [isCalculating, setIsCalculating] = useState(false);
+
+  // Use shared hook for dependent amount calculation (Uniswap pattern)
+  const {
+    calculateDependentAmount,
+    isCalculating,
+    isOutOfRange,
+    dependentAmount,
+    dependentField,
+  } = useDerivedIncreaseInfo({
+    position,
+    chainId,
+    currentPoolTick,
+    networkMode,
+  });
+
+  // Sync dependent amount from calculation hook to UI state
+  useEffect(() => {
+    if (!dependentField || !dependentAmount) return;
+    if (dependentField === 'amount1') {
+      setIncreaseAmount1(dependentAmount);
+    } else if (dependentField === 'amount0') {
+      setIncreaseAmount0(dependentAmount);
+    }
+  }, [dependentField, dependentAmount]);
 
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
@@ -73,7 +99,6 @@ export function AddLiquidityFormPanel({
   const [balanceWiggleCount1, setBalanceWiggleCount1] = useState(0);
   const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
   const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
-  const calcVersionRef = useRef(0);
 
   // Balance data
   const { data: token0BalanceData, refetch: refetchToken0Balance } = useBalance({
@@ -157,58 +182,6 @@ export function AddLiquidityFormPanel({
       onAmountsChange(amt0, amt1);
     }
   }, [increaseAmount0, increaseAmount1, onAmountsChange]);
-
-  const calculateIncreaseAmount = useCallback(async (inputAmount: string, inputSide: 'amount0' | 'amount1') => {
-    const version = ++calcVersionRef.current;
-    if (!position || !inputAmount || parseFloat(inputAmount) <= 0) {
-      setIncreaseAmount0(inputSide === 'amount1' ? increaseAmount0 : "");
-      setIncreaseAmount1(inputSide === 'amount0' ? increaseAmount1 : "");
-      return;
-    }
-
-    setIsCalculating(true);
-    try {
-      const isOOR = currentPoolTick !== null && currentPoolTick !== undefined &&
-                    (currentPoolTick < position.tickLower || currentPoolTick > position.tickUpper);
-      if (isOOR) {
-        inputSide === 'amount0' ? setIncreaseAmount1("0") : setIncreaseAmount0("0");
-        setIsCalculating(false);
-        return;
-      }
-
-      const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
-      const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
-
-      if (!token0Symbol || !token1Symbol) {
-        const amount = calculateCorrespondingAmount(inputAmount, inputSide, position);
-        inputSide === 'amount0' ? setIncreaseAmount1(amount) : setIncreaseAmount0(amount);
-        setIsCalculating(false);
-        return;
-      }
-
-      const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
-      const result = await calculateLiquidityParameters({
-        token0Symbol, token1Symbol, inputAmount,
-        inputTokenSymbol: inputSide === 'amount0' ? token0Symbol : token1Symbol,
-        userTickLower: position.tickLower,
-        userTickUpper: position.tickUpper,
-        chainId,
-      });
-
-      if (version === calcVersionRef.current) {
-        const decimals = tokenDefinitions[inputSide === 'amount0' ? token1Symbol : token0Symbol]?.decimals || 18;
-        const amount = formatUnits(BigInt(result[inputSide === 'amount0' ? 'amount1' : 'amount0'] || '0'), decimals);
-        inputSide === 'amount0' ? setIncreaseAmount1(amount) : setIncreaseAmount0(amount);
-      }
-    } catch (e) {
-      const fallback = calculateCorrespondingAmount(inputAmount, inputSide, position);
-      if (version === calcVersionRef.current) {
-        inputSide === 'amount0' ? setIncreaseAmount1(fallback) : setIncreaseAmount0(fallback);
-      }
-    } finally {
-      if (version === calcVersionRef.current) setIsCalculating(false);
-    }
-  }, [position, chainId, increaseAmount0, increaseAmount1]);
 
   // Wiggle animation effects
   useEffect(() => {
@@ -506,7 +479,7 @@ export function AddLiquidityFormPanel({
                   <span className="ml-1 text-xs text-muted-foreground">{position.token0.symbol}</span>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {formatCalculatedAmount(parseFloat(increaseAmount0 || "0") * getUSDPriceForSymbol(position.token0.symbol, allPrices))}
+                  {formatCalculatedAmount(parseFloat(increaseAmount0 || "0") * (token0USDPrice || 0))}
                 </div>
               </div>
             </div>
@@ -518,7 +491,7 @@ export function AddLiquidityFormPanel({
                   <span className="ml-1 text-xs text-muted-foreground">{position.token1.symbol}</span>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {formatCalculatedAmount(parseFloat(increaseAmount1 || "0") * getUSDPriceForSymbol(position.token1.symbol, allPrices))}
+                  {formatCalculatedAmount(parseFloat(increaseAmount1 || "0") * (token1USDPrice || 0))}
                 </div>
               </div>
               <Image src={getTokenIcon(position.token1.symbol)} alt="" width={32} height={32} className="rounded-full" />
@@ -541,12 +514,14 @@ export function AddLiquidityFormPanel({
             </a>
           )}
         </div>
-        <Button
-          className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
-          onClick={() => onSuccess()}
-        >
-          Continue
-        </Button>
+        {!hideContinueButton && (
+          <Button
+            className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+            onClick={() => onSuccess()}
+          >
+            Continue
+          </Button>
+        )}
       </div>
     );
   }
@@ -693,7 +668,7 @@ export function AddLiquidityFormPanel({
                 onClick={() => {
                   const calculatedValue = handleToken0Percentage(100);
                   if (calculatedValue && parseFloat(calculatedValue) > 0) {
-                    calculateIncreaseAmount(calculatedValue, 'amount0');
+                    calculateDependentAmount(calculatedValue, 'amount0');
                   }
                 }}
               >
@@ -719,7 +694,7 @@ export function AddLiquidityFormPanel({
                     handleIncreaseAmountChangeWithWiggle(e, 'amount0');
                     const newAmount = sanitizeDecimalInput(e.target.value);
                     if (newAmount && parseFloat(newAmount) > 0) {
-                      calculateIncreaseAmount(newAmount, 'amount0');
+                      calculateDependentAmount(newAmount, 'amount0');
                     }
                   }}
                   className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
@@ -728,7 +703,7 @@ export function AddLiquidityFormPanel({
                   <div className={cn("text-muted-foreground transition-opacity duration-100", {
                     "group-hover:opacity-0": token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0
                   })}>
-                    {formatCalculatedAmount(parseFloat(increaseAmount0 || "0") * getUSDPriceForSymbol(position.token0.symbol, allPrices))}
+                    {formatCalculatedAmount(parseFloat(increaseAmount0 || "0") * (token0USDPrice || 0))}
                   </div>
                   {token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && (
                     <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
@@ -752,7 +727,7 @@ export function AddLiquidityFormPanel({
                               const calculatedValue = handleToken0Percentage(percentage);
                               // Trigger API calculation with the new value
                               if (calculatedValue && parseFloat(calculatedValue) > 0) {
-                                calculateIncreaseAmount(calculatedValue, 'amount0');
+                                calculateDependentAmount(calculatedValue, 'amount0');
                               }
                             }}
                           >
@@ -792,7 +767,7 @@ export function AddLiquidityFormPanel({
                 onClick={() => {
                   const calculatedValue = handleToken1Percentage(100);
                   if (calculatedValue && parseFloat(calculatedValue) > 0) {
-                    calculateIncreaseAmount(calculatedValue, 'amount1');
+                    calculateDependentAmount(calculatedValue, 'amount1');
                   }
                 }}
               >
@@ -818,7 +793,7 @@ export function AddLiquidityFormPanel({
                     handleIncreaseAmountChangeWithWiggle(e, 'amount1');
                     const newAmount = sanitizeDecimalInput(e.target.value);
                     if (newAmount && parseFloat(newAmount) > 0) {
-                      calculateIncreaseAmount(newAmount, 'amount1');
+                      calculateDependentAmount(newAmount, 'amount1');
                     }
                   }}
                   className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
@@ -827,7 +802,7 @@ export function AddLiquidityFormPanel({
                   <div className={cn("text-muted-foreground transition-opacity duration-100", {
                     "group-hover:opacity-0": token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0
                   })}>
-                    {formatCalculatedAmount(parseFloat(increaseAmount1 || "0") * getUSDPriceForSymbol(position.token1.symbol, allPrices))}
+                    {formatCalculatedAmount(parseFloat(increaseAmount1 || "0") * (token1USDPrice || 0))}
                   </div>
                   {token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && (
                     <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
@@ -851,7 +826,7 @@ export function AddLiquidityFormPanel({
                               const calculatedValue = handleToken1Percentage(percentage);
                               // Trigger API calculation with the new value
                               if (calculatedValue && parseFloat(calculatedValue) > 0) {
-                                calculateIncreaseAmount(calculatedValue, 'amount1');
+                                calculateDependentAmount(calculatedValue, 'amount1');
                               }
                             }}
                           >

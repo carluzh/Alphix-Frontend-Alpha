@@ -41,3 +41,10 @@ export {
   type ZapTransactionData,
   type FetchZapQuoteParams,
 } from './useZapQuote';
+
+export {
+  useDerivedIncreaseInfo,
+  type UseDerivedIncreaseInfoParams,
+  type UseDerivedIncreaseInfoResult,
+  type DerivedIncreaseInfo,
+} from './useDerivedIncreaseInfo';
