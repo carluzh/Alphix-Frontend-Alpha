@@ -1,7 +1,7 @@
 # Remove AI code slop
 
 Two modes:
-1. **Branch mode** (no file specified): Check the diff against main and remove slop introduced in this branch.
+1. **Branch mode** (no file specified): Check uncommitted changes in the working directory (`git diff` for unstaged, `git diff --staged` for staged). Focus on cleaning up slop in the current local changes only - do NOT diff against main/master.
 2. **File mode** (file specified): Read the entire file and scan for slop. Do NOT use git diff - just read and analyze the complete file.
 
 This includes:

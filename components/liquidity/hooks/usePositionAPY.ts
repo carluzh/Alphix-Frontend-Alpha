@@ -72,13 +72,30 @@ export function usePositionAPY(params: UsePositionAPYParams): UsePositionAPYResu
   } = params;
 
   const [estimatedApy, setEstimatedApy] = useState<string>('0.00');
-  const [isCalculatingApy, setIsCalculatingApy] = useState(false);
+  const [isCalculating, setIsCalculating] = useState(false);
   const [cachedPoolMetrics, setCachedPoolMetrics] = useState<CachedPoolMetrics | null>(null);
   const fetchedPoolMetricsRef = useRef<string | null>(null);
 
   const tokenDefinitions = getTokenDefinitions(networkMode);
 
-  // Fetch pool metrics for APY calculation (cached per pool)
+  // Derived validation - single source of truth for "can we calculate"
+  const lowerTick = parseInt(tickLower);
+  const upperTick = parseInt(tickUpper);
+  const hasValidInputs = !!(
+    selectedPoolId &&
+    tickLower &&
+    tickUpper &&
+    currentPoolSqrtPriceX96 &&
+    currentPoolTick !== null &&
+    poolLiquidity &&
+    !isNaN(lowerTick) &&
+    !isNaN(upperTick) &&
+    lowerTick < upperTick
+  );
+  const hasMetrics = !!(cachedPoolMetrics?.poolId === selectedPoolId && cachedPoolMetrics?.metrics?.days);
+  const isWaitingForMetrics = hasValidInputs && !hasMetrics;
+
+  // Fetch pool metrics (cached per pool)
   useEffect(() => {
     if (!selectedPoolId || !poolLiquidity) return;
     if (fetchedPoolMetricsRef.current === selectedPoolId) return;
@@ -106,134 +123,57 @@ export function usePositionAPY(params: UsePositionAPYParams): UsePositionAPYResu
     })();
   }, [selectedPoolId, poolLiquidity]);
 
-  // APY calculation effect
+  // APY calculation
   useEffect(() => {
-    // Early validation - don't show loading for invalid states
-    if (!selectedPoolId || !tickLower || !tickUpper || !currentPoolSqrtPriceX96 || currentPoolTick === null) {
-      setEstimatedApy('0.00');
-      setIsCalculatingApy(false);
+    if (!hasValidInputs || !hasMetrics) {
+      setEstimatedApy(hasValidInputs && cachedPoolMetrics?.metrics?.days === 0 ? '—' : '0.00');
+      setIsCalculating(false);
       return;
     }
 
-    const lowerTick = parseInt(tickLower);
-    const upperTick = parseInt(tickUpper);
+    setIsCalculating(true);
 
-    if (isNaN(lowerTick) || isNaN(upperTick) || lowerTick >= upperTick) {
-      setEstimatedApy('0.00');
-      setIsCalculatingApy(false);
-      return;
-    }
-
-    if (!cachedPoolMetrics || cachedPoolMetrics.poolId !== selectedPoolId) {
-      setIsCalculatingApy(true);
-      return;
-    }
-
-    if (!cachedPoolMetrics.metrics || cachedPoolMetrics.metrics.days === 0) {
-      setEstimatedApy('—');
-      setIsCalculatingApy(false);
-      return;
-    }
-
-    // Only show loading and calculate for valid states
-    setIsCalculatingApy(true);
-
-    const calculateApy = async () => {
+    const calculate = async () => {
       try {
-        const poolConfig = getPoolById(selectedPoolId);
-        if (!poolConfig) {
-          setEstimatedApy('—');
-          setIsCalculatingApy(false);
-          return;
-        }
-
+        const poolConfig = getPoolById(selectedPoolId!);
         const token0Def = tokenDefinitions[token0Symbol];
         const token1Def = tokenDefinitions[token1Symbol];
 
-        if (!token0Def || !token1Def) {
+        if (!poolConfig || !token0Def || !token1Def) {
           setEstimatedApy('—');
-          setIsCalculatingApy(false);
           return;
         }
 
-        const sdkToken0 = new Token(
-          chainId,
-          getAddress(token0Def.address),
-          token0Def.decimals,
-          token0Symbol,
-          token0Symbol
-        );
-        const sdkToken1 = new Token(
-          chainId,
-          getAddress(token1Def.address),
-          token1Def.decimals,
-          token1Symbol,
-          token1Symbol
-        );
-
         const sdkPool = new V4PoolSDK(
-          sdkToken0,
-          sdkToken1,
+          new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Symbol, token0Symbol),
+          new Token(chainId, getAddress(token1Def.address), token1Def.decimals, token1Symbol, token1Symbol),
           V4_POOL_FEE,
           V4_POOL_TICK_SPACING,
           V4_POOL_HOOKS,
-          JSBI.BigInt(currentPoolSqrtPriceX96),
-          JSBI.BigInt(cachedPoolMetrics.poolLiquidity),
-          currentPoolTick
+          JSBI.BigInt(currentPoolSqrtPriceX96!),
+          JSBI.BigInt(cachedPoolMetrics!.poolLiquidity),
+          currentPoolTick!
         );
 
-        const amount0Num = parseFloat(amount0 || '0');
-        const amount1Num = parseFloat(amount1 || '0');
-        const useDefaultAmount = amount0Num <= 0 && amount1Num <= 0;
-
-        let apy: number;
-
-        if (useDefaultAmount) {
-          apy = await calculatePositionAPY(
-            sdkPool,
-            lowerTick,
-            upperTick,
-            cachedPoolMetrics.metrics as PoolMetrics,
-            100
-          );
-        } else {
-          const userLiquidity = calculatedData?.liquidity;
-          apy = await calculateUserPositionAPY(
-            sdkPool,
-            lowerTick,
-            upperTick,
-            amount0,
-            amount1,
-            cachedPoolMetrics.metrics as PoolMetrics,
-            userLiquidity
-          );
-        }
+        const useDefaultAmount = parseFloat(amount0 || '0') <= 0 && parseFloat(amount1 || '0') <= 0;
+        const apy = useDefaultAmount
+          ? await calculatePositionAPY(sdkPool, lowerTick, upperTick, cachedPoolMetrics!.metrics as PoolMetrics, 100)
+          : await calculateUserPositionAPY(sdkPool, lowerTick, upperTick, amount0, amount1, cachedPoolMetrics!.metrics as PoolMetrics, calculatedData?.liquidity);
 
         setEstimatedApy(formatUserAPY(apy));
       } catch {
         setEstimatedApy('—');
       } finally {
-        setIsCalculatingApy(false);
+        setIsCalculating(false);
       }
     };
 
-    const timer = setTimeout(calculateApy, 200);
+    const timer = setTimeout(calculate, 200);
     return () => clearTimeout(timer);
-  }, [
-    selectedPoolId,
-    tickLower,
-    tickUpper,
-    currentPoolSqrtPriceX96,
-    currentPoolTick,
-    token0Symbol,
-    token1Symbol,
-    amount0,
-    amount1,
-    calculatedData,
-    cachedPoolMetrics,
-    chainId,
-    tokenDefinitions,
-  ]);
+  }, [hasValidInputs, hasMetrics, selectedPoolId, lowerTick, upperTick, currentPoolSqrtPriceX96, currentPoolTick, token0Symbol, token1Symbol, amount0, amount1, calculatedData, cachedPoolMetrics, chainId, tokenDefinitions]);
+
+  // Derive loading state: calculating OR waiting for metrics to load
+  const isCalculatingApy = isCalculating || isWaitingForMetrics;
 
   return {
     estimatedApy,

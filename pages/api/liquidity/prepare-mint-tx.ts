@@ -44,6 +44,9 @@ interface PrepareMintTxRequest extends NextApiRequest {
         userTickLower: number;
         userTickUpper: number;
         chainId: number;
+        // User settings from frontend (optional - defaults provided)
+        slippageBps?: number; // Slippage in basis points (e.g., 50 = 0.5%). Default: 50
+        deadlineMinutes?: number; // Transaction deadline in minutes. Default: 20
         permitSignature?: string;
         permitBatchData?: {
             domain?: {
@@ -122,17 +125,33 @@ interface ApprovalNeededResponse {
 }
 
 
+// Uniswap-compatible response format (mirrors CreateLPPositionResponse from Trading API)
 interface TransactionPreparedResponse {
     needsApproval: false;
+    // Primary transaction field - matches Uniswap's 'create' field
+    create: {
+        to: string;
+        from?: string;
+        data: string;
+        value: string;
+        chainId: number;
+    };
+    // Backwards compatibility - same as 'create'
     transaction: {
         to: string;
-        data: string; 
-        value: string; 
+        data: string;
+        value: string;
     };
-    deadline: string; 
+    // Pool state (matches Uniswap)
+    sqrtRatioX96: string;
+    currentTick: number;
+    poolLiquidity: string;
+    // Position details
+    dependentAmount?: string;
+    deadline: string;
     details: {
-        token0: { address: string; symbol: TokenSymbol; amount: string; }; 
-        token1: { address: string; symbol: TokenSymbol; amount: string; }; 
+        token0: { address: string; symbol: TokenSymbol; amount: string; };
+        token1: { address: string; symbol: TokenSymbol; amount: string; };
         liquidity: string;
         finalTickLower: number;
         finalTickUpper: number;
@@ -180,7 +199,13 @@ export default async function handler(
             userTickLower,
             userTickUpper,
             chainId,
+            slippageBps = 50, // Default: 0.5%
+            deadlineMinutes = 20, // Default: 20 minutes
         } = req.body;
+
+        // Create slippage tolerance from user settings
+        // slippageBps is in basis points (50 = 0.5%), so divide by 10000 to get percentage
+        const SLIPPAGE_TOLERANCE = new Percent(slippageBps, 10_000);
 
         // ChainId validation - CRITICAL security check
         const chainIdError = validateChainId(chainId, networkMode);
@@ -336,29 +361,9 @@ export default async function handler(
         const { permitSignature: batchPermitSignature, permitBatchData } = req.body;
         const hasBatchPermit = batchPermitSignature && permitBatchData;
 
-        // DEBUG: Log received request
-        console.log('[prepare-mint-tx] === DEBUG START ===');
-        console.log('[prepare-mint-tx] Received:', {
-            inputAmount,
-            inputTokenSymbol,
-            token0Symbol,
-            token1Symbol,
-            userTickLower,
-            userTickUpper,
-            hasBatchPermit,
-        });
-        console.log('[prepare-mint-tx] Parsed input:', {
-            parsedInputAmount: parsedInputAmount_BigInt.toString(),
-            sdkInputToken: sdkInputToken.symbol,
-            sortedToken0: sortedToken0.symbol,
-            sortedToken1: sortedToken1.symbol,
-            isInputToken0: sdkInputToken.address === sortedToken0.address,
-        });
-
         // Build initial position from input amount
         let position: V4Position;
         if (sdkInputToken.address === sortedToken0.address) {
-            console.log('[prepare-mint-tx] Building position from amount0 (token0 is input)');
             position = V4Position.fromAmount0({
                 pool: v4PoolForCalc,
                 tickLower: tickLower,
@@ -367,7 +372,6 @@ export default async function handler(
                 useFullPrecision: true
             });
         } else {
-            console.log('[prepare-mint-tx] Building position from amount1 (token1 is input)');
             position = V4Position.fromAmount1({
                 pool: v4PoolForCalc,
                 tickLower: tickLower,
@@ -375,16 +379,6 @@ export default async function handler(
                 amount1: parsedInputAmount_JSBI
             });
         }
-
-        console.log('[prepare-mint-tx] Position built:', {
-            liquidity: position.liquidity.toString(),
-            mintAmounts: {
-                amount0: position.mintAmounts.amount0.toString(),
-                amount1: position.mintAmounts.amount1.toString(),
-            },
-            amount0Quotient: position.amount0.quotient.toString(),
-            amount1Quotient: position.amount1.quotient.toString(),
-        });
 
         // NOTE: We do NOT rebuild the position from permit amounts.
         // The position is already correctly built from inputAmount above.
@@ -397,18 +391,16 @@ export default async function handler(
             sigDeadline: permitBatchData.sigDeadline || '0'
         }) : null;
 
-        if (permitBatchValues) {
-            console.log('[prepare-mint-tx] Permit batch details:', permitBatchValues.details);
-        }
-
         const liquidity = position.liquidity;
         let amount0 = BigInt(position.mintAmounts.amount0.toString());
         let amount1 = BigInt(position.mintAmounts.amount1.toString());
 
-        console.log('[prepare-mint-tx] Final amounts (before MAX check):', {
-            amount0: amount0.toString(),
-            amount1: amount1.toString(),
-        });
+        // CRITICAL: Use slippage-adjusted amounts for permits (matches SDK's addCallParameters)
+        // The SDK's permitBatchData() and addCallParameters() both use mintAmountsWithSlippage
+        // SLIPPAGE_TOLERANCE is defined at top of handler from user's slippageBps setting
+        const slippageAmountsForPermit = position.mintAmountsWithSlippage(SLIPPAGE_TOLERANCE);
+        const amount0ForPermit = BigInt(slippageAmountsForPermit.amount0.toString());
+        const amount1ForPermit = BigInt(slippageAmountsForPermit.amount1.toString());
 
         // SDK returns maxUint256 for amounts not needed in single-sided (OOR) positions - treat as 0
         const MAX_UINT256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
@@ -429,9 +421,10 @@ export default async function handler(
             return res.status(400).json({ message: "Calculation resulted in zero amounts and zero liquidity. Please provide a valid input amount and range." });
         }
 
+        // Use slippage-adjusted amounts for permit checks (matches what addCallParameters will transfer)
         const tokensToCheck = [
-            { sdkToken: sortedToken0, requiredAmount: amount0, symbol: getToken(sortedToken0.symbol as TokenSymbol, networkMode)?.symbol || sortedToken0.symbol || "Token0" },
-            { sdkToken: sortedToken1, requiredAmount: amount1, symbol: getToken(sortedToken1.symbol as TokenSymbol, networkMode)?.symbol || sortedToken1.symbol || "Token1" }
+            { sdkToken: sortedToken0, requiredAmount: amount0, permitAmount: amount0ForPermit, symbol: getToken(sortedToken0.symbol as TokenSymbol, networkMode)?.symbol || sortedToken0.symbol || "Token0" },
+            { sdkToken: sortedToken1, requiredAmount: amount1, permitAmount: amount1ForPermit, symbol: getToken(sortedToken1.symbol as TokenSymbol, networkMode)?.symbol || sortedToken1.symbol || "Token1" }
         ];
 
         const hasNativeETH = sortedToken0.address === ETHERS_ADDRESS_ZERO || sortedToken1.address === ETHERS_ADDRESS_ZERO;
@@ -478,7 +471,7 @@ export default async function handler(
             }> = [];
 
             for (const t of tokensToCheck) {
-                if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.requiredAmount <= 0n) continue;
+                if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.permitAmount <= 0n) continue;
 
                 const [permitAmt, permitExp, permitNonce] = await publicClient.readContract({
                     address: PERMIT2_ADDRESS,
@@ -487,12 +480,14 @@ export default async function handler(
                     args: [getAddress(userAddress), getAddress(t.sdkToken.address), POSITION_MANAGER_ADDRESS]
                 }) as readonly [amount: bigint, expiration: number, nonce: number];
 
-                const hasValidPermit = permitAmt > t.requiredAmount && permitExp > currentTimestamp;
+                // Check if existing permit covers slippage-adjusted amount
+                const hasValidPermit = permitAmt >= t.permitAmount && permitExp > currentTimestamp;
                 if (hasValidPermit) continue;
 
+                // Use slippage-adjusted amount for permit (matches SDK's permitBatchData behavior)
                 permitsNeeded.push({
                     token: getAddress(t.sdkToken.address),
-                    amount: (t.requiredAmount + 1n).toString(),
+                    amount: t.permitAmount.toString(),
                     expiration: toDeadline(PERMIT_EXPIRATION_MS).toString(),
                     nonce: permitNonce.toString(),
                 });
@@ -551,14 +546,16 @@ export default async function handler(
         }
 
         // If all checks passed for both tokens, proceed to prepare the transaction using V4PositionManager
-        // Calculate deadline for transaction
+        // Calculate deadline for transaction using user's deadlineMinutes setting
         const latestBlockForTx = await publicClient.getBlock({ blockTag: 'latest' });
         if (!latestBlockForTx) throw new Error("Failed to get latest block for deadline.");
-        const deadlineBigInt = latestBlockForTx.timestamp + 1200n; // 20 minutes from now
+        const deadlineSeconds = BigInt(deadlineMinutes) * 60n;
+        const deadlineBigInt = latestBlockForTx.timestamp + deadlineSeconds;
 
         // Create MintOptions for V4PositionManager
+        // Uses same SLIPPAGE_TOLERANCE defined at top of handler from user's slippageBps
         let mintOptions: MintOptions = {
-            slippageTolerance: new Percent(50, 10_000), // 0.5% slippage
+            slippageTolerance: SLIPPAGE_TOLERANCE, // From user settings (default: 0.5%)
             deadline: deadlineBigInt.toString(),
             recipient: getAddress(userAddress),
             hookData: '0x',
@@ -581,13 +578,6 @@ export default async function handler(
                 sigDeadline: String(permitBatchValues.sigDeadline),
             };
 
-            // DEBUG: Log what we're passing to SDK
-            console.log('[prepare-mint-tx] batchPermit being passed to SDK:', {
-                owner: getAddress(userAddress),
-                permitBatchDetails: permitBatchForSDK.details,
-                signature: batchPermitSignature?.slice(0, 20) + '...',
-            });
-
             mintOptions = {
                 ...mintOptions,
                 batchPermit: {
@@ -598,50 +588,37 @@ export default async function handler(
             };
         }
 
-        // DEBUG: Log position amounts vs what SDK will use
-        console.log('[prepare-mint-tx] Position for SDK:', {
-            liquidity: position.liquidity.toString(),
-            amount0: position.amount0.quotient.toString(),
-            amount1: position.amount1.quotient.toString(),
-            mintAmount0: position.mintAmounts.amount0.toString(),
-            mintAmount1: position.mintAmounts.amount1.toString(),
-        });
-
-        // DEBUG: Log slippage calculations to diagnose summed amounts issue
-        const slippageAmounts = position.mintAmountsWithSlippage(mintOptions.slippageTolerance);
-        console.log('[prepare-mint-tx] SDK mintAmountsWithSlippage:', {
-            amount0: slippageAmounts.amount0.toString(),
-            amount1: slippageAmounts.amount1.toString(),
-            slippageTolerance: mintOptions.slippageTolerance.toFixed(4),
-        });
-        console.log('[prepare-mint-tx] Pool state for position:', {
-            token0: v4PoolForCalc.token0.symbol,
-            token1: v4PoolForCalc.token1.symbol,
-            tickCurrent: v4PoolForCalc.tickCurrent,
-            sqrtRatioX96: v4PoolForCalc.sqrtRatioX96.toString(),
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            isInRange: currentTick >= tickLower && currentTick < tickUpper,
-        });
-
         const methodParameters = V4PositionManager.addCallParameters(position, mintOptions);
         const encodedModifyLiquiditiesCallDataViem = methodParameters.calldata;
         const transactionValue = methodParameters.value ?? "0";
 
-        console.log('[prepare-mint-tx] Returning transaction with amounts:', {
-            token0: { symbol: sortedToken0.symbol, amount: amount0.toString() },
-            token1: { symbol: sortedToken1.symbol, amount: amount1.toString() },
-            liquidity: liquidity.toString(),
-        });
-        console.log('[prepare-mint-tx] === DEBUG END ===');
+        // Calculate dependent amount (the amount that was calculated from the input)
+        const isInputToken0 = sdkInputToken.address === sortedToken0.address;
+        const dependentAmount = isInputToken0 ? amount1.toString() : amount0.toString();
 
+        // Response format aligned with Uniswap Trading API CreateLPPositionResponse
         return res.status(200).json({
             needsApproval: false,
+            // Uniswap-style 'create' field
+            create: {
+                to: POSITION_MANAGER_ADDRESS,
+                from: getAddress(userAddress),
+                data: encodedModifyLiquiditiesCallDataViem,
+                value: transactionValue,
+                chainId: chainId,
+            },
+            // Backwards compatibility
             transaction: {
                 to: POSITION_MANAGER_ADDRESS,
                 data: encodedModifyLiquiditiesCallDataViem,
                 value: transactionValue
             },
+            // Pool state (matches Uniswap response)
+            sqrtRatioX96: currentSqrtPriceX96_JSBI.toString(),
+            currentTick: currentTick,
+            poolLiquidity: currentLiquidity.toString(),
+            // Dependent amount (the calculated amount for the other token)
+            dependentAmount,
             deadline: deadlineBigInt.toString(),
             details: {
                 token0: { address: sortedToken0.address, symbol: (getToken(sortedToken0.symbol as TokenSymbol, networkMode)?.symbol || sortedToken0.symbol) as TokenSymbol, amount: amount0.toString() },

@@ -123,13 +123,27 @@ interface ApprovalNeededResponse {
     };
 }
 
+// Uniswap-compatible response format (mirrors CreateLPPositionResponse from Trading API)
 interface TransactionPreparedResponse {
     needsApproval: false;
+    // Primary transaction field - matches Uniswap's 'create' field
+    create: {
+        to: string;
+        from?: string;
+        data: string;
+        value: string;
+        chainId: number;
+    };
+    // Backwards compatibility - same as 'create'
     transaction: {
         to: string;
         data: string;
         value: string;
     };
+    // Pool state (matches Uniswap)
+    sqrtRatioX96: string;
+    currentTick: number;
+    poolLiquidity: string;
     details: {
         token0: { address: string; symbol: TokenSymbol; amount: string };
         token1: { address: string; symbol: TokenSymbol; amount: string };
@@ -540,13 +554,27 @@ export default async function handler(
             ? (token0IsNative ? parsedToken0Amount : parsedToken1Amount).toString()
             : '0';
 
+        // Response format aligned with Uniswap Trading API CreateLPPositionResponse
         return res.status(200).json({
             needsApproval: false,
+            // Uniswap-style 'create' field
+            create: {
+                to: POSITION_MANAGER_ADDRESS,
+                from: getAddress(userAddress),
+                data: mintMethodParameters.calldata,
+                value: txValue,
+                chainId: chainId,
+            },
+            // Backwards compatibility
             transaction: {
                 to: POSITION_MANAGER_ADDRESS,
                 data: mintMethodParameters.calldata,
                 value: txValue
             },
+            // Pool state (matches Uniswap response)
+            sqrtRatioX96: sqrtPriceX96.toString(),
+            currentTick,
+            poolLiquidity: poolLiquidity.toString(),
             details: {
                 token0: {
                     address: getAddress(token0Config.address),

@@ -367,72 +367,6 @@ export function PositionDetailsModal({
     });
   }, [approveERC20Async, tokenDefinitions, position.token0.symbol, increaseAmount0, increaseAmount1]);
 
-  const signPermitV2 = useCallback(async (): Promise<string | undefined> => {
-    if (!increaseApprovalData?.permitBatchData || !increaseApprovalData?.signatureDetails) {
-      return undefined;
-    }
-
-    if (!signer) {
-      toast.error("Wallet not connected", {
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-      });
-      return undefined;
-    }
-
-    try {
-      // Toast removed - shown by TransactionFlowPanel
-      const valuesToSign = increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData;
-      const signature = await (signer as any)._signTypedData(
-        increaseApprovalData.signatureDetails.domain,
-        increaseApprovalData.signatureDetails.types,
-        valuesToSign
-      );
-
-      const payload = {
-        owner: accountAddress as `0x${string}`,
-        permitBatch: valuesToSign,
-        signature
-      };
-      if (valuesToSign?.details && valuesToSign.details.length > 0) {
-        providePreSignedIncreaseBatchPermit(position.positionId, payload);
-      }
-
-      const currentTime = Math.floor(Date.now() / 1000);
-      const sigDeadline = valuesToSign?.sigDeadline || valuesToSign?.details?.[0]?.expiration || 0;
-      const durationSeconds = Number(sigDeadline) - currentTime;
-      let durationFormatted = "";
-      if (durationSeconds >= 86400) {
-        const days = Math.ceil(durationSeconds / 86400);
-        durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
-      } else if (durationSeconds >= 3600) {
-        const hours = Math.ceil(durationSeconds / 3600);
-        durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
-      } else {
-        const minutes = Math.ceil(durationSeconds / 60);
-        durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
-      }
-
-      toast.success('Batch Signature Complete', {
-        icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
-        description: `Batch permit signed successfully for ${durationFormatted}`
-      });
-      return signature;
-    } catch (error: any) {
-      const isUserRejection =
-        error.message?.toLowerCase().includes('user rejected') ||
-        error.message?.toLowerCase().includes('user denied') ||
-        error.code === 4001;
-
-      if (!isUserRejection) {
-        toast.error("Signature Error", {
-          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
-          description: error.message
-        });
-      }
-      throw error;
-    }
-  }, [increaseApprovalData, signer]);
-
   const hasUncollectedFees = useCallback(() => {
     if (!position || position.isInRange) return false;
     const fee0 = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
@@ -442,17 +376,9 @@ export function PositionDetailsModal({
 
   // Old getNextStep and handleIncreaseTransactionV2 removed - now using TransactionFlowPanel
 
-  // Wrapper function for TransactionFlowPanel
-  const handleIncreaseDeposit = useCallback(async (permitSig?: string) => {
-    if (!position || !increaseApprovalData) return;
-
-    // Validate permit requirements
-    if ((increaseApprovalData?.needsToken0Permit || increaseApprovalData?.needsToken1Permit)) {
-      if (!permitSig) throw new Error('Permit signature required but not provided');
-      if (!increaseApprovalData?.permitBatchData || !increaseApprovalData?.signatureDetails) {
-        throw new Error('Permit batch data missing - please sign permit again');
-      }
-    }
+  // Wrapper for TransactionFlowPanel - permit signing handled by API
+  const handleIncreaseDeposit = useCallback(async () => {
+    if (!position) return;
 
     let finalAmount0 = increaseAmount0 || '0';
     let finalAmount1 = increaseAmount1 || '0';
@@ -474,16 +400,8 @@ export function PositionDetailsModal({
       feesForIncrease: { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' },
     };
 
-    const opts = permitSig && increaseApprovalData.permitBatchData ? {
-      batchPermit: {
-        owner: accountAddress as `0x${string}`,
-        permitBatch: increaseApprovalData.permitBatchData.values || increaseApprovalData.permitBatchData,
-        signature: permitSig,
-      }
-    } : undefined;
-
-    increaseLiquidity(data, opts);
-  }, [position, increaseApprovalData, increaseAmount0, increaseAmount1, currentPoolTick, prefetchedRaw0, prefetchedRaw1, accountAddress, increaseLiquidity]);
+    increaseLiquidity(data);
+  }, [position, increaseAmount0, increaseAmount1, currentPoolTick, prefetchedRaw0, prefetchedRaw1, increaseLiquidity]);
 
 
   // Remove Liquidity handler functions
@@ -2230,7 +2148,6 @@ export function PositionDetailsModal({
                             token1Symbol={position.token1.symbol as TokenSymbol}
                             isDepositSuccess={isIncreaseSuccess}
                             onApproveToken={handleIncreaseApproveV2}
-                            onSignPermit={signPermitV2}
                             onExecute={handleIncreaseDeposit}
                             onRefetchApprovals={refetchIncreaseApprovals}
                             onBack={() => {

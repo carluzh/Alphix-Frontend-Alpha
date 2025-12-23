@@ -8,7 +8,7 @@ import { TokenSymbol, getTokenDefinitions } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
 import { useTransactionFlow, generateStepperSteps } from '@/hooks/useTransactionFlow';
 import { toast } from 'sonner';
-import { Info, OctagonX, BadgeCheck, AlertTriangle, Maximize } from 'lucide-react';
+import { OctagonX, AlertTriangle, Maximize } from 'lucide-react';
 import { PreviewPositionModal } from './PreviewPositionModal';
 
 export interface TransactionFlowPanelProps {
@@ -24,9 +24,8 @@ export interface TransactionFlowPanelProps {
 
   // Action handlers
   onApproveToken: (tokenSymbol: TokenSymbol) => Promise<void>;
-  onSignPermit: () => Promise<string | undefined>;
-  onExecuteZap?: () => Promise<void>; // New consolidated zap handler
-  onExecute: (permitSignature?: string) => Promise<void>;
+  onExecuteZap?: () => Promise<void>;
+  onExecute: () => Promise<void>;
   onRefetchApprovals?: () => Promise<any>;
   onBack?: () => void;
   onReset?: () => void;
@@ -58,8 +57,6 @@ export interface TransactionFlowPanelProps {
   currentPoolTick?: number | null;
   currentPoolSqrtPriceX96?: string | null;
   selectedPoolId?: string;
-  poolAPY?: number | null;
-  estimatedApy?: string;
   getUsdPriceForSymbol?: (symbol?: string) => number;
   convertTickToPrice?: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
   zapQuote?: {
@@ -80,7 +77,6 @@ export function TransactionFlowPanel({
   isZapMode = false,
   zapInputToken = 'token0',
   onApproveToken,
-  onSignPermit,
   onExecuteZap,
   onExecute,
   onRefetchApprovals,
@@ -101,8 +97,6 @@ export function TransactionFlowPanel({
   currentPoolTick,
   currentPoolSqrtPriceX96,
   selectedPoolId,
-  poolAPY,
-  estimatedApy,
   getUsdPriceForSymbol,
   convertTickToPrice,
   zapQuote,
@@ -113,7 +107,6 @@ export function TransactionFlowPanel({
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { state, actions, getNextStep, canProceed } = useTransactionFlow({
     onFlowComplete: () => {
-      // Flow completed successfully
       if (onReset) onReset();
     },
   });
@@ -139,14 +132,6 @@ export function TransactionFlowPanel({
 
     const nextStep = getNextStep(approvalData, isZapMode);
     if (!nextStep) return;
-
-    if (!isZapMode && nextStep === 'signing_permit' && (!approvalData.permitBatchData || !approvalData.signatureDetails)) {
-      toast.error('Permit data not ready', {
-        description: 'Please wait for permit data to load or try refreshing',
-        icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' })
-      });
-      return;
-    }
 
     actions.lock();
     actions.setStep(nextStep);
@@ -223,31 +208,14 @@ export function TransactionFlowPanel({
           }
           break;
 
-        case 'signing_permit': {
-          toast('Sign in Wallet', { icon: React.createElement(Info, { className: 'h-4 w-4' }) });
-          const signature = await onSignPermit();
-          if (signature) {
-            actions.setPermitSignature(signature);
-            actions.completeStep('signing_permit');
-            if (autoProgressOnApproval) {
-              await new Promise(resolve => setTimeout(resolve, 500));
-              actions.unlock();
-              handleProceed();
-              return;
-            }
-          } else {
-            throw new Error('Signature cancelled');
-          }
-          break;
-        }
-
         case 'executing':
           if (isZapMode) {
             if (!onExecuteZap) throw new Error('Zap execution handler not provided');
             await onExecuteZap();
-            actions.completeStep('executing');
+            // Don't complete step here - let the isDepositSuccess useEffect handle it
+            // when the transaction is confirmed (same pattern as regular mode)
           } else {
-            await onExecute(state.permitSignature);
+            await onExecute();
           }
           break;
       }
@@ -281,11 +249,10 @@ export function TransactionFlowPanel({
     token0Symbol,
     token1Symbol,
     onApproveToken,
-    onSignPermit,
     onExecuteZap,
     onExecute,
-    state.permitSignature,
     autoProgressOnApproval,
+    onRefetchApprovals,
   ]);
 
   const stepperSteps = generateStepperSteps(state, approvalData, token0Symbol, token1Symbol, isZapMode, tokenDefinitions);
@@ -297,7 +264,6 @@ export function TransactionFlowPanel({
       case 'approving_zap_tokens': return 'Approve Tokens';
       case 'approving_token0': return `Approve ${token0Symbol}`;
       case 'approving_token1': return `Approve ${token1Symbol}`;
-      case 'signing_permit': return 'Sign Permit';
       case 'executing': return executeButtonLabel;
       default: return executeButtonLabel;
     }

@@ -4,12 +4,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { TokenSymbol, getToken, getChainId } from "@/lib/pools-config";
 import { InteractiveRangeChart } from "../InteractiveRangeChart";
 import { PlusIcon, MinusIcon, ArrowLeftRight, CircleHelp, ChartBarBig, SquarePen } from "lucide-react";
@@ -19,10 +14,26 @@ import { calculatePositionAPY, formatAPY, type PoolMetrics } from "@/lib/apy-cal
 import { getPoolById } from "@/lib/pools-config";
 import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { Token } from '@uniswap/sdk-core';
-import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
+import { Pool as V4Pool } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { convertTickToPrice, convertPriceToValidTick, calculateTicksFromPercentage } from '@/lib/liquidity';
+
+// Consolidated constants for range presets
+const PRESET_PERCENTAGES: Record<string, number> = {
+  "±15%": 15, "±8%": 8, "±3%": 3, "±1%": 1, "±0.5%": 0.5, "±0.1%": 0.1
+};
+
+const RANGE_TYPES_STANDARD: readonly string[] = ["Full Range", "±15%", "±3%", "Custom"];
+const RANGE_TYPES_STABLE: readonly string[] = ["Full Range", "±3%", "±0.5%", "Custom"];
+
+const RANGE_LABELS: Record<string, string> = {
+  "Full Range": "Full Range",
+  "±15%": "Wide",
+  "±3%": "Narrow",  // overridden for stable pools
+  "±0.5%": "Narrow",
+  "Custom": "Custom"
+};
 
 interface RangeSelectionModalV2Props {
   isOpen: boolean;
@@ -74,8 +85,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     currentPrice, currentPoolTick, currentPoolSqrtPriceX96,
     minPriceDisplay, maxPriceDisplay, baseTokenSymbol,
     sdkMinTick, sdkMaxTick, defaultTickSpacing,
-    xDomain, onXDomainChange, poolToken0, poolToken1, presetOptions,
-    isInverted = false,
+    xDomain, poolToken0, poolToken1, presetOptions,
     initialFocusField = null,
     poolMetricsData = null,
     poolType
@@ -83,7 +93,6 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
   const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
-  const suppressNextClick = useRef(false);
   const minPriceInputRef = useRef<HTMLInputElement>(null);
   const maxPriceInputRef = useRef<HTMLInputElement>(null);
   const [mounted, setMounted] = useState(false);
@@ -185,7 +194,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   const [minPriceInput, setMinPriceInput] = useState(abbreviateDecimal(minPriceDisplay));
   const [maxPriceInput, setMaxPriceInput] = useState(abbreviateDecimal(maxPriceDisplay));
   const [isChartLoading, setIsChartLoading] = useState(true);
-  const [isDragging, setIsDragging] = useState(false);
+  const [isDraggingChart, setIsDraggingChart] = useState(false);
 
   const [isMinPriceFocused, setIsMinPriceFocused] = useState(false);
   const [isMaxPriceFocused, setIsMaxPriceFocused] = useState(false);
@@ -265,11 +274,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
     if (!currentPoolTick) return null;
 
-    const percentageMap: Record<string, number> = {
-      "±15%": 0.15, "±8%": 0.08, "±3%": 0.03,
-    };
-
-    for (const [preset, percentage] of Object.entries(percentageMap)) {
+    // Check all percentage presets (use decimal form for tick calculation)
+    for (const [preset, pct] of Object.entries(PRESET_PERCENTAGES)) {
+      const percentage = pct / 100;
       const tickDelta = Math.round(Math.log(1 + percentage) / Math.log(1.0001));
       const expectedLower = Math.floor((currentPoolTick - tickDelta) / defaultTickSpacing) * defaultTickSpacing;
       const expectedUpper = Math.ceil((currentPoolTick + tickDelta) / defaultTickSpacing) * defaultTickSpacing;
@@ -361,13 +368,14 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     setMinPriceFullPrecision(minPrice);
     setMaxPriceFullPrecision(maxPrice);
 
-    if (!isMinPriceFocused) {
+    // Update inputs if not focused, OR if dragging chart (override focus to show live values)
+    if (!isMinPriceFocused || isDraggingChart) {
       setMinPriceInput(abbreviateDecimal(minPrice));
     }
-    if (!isMaxPriceFocused) {
+    if (!isMaxPriceFocused || isDraggingChart) {
       setMaxPriceInput(abbreviateDecimal(maxPrice));
     }
-  }, [localTickLower, localTickUpper, denominationBase, shouldInvert, isMinPriceFocused, isMaxPriceFocused, isOpen]);
+  }, [localTickLower, localTickUpper, denominationBase, shouldInvert, isMinPriceFocused, isMaxPriceFocused, isDraggingChart, isOpen]);
 
   useEffect(() => {
     const poolMetrics = poolMetricsData?.metrics;
@@ -409,9 +417,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
         const actualTickSpacing = poolConfig.tickSpacing;
         const isStable = presetOptions.includes("±0.5%");
-        const rangeTypes = isStable
-          ? ["Full Range", "±3%", "±0.5%", "Custom"]
-          : ["Full Range", "±15%", "±3%", "Custom"];
+        const rangeTypes = isStable ? RANGE_TYPES_STABLE : RANGE_TYPES_STANDARD;
 
         const metrics: PoolMetrics = {
           totalFeesToken0: poolMetrics.totalFeesToken0,
@@ -432,14 +438,10 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             tickLower = alignedMinTick;
             tickUpper = alignedMaxTick;
           } else {
-            const percentages: Record<string, number> = {
-              "±15%": 0.15,
-              "±3%": 0.03,
-              "±0.5%": 0.005
-            };
-            const pct = percentages[rangeType];
+            const pct = PRESET_PERCENTAGES[rangeType];
             if (pct && currentPoolTick !== null) {
-              const tickDelta = Math.round(Math.log(1 + pct) / Math.log(1.0001));
+              const pctDecimal = pct / 100;
+              const tickDelta = Math.round(Math.log(1 + pctDecimal) / Math.log(1.0001));
               const expectedLower = Math.floor((currentPoolTick - tickDelta) / actualTickSpacing) * actualTickSpacing;
               const expectedUpper = Math.ceil((currentPoolTick + tickDelta) / actualTickSpacing) * actualTickSpacing;
               tickLower = Math.max(sdkMinTick, expectedLower);
@@ -478,14 +480,9 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     }
     if (currentPoolTick === null) return;
 
-    // Convert preset string to percentage (e.g., "±15%" -> 15)
-    const percentages: Record<string, number> = {
-      "±15%": 15, "±8%": 8, "±3%": 3, "±1%": 1, "±0.5%": 0.5, "±0.1%": 0.1
-    };
-    const pct = percentages[preset];
+    const pct = PRESET_PERCENTAGES[preset];
     if (!pct) return;
 
-    // Use lib/liquidity utility for tick calculation
     const [rawLower, rawUpper] = calculateTicksFromPercentage(pct, pct, currentPoolTick, defaultTickSpacing);
     const lower = Math.max(sdkMinTick, rawLower);
     const upper = Math.min(sdkMaxTick, rawUpper);
@@ -511,16 +508,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       }
     }
     
-    // Clear preset when manually adjusting, same as dragging
     setSelectedPreset(null);
-  };
-
-  const handleReset = () => {
-    if (currentPoolTick === null) return;
-    // Reset to ±15% range using lib/liquidity utility
-    const [rawLower, rawUpper] = calculateTicksFromPercentage(15, 15, currentPoolTick, defaultTickSpacing);
-    setLocalTickLower(Math.max(sdkMinTick, rawLower).toString());
-    setLocalTickUpper(Math.min(sdkMaxTick, rawUpper).toString());
   };
 
   // Don't render portal until mounted (SSR safety)
@@ -595,20 +583,12 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
               <span className="text-xs font-bold text-muted-foreground">Range Types</span>
               <div className={`grid gap-2 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
                 {(() => {
-                  // Determine which range types to show based on presetOptions
                   const isStable = presetOptions.includes("±0.5%");
-                  const rangeTypes = isStable
-                    ? ["Full Range", "±3%", "±0.5%", "Custom"]
-                    : ["Full Range", "±15%", "±3%", "Custom"];
+                  const rangeTypes = isStable ? RANGE_TYPES_STABLE : RANGE_TYPES_STANDARD;
 
                   return rangeTypes.map((rangeType) => {
-                    const labels: Record<string, string> = {
-                      "Full Range": "Full Range",
-                      "±15%": "Wide",
-                      "±3%": isStable ? "Wide" : "Narrow",
-                      "±0.5%": "Narrow",
-                      "Custom": "Custom"
-                    };
+                    // ±3% is "Wide" for stable pools (since ±0.5% is the narrow), "Narrow" for standard
+                    const label = rangeType === "±3%" && isStable ? "Wide" : (RANGE_LABELS[rangeType] || rangeType);
 
                     // Custom is active when no preset matches the displayed range types
                     const isActive = rangeType === "Custom"
@@ -640,7 +620,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       }`}
                       style={!isActive && rangeType !== "Custom" ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                     >
-                      <span className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium relative z-10`}>{labels[rangeType] || rangeType}</span>
+                      <span className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium relative z-10`}>{label}</span>
                       <span className="text-xs text-muted-foreground relative z-10">{apyDisplay}</span>
                     </div>
                   );
@@ -713,8 +693,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     poolToken1={poolToken1}
                     readOnly={false}
                     forceDenominationBase={denominationBase}
-                    onLoadingChange={(loading) => setIsChartLoading(loading)}
-                    onDragStateChange={(state) => setIsDragging(state !== null)}
+                    onLoadingChange={setIsChartLoading}
+                    onDragStateChange={(dragState) => setIsDraggingChart(dragState !== null)}
                   />
                 </div>
               </div>

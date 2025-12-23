@@ -6,7 +6,7 @@
  */
 import * as Sentry from '@sentry/nextjs';
 import { useCallback, useState, useRef } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, useBalance, usePublicClient } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, useBalance, usePublicClient, useSendTransaction } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BadgeCheck, OctagonX, InfoIcon } from 'lucide-react';
@@ -20,7 +20,7 @@ import { addPositionIdToCache } from '@/lib/client-cache';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { useCheckMintApprovals } from '@/lib/liquidity';
 import { useCheckZapApprovals } from './useCheckZapApprovals';
-import { isInfiniteApprovalEnabled } from '@/hooks/useUserSettings';
+import { isInfiniteApprovalEnabled, getStoredSlippageBps, getStoredUserSettings } from '@/hooks/useUserSettings';
 
 type LiquidityOperation = 'liquidity_mint' | 'liquidity_zap' | 'liquidity_approve';
 
@@ -186,14 +186,14 @@ export function useAddLiquidityTransaction({
     error: swapReceiptError,
   } = useWaitForTransactionReceipt({ hash: swapTxHash });
 
-  // Wagmi hooks for deposit transaction
+  // Wagmi hooks for deposit transaction - using sendTransaction for raw tx (Uniswap pattern)
   const {
     data: depositTxHash,
-    writeContractAsync: depositAsync,
+    sendTransactionAsync,
     isPending: isDepositPending,
     error: depositError,
     reset: resetDeposit,
-  } = useWriteContract();
+  } = useSendTransaction();
 
   const {
     isLoading: isDepositConfirming,
@@ -619,53 +619,31 @@ export function useAddLiquidityTransaction({
             throw new Error('Invalid LP deposit transaction from API');
           }
 
-          // Execute LP deposit
+          // Execute LP deposit - send raw transaction (Uniswap pattern)
           toast('Confirm LP Deposit in Wallet', {
             icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
           });
 
-          const depositConfig: any = {
-            address: finalResult.transaction.to as `0x${string}`,
-            abi: [{
-              name: 'multicall',
-              type: 'function',
-              stateMutability: finalResult.transaction.value && finalResult.transaction.value !== '0' ? 'payable' : 'nonpayable',
-              inputs: [{ name: 'data', type: 'bytes[]' }],
-              outputs: [{ name: 'results', type: 'bytes[]' }],
-            }],
-            functionName: 'multicall',
-            args: [[finalResult.transaction.data as Hex]],
-          };
-
-          if (finalResult.transaction.value && finalResult.transaction.value !== '0') {
-            depositConfig.value = BigInt(finalResult.transaction.value);
-          }
-
-          await depositAsync(depositConfig);
+          await sendTransactionAsync({
+            to: finalResult.transaction.to as `0x${string}`,
+            data: finalResult.transaction.data as Hex,
+            value: finalResult.transaction.value && finalResult.transaction.value !== '0'
+              ? BigInt(finalResult.transaction.value)
+              : undefined,
+          });
         } else if (mintResult.transaction && mintResult.transaction.data) {
-          // No permit needed, execute directly
+          // No permit needed, execute directly - send raw transaction (Uniswap pattern)
           toast('Confirm LP Deposit in Wallet', {
             icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
           });
 
-          const depositConfig: any = {
-            address: mintResult.transaction.to as `0x${string}`,
-            abi: [{
-              name: 'multicall',
-              type: 'function',
-              stateMutability: mintResult.transaction.value && mintResult.transaction.value !== '0' ? 'payable' : 'nonpayable',
-              inputs: [{ name: 'data', type: 'bytes[]' }],
-              outputs: [{ name: 'results', type: 'bytes[]' }],
-            }],
-            functionName: 'multicall',
-            args: [[mintResult.transaction.data as Hex]],
-          };
-
-          if (mintResult.transaction.value && mintResult.transaction.value !== '0') {
-            depositConfig.value = BigInt(mintResult.transaction.value);
-          }
-
-          await depositAsync(depositConfig);
+          await sendTransactionAsync({
+            to: mintResult.transaction.to as `0x${string}`,
+            data: mintResult.transaction.data as Hex,
+            value: mintResult.transaction.value && mintResult.transaction.value !== '0'
+              ? BigInt(mintResult.transaction.value)
+              : undefined,
+          });
         } else {
           throw new Error('Invalid LP deposit response from API');
         }
@@ -673,25 +651,19 @@ export function useAddLiquidityTransaction({
         throw error;
       }
     },
-    [accountAddress, chainId, zapApprovalData, calculatedData, tickLower, tickUpper, zapInputToken, amount0, amount1, token0Symbol, token1Symbol, swapAsync, depositAsync, signTypedDataAsync, approveAsync]
+    [accountAddress, chainId, zapApprovalData, calculatedData, tickLower, tickUpper, zapInputToken, amount0, amount1, token0Symbol, token1Symbol, swapAsync, sendTransactionAsync, signTypedDataAsync, approveAsync, publicClient]
   );
 
   // OLD HANDLERS REMOVED - Now using consolidated handleZapSwapAndDeposit
 
-  // Handle deposit transaction (with optional permit signature)
+  // Handle deposit transaction
+  // Simplified flow: API is single source of truth for permit data
+  // 1. Call API without permit
+  // 2. If API returns PERMIT2_BATCH_SIGNATURE needed, sign it and retry
+  // 3. Execute transaction
   const handleDeposit = useCallback(
-    async (permitSignature?: string) => {
+    async () => {
       if (!accountAddress || !chainId) throw new Error('Wallet not connected');
-
-      // Validate permit requirements (regular mode only)
-      if (!isZapMode && regularApprovalData) {
-        if ((regularApprovalData.needsToken0Permit || regularApprovalData.needsToken1Permit)) {
-          if (!permitSignature) throw new Error('Permit signature required but not provided');
-          if (!regularApprovalData.permitBatchData || !regularApprovalData.signatureDetails) {
-            throw new Error('Permit batch data missing - please sign permit again');
-          }
-        }
-      }
 
       setIsWorking(true);
 
@@ -715,7 +687,6 @@ export function useAddLiquidityTransaction({
         }
 
         // Use activeInputSide to determine which token the user actually entered
-        // This is critical for the API to build the position correctly
         let inputAmount: string;
         let inputTokenSymbol: TokenSymbol;
 
@@ -726,24 +697,18 @@ export function useAddLiquidityTransaction({
           inputAmount = finalAmount1;
           inputTokenSymbol = token1Symbol;
         } else {
-          // Fallback: pick whichever has a value (for OOR positions where only one token is needed)
           inputAmount = finalAmount0 && parseFloat(finalAmount0) > 0 ? finalAmount0 : finalAmount1;
           inputTokenSymbol = finalAmount0 && parseFloat(finalAmount0) > 0 ? token0Symbol : token1Symbol;
         }
 
-        // DEBUG: Log all input values
-        console.log('[handleDeposit] === DEBUG START ===');
-        console.log('[handleDeposit] Form values:', { amount0, amount1, activeInputSide });
-        console.log('[handleDeposit] Final amounts after OOR check:', { finalAmount0, finalAmount1 });
-        console.log('[handleDeposit] Selected input:', { inputAmount, inputTokenSymbol });
-        console.log('[handleDeposit] calculatedData:', calculatedData);
-        console.log('[handleDeposit] Permit batch data:', regularApprovalData?.permitBatchData);
-
-        // Choose the endpoint based on zap mode
-        // In zap mode, after swap is complete, use the mint-after-swap endpoint
         const endpoint = isZapMode ? '/api/liquidity/prepare-mint-after-swap-tx' : '/api/liquidity/prepare-mint-tx';
 
-        const requestBody: any = {
+        // Get user settings for slippage and deadline
+        const userSettings = getStoredUserSettings();
+        const slippageBps = Math.round(userSettings.slippage * 100);
+        const deadlineMinutes = userSettings.deadline;
+
+        const baseRequestBody = {
           userAddress: accountAddress,
           token0Symbol,
           token1Symbol,
@@ -752,29 +717,15 @@ export function useAddLiquidityTransaction({
           userTickLower: tl,
           userTickUpper: tu,
           chainId,
+          slippageBps,
+          deadlineMinutes,
+          ...(isZapMode && { slippageTolerance: zapSlippageToleranceBps || slippageBps }),
         };
 
-        // Add slippage tolerance for zap mode
-        if (isZapMode) {
-          requestBody.slippageTolerance = zapSlippageToleranceBps;
-          // Include batch permit signature if we have one
-          if (permitSignature) {
-            requestBody.permitSignature = permitSignature;
-          }
-        }
-
-        // If we have a permit signature, include it (only for non-zap mode)
-        if (!isZapMode && permitSignature && regularApprovalData?.permitBatchData) {
-          requestBody.permitSignature = permitSignature;
-          requestBody.permitBatchData = regularApprovalData.permitBatchData;
-        }
-
-        console.log('[handleDeposit] Request body:', JSON.stringify(requestBody, null, 2));
-
-        const response = await fetch(endpoint, {
+        let response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
+          body: JSON.stringify(baseRequestBody),
         });
 
         if (!response.ok) {
@@ -782,57 +733,72 @@ export function useAddLiquidityTransaction({
           throw new Error(errorData.message || 'Failed to prepare transaction');
         }
 
-        const result = await response.json();
-        console.log('[handleDeposit] API response:', JSON.stringify(result, null, 2));
-        console.log('[handleDeposit] === DEBUG END ===');
+        let result = await response.json();
 
-        // In the new flow, batch permits are signed before calling handleDeposit
-        // So we should not encounter needsApproval here
-        if (result.needsApproval) {
-          throw new Error('Permit signature required. Please sign the batch permit first.');
-        }
-
-        if (result.transaction && result.transaction.to) {
-          // ========== EXECUTE MINT/DEPOSIT TRANSACTION ==========
-          // In zap mode: Swap already completed, now minting LP position with both tokens
-          // In regular mode: Directly minting LP position with both tokens
-
-          if (!result.transaction.data) {
-            throw new Error('Invalid transaction data from API');
+        if (result.needsApproval && result.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
+          const { permitBatchData, signatureDetails } = result;
+          if (!permitBatchData || !signatureDetails) {
+            throw new Error('API returned permit required but no permit data');
           }
 
-          const depositConfig: any = {
-            address: result.transaction.to as `0x${string}`,
-            abi: [
-              {
-                name: 'multicall',
-                type: 'function',
-                stateMutability: result.transaction.value && result.transaction.value !== '0' ? 'payable' : 'nonpayable',
-                inputs: [{ name: 'data', type: 'bytes[]' }],
-                outputs: [{ name: 'results', type: 'bytes[]' }],
-              },
-            ],
-            functionName: 'multicall',
-            args: [[result.transaction.data as Hex]],
-          };
-
-          if (result.transaction.value && result.transaction.value !== '0') {
-            depositConfig.value = BigInt(result.transaction.value);
-          }
-
-          toast('Confirm Deposit in Wallet', {
+          // Sign the permit data from API (single source of truth)
+          toast('Sign Permit in Wallet', {
             icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
           });
 
-          await depositAsync(depositConfig);
-        } else {
+          const valuesToSign = permitBatchData.values || permitBatchData;
+          const signature = await signTypedDataAsync({
+            domain: signatureDetails.domain,
+            types: signatureDetails.types,
+            primaryType: 'PermitBatch',
+            message: valuesToSign,
+          });
+
+          toast.success('Permit Signed', {
+            icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+          });
+
+          response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...baseRequestBody,
+              permitSignature: signature,
+              permitBatchData,
+            }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Failed to prepare transaction');
+          }
+
+          result = await response.json();
+        }
+
+        // Handle ERC20 approval needed (should be handled separately before deposit)
+        if (result.needsApproval && result.approvalType === 'ERC20_TO_PERMIT2') {
+          throw new Error(`ERC20 approval needed for ${result.approvalTokenSymbol}. Please approve first.`);
+        }
+
+        // Execute the transaction
+        const txData = result.transaction || result.create;
+        if (!txData?.to || !txData?.data) {
           throw new Error('Invalid transaction data from API');
         }
 
-        // Note: onLiquidityAdded will be called after confirmation in the useEffect below
-        // This prevents duplicate skeleton creation
+        toast('Confirm Transaction in Wallet', {
+          icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
+        });
+
+        await sendTransactionAsync({
+          to: txData.to as `0x${string}`,
+          data: txData.data as Hex,
+          value: txData.value && txData.value !== '0' ? BigInt(txData.value) : undefined,
+        });
+
       } catch (error: any) {
-        console.error('[handleDeposit] Deposit error:', error);
+        console.error('[handleDeposit] Error:', error);
 
         const isUserRejection =
           error.message?.toLowerCase().includes('user rejected') ||
@@ -858,10 +824,6 @@ export function useAddLiquidityTransaction({
           toast.error('Transaction Failed', {
             icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
             description: error.message || 'Unknown error',
-            action: {
-              label: 'Copy Error',
-              onClick: () => navigator.clipboard.writeText(error.message || ''),
-            },
           });
         }
 
@@ -870,11 +832,8 @@ export function useAddLiquidityTransaction({
         setIsWorking(false);
       }
     },
-    [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, approvalData, depositAsync, onLiquidityAdded, isZapMode, zapInputToken, regularApprovalData, signTypedDataAsync]
+    [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, sendTransactionAsync, isZapMode, zapInputToken, signTypedDataAsync, activeInputSide, zapSlippageToleranceBps]
   );
-
-  // Removed backup useEffect to prevent duplicate refetch logic
-  // The optimistic flow in AddLiquidityForm handles the progression now
 
   // Handle deposit transaction failure
   React.useEffect(() => {
@@ -938,7 +897,6 @@ export function useAddLiquidityTransaction({
               if (args.from === '0x0000000000000000000000000000000000000000' &&
                   args.to?.toLowerCase() === accountAddress?.toLowerCase()) {
                 newTokenId = args.id?.toString();
-                console.log(`[AddLiquidityV2] Extracted tokenId ${newTokenId} from Transfer event`);
                 if (accountAddress && newTokenId) {
                   addPositionIdToCache(accountAddress, newTokenId);
                 }

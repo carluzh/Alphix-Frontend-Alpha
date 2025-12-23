@@ -8,7 +8,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { useAccount, useBalance } from "wagmi";
 import { toast } from "sonner";
-import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
 import { getStoredDeadlineSeconds } from "@/hooks/useUserSettings";
@@ -192,7 +191,6 @@ export function AddLiquidityForm({
   const { address: accountAddress, chainId, isConnected } = useAccount();
   const { networkMode, chainId: targetChainId } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
-  const signer = useEthersSigner();
 
   // Calculation hook - handles debounced amount calculation (replaces inline debouncedCalculateAmountAndCheckApprovals)
   const {
@@ -651,62 +649,6 @@ export function AddLiquidityForm({
     }
   };
 
-  // Old handlePrepareAndSubmit removed - now using TransactionFlowPanel
-
-  const signPermit = useCallback(async (): Promise<string | undefined> => {
-    // Only valid for regular (non-zap) mode - zap mode uses different permit flow
-    if (isZapMode || !approvalData || !('permitBatchData' in approvalData) || !approvalData.permitBatchData || !approvalData.signatureDetails) {
-      return undefined;
-    }
-
-    if (!signer) {
-      showErrorToast("Wallet not connected");
-      return undefined;
-    }
-
-    try {
-      // Toast removed - shown by TransactionFlowPanel
-      const valuesToSign = approvalData.permitBatchData.values || approvalData.permitBatchData;
-      const signature = await (signer as any)._signTypedData(
-        approvalData.signatureDetails.domain,
-        approvalData.signatureDetails.types,
-        valuesToSign
-      );
-
-      const currentTime = Math.floor(Date.now() / 1000);
-      const sigDeadline = valuesToSign?.sigDeadline || valuesToSign?.details?.[0]?.expiration || 0;
-      const durationSeconds = Number(sigDeadline) - currentTime;
-      let durationFormatted = "";
-      if (durationSeconds >= 86400) {
-        const days = Math.ceil(durationSeconds / 86400);
-        durationFormatted = `${days} day${days > 1 ? 's' : ''}`;
-      } else if (durationSeconds >= 3600) {
-        const hours = Math.ceil(durationSeconds / 3600);
-        durationFormatted = `${hours} hour${hours > 1 ? 's' : ''}`;
-      } else {
-        const minutes = Math.ceil(durationSeconds / 60);
-        durationFormatted = `${minutes} minute${minutes > 1 ? 's' : ''}`;
-      }
-
-      toast.success('Batch Signature Complete', {
-        icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
-        description: `Batch permit signed successfully for ${durationFormatted}`
-      });
-      return signature;
-    } catch (error: any) {
-      const isUserRejection =
-        error.message?.toLowerCase().includes('user rejected') ||
-        error.message?.toLowerCase().includes('user denied') ||
-        error.code === 4001;
-
-      if (!isUserRejection) {
-        showErrorToast("Signature Error", error.message);
-      }
-      throw error;
-    }
-  }, [approvalData, signer, isZapMode]);
-
-  // Old getButtonText removed - now using TransactionFlowPanel
 
   // Effect to auto-apply active percentage preset when currentPrice changes OR when activePreset changes
   useEffect(() => {
@@ -1333,7 +1275,6 @@ export function AddLiquidityForm({
                   token1Symbol={token1Symbol}
                   isDepositSuccess={isDepositSuccess}
                   onApproveToken={regularTransaction.handleApprove}
-                  onSignPermit={signPermit}
                   onExecute={handleDeposit}
                   onRefetchApprovals={refetchApprovals}
                   onBack={() => {
@@ -1372,7 +1313,6 @@ export function AddLiquidityForm({
                   isZapMode={true}
                   zapInputToken={zapInputToken}
                   onApproveToken={handleApprove}
-                  onSignPermit={signPermit}
                   onExecuteZap={zapTransaction.handleZapSwapAndDeposit}
                   onExecute={handleDeposit}
                   onRefetchApprovals={refetchApprovals}

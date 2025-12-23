@@ -135,14 +135,9 @@ export function useTransactionFlow(props?: UseTransactionFlowProps): UseTransact
       return 'approving_token1';
     }
 
-    const hasPermitData = approvalData.permitBatchData && approvalData.signatureDetails;
-    const needsPermit = approvalData.needsToken0Permit || approvalData.needsToken1Permit || hasPermitData;
-    if (needsPermit && !state.permitSignature) {
-      return 'signing_permit';
-    }
-
+    // Permit signing is now handled internally by handleDeposit (API-driven flow)
     return state.completedSteps.has('executing') ? null : 'executing';
-  }, [state.completedSteps, state.permitSignature]);
+  }, [state.completedSteps]);
 
   const canProceed = useCallback(() => {
     return !state.isLocked && state.currentStep === 'idle' && !state.error;
@@ -247,16 +242,14 @@ export function generateStepperSteps(
     count: { completed: totalApproved, total: totalTokens },
   });
 
-  // Check if permit is actually needed (same logic as getNextStep)
-  const hasPermitData = approvalData?.permitBatchData && approvalData?.signatureDetails;
-  const needsPermit = approvalData?.needsToken0Permit || approvalData?.needsToken1Permit || hasPermitData;
-  const permitNotNeeded = approvalData && !needsPermit;
-  const permitCompleted = permitNotNeeded || !!flowState.permitSignature || flowState.currentStep === 'executing' || flowState.completedSteps.has('executing');
+  // Permit signing is now handled internally by handleDeposit (API-driven flow)
+  // Mark as completed when we reach executing step, or show as pending before that
+  const permitCompleted = flowState.currentStep === 'executing' || flowState.completedSteps.has('executing');
 
   steps.push({
     id: 'permit',
     label: 'Permit Signature',
-    status: permitCompleted ? 'completed' as const : flowState.currentStep === 'signing_permit' ? 'loading' as const : 'pending' as const,
+    status: permitCompleted ? 'completed' as const : 'pending' as const,
   });
 
   steps.push({
