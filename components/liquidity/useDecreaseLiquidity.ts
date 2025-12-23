@@ -12,24 +12,18 @@ import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } fro
 import { getToken, TokenSymbol, getTokenSymbolByAddress, getTokenDefinitions } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
 import { baseSepolia, getExplorerTxUrl } from '@/lib/wagmiConfig';
-import { getAddress, type Hex, BaseError, parseUnits, encodeAbiParameters, keccak256, formatUnits } from 'viem';
+import { getAddress, type Hex, BaseError, encodeAbiParameters, keccak256, formatUnits } from 'viem';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
 import { invalidateAfterTx } from '@/lib/invalidation';
-
-// Helper function to safely parse amounts without precision loss
-const safeParseUnits = (amount: string, decimals: number): bigint => {
-  let cleaned = (amount || '').toString().replace(/,/g, '').trim();
-  if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') return 0n;
-
-  // Convert scientific notation to decimal
-  if (cleaned.includes('e')) {
-    cleaned = parseFloat(cleaned).toFixed(decimals);
-  }
-
-  return parseUnits(cleaned, decimals);
-};
 import JSBI from 'jsbi';
+import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
+
+// Re-export transaction builders and types for external use
+export { buildDecreaseLiquidityTx, buildCollectFeesTx, parseTokenIdFromPosition } from '@/lib/liquidity';
+export type { DecreasePositionData } from '@/lib/liquidity';
+
+import type { DecreasePositionData } from '@/lib/liquidity';
 
 type LiquidityOperation = 'liquidity_decrease' | 'liquidity_burn' | 'liquidity_collect_fees';
 
@@ -47,29 +41,6 @@ const captureError = (
 interface UseDecreaseLiquidityProps {
   onLiquidityDecreased?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
   onFeesCollected?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => void;
-}
-
-export interface DecreasePositionData {
-  tokenId: string | number;
-  token0Symbol: TokenSymbol;
-  token1Symbol: TokenSymbol;
-  decreaseAmount0: string; // Amount to remove
-  decreaseAmount1: string; // Amount to remove
-  isFullBurn: boolean; // Whether this is a full position burn
-  // Position parameters needed to query the NFT token ID
-  poolId: string;
-  tickLower: number;
-  tickUpper: number;
-  salt?: string;
-  // When true, perform a collect-only operation (decrease liquidity by 0) to claim fees
-  collectOnly?: boolean;
-  // Optional: current position token balances for proportional in-range decreases
-  positionToken0Amount?: string;
-  positionToken1Amount?: string;
-  // Which side the user actually edited in the UI: 'token0' or 'token1'
-  enteredSide?: 'token0' | 'token1';
-  // Fee data to add to amounts - CRITICAL: NO ROUNDING UP ALLOWED
-  feesForWithdraw?: { amount0: string; amount1: string; } | null;
 }
 
 type DecreaseOptions = { slippageBps?: number; deadlineSeconds?: number };

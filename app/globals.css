@@ -710,3 +710,101 @@ input[type=number] {
   }
 }
 
+/* =============================================================================
+   LIQUIDITY INPUT ANIMATIONS
+   ============================================================================= */
+
+/* Input gradient hover effect */
+@keyframes inputGradientFlow {
+  from { background-position: 0% 0%; }
+  to { background-position: 300% 0%; }
+}
+
+.input-gradient-hover {
+  position: relative;
+  border-radius: 8px;
+}
+
+.input-gradient-hover::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 9px;
+  background: linear-gradient(
+    45deg,
+    #f94706,
+    #ff7919 25%,
+    #f94706 50%,
+    #ff7919 75%,
+    #f94706 100%
+  );
+  background-size: 300% 100%;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 0;
+  animation: inputGradientFlow 10s linear infinite;
+}
+
+.input-gradient-hover:hover::before,
+.input-gradient-hover:focus-within::before {
+  opacity: 1;
+}
+
+/* Plus icon loading animation */
+@keyframes plusGlare {
+  from { background-position: 0% 0%; }
+  to { background-position: 300% 0%; }
+}
+
+.plus-loading-wrapper {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  overflow: visible;
+}
+
+.plus-loading-wrapper::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 9px;
+  background: linear-gradient(
+    45deg,
+    #f94706,
+    #ff7919 30%,
+    rgba(0, 0, 0, 0.4) 50%,
+    #f94706 70%,
+    #ff7919 100%
+  );
+  background-size: 300% 100%;
+  opacity: 0;
+  transition: opacity 0.5s ease-out;
+  pointer-events: none;
+  z-index: 0;
+  animation: plusGlare 1.5s linear infinite;
+}
+
+.plus-loading-wrapper.loading::before {
+  opacity: 1;
+}
+
+.plus-loading-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  background: var(--surface-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+

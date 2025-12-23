@@ -75,7 +75,12 @@
       "Bash(git diff:*)",
       "Bash(npx tsc --noEmit)",
       "Skill(deslop)",
-      "Skill(deslop:*)"
+      "Skill(deslop:*)",
+      "Bash(wc:*)",
+      "Bash(for file in components/liquidity/*.tsx components/liquidity/*.ts components/liquidity/range-selection/*.tsx)",
+      "Bash(xargs ls:*)",
+      "Bash(del \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\lib\\\\liquidity\\\\hooks\\\\pool\\\\usePoolState.ts\" \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\lib\\\\liquidity\\\\hooks\\\\pool\\\\index.ts\" \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\lib\\\\liquidity\\\\hooks\\\\position\\\\usePositionApy.ts\")",
+      "Bash(xargs -I {} sh -c 'echo \"\"=== {} ===\"\" && wc -l {}')"
     ],
     "deny": [],
     "ask": []

@@ -1,4 +1,9 @@
-// Refactored Add Liquidity Transaction Hook (Uniswap-style)
+/**
+ * Add Liquidity Transaction Hook
+ *
+ * Handles the transaction flow for adding liquidity to V4 pools.
+ * Supports both regular dual-token and zap (single-token) modes.
+ */
 import * as Sentry from '@sentry/nextjs';
 import { useCallback, useState, useRef } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, useBalance, usePublicClient } from 'wagmi';
@@ -13,7 +18,7 @@ import { ERC20_ABI } from '@/lib/abis/erc20';
 import { type Hex, maxUint256, formatUnits, formatUnits as viemFormatUnits, parseUnits as viemParseUnits, decodeEventLog } from 'viem';
 import { addPositionIdToCache } from '@/lib/client-cache';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
-import { useCheckLiquidityApprovals } from './useCheckLiquidityApprovals';
+import { useCheckMintApprovals } from '@/lib/liquidity';
 import { useCheckZapApprovals } from './useCheckZapApprovals';
 import { isInfiniteApprovalEnabled } from '@/hooks/useUserSettings';
 
@@ -30,7 +35,7 @@ const captureError = (
   });
 };
 
-export interface UseAddLiquidityTransactionV2Props {
+export interface UseAddLiquidityTransactionProps {
   token0Symbol: TokenSymbol;
   token1Symbol: TokenSymbol;
   amount0: string;
@@ -47,7 +52,7 @@ export interface UseAddLiquidityTransactionV2Props {
   deadlineSeconds?: number; // Transaction deadline in seconds (default: 1800 = 30 minutes)
 }
 
-export function useAddLiquidityTransactionV2({
+export function useAddLiquidityTransaction({
   token0Symbol,
   token1Symbol,
   amount0,
@@ -62,7 +67,7 @@ export function useAddLiquidityTransactionV2({
   zapInputToken = 'token0',
   zapSlippageToleranceBps = 50, // Default 0.5% (50 basis points)
   deadlineSeconds = 1800, // Default 30 minutes
-}: UseAddLiquidityTransactionV2Props) {
+}: UseAddLiquidityTransactionProps) {
   const { address: accountAddress, chainId } = useAccount();
   const queryClient = useQueryClient();
 
@@ -93,7 +98,7 @@ export function useAddLiquidityTransactionV2({
     data: regularApprovalData,
     isLoading: isCheckingRegularApprovals,
     refetch: refetchRegularApprovals,
-  } = useCheckLiquidityApprovals(
+  } = useCheckMintApprovals(
     accountAddress && chainId && calculatedData && !isZapMode
       ? {
           userAddress: accountAddress,
@@ -972,8 +977,18 @@ export function useAddLiquidityTransactionV2({
     isDepositSuccess: isDepositConfirmed,
     handleApprove,
     handleDeposit,
-    handleZapSwapAndDeposit, // New consolidated handler for zap mode
+    handleZapSwapAndDeposit,
     refetchApprovals,
     reset: resetAll,
   };
 }
+
+// =============================================================================
+// BACKWARDS COMPATIBILITY ALIASES
+// =============================================================================
+
+/** @deprecated Use UseAddLiquidityTransactionProps instead */
+export type UseAddLiquidityTransactionV2Props = UseAddLiquidityTransactionProps;
+
+/** @deprecated Use useAddLiquidityTransaction instead */
+export const useAddLiquidityTransactionV2 = useAddLiquidityTransaction;

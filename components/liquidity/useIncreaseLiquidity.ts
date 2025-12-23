@@ -3,31 +3,24 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
-import { TickMath } from '@uniswap/v3-sdk';
+import { V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import { Token, Ether, CurrencyAmount, Percent } from '@uniswap/sdk-core';
-import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap-constants';
+import { V4_POSITION_MANAGER_ADDRESS, V4_POSITION_MANAGER_ABI, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap-constants';
 import { getToken, TokenSymbol, getTokenSymbolByAddress } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
-import { baseSepolia, getExplorerTxUrl } from '@/lib/wagmiConfig';
-import { getAddress, type Hex, BaseError, parseUnits, formatUnits, encodeAbiParameters, keccak256 } from 'viem';
+import { getExplorerTxUrl } from '@/lib/wagmiConfig';
+import { getAddress, type Hex, BaseError, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
 import { invalidateAfterTx } from '@/lib/invalidation';
 import { OctagonX, InfoIcon, BadgeCheck } from 'lucide-react';
-
-// Helper function to safely parse amounts without precision loss
-const safeParseUnits = (amount: string, decimals: number): bigint => {
-  let cleaned = (amount || '').toString().replace(/,/g, '').trim();
-  if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') return 0n;
-
-  // Convert scientific notation to decimal
-  if (cleaned.includes('e')) {
-    cleaned = parseFloat(cleaned).toFixed(decimals);
-  }
-
-  return parseUnits(cleaned, decimals);
-};
 import JSBI from 'jsbi';
+import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
+
+// Re-export transaction builder and types for external use
+export { buildIncreaseLiquidityTx, parseTokenIdFromPosition } from '@/lib/liquidity';
+export type { IncreasePositionData } from '@/lib/liquidity';
+
+import type { IncreasePositionData } from '@/lib/liquidity';
 
 // In-memory store to provide pre-signed batch permits from UI flows (e.g., Modal "Sign" step)
 type BatchPermitPayload = { owner: `0x${string}`; permitBatch: any; signature: string };
@@ -40,21 +33,6 @@ export function providePreSignedIncreaseBatchPermit(tokenId: string | number | b
 
 interface UseIncreaseLiquidityProps {
   onLiquidityIncreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; increaseAmounts?: { amount0: string; amount1: string } | null }) => void;
-}
-
-export interface IncreasePositionData {
-  tokenId: string | number;
-  token0Symbol: TokenSymbol;
-  token1Symbol: TokenSymbol;
-  additionalAmount0: string; // New amount to add
-  additionalAmount1: string; // New amount to add
-  // Position parameters needed to query the NFT token ID
-  poolId: string;
-  tickLower: number;
-  tickUpper: number;
-  salt?: string;
-  // Fee data to add to amounts - CRITICAL: NO ROUNDING UP ALLOWED
-  feesForIncrease?: { amount0: string; amount1: string; } | null;
 }
 
 type IncreaseOptions = { 

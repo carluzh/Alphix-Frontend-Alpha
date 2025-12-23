@@ -22,6 +22,7 @@ import { Token } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { convertTickToPrice, convertPriceToValidTick, calculateTicksFromPercentage } from '@/lib/liquidity';
 
 interface RangeSelectionModalV2Props {
   isOpen: boolean;
@@ -218,43 +219,40 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     return price.toFixed(poolPriceDecimals);
   }, [currentPrice, shouldInvert, poolPriceDecimals]);
 
+  // Use lib/liquidity utility for tick -> price conversion
   const calculatePriceFromTick = (tick: number): string => {
     if (!currentPrice || currentPoolTick === null || isNaN(tick)) return "0";
-    const currentPriceNum = parseFloat(currentPrice);
-    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
 
-    let price = shouldInvert
-      ? 1 / (currentPriceNum * priceDelta)
-      : currentPriceNum * priceDelta;
+    const result = convertTickToPrice({
+      tick,
+      currentPrice,
+      currentPoolTick,
+      baseToken: denominationBase,
+      token0Symbol,
+    });
 
-    if (!isFinite(price) || isNaN(price)) return "0";
+    if (!result) return "0";
 
     const decimals = denominationToken?.decimals ?? 18;
-    return price.toFixed(decimals);
+    const numericResult = parseFloat(result);
+    return isFinite(numericResult) ? numericResult.toFixed(decimals) : "0";
   };
 
-  const convertPriceToTick = (priceStr: string, isMinPrice: boolean): number | null => {
+  // Use lib/liquidity utility for price -> tick conversion
+  const localConvertPriceToTick = (priceStr: string, isMinPrice: boolean): number | null => {
     if (!currentPrice || currentPoolTick === null) return null;
-    const price = parseFloat(priceStr);
-    const currentPriceNum = parseFloat(currentPrice);
-    if (!isFinite(price) || price <= 0 || !isFinite(currentPriceNum) || currentPriceNum <= 0) return null;
 
-    let rawTick: number;
-    if (shouldInvert) {
-      rawTick = currentPoolTick + Math.log(1 / (price * currentPriceNum)) / Math.log(1.0001);
-    } else {
-      rawTick = currentPoolTick + Math.log(price / currentPriceNum) / Math.log(1.0001);
-    }
-
-    if (!isFinite(rawTick)) return null;
-
-    // Snap to tick spacing - for min price round down, for max price round up
-    const snappedTick = isMinPrice
-      ? Math.floor(rawTick / defaultTickSpacing) * defaultTickSpacing
-      : Math.ceil(rawTick / defaultTickSpacing) * defaultTickSpacing;
-
-    // Clamp to valid range
-    return Math.max(sdkMinTick, Math.min(sdkMaxTick, snappedTick));
+    return convertPriceToValidTick({
+      priceString: priceStr,
+      isMaxPrice: !isMinPrice,
+      baseToken: denominationBase,
+      token0Symbol,
+      tickSpacing: defaultTickSpacing,
+      minTick: sdkMinTick,
+      maxTick: sdkMaxTick,
+      currentPrice,
+      currentPoolTick,
+    });
   };
 
   const detectedPreset = useMemo(() => {
@@ -479,16 +477,18 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
       return;
     }
     if (currentPoolTick === null) return;
-    
+
+    // Convert preset string to percentage (e.g., "±15%" -> 15)
     const percentages: Record<string, number> = {
-      "±15%": 0.15, "±8%": 0.08, "±3%": 0.03, "±1%": 0.01, "±0.5%": 0.005, "±0.1%": 0.001
+      "±15%": 15, "±8%": 8, "±3%": 3, "±1%": 1, "±0.5%": 0.5, "±0.1%": 0.1
     };
     const pct = percentages[preset];
     if (!pct) return;
-    
-    const delta = Math.round(Math.log(1 + pct) / Math.log(1.0001));
-    const lower = Math.max(sdkMinTick, Math.floor((currentPoolTick - delta) / defaultTickSpacing) * defaultTickSpacing);
-    const upper = Math.min(sdkMaxTick, Math.ceil((currentPoolTick + delta) / defaultTickSpacing) * defaultTickSpacing);
+
+    // Use lib/liquidity utility for tick calculation
+    const [rawLower, rawUpper] = calculateTicksFromPercentage(pct, pct, currentPoolTick, defaultTickSpacing);
+    const lower = Math.max(sdkMinTick, rawLower);
+    const upper = Math.min(sdkMaxTick, rawUpper);
     setLocalTickLower(lower.toString());
     setLocalTickUpper(upper.toString());
   };
@@ -517,9 +517,10 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
   const handleReset = () => {
     if (currentPoolTick === null) return;
-    const delta = Math.round(Math.log(1.15) / Math.log(1.0001));
-    setLocalTickLower(Math.max(sdkMinTick, Math.floor((currentPoolTick - delta) / defaultTickSpacing) * defaultTickSpacing).toString());
-    setLocalTickUpper(Math.min(sdkMaxTick, Math.ceil((currentPoolTick + delta) / defaultTickSpacing) * defaultTickSpacing).toString());
+    // Reset to ±15% range using lib/liquidity utility
+    const [rawLower, rawUpper] = calculateTicksFromPercentage(15, 15, currentPoolTick, defaultTickSpacing);
+    setLocalTickLower(Math.max(sdkMinTick, rawLower).toString());
+    setLocalTickUpper(Math.min(sdkMaxTick, rawUpper).toString());
   };
 
   // Don't render portal until mounted (SSR safety)
@@ -795,7 +796,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     onBlur={() => {
                       setIsMinPriceFocused(false);
                       // Convert typed price to tick and update state
-                      const newTick = convertPriceToTick(minPriceFullPrecision, !shouldInvert);
+                      const newTick = localConvertPriceToTick(minPriceFullPrecision, !shouldInvert);
                       if (newTick !== null) {
                         const targetTick = shouldInvert ? localTickLower : localTickUpper;
                         const isValid = shouldInvert
@@ -877,7 +878,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                     onBlur={() => {
                       setIsMaxPriceFocused(false);
                       // Convert typed price to tick and update state
-                      const newTick = convertPriceToTick(maxPriceFullPrecision, shouldInvert);
+                      const newTick = localConvertPriceToTick(maxPriceFullPrecision, shouldInvert);
                       if (newTick !== null) {
                         const targetTick = shouldInvert ? localTickUpper : localTickLower;
                         const isValid = shouldInvert

@@ -21,7 +21,8 @@ import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { useChainMismatch } from "@/hooks/useChainMismatch";
 import { getTokenDefinitions, TokenSymbol, getToken, getAllTokens, getPoolById } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
-import { useAddLiquidityTransaction } from "./useAddLiquidityTransaction";
+// Note: useAddLiquidityTransaction was removed - new positions use AddLiquidityForm instead
+// This modal now only supports increasing existing positions
 import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
 import { TokenSelectorToken } from "../swap/TokenSelector";
 import { AnimatePresence, motion, useAnimation } from "framer-motion";
@@ -360,39 +361,33 @@ export function AddLiquidityModal({
     isExistingPosition ? setIncreaseAmount1 : setAmount1
   );
 
-  // Transaction hooks
-  const {
-    isWorking,
-    step,
-    preparedTxData,
-    involvedTokensCount,
-    completedERC20ApprovalsCount,
-    needsERC20Approvals,
-    batchPermitSigned,
-    isApproveWritePending,
-    isApproving,
-    isMintSendPending,
-    isMintConfirming,
-    isMintSuccess,
-    handlePrepareMint,
-    handleApprove,
-    handleMint,
-    resetTransactionState,
-  } = useAddLiquidityTransaction({
-    token0Symbol,
-    token1Symbol,
-    amount0,
-    amount1,
-    tickLower,
-    tickUpper,
-    activeInputSide,
-    calculatedData,
-    onLiquidityAdded,
-    onApprovalInsufficient: () => {
-      setApprovalWiggleCount(prev => prev + 1);
-    },
-    onOpenChange,
-  });
+  // REMOVED: useAddLiquidityTransaction - new positions now use AddLiquidityForm
+  // This modal only handles increasing existing positions
+  // Stub values for backward compat - these code paths should never be hit
+  const isWorking = false;
+  // Using useState to prevent TypeScript from narrowing the type
+  // (these are stubs for removed functionality)
+  const [step] = useState<'input' | 'approve' | 'permit' | 'mint'>('input');
+  const [preparedTxData] = useState<{ approvalTokenSymbol?: string } | null>(null);
+  const involvedTokensCount = 0;
+  const completedERC20ApprovalsCount = 0;
+  const needsERC20Approvals: TokenSymbol[] = [];
+  const batchPermitSigned = false;
+  const isApproveWritePending = false;
+  const isApproving = false;
+  const isMintSendPending = false;
+  const isMintConfirming = false;
+  const isMintSuccess = false;
+  const handlePrepareMint = () => {
+    console.error('AddLiquidityModal: New position flow is deprecated. Use AddLiquidityForm instead.');
+  };
+  const handleApprove = (_token?: TokenSymbol) => {
+    console.error('AddLiquidityModal: New position flow is deprecated. Use AddLiquidityForm instead.');
+  };
+  const handleMint = () => {
+    console.error('AddLiquidityModal: New position flow is deprecated. Use AddLiquidityForm instead.');
+  };
+  const resetTransactionState = () => {};
 
   // Always call the hook to maintain hook order, but disable callback when parent exists
   

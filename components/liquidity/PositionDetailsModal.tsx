@@ -26,7 +26,7 @@ import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLi
 import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
 import { useDecreaseLiquidity, type DecreasePositionData } from "./useDecreaseLiquidity";
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
-import { useCheckIncreaseLiquidityApprovals } from "./useCheckIncreaseLiquidityApprovals";
+import { useCheckIncreaseApprovals } from "@/lib/liquidity";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings";
 import { toast } from "sonner";
@@ -224,7 +224,7 @@ export function PositionDetailsModal({
     data: increaseApprovalData,
     isLoading: isCheckingIncreaseApprovals,
     refetch: refetchIncreaseApprovals,
-  } = useCheckIncreaseLiquidityApprovals(
+  } = useCheckIncreaseApprovals(
     accountAddress && chainId && position?.positionId
       ? {
           userAddress: accountAddress,
