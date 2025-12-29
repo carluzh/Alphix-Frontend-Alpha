@@ -106,10 +106,10 @@ export function IncreaseLiquidityForm() {
         position={{
           token0Symbol: position.token0.symbol,
           token1Symbol: position.token1.symbol,
-          feeTier: position.feeTier,
           isInRange: position.isInRange,
         }}
         isMiniVersion
+        showFeeTier={false}
       />
 
       {/* Deposit Input Form */}

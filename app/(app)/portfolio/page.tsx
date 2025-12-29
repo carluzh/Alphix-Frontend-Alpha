@@ -27,19 +27,19 @@ import { useIncreaseLiquidity, useDecreaseLiquidity } from "@/lib/liquidity/hook
 import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
 import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
 import { batchGetTokenPrices } from '@/lib/price-service';
-import { calculateRealizedApr, formatApr } from '@/lib/apr';
+import { calculateRealizedApr } from '@/lib/apr';
 import { Percent } from '@uniswap/sdk-core';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNetwork } from "@/lib/network-context";
 import { TickMath } from '@uniswap/v3-sdk';
 
-const AddLiquidityModal = dynamic(
-  () => import("@/components/liquidity/AddLiquidityModal").then(m => m.AddLiquidityModal),
+const IncreaseLiquidityModal = dynamic(
+  () => import("@/components/liquidity/increase").then(m => m.IncreaseLiquidityModal),
   { ssr: false }
 );
-const WithdrawLiquidityModal = dynamic(
-  () => import("@/components/liquidity/WithdrawLiquidityModal").then(m => m.WithdrawLiquidityModal),
+const DecreaseLiquidityModal = dynamic(
+  () => import("@/components/liquidity/decrease").then(m => m.DecreaseLiquidityModal),
   { ssr: false }
 );
 const PositionDetailsModal = dynamic(
@@ -1023,15 +1023,6 @@ export default function PortfolioPage() {
 
   const { data: batchFeesData } = useUncollectedFeesBatch(allPositionIds, 60_000);
 
-  // Extract individual fee data from batch result
-  const getFeesForPosition = React.useCallback((positionId: string) => {
-    if (!batchFeesData || !positionId) return null;
-    return batchFeesData.find(fee => fee.positionId === positionId) || null;
-  }, [batchFeesData]);
-
-  // Extract fees for specific use cases
-  const feesForIncrease = getFeesForPosition(positionToModify?.positionId || '');
-  const feesForWithdraw = getFeesForPosition(positionToWithdraw?.positionId || '');
   const lastDecreaseWasFullRef = useRef<boolean>(false);
   const lastTxBlockRef = useRef<bigint | null>(null);
   const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; balance: number; usdValue: number; color: string }>>([]);
@@ -2680,55 +2671,51 @@ export default function PortfolioPage() {
         </div>
         {/* no third state below 1100px */}
       </div>
-        {/* Add Liquidity Modal */}
-        <AddLiquidityModal
-          isOpen={showIncreaseModal}
-          onOpenChange={setShowIncreaseModal}
-          onLiquidityAdded={() => {
-            const poolSubgraphId = positionToModify?.poolId;
-            if (poolSubgraphId) {
+        {/* Increase Liquidity Modal */}
+        {positionToModify && (
+          <IncreaseLiquidityModal
+            isOpen={showIncreaseModal}
+            onClose={() => {
+              setShowIncreaseModal(false);
+              setPositionToModify(null);
+            }}
+            position={positionToModify}
+            onSuccess={() => {
+              const poolSubgraphId = positionToModify?.poolId;
+              if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
                 if (poolConfig) {
                   modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
                 }
-            }
-            publicClient?.getBlockNumber().then(block => lastTxBlockRef.current = block);
-          }}
-          positionToModify={positionToModify}
-          feesForIncrease={feesForIncrease}
-          increaseLiquidity={positionToModify ? (data) => {
-            pendingActionRef.current = { type: 'increase' };
-            increaseLiquidity(data);
-          } : undefined}
-          isIncreasingLiquidity={isIncreasingLiquidity}
-          isIncreaseSuccess={isIncreaseSuccess}
-          increaseTxHash={increaseTxHash}
-          sdkMinTick={-887272}
-          sdkMaxTick={887272}
-          defaultTickSpacing={60}
-        />
+              }
+              publicClient?.getBlockNumber().then(block => lastTxBlockRef.current = block);
+              pendingActionRef.current = { type: 'increase' };
+            }}
+          />
+        )}
 
         {/* Withdraw Modal */}
-        <WithdrawLiquidityModal
-          isOpen={showWithdrawModal}
-          onOpenChange={setShowWithdrawModal}
-          position={positionToWithdraw}
-          feesForWithdraw={feesForWithdraw}
-          decreaseLiquidity={decreaseLiquidity}
-          isWorking={isDecreasingLiquidity}
-          isDecreaseSuccess={isDecreaseSuccess}
-          decreaseTxHash={decreaseTxHash}
-          onLiquidityWithdrawn={() => {
-            const poolSubgraphId = positionToWithdraw?.poolId;
-            if (poolSubgraphId) {
+        {positionToWithdraw && (
+          <DecreaseLiquidityModal
+            isOpen={showWithdrawModal}
+            onClose={() => {
+              setShowWithdrawModal(false);
+              setPositionToWithdraw(null);
+            }}
+            position={positionToWithdraw}
+            onSuccess={() => {
+              const poolSubgraphId = positionToWithdraw?.poolId;
+              if (poolSubgraphId) {
                 const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
                 if (poolConfig) {
                   modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
                 }
-            }
-            publicClient?.getBlockNumber().then(block => lastTxBlockRef.current = block);
-          }}
-        />
+              }
+              publicClient?.getBlockNumber().then(block => lastTxBlockRef.current = block);
+              pendingActionRef.current = { type: 'decrease' };
+            }}
+          />
+        )}
 
       {selectedPosition && (
         <PositionDetailsModal

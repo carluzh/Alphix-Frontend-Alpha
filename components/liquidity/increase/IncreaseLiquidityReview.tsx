@@ -245,10 +245,10 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
         position={{
           token0Symbol: position.token0.symbol,
           token1Symbol: position.token1.symbol,
-          feeTier: position.feeTier,
           isInRange: position.isInRange,
         }}
         isMiniVersion
+        showFeeTier={false}
       />
 
       {/* Amount Summary */}

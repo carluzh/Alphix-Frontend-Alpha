@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
-import { useAccount, useBalance } from "wagmi";
+import { useAccount } from "wagmi";
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
@@ -48,8 +48,6 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from '@tanstack/react-query';
-import { getPositionManagerAddress } from '@/lib/pools-config';
-import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps, removePositionIdFromCache } from "@/lib/client-cache";
 import { invalidateAfterTx } from "@/lib/invalidation";
 
@@ -65,12 +63,12 @@ import { ChevronDownIcon } from "lucide-react";
 import { PositionCardCompact } from '@/components/liquidity/PositionCardCompact';
 import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
 
-const AddLiquidityModal = dynamic(
-  () => import("@/components/liquidity/AddLiquidityModal").then(m => m.AddLiquidityModal),
+const IncreaseLiquidityModal = dynamic(
+  () => import("@/components/liquidity/increase").then(m => m.IncreaseLiquidityModal),
   { ssr: false }
 );
-const WithdrawLiquidityModal = dynamic(
-  () => import("@/components/liquidity/WithdrawLiquidityModal").then(m => m.WithdrawLiquidityModal),
+const DecreaseLiquidityModal = dynamic(
+  () => import("@/components/liquidity/decrease").then(m => m.DecreaseLiquidityModal),
   { ssr: false }
 );
 const PositionDetailsModal = dynamic(
@@ -372,7 +370,6 @@ export default function PoolDetailPage() {
   const [showIncreaseModal, setShowIncreaseModal] = useState(false);
   const [showDecreaseModal, setShowDecreaseModal] = useState(false);
   const [positionToModify, setPositionToModify] = useState<ProcessedPosition | null>(null);
-  const [addLiquidityOpen, setAddLiquidityOpen] = useState(false);
   const [addLiquidityFormOpen, setAddLiquidityFormOpen] = useState(false);
 
 
@@ -411,11 +408,6 @@ export default function PoolDetailPage() {
     
     return batchFeesData.find(fee => fee.positionId === positionId) || null;
   }, [batchFeesData, optimisticallyClearedFees]);
-
-  // Extract fees for specific use cases
-  const feesForWithdraw = getFeesForPosition(positionToBurn?.positionId || '');
-  const feesForIncrease = getFeesForPosition(positionToModify?.positionId || '');
-
 
   // Modal input states
   const [decreaseAmount0, setDecreaseAmount0] = useState<string>("");
@@ -2428,65 +2420,36 @@ export default function PoolDetailPage() {
       </div>
 
       {/* Withdraw Position Modal */}
-      <WithdrawLiquidityModal
-        isOpen={showBurnConfirmDialog}
-        onOpenChange={(open) => {
-        // Only allow closing if not currently processing transaction
-        if (!isDecreasingLiquidity) {
-          setShowBurnConfirmDialog(open);
-          // Reset position when modal is actually closed
-          if (!open) {
+      {positionToBurn && (
+        <DecreaseLiquidityModal
+          isOpen={showBurnConfirmDialog}
+          onClose={() => {
+            setShowBurnConfirmDialog(false);
             setPositionToBurn(null);
-          }
-        }
-        }}
-        position={positionToBurn}
-        feesForWithdraw={feesForWithdraw}
-        onLiquidityWithdrawn={() => {
-          // Handle successful withdrawal - don't reset position immediately to allow success view to show
-          // Don't reset pendingActionRef here - let onLiquidityDecreasedCallback handle it after refresh
-          // Don't call setPositionToBurn(null) here - let the modal handle its own closing
-        }}
-        // Connect to parent's refetching flow
-        decreaseLiquidity={decreaseLiquidity}
-        isWorking={isDecreasingLiquidity}
-        isDecreaseSuccess={isDecreaseSuccess}
-        decreaseTxHash={decreaseTxHash}
-      />
+          }}
+          position={positionToBurn}
+          onSuccess={() => {
+            // Trigger data refresh after successful withdrawal
+            pendingActionRef.current = { type: 'decrease' };
+          }}
+        />
+      )}
 
-      {/* Add Liquidity Modal - for position card submenu */}
-      <AddLiquidityModal
-        isOpen={addLiquidityOpen || showIncreaseModal}
-        onOpenChange={(open) => {
-          if (showIncreaseModal) {
-            setShowIncreaseModal(open);
-          } else {
-            setAddLiquidityOpen(open);
-          }
-        }}
-        selectedPoolId={poolId}
-        sdkMinTick={SDK_MIN_TICK}
-        sdkMaxTick={SDK_MAX_TICK}
-        defaultTickSpacing={getPoolById(poolId)?.tickSpacing || DEFAULT_TICK_SPACING}
-        positionToModify={showIncreaseModal ? positionToModify : null}
-        feesForIncrease={showIncreaseModal ? feesForIncrease : null}
-        increaseLiquidity={showIncreaseModal ? (data) => {
-          pendingActionRef.current = { type: 'increase' };
-          increaseLiquidity(data);
-        } : undefined}
-        isIncreasingLiquidity={showIncreaseModal ? isIncreasingLiquidity : undefined}
-        isIncreaseSuccess={showIncreaseModal ? isIncreaseSuccess : undefined}
-        increaseTxHash={showIncreaseModal ? increaseTxHash : undefined}
-        onLiquidityAdded={(token0Symbol?: string, token1Symbol?: string, txInfo?) => {
-          if (showIncreaseModal) {
-            // For increase operations, do nothing here - let the transaction callback handle everything
-            // This prevents premature toasts and modal closure
-          } else {
-            setAddLiquidityOpen(false);
-            refreshAfterLiquidityAddedWithSkeleton(token0Symbol, token1Symbol, txInfo);
-          }
-        }}
-      />
+      {/* Increase Liquidity Modal - for position card submenu */}
+      {positionToModify && (
+        <IncreaseLiquidityModal
+          isOpen={showIncreaseModal}
+          onClose={() => {
+            setShowIncreaseModal(false);
+            setPositionToModify(null);
+          }}
+          position={positionToModify}
+          onSuccess={() => {
+            // Trigger data refresh after successful increase
+            pendingActionRef.current = { type: 'increase' };
+          }}
+        />
+      )}
 
       {/* Add Liquidity Form Modal - for top button */}
       {(() => {
