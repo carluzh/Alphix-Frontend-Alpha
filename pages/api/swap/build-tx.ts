@@ -685,6 +685,9 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             }
         } catch {}
 
+        // Transaction building is real-time - never cache (Uniswap pattern)
+        res.setHeader('Cache-Control', 'no-store');
+
         res.status(200).json({
             ok: true,
             commands: routePlanner.commands as Hex,

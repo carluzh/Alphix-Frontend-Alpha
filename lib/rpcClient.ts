@@ -52,7 +52,8 @@ export async function executeRPCCall<T>(
     signal?: AbortSignal;
   } = {}
 ): Promise<T> {
-  const { timeout = 10000, maxRetries = 2, signal } = options;
+  // Conservative retry strategy (Uniswap pattern: max 2 attempts for 5xx errors only)
+  const { timeout = 10000, maxRetries = 1, signal } = options;
 
   return withRateLimitRetry(
     async () => {
@@ -113,7 +114,8 @@ export async function executeRPCBatch<T extends any[]>(
     signal?: AbortSignal;
   } = {}
 ): Promise<T> {
-  const { timeout = 15000, maxRetries = 2, signal } = options;
+  // Conservative retry strategy (Uniswap pattern: max 2 attempts for 5xx errors only)
+  const { timeout = 15000, maxRetries = 1, signal } = options;
 
   return withRateLimitRetry(
     async () => {

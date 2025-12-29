@@ -57,14 +57,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         `;
 
+        // AbortController timeout pattern for subgraph fetch
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s for subgraph
+
         const response = await fetch(subgraphUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             query,
             variables: { pool: apiId, first: limit }
-          })
+          }),
+          signal: controller.signal
         });
+
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
           throw new Error(`Subgraph request failed: ${response.status} ${response.statusText}`);
@@ -80,7 +87,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     );
 
-    res.setHeader('Cache-Control', 'no-store'); // Prevent browser/CDN caching
+    // Tick data is semi-static - use Uniswap multi-layer caching pattern
+    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
     if (result.isStale) {
       res.setHeader('X-Cache-Status', 'stale');
     }

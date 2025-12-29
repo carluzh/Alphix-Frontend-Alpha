@@ -74,7 +74,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         };
 
         // Validate response data
-        const validatedData = validateApiResponse(DynamicFeeSchema, responseData, 'get-dynamic-fee');
+        const validatedData = validateApiResponse(DynamicFeeSchema, responseData, 'get-dynamic-fee', 'handler');
 
         res.status(200).json(validatedData);
 

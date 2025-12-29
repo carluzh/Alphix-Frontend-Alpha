@@ -1,11 +1,15 @@
 /**
  * Unified Liquidity Types - Uniswap-style step-based architecture
  *
- * This module mirrors Uniswap's transaction step system from:
+ * COPIED FROM UNISWAP - DO NOT MODIFY WITHOUT UPDATING FROM SOURCE
+ * Source files:
  * - interface/packages/uniswap/src/features/transactions/steps/types.ts
  * - interface/packages/uniswap/src/features/transactions/liquidity/types.ts
+ * - interface/packages/uniswap/src/features/transactions/steps/approve.ts
+ * - interface/packages/uniswap/src/features/transactions/steps/permit2Signature.ts
  */
 
+import type { Currency, CurrencyAmount, Token } from '@uniswap/sdk-core';
 import type { Address, Hex } from 'viem';
 import type { TokenSymbol } from '@/lib/pools-config';
 
@@ -33,7 +37,68 @@ export enum LiquidityTransactionType {
   Create = 'create',
   Increase = 'increase',
   Decrease = 'decrease',
+  Migrate = 'migrate',
   Collect = 'collect',
+}
+
+// =============================================================================
+// ALPHIX API REQUEST TYPES - Used for async step creation (similar to TradingApi)
+// =============================================================================
+
+/**
+ * Request args for creating a new LP position via Alphix API.
+ * These are stored in the context and used when calling the API with a signature.
+ */
+export interface CreateLPPositionRequestArgs {
+  userAddress: string;
+  token0Symbol: string;
+  token1Symbol: string;
+  inputAmount: string;
+  inputTokenSymbol: string;
+  userTickLower: number;
+  userTickUpper: number;
+  chainId: number;
+  slippageBps?: number;
+  deadlineMinutes?: number;
+  permitBatchData?: {
+    domain?: {
+      name: string;
+      chainId: number;
+      verifyingContract: string;
+    };
+    types?: Record<string, Array<{ name: string; type: string }>>;
+    values?: {
+      details: Array<{
+        token: string;
+        amount: string;
+        expiration: string;
+        nonce: string;
+      }>;
+      spender: string;
+      sigDeadline: string;
+    };
+  };
+}
+
+/**
+ * Request args for increasing an existing LP position via Alphix API.
+ */
+export interface IncreaseLPPositionRequestArgs extends CreateLPPositionRequestArgs {
+  tokenId?: string;
+}
+
+/**
+ * Response type for Alphix API transaction preparation
+ */
+export interface LPPositionTransactionResponse {
+  create?: {
+    to: string;
+    from?: string;
+    data: string;
+    value: string;
+    chainId: number;
+  };
+  sqrtRatioX96?: string;
 }
 
 // =============================================================================
@@ -85,40 +150,42 @@ export interface TokenInfo {
 // =============================================================================
 
 /**
- * Token Approval Step - Matches interface/packages/uniswap/.../steps/approve.ts
+ * Token Approval Step - COPIED FROM interface/packages/uniswap/src/features/transactions/steps/approve.ts
  */
 export interface TokenApprovalTransactionStep extends OnChainTransactionFields {
   type: TransactionStepType.TokenApprovalTransaction;
-  token: TokenInfo;
-  spender: Address;
+  token: Token;
+  spender: string;
+  pair?: [Currency, Currency];
+  // TODO(WEB-5083): this is used to distinguish a revoke from an approve. It can likely be replaced by a boolean because for LP stuff the amount isn't straight forward.
   amount: string;
-  pair?: [TokenSymbol, TokenSymbol];
 }
 
 /**
- * Token Revocation Step - Matches interface/packages/uniswap/.../steps/revoke.ts
+ * Token Revocation Step - COPIED FROM interface/packages/uniswap/src/features/transactions/steps/revoke.ts
  */
-export interface TokenRevocationTransactionStep extends OnChainTransactionFields {
+export interface TokenRevocationTransactionStep extends Omit<TokenApprovalTransactionStep, 'type'> {
   type: TransactionStepType.TokenRevocationTransaction;
-  token: TokenInfo;
-  spender: Address;
+  amount: '0';
 }
 
 /**
- * Permit2 Signature Step - Matches interface/packages/uniswap/.../steps/permit2Signature.ts
+ * Permit2 Signature Step - COPIED FROM interface/packages/uniswap/src/features/transactions/steps/permit2Signature.ts
  */
 export interface Permit2SignatureStep extends SignTypedDataStepFields {
   type: TransactionStepType.Permit2Signature;
-  token: TokenInfo;
+  token: Currency; // Check if this needs to handle multiple tokens for LPing
 }
 
 /**
- * Permit2 Transaction Step - Matches interface/packages/uniswap/.../steps/permit2Transaction.ts
+ * Permit2 Transaction Step - COPIED FROM interface/packages/uniswap/src/features/transactions/steps/permit2Transaction.ts
  */
 export interface Permit2TransactionStep extends OnChainTransactionFields {
   type: TransactionStepType.Permit2Transaction;
-  token: TokenInfo;
-  pair?: [TokenSymbol, TokenSymbol];
+  token: Token;
+  spender: string;
+  pair?: [Currency, Currency];
+  amount: string;
 }
 
 /**
@@ -189,18 +256,14 @@ export type TransactionStep =
 
 // =============================================================================
 // LIQUIDITY ACTION - Matches Uniswap's LiquidityAction
+// COPIED FROM interface/packages/uniswap/src/features/transactions/liquidity/types.ts
 // =============================================================================
-
-export interface CurrencyAmount {
-  currency: TokenInfo;
-  quotient: string;
-}
 
 export interface LiquidityAction {
   type: LiquidityTransactionType;
-  currency0Amount: CurrencyAmount;
-  currency1Amount: CurrencyAmount;
-  liquidityToken?: TokenInfo;
+  currency0Amount: CurrencyAmount<Currency>;
+  currency1Amount: CurrencyAmount<Currency>;
+  liquidityToken?: Token;
 }
 
 // =============================================================================
@@ -224,14 +287,14 @@ interface BaseLiquidityTxAndGasInfo {
 export interface IncreasePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
   type: LiquidityTransactionType.Increase;
   unsigned: boolean;
-  increasePositionRequestArgs: unknown | undefined;
+  increasePositionRequestArgs: IncreaseLPPositionRequestArgs | undefined;
   sqrtRatioX96: string | undefined;
 }
 
 export interface CreatePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
   type: LiquidityTransactionType.Create;
   unsigned: boolean;
-  createPositionRequestArgs: unknown | undefined;
+  createPositionRequestArgs: CreateLPPositionRequestArgs | undefined;
   sqrtRatioX96: string | undefined;
 }
 

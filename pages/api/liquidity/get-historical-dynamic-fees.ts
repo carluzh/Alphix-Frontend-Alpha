@@ -98,11 +98,19 @@ export default async function handler(
         const SUBGRAPH_URL = selectSubgraphUrl(poolId, networkMode);
         const query = selectQuery(networkMode);
 
+        // AbortController timeout pattern for subgraph fetch
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s for subgraph
+
         const resp = await fetch(SUBGRAPH_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query, variables: { poolId: poolId.toLowerCase() } }),
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
+
         if (!resp.ok) {
           const body = await resp.text();
           throw new Error(`Subgraph error: ${body}`);

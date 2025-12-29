@@ -70,12 +70,19 @@ async function fetchUniswapPriceHistory(
     }
   }`
 
+  // AbortController timeout pattern for external API
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 15000) // 15s for external API
+
   try {
     const response = await fetch(UNISWAP_GATEWAY, {
       method: 'POST',
       headers: UNISWAP_HEADERS,
       body: JSON.stringify({ query, variables: { poolId, duration } }),
+      signal: controller.signal,
     })
+
+    clearTimeout(timeoutId)
 
     if (!response.ok) {
       console.warn(`[pool-price-history] Uniswap Gateway returned ${response.status}`)
@@ -91,6 +98,7 @@ async function fetchUniswapPriceHistory(
 
     return result.data?.v4Pool?.priceHistory ?? null
   } catch (error) {
+    clearTimeout(timeoutId)
     console.warn('[pool-price-history] Uniswap Gateway error:', error)
     return null
   }
@@ -128,12 +136,17 @@ async function fetchCoinGeckoPriceHistory(
     const isToken1Stable = STABLECOINS.includes(token1)
 
     // Fetch prices based on token stability
+    // AbortController timeout pattern for CoinGecko API
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 15000) // 15s for external API
+
     if (isToken0Stable && !isToken1Stable) {
       // token0 is stable - fetch token1 price
       const response = await fetch(
         `https://api.coingecko.com/api/v3/coins/${token1Id}/market_chart?vs_currency=usd&days=${days}`,
-        { headers: { 'Accept': 'application/json' } }
+        { headers: { 'Accept': 'application/json' }, signal: controller.signal }
       )
+      clearTimeout(timeoutId)
       if (!response.ok) return null
 
       const result = await response.json()
@@ -146,8 +159,9 @@ async function fetchCoinGeckoPriceHistory(
       // token1 is stable - fetch token0 price
       const response = await fetch(
         `https://api.coingecko.com/api/v3/coins/${token0Id}/market_chart?vs_currency=usd&days=${days}`,
-        { headers: { 'Accept': 'application/json' } }
+        { headers: { 'Accept': 'application/json' }, signal: controller.signal }
       )
+      clearTimeout(timeoutId)
       if (!response.ok) return null
 
       const result = await response.json()
@@ -158,18 +172,37 @@ async function fetchCoinGeckoPriceHistory(
       }))
     } else {
       // Both stable or both non-stable - fetch both and calculate ratio
-      const [res0, res1] = await Promise.all([
+      // Promise.allSettled pattern (identical to Uniswap getPool.ts)
+      // AbortController timeout for parallel fetches
+      const controller0 = new AbortController()
+      const controller1 = new AbortController()
+      const timeoutId0 = setTimeout(() => controller0.abort(), 15000)
+      const timeoutId1 = setTimeout(() => controller1.abort(), 15000)
+
+      const [res0Result, res1Result] = await Promise.allSettled([
         fetch(`https://api.coingecko.com/api/v3/coins/${token0Id}/market_chart?vs_currency=usd&days=${days}`, {
-          headers: { 'Accept': 'application/json' }
+          headers: { 'Accept': 'application/json' },
+          signal: controller0.signal
         }),
         fetch(`https://api.coingecko.com/api/v3/coins/${token1Id}/market_chart?vs_currency=usd&days=${days}`, {
-          headers: { 'Accept': 'application/json' }
+          headers: { 'Accept': 'application/json' },
+          signal: controller1.signal
         })
       ])
 
-      if (!res0.ok || !res1.ok) return null
+      clearTimeout(timeoutId)
+      clearTimeout(timeoutId0)
+      clearTimeout(timeoutId1)
 
-      const [result0, result1] = await Promise.all([res0.json(), res1.json()])
+      // Extract results - both required for ratio calculation
+      const res0 = res0Result.status === 'fulfilled' ? res0Result.value : null
+      const res1 = res1Result.status === 'fulfilled' ? res1Result.value : null
+      if (!res0 || !res1 || !res0.ok || !res1.ok) return null
+
+      const [json0Result, json1Result] = await Promise.allSettled([res0.json(), res1.json()])
+      if (json0Result.status !== 'fulfilled' || json1Result.status !== 'fulfilled') return null
+      const result0 = json0Result.value;
+      const result1 = json1Result.value;
       const prices0 = result0.prices || []
       const prices1 = result1.prices || []
 

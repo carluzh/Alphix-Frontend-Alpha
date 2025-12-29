@@ -12,8 +12,7 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadCont
 import { baseSepolia, getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
-import { invalidateAfterTx } from "@/lib/invalidation";
-import { useQueryClient } from "@tanstack/react-query";
+import { invalidateAfterTx, apolloClient } from "@/lib/apollo";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
@@ -795,7 +794,6 @@ export default function PortfolioPage() {
   const [positionsRefresh, setPositionsRefresh] = useState(0);
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const publicClient = usePublicClient();
-  const queryClient = useQueryClient();
 
   // Centralized hooks for positions (Category 2: user-action invalidated)
   const { data: userPositionsData, isLoading: isLoadingUserPositions, isFetching: isPositionsFetching } = useUserPositions(accountAddress || '');
@@ -1073,7 +1071,7 @@ export default function PortfolioPage() {
     if (!accountAddress || !chainId) return;
 
     try {
-      await invalidateAfterTx(queryClient, {
+      await invalidateAfterTx(null, {
         owner: accountAddress,
         chainId,
         poolId: info?.poolId, // Can be undefined for portfolio-wide operations
@@ -1101,7 +1099,7 @@ export default function PortfolioPage() {
       console.error('[Portfolio refreshAfterMutation] failed:', error);
       setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
     }
-  }, [accountAddress, queryClient]);
+  }, [accountAddress]);
 
   // After-confirmation refresh using the same centralized prefetch hook as pool page
   const bumpPositionsRefresh = useCallback(() => { // Refresh positions after add/withdraw
@@ -1286,19 +1284,19 @@ export default function PortfolioPage() {
       await waitForSubgraphBlock(Number(lastTxBlockRef.current));
       lastTxBlockRef.current = null;
     }
-    // Invalidate fees cache so UI shows fees as zero
-    queryClient.invalidateQueries({ queryKey: ['user', 'uncollectedFeesBatch'] });
-  }, [queryClient]);
+    // Invalidate fees cache so UI shows fees as zero (Apollo cache)
+    apolloClient.cache.evict({ fieldName: 'uncollectedFees' });
+    apolloClient.cache.gc();
+  }, []);
 
   const handleModalFeesCollected = useCallback((positionId: string) => {
-    queryClient.setQueriesData<Array<{ positionId: string; amount0: string; amount1: string }>>(
-      { queryKey: ['user', 'uncollectedFeesBatch'] },
-      (oldData) => oldData?.map(fee =>
-        fee.positionId === positionId ? { ...fee, amount0: '0', amount1: '0' } : fee
-      )
-    );
-    queryClient.invalidateQueries({ queryKey: ['user', 'uncollectedFeesBatch'] });
-  }, [queryClient]);
+    // Evict the specific position's fees from Apollo cache
+    apolloClient.cache.evict({
+      id: apolloClient.cache.identify({ __typename: 'FeeItem', positionId }),
+    });
+    apolloClient.cache.evict({ fieldName: 'uncollectedFees' });
+    apolloClient.cache.gc();
+  }, []);
   
   const { decreaseLiquidity, claimFees, isLoading: isDecreasingLiquidity, isSuccess: isDecreaseSuccess, hash: decreaseTxHash } = useDecreaseLiquidity({ 
     onLiquidityDecreased: onLiquidityDecreasedCallback, 

@@ -1,6 +1,16 @@
 import { withSentryConfig } from "@sentry/nextjs";
+import bundleAnalyzer from '@next/bundle-analyzer';
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
+import { createRequire } from 'module';
+
+// Create require for ESM compatibility (needed for require.resolve in webpack config)
+const require = createRequire(import.meta.url);
+
+// Bundle analyzer - run with ANALYZE=true npm run build
+const withBundleAnalyzer = bundleAnalyzer({
+  enabled: process.env.ANALYZE === 'true',
+});
 
 // Get version from version-log.ts (single source of truth) and git commit hash at build time
 const versionLogContent = readFileSync('./lib/version-log.ts', 'utf8');
@@ -16,18 +26,19 @@ try {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
   env: {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_GIT_COMMIT: gitCommitHash,
   },
   webpack: (config, { isServer }) => {
-    // MetaMask SDK includes a React-Native async-storage import path in its browser bundle.
-    // For web builds we don't use that storage adapter, so stub it to an empty module.
-    if (!isServer) {
-      config.resolve = config.resolve || {};
-      config.resolve.alias = config.resolve.alias || {};
-      config.resolve.alias['@react-native-async-storage/async-storage'] = false;
-    }
+    config.resolve = config.resolve || {};
+    config.resolve.alias = config.resolve.alias || {};
+    // SDK deduplication - identical to Uniswap vite.config.mts dedupe
+    // Note: react/react-dom handled by Next.js, ethers has subpath imports
+    const sdkDedupe = ['@uniswap/sdk-core', '@uniswap/v4-sdk', '@uniswap/universal-router-sdk', 'jsbi'];
+    sdkDedupe.forEach(pkg => { config.resolve.alias[pkg] = require.resolve(pkg); });
+    if (!isServer) config.resolve.alias['@react-native-async-storage/async-storage'] = false;
     return config;
   },
   typescript: {
@@ -42,6 +53,8 @@ const nextConfig = {
     webpackBuildWorker: true,
     parallelServerBuildTraces: true,
     parallelServerCompiles: true,
+    // Optimize chunking for smaller bundles
+    optimizePackageImports: ['@uniswap/sdk-core', '@uniswap/v4-sdk', 'viem', 'wagmi', '@tanstack/react-query'],
   },
   // Exclude WalletConnect packages from Turbopack bundling due to incompatible test files
   serverExternalPackages: [
@@ -55,7 +68,8 @@ const nextConfig = {
   ],
 }
 
-export default withSentryConfig(nextConfig, {
+// Wrap with bundle analyzer, then Sentry
+export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // Minimal Sentry build options
   silent: true, // Suppress Sentry build logs
   hideSourceMaps: true, // Don't expose source maps publicly

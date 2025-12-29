@@ -1,11 +1,17 @@
 /**
  * Step Factory Functions & Flow Ordering
  *
- * Mirrors Uniswap's step creation and flow ordering from:
- * - interface/packages/uniswap/src/features/transactions/steps/*.ts
+ * COPIED FROM UNISWAP - DO NOT MODIFY WITHOUT UPDATING FROM SOURCE
+ * Source files:
+ * - interface/packages/uniswap/src/features/transactions/steps/approve.ts
+ * - interface/packages/uniswap/src/features/transactions/steps/revoke.ts
+ * - interface/packages/uniswap/src/features/transactions/steps/permit2Signature.ts
+ * - interface/packages/uniswap/src/features/transactions/steps/permit2Transaction.ts
  * - interface/packages/uniswap/src/features/transactions/liquidity/steps/*.ts
+ * - interface/packages/uniswap/src/utils/approvals.ts
  */
 
+import type { Currency, CurrencyAmount, Token } from '@uniswap/sdk-core';
 import type { Address, Hex } from 'viem';
 import { maxUint256, getAddress } from 'viem';
 import type { TokenSymbol } from '@/lib/pools-config';
@@ -34,99 +40,94 @@ import {
   type StepperStep,
   type LiquidityFlowState,
   type OnChainTransactionFields,
+  type CreateLPPositionRequestArgs,
+  type IncreaseLPPositionRequestArgs,
 } from '../../types';
 
 // =============================================================================
-// TOKEN APPROVAL STEP - Matches Uniswap's createApprovalTransactionStep
+// APPROVAL UTILITIES - COPIED FROM interface/packages/uniswap/src/utils/approvals.ts
 // =============================================================================
 
-export interface CreateApprovalStepParams {
-  txRequest: ValidatedTransactionRequest;
-  token: TokenInfo;
-  spender: Address;
-  amount: string;
-  pair?: [TokenSymbol, TokenSymbol];
+type ERC20ApprovalTransactionParts = {
+  /** The amount approved for spend */
+  amount: bigint;
+  /** The address approved for spend */
+  spender: string;
+};
+
+export function parseERC20ApproveCalldata(data: string): ERC20ApprovalTransactionParts {
+  const amount = BigInt(`0x${data.slice(-64)}`); // length of a uint256
+  const spender = `0x${data.slice(-104, -64)}`; // length of an address
+  return { amount, spender };
 }
 
+// =============================================================================
+// TOKEN APPROVAL STEP - COPIED FROM interface/packages/uniswap/src/features/transactions/steps/approve.ts
+// =============================================================================
+
+/**
+ * Creates an approval transaction step - COPIED FROM UNISWAP
+ * @param txRequest - The transaction request (optional, returns undefined if not provided)
+ * @param amountIn - The currency amount being approved
+ * @param pair - Optional pair of currencies for display
+ */
 export function createApprovalTransactionStep({
   txRequest,
-  token,
-  spender,
-  amount,
+  amountIn,
   pair,
-}: CreateApprovalStepParams): TokenApprovalTransactionStep {
-  return {
-    type: TransactionStepType.TokenApprovalTransaction,
-    txRequest,
-    token,
-    spender,
-    amount,
-    pair,
-  };
-}
-
-/** @deprecated Use createApprovalTransactionStep instead */
-export function createTokenApprovalStep(params: {
-  tokenSymbol: TokenSymbol;
-  networkMode: NetworkMode;
-  requiredAmount: bigint;
-  useInfinite: boolean;
-}): TokenApprovalTransactionStep {
-  const tokenConfig = getToken(params.tokenSymbol, params.networkMode);
-  if (!tokenConfig) {
-    throw new Error(`Token ${params.tokenSymbol} not found`);
-  }
-
-  const amount = params.useInfinite ? maxUint256 : params.requiredAmount + 1n;
-
-  return {
-    type: TransactionStepType.TokenApprovalTransaction,
-    txRequest: {
-      to: getAddress(tokenConfig.address) as Address,
-      data: '0x' as Hex, // Will be filled by transaction builder
-      value: 0n,
-    },
-    token: {
-      address: getAddress(tokenConfig.address) as Address,
-      symbol: tokenConfig.symbol,
-      decimals: tokenConfig.decimals,
-    },
-    spender: PERMIT2_ADDRESS as Address,
-    amount: amount.toString(),
-  };
-}
-
-// =============================================================================
-// TOKEN REVOCATION STEP - Matches Uniswap's createRevocationTransactionStep
-// =============================================================================
-
-export interface CreateRevocationStepParams {
-  txRequest: ValidatedTransactionRequest;
-  token: TokenInfo;
-  spender: Address;
-}
-
-export function createRevocationTransactionStep(
-  txRequest: ValidatedTransactionRequest | undefined,
-  token: TokenInfo
-): TokenRevocationTransactionStep | undefined {
-  if (!txRequest) {
+}: {
+  txRequest?: ValidatedTransactionRequest;
+  amountIn?: CurrencyAmount<Currency>;
+  pair?: [Currency, Currency];
+}): TokenApprovalTransactionStep | undefined {
+  if (!txRequest?.data || !amountIn) {
     return undefined;
   }
 
-  return {
-    type: TransactionStepType.TokenRevocationTransaction,
-    txRequest,
-    token,
-    spender: PERMIT2_ADDRESS as Address,
-  };
+  const type = TransactionStepType.TokenApprovalTransaction;
+  const token = amountIn.currency.wrapped;
+  const { spender } = parseERC20ApproveCalldata(txRequest.data.toString());
+  const amount = amountIn.quotient.toString();
+
+  return { type, txRequest, token, spender, amount, pair };
+}
+
+
+// =============================================================================
+// TOKEN REVOCATION STEP - COPIED FROM interface/packages/uniswap/src/features/transactions/steps/revoke.ts
+// =============================================================================
+
+/**
+ * Creates a revocation transaction step - COPIED FROM UNISWAP
+ * @param txRequest - The transaction request (optional, returns undefined if not provided)
+ * @param token - The token being revoked
+ */
+export function createRevocationTransactionStep(
+  txRequest: ValidatedTransactionRequest | undefined,
+  token: Token
+): TokenRevocationTransactionStep | undefined {
+  if (!txRequest?.data) {
+    return undefined;
+  }
+
+  const type = TransactionStepType.TokenRevocationTransaction;
+  const { spender, amount } = parseERC20ApproveCalldata(txRequest.data.toString());
+
+  if (amount !== BigInt(0)) {
+    return undefined;
+  }
+
+  return { type, txRequest, token, spender, amount: '0' };
 }
 
 // =============================================================================
-// PERMIT2 SIGNATURE STEP - Matches Uniswap's createPermit2SignatureStep
+// PERMIT2 SIGNATURE STEP - COPIED FROM interface/packages/uniswap/src/features/transactions/steps/permit2Signature.ts
 // =============================================================================
 
-export interface CreatePermit2SignatureStepParams {
+/**
+ * ValidatedPermit type - matches Uniswap's permit structure
+ */
+export interface ValidatedPermit {
   domain: {
     name: string;
     chainId: number;
@@ -134,59 +135,49 @@ export interface CreatePermit2SignatureStepParams {
   };
   types: Record<string, Array<{ name: string; type: string }>>;
   values: Record<string, unknown>;
-  token: TokenInfo;
 }
 
+/**
+ * Creates a Permit2 signature step - COPIED FROM UNISWAP
+ * @param permitData - The permit typed data
+ * @param token - The currency for this permit
+ */
 export function createPermit2SignatureStep(
-  permitData: { domain: any; types: any; values: any },
-  token: TokenInfo
+  permitData: ValidatedPermit,
+  token: Currency
 ): Permit2SignatureStep {
-  return {
-    type: TransactionStepType.Permit2Signature,
-    domain: permitData.domain,
-    types: permitData.types,
-    values: permitData.values,
-    token,
-  };
-}
-
-/** @deprecated Use createPermit2SignatureStep with proper params */
-export interface CreatePermit2StepParams {
-  chainId: number;
-  networkMode: NetworkMode;
-  details: Array<{
-    tokenAddress: Address;
-    amount: bigint;
-    nonce: number;
-  }>;
-  sigDeadlineSeconds?: number;
+  return { type: TransactionStepType.Permit2Signature, token, ...permitData };
 }
 
 // =============================================================================
-// PERMIT2 TRANSACTION STEP - Matches Uniswap's createPermit2TransactionStep
+// PERMIT2 TRANSACTION STEP - COPIED FROM interface/packages/uniswap/src/features/transactions/steps/permit2Transaction.ts
 // =============================================================================
 
-export interface CreatePermit2TransactionStepParams {
-  txRequest: ValidatedTransactionRequest;
-  token: TokenInfo;
-  pair?: [TokenSymbol, TokenSymbol];
-}
-
+/**
+ * Creates a Permit2 transaction step - COPIED FROM UNISWAP
+ * @param txRequest - The transaction request (optional, returns undefined if not provided)
+ * @param amountIn - The currency amount
+ * @param pair - Optional pair of currencies for display
+ */
 export function createPermit2TransactionStep({
   txRequest,
-  token,
+  amountIn,
   pair,
-}: CreatePermit2TransactionStepParams): Permit2TransactionStep | undefined {
-  if (!txRequest) {
+}: {
+  txRequest?: ValidatedTransactionRequest;
+  amountIn?: CurrencyAmount<Currency>;
+  pair?: [Currency, Currency];
+}): Permit2TransactionStep | undefined {
+  if (!txRequest?.data || !amountIn) {
     return undefined;
   }
 
-  return {
-    type: TransactionStepType.Permit2Transaction,
-    txRequest,
-    token,
-    pair,
-  };
+  const type = TransactionStepType.Permit2Transaction;
+  const token = amountIn.currency.wrapped;
+  const { spender } = parseERC20ApproveCalldata(txRequest.data.toString());
+  const amount = amountIn.quotient.toString();
+
+  return { type, txRequest, token, spender, amount, pair };
 }
 
 // =============================================================================
@@ -204,15 +195,119 @@ export function createIncreasePositionStep(
   };
 }
 
+/**
+ * Creates an async step for increasing an existing LP position.
+ * MATCHES UNISWAP PATTERN - Takes request args and internally calls API with signature.
+ *
+ * @param increasePositionRequestArgs - The request args for the API call
+ */
 export function createIncreasePositionAsyncStep(
-  getTxRequestFn: (signature: string) => Promise<{
-    txRequest: ValidatedTransactionRequest | undefined;
-    sqrtRatioX96: string | undefined;
-  }>
+  increasePositionRequestArgs: IncreaseLPPositionRequestArgs | undefined,
 ): IncreasePositionTransactionStepAsync {
   return {
     type: TransactionStepType.IncreasePositionTransactionAsync,
-    getTxRequest: getTxRequestFn,
+    getTxRequest: async (
+      signature: string,
+    ): Promise<{ txRequest: ValidatedTransactionRequest | undefined; sqrtRatioX96: string | undefined }> => {
+      if (!increasePositionRequestArgs) {
+        return { txRequest: undefined, sqrtRatioX96: undefined };
+      }
+
+      try {
+        // Call Alphix API with signature to get the transaction
+        const response = await fetch('/api/liquidity/prepare-mint-tx', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...increasePositionRequestArgs,
+            permitSignature: signature,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || 'Failed to prepare increase position transaction');
+        }
+
+        const data = await response.json();
+
+        // Validate and transform the response
+        const txData = data.create || data.transaction;
+        if (!txData) {
+          return { txRequest: undefined, sqrtRatioX96: data.sqrtRatioX96 };
+        }
+
+        const txRequest: ValidatedTransactionRequest = {
+          to: txData.to as Address,
+          data: txData.data as Hex,
+          value: txData.value ? BigInt(txData.value) : undefined,
+          chainId: txData.chainId || increasePositionRequestArgs.chainId,
+        };
+
+        return { txRequest, sqrtRatioX96: data.sqrtRatioX96 };
+      } catch (e) {
+        console.error('createIncreasePositionAsyncStep error:', e);
+        throw e;
+      }
+    },
+  };
+}
+
+/**
+ * Creates an async step for creating a new LP position.
+ * MATCHES UNISWAP PATTERN - Takes request args and internally calls API with signature.
+ *
+ * @param createPositionRequestArgs - The request args for the API call
+ */
+export function createCreatePositionAsyncStep(
+  createPositionRequestArgs: CreateLPPositionRequestArgs | undefined,
+): IncreasePositionTransactionStepAsync {
+  return {
+    type: TransactionStepType.IncreasePositionTransactionAsync,
+    getTxRequest: async (
+      signature: string,
+    ): Promise<{ txRequest: ValidatedTransactionRequest | undefined; sqrtRatioX96: string | undefined }> => {
+      if (!createPositionRequestArgs) {
+        return { txRequest: undefined, sqrtRatioX96: undefined };
+      }
+
+      try {
+        // Call Alphix API with signature to get the transaction
+        const response = await fetch('/api/liquidity/prepare-mint-tx', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...createPositionRequestArgs,
+            permitSignature: signature,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || 'Failed to prepare create position transaction');
+        }
+
+        const data = await response.json();
+
+        // Validate and transform the response
+        const txData = data.create || data.transaction;
+        if (!txData) {
+          return { txRequest: undefined, sqrtRatioX96: data.sqrtRatioX96 };
+        }
+
+        const txRequest: ValidatedTransactionRequest = {
+          to: txData.to as Address,
+          data: txData.data as Hex,
+          value: txData.value ? BigInt(txData.value) : undefined,
+          chainId: txData.chainId || createPositionRequestArgs.chainId,
+        };
+
+        return { txRequest, sqrtRatioX96: data.sqrtRatioX96 };
+      } catch (e) {
+        console.error('createCreatePositionAsyncStep error:', e);
+        throw e;
+      }
+    },
   };
 }
 
@@ -474,75 +569,3 @@ export function hasFlowError(flowState: LiquidityFlowState): boolean {
   return flowState.steps.some((s) => s.status === 'error');
 }
 
-// =============================================================================
-// DEPRECATED EXPORTS - For backward compatibility
-// =============================================================================
-
-/** @deprecated Use CreateApprovalStepParams instead */
-export type CreateApprovalStepParamsLegacy = {
-  tokenSymbol: TokenSymbol;
-  networkMode: NetworkMode;
-  requiredAmount: bigint;
-  useInfinite: boolean;
-};
-
-/** @deprecated Use CreatePermit2SignatureStepParams instead */
-export type CreatePermit2StepParamsLegacy = CreatePermit2StepParams;
-
-/** @deprecated Use proper step creation functions */
-export interface CreateSwapStepParams {
-  inputToken: TokenSymbol;
-  outputToken: TokenSymbol;
-  inputAmount: string;
-  minOutputAmount: string;
-  permitSignature?: string;
-  txRequest: {
-    to: Address;
-    data: Hex;
-    value: bigint;
-    deadline: bigint;
-  };
-}
-
-/** @deprecated Swap execution is no longer a core step type */
-export function createSwapExecutionStep(params: CreateSwapStepParams): any {
-  return {
-    type: 'SwapExecution',
-    inputToken: params.inputToken,
-    outputToken: params.outputToken,
-    inputAmount: params.inputAmount,
-    minOutputAmount: params.minOutputAmount,
-    permitSignature: params.permitSignature,
-    txRequest: params.txRequest,
-  };
-}
-
-/** @deprecated Use proper step creation functions */
-export interface CreatePositionTxStepParams {
-  operationType: LiquidityTransactionType;
-  permitSignature?: string;
-  txRequest: {
-    to: Address;
-    data: Hex;
-    value: bigint;
-  };
-}
-
-/** @deprecated Use createIncreasePositionStep or createDecreasePositionStep */
-export function createPositionTransactionStep(params: CreatePositionTxStepParams): any {
-  const txRequest: ValidatedTransactionRequest = {
-    to: params.txRequest.to,
-    data: params.txRequest.data,
-    value: params.txRequest.value,
-  };
-
-  if (params.operationType === LiquidityTransactionType.Increase || params.operationType === LiquidityTransactionType.Create) {
-    return createIncreasePositionStep(txRequest, undefined);
-  } else if (params.operationType === LiquidityTransactionType.Decrease) {
-    return createDecreasePositionStep(txRequest, undefined);
-  } else if (params.operationType === LiquidityTransactionType.Collect) {
-    return createCollectFeesStep(txRequest);
-  }
-
-  return createIncreasePositionStep(txRequest, undefined);
-}

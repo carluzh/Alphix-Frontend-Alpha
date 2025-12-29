@@ -3,7 +3,7 @@
 import React from "react";
 import { PlusIcon } from "lucide-react";
 import { TokenInputCard, TokenInputStyles } from "../TokenInputCard";
-import type { LegacyAnimationControls } from "motion-dom";
+import type { AnimationControls } from "framer-motion";
 
 export type PositionField = "TOKEN0" | "TOKEN1";
 
@@ -27,8 +27,8 @@ export interface DepositInputFormProps extends DepositInfo {
   token1USDPrice?: number;
   isAmount0OverBalance?: boolean;
   isAmount1OverBalance?: boolean;
-  wiggleControls0?: LegacyAnimationControls;
-  wiggleControls1?: LegacyAnimationControls;
+  wiggleControls0?: AnimationControls;
+  wiggleControls1?: AnimationControls;
   onToken0PercentageClick?: (percentage: number) => string | void;
   onToken1PercentageClick?: (percentage: number) => string | void;
   inputLabel?: string;

@@ -1,5 +1,56 @@
 import { z } from 'zod';
 
+// ===== INPUT VALIDATION SCHEMAS (Uniswap pattern) =====
+
+// Common input validators
+export const AddressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum address');
+export const PoolIdSchema = z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid pool ID (must be 32-byte hex)');
+export const ChainIdSchema = z.coerce.number().int().positive();
+export const AmountSchema = z.string().regex(/^\d+$/, 'Amount must be numeric string');
+
+// Pool state request input
+export const GetPoolStateInputSchema = z.object({
+  poolId: z.string().min(1, 'poolId is required'),
+});
+
+// Pool metrics request input
+export const GetPoolMetricsInputSchema = z.object({
+  poolId: z.string().min(1, 'poolId is required'),
+  days: z.coerce.number().int().min(1).max(365).default(7),
+});
+
+// Price history request input
+export const GetPriceHistoryInputSchema = z.object({
+  poolId: z.string().min(1, 'poolId is required'),
+  token0: z.string().min(1, 'token0 is required'),
+  token1: z.string().min(1, 'token1 is required'),
+  duration: z.enum(['HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR']).default('WEEK'),
+});
+
+// Positions request input
+export const GetPositionsInputSchema = z.object({
+  owner: AddressSchema,
+  chainId: ChainIdSchema.optional(),
+});
+
+// Ticks request input
+export const GetTicksInputSchema = z.object({
+  poolId: z.string().min(1, 'poolId is required'),
+});
+
+// Input validation helper - safeParse pattern (identical to Uniswap)
+export function validateApiInput<T>(schema: z.ZodSchema<T>, data: unknown, apiName: string): { success: true; data: T } | { success: false; error: string } {
+  const result = schema.safeParse(data);
+  if (!result.success) {
+    const errorMsg = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ');
+    console.warn(`[Validation] ${apiName} input validation failed:`, errorMsg);
+    return { success: false, error: errorMsg };
+  }
+  return { success: true, data: result.data };
+}
+
+// ===== RESPONSE VALIDATION SCHEMAS =====
+
 // Pool State API Response Schema
 export const PoolStateSchema = z.object({
   poolId: z.string(),
@@ -109,19 +160,22 @@ export const LogoutResponseSchema = z.object({
 
 export type LogoutResponse = z.infer<typeof LogoutResponseSchema>;
 
-// Validation helper function
-export function validateApiResponse<T>(
-  schema: z.ZodSchema<T>,
-  data: unknown,
-  apiName: string
-): T {
-  try {
-    return schema.parse(data);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      console.error(`[Validation] ${apiName} response validation failed:`, error.issues);
-      throw new Error(`Invalid ${apiName} response format: ${error.message}`);
-    }
-    throw error;
+// Validation helper - safeParse pattern (identical to Uniswap)
+export function validateApiResponse<T>(schema: z.ZodSchema<T>, data: unknown, fileName: string, functionName: string): T | undefined {
+  const result = schema.safeParse(data);
+  if (!result.success) {
+    console.warn(fileName, functionName, 'Validation failed', { issues: result.error.issues, data });
+    return undefined;
   }
+  return result.data;
+}
+
+// Strict validation (throws on failure) - for cases requiring guaranteed types
+export function validateApiResponseStrict<T>(schema: z.ZodSchema<T>, data: unknown, apiName: string): T {
+  const result = schema.safeParse(data);
+  if (!result.success) {
+    console.error(`[Validation] ${apiName} response validation failed:`, result.error.issues);
+    throw new Error(`Invalid ${apiName} response format: ${result.error.message}`);
+  }
+  return result.data;
 }

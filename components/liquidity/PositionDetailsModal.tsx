@@ -34,8 +34,6 @@ import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings";
 import { toast } from "sonner";
 import { motion, useAnimation } from "framer-motion";
 import { getTokenSymbolByAddress } from "@/lib/utils";
-import { useQueryClient } from "@tanstack/react-query";
-import { invalidateAfterTx } from "@/lib/invalidation";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 // Define modal view types
@@ -193,7 +191,6 @@ export function PositionDetailsModal({
   // Always use network context chainId for queries (not wallet chainId)
   const { isMismatched: isChainMismatched } = useChainMismatch();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
-  const queryClient = useQueryClient();
   const { signTypedDataAsync } = useSignTypedData();
   const { writeContractAsync: approveERC20Async } = useWriteContract();
   const approvalWiggleControls = useAnimation();
@@ -639,7 +636,7 @@ export function PositionDetailsModal({
 
     // Trigger position refresh with backoff
     onRefreshPosition();
-  }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId, resetIncrease, onAfterLiquidityAdded, increaseAmount0, increaseAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
+  }, [onRefreshPosition, accountAddress, selectedPoolId, position.positionId, resetIncrease, onAfterLiquidityAdded, increaseAmount0, increaseAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
 
   const handleRemoveLiquiditySuccess = useCallback(async () => {
     // Calculate TVL delta (negative) and notify parent for optimistic updates
@@ -677,7 +674,7 @@ export function PositionDetailsModal({
         onClose();
       }, 1500);
     }
-  }, [onRefreshPosition, queryClient, accountAddress, selectedPoolId, position.positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
+  }, [onRefreshPosition, accountAddress, selectedPoolId, position.positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
 
   // Handlers for preview updates
   const handleAddAmountsChange = useCallback((amount0: number, amount1: number) => {

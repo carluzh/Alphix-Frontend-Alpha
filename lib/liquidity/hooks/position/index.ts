@@ -61,3 +61,16 @@ export {
   type UsePositionAPRResult,
   type CachedPoolMetrics,
 } from './usePositionAPR';
+
+// Step-based liquidity hooks - Uniswap pattern
+export {
+  useStepBasedIncreaseLiquidity,
+  useStepBasedDecreaseLiquidity,
+  useStepBasedCollectFees,
+  type UseStepBasedIncreaseProps,
+  type UseStepBasedDecreaseProps,
+  type UseStepBasedCollectProps,
+  type IncreasePositionParams,
+  type DecreasePositionParams,
+  type CollectFeesParams,
+} from './useStepBasedLiquidity';

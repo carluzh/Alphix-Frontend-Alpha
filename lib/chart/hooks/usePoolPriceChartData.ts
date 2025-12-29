@@ -2,21 +2,25 @@
  * Pool Price Chart Data Hook
  *
  * Fetches and transforms pool price history for chart display.
- * Matches Uniswap's implementation pattern 1:1.
+ * Uses generated Apollo hook from graphql-codegen.
  *
  * @see interface/apps/web/src/hooks/usePoolPriceChartData.tsx
  */
 
-import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import type { UTCTimestamp } from 'lightweight-charts'
+import { useNetwork } from '@/lib/network-context'
+import {
+  useGetPoolPriceHistoryQuery,
+  type Chain,
+  type HistoryDuration as GqlHistoryDuration,
+} from '@/lib/apollo/__generated__'
 import {
   ChartQueryResult,
   ChartType,
   DataQuality,
   HistoryDuration,
   PriceChartData,
-  TimestampedPoolPrice,
 } from '@/lib/chart/types'
 import { removeOutliers } from '@/lib/chart/utils'
 
@@ -39,12 +43,6 @@ interface PoolPriceChartVars {
   duration?: HistoryDuration
 }
 
-interface ApiResponse {
-  data: TimestampedPoolPrice[]
-  source: 'uniswap' | 'coingecko'
-  cached?: boolean
-}
-
 /**
  * Hook for fetching pool price chart data
  *
@@ -65,49 +63,29 @@ export function usePoolPriceChartData({
   variables?: PoolPriceChartVars
   priceInverted: boolean
 }): ChartQueryResult<PriceChartData, ChartType.PRICE> {
-  const { poolId, token0, token1, duration = HistoryDuration.WEEK } = variables ?? {}
+  const { networkMode } = useNetwork()
+  const chain: Chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
+  const { poolId, duration = HistoryDuration.WEEK } = variables ?? {}
+  const enabled = !!poolId && poolId.length > 0
 
-  const { data, isLoading } = useQuery<ApiResponse>({
-    queryKey: ['pool', 'priceHistory', poolId, duration],
-    queryFn: async ({ signal }) => {
-      if (!poolId || !token0 || !token1) {
-        return { data: [], source: 'coingecko' as const }
-      }
-
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 30000)
-
-      try {
-        const url = `/api/liquidity/pool-price-history?poolId=${poolId}&token0=${token0}&token1=${token1}&duration=${duration}`
-        const response = await fetch(url, { signal: controller.signal })
-        clearTimeout(timeoutId)
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
-        }
-
-        return await response.json()
-      } catch (error) {
-        clearTimeout(timeoutId)
-        if (error instanceof Error && error.name === 'AbortError') {
-          throw new Error('Request timed out')
-        }
-        throw error
-      }
+  const { data, loading } = useGetPoolPriceHistoryQuery({
+    variables: {
+      chain,
+      poolId: poolId ?? '',
+      duration: duration as GqlHistoryDuration,
     },
-    enabled: !!poolId && !!token0 && !!token1,
-    staleTime: 15 * 60 * 1000, // 15 minutes
-    gcTime: 10 * 60 * 1000,    // 10 minutes
-    retry: 1,
+    skip: !enabled,
+    fetchPolicy: 'cache-and-network',
+    pollInterval: 5 * 60 * 1000, // 5 minutes
   })
 
   return useMemo(() => {
-    const priceHistory = data?.data ?? []
+    const priceHistory = data?.poolPriceHistory ?? []
 
     // Transform to PriceChartData format
     // @see interface/apps/web/src/hooks/usePoolPriceChartData.tsx:35-49
     const entries = priceHistory
-      .filter((price): price is TimestampedPoolPrice => price !== undefined)
+      .filter((price) => price !== undefined && price !== null)
       .map((price) => {
         // Use token0Price if inverted, token1Price otherwise
         const value = priceInverted ? price.token0Price : price.token1Price
@@ -126,17 +104,17 @@ export function usePoolPriceChartData({
     const filteredEntries = removeOutliers(entries)
 
     // Determine data quality
-    const dataQuality = isLoading || !priceHistory.length
+    const dataQuality = loading || !priceHistory.length
       ? DataQuality.INVALID
       : DataQuality.VALID
 
     return {
       chartType: ChartType.PRICE,
       entries: filteredEntries,
-      loading: isLoading,
+      loading,
       dataQuality,
       dataHash: hashEntries(filteredEntries),
     }
-  }, [data?.data, isLoading, priceInverted])
+  }, [data?.poolPriceHistory, loading, priceInverted])
 }
 

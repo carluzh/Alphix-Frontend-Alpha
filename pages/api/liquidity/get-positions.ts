@@ -3,10 +3,12 @@ import { Token } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getAddress, type Address, type Hex, encodeAbiParameters, keccak256 } from "viem";
-import { getTokenSymbolByAddress, getToken as getTokenConfig, getChainId, getNetworkModeFromRequest, type NetworkMode } from "../../../lib/pools-config";
-import { getPositionDetails, getPoolState } from "../../../lib/liquidity-utils";
+import { getAddress, type Address, type Hex, encodeAbiParameters, keccak256, parseAbi } from "viem";
+import { getTokenSymbolByAddress, getToken as getTokenConfig, getChainId, getNetworkModeFromRequest, getPositionManagerAddress, getStateViewAddress, type NetworkMode } from "../../../lib/pools-config";
+import { getPositionDetails, getPoolState, decodePositionInfo, calculateUnclaimedFeesV4 } from "../../../lib/liquidity-utils";
 import { getAlphixSubgraphUrl, getDaiSubgraphUrl, isMainnetSubgraphMode } from "../../../lib/subgraph-url-helper";
+import { STATE_VIEW_ABI } from "../../../lib/abis/state_view_abi";
+import { createNetworkClient } from "../../../lib/viemClient";
 
 // Minimal subgraph types and query
 interface SubgraphPosition {
@@ -78,7 +80,13 @@ interface ProcessedPositionToken {
     rawAmount: string;
 }
 
-export interface ProcessedPosition { // Export for frontend type usage
+/**
+ * ProcessedPosition - Mirrors Uniswap's PositionInfo pattern
+ *
+ * @see interface/apps/web/src/components/Liquidity/types.ts (BasePositionInfo)
+ * @see interface/apps/web/src/components/Liquidity/utils/parseFromRest.ts (parseRestPosition)
+ */
+export interface ProcessedPosition {
     positionId: string;
     owner: string;
     poolId: string;
@@ -91,6 +99,13 @@ export interface ProcessedPosition { // Export for frontend type usage
     blockTimestamp: number;
     lastTimestamp: number; // Last modification timestamp (for APY calculation)
     isInRange: boolean;
+
+    // Fee fields - mirrors Uniswap's token0UncollectedFees/token1UncollectedFees
+    // @see interface/apps/web/src/components/Liquidity/types.ts (lines 48-49)
+    // @see interface/apps/web/src/components/Liquidity/utils/parseFromRest.ts (lines 393-394)
+    token0UncollectedFees?: string;
+    token1UncollectedFees?: string;
+
     // Optimistic UI state flags (added by invalidation.ts)
     isPending?: boolean; // Position is being minted (show skeleton)
     isRemoving?: boolean; // Position is being burned (fade out)
@@ -130,57 +145,45 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
         }
     }
 
-    // Fetch from all subgraphs
-    let allRawPositions: SubgraphPosition[] = [];
-    const seenPositionIds = new Set<string>(); // Track position IDs to prevent duplicates
+    // Fetch from all subgraphs in parallel (Promise.allSettled pattern identical to Uniswap getPool.ts)
+    const subgraphResults = await Promise.allSettled(subgraphUrls.map(async (subgraphUrl) => {
+        // AbortController timeout pattern for subgraph fetch
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s for subgraph
 
-    for (const subgraphUrl of subgraphUrls) {
         try {
-            const resp = await fetch(subgraphUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: hookPositionsQuery, variables: { owner: owner.toLowerCase() } }),
-            });
-            if (resp.ok) {
-                const json = await resp.json() as { data?: { positions: SubgraphPosition[] } };
-                let raw = (json as any)?.data?.hookPositions ?? [] as SubgraphPosition[];
-
-                // Fallback to legacy positions if hookPositions empty (testnet only)
-                if (!isMainnet && (!Array.isArray(raw) || raw.length === 0)) {
-                    try {
-                        const respLegacy = await fetch(subgraphUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }),
-                        });
-                        if (respLegacy.ok) {
-                            const jsonLegacy = await respLegacy.json() as any;
-                            const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
-                            raw = legacy.map((p) => ({
-                                id: p.id,
-                                owner: p.owner,
-                                tickLower: '0',
-                                tickUpper: '0',
-                                liquidity: '0',
-                                creationTimestamp: p.createdAtTimestamp || '0',
-                                lastTimestamp: undefined as any,
-                                pool: { id: '' },
-                            }));
-                        }
-                    } catch {}
-                }
-
-                // Deduplicate positions across subgraphs
-                for (const pos of raw) {
-                    if (!seenPositionIds.has(pos.id)) {
-                        seenPositionIds.add(pos.id);
-                        allRawPositions.push(pos);
+            const resp = await fetch(subgraphUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: hookPositionsQuery, variables: { owner: owner.toLowerCase() } }), signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (!resp.ok) return [];
+            const json = await resp.json() as any;
+            let raw = json?.data?.hookPositions ?? [] as SubgraphPosition[];
+            // Fallback to legacy positions if hookPositions empty (testnet only)
+            if (!isMainnet && (!Array.isArray(raw) || raw.length === 0)) {
+                try {
+                    const legacyController = new AbortController();
+                    const legacyTimeoutId = setTimeout(() => legacyController.abort(), 10000);
+                    const respLegacy = await fetch(subgraphUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }), signal: legacyController.signal });
+                    clearTimeout(legacyTimeoutId);
+                    if (respLegacy.ok) {
+                        const jsonLegacy = await respLegacy.json() as any;
+                        const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
+                        raw = legacy.map(p => ({ id: p.id, owner: p.owner, tickLower: '0', tickUpper: '0', liquidity: '0', creationTimestamp: p.createdAtTimestamp || '0', lastTimestamp: undefined as any, pool: { id: '' } }));
                     }
-                }
+                } catch {}
             }
-        } catch (err) {
-            console.error('[get-positions] Error fetching from subgraph', subgraphUrl, err);
+            return raw;
+        } catch (error) {
+            clearTimeout(timeoutId);
+            throw error;
         }
+    }));
+
+    // Extract fulfilled results and deduplicate (Uniswap pattern)
+    let allRawPositions: SubgraphPosition[] = [];
+    const seenPositionIds = new Set<string>();
+    for (const result of subgraphResults) {
+        if (result.status !== 'fulfilled') continue;
+        for (const pos of result.value) { if (!seenPositionIds.has(pos.id)) { seenPositionIds.add(pos.id); allRawPositions.push(pos); } }
     }
 
     // Process all positions
@@ -257,7 +260,108 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
                     });
                 }
 
-                // Step 3: Process positions with fetched data
+                // Step 3: Batch fetch uncollected fees for all positions
+                // Mirrors Uniswap's pattern where fees come WITH position data
+                // @see interface/apps/web/src/components/Liquidity/utils/parseFromRest.ts (lines 372-373, 393-394)
+                const feeCache = new Map<string, { token0UncollectedFees: string; token1UncollectedFees: string }>();
+                try {
+                    const client = createNetworkClient(networkMode);
+                    const stateView = getStateViewAddress(networkMode);
+                    const pmAddress = getPositionManagerAddress(networkMode);
+                    const stateViewAbiParsed = parseAbi(STATE_VIEW_ABI);
+
+                    // Build multicall for fee data: getPositionInfo + getFeeGrowthInside per position
+                    const feeCalls: Array<{ address: `0x${string}`; abi: any; functionName: string; args: any[] }> = [];
+                    const feeMetadata: Array<{ positionId: string; poolIdBytes32: `0x${string}`; tickLower: number; tickUpper: number; salt: `0x${string}` }> = [];
+
+                    for (const { r, details } of positionsWithDetails) {
+                        // Compute poolId
+                        let poolIdBytes32 = getPoolIdFromPosition(r) as `0x${string}`;
+                        if (!poolIdBytes32 || !poolIdBytes32.startsWith('0x')) {
+                            const encodedPoolKey = encodeAbiParameters([
+                                { type: 'tuple', components: [
+                                    { name: 'currency0', type: 'address' },
+                                    { name: 'currency1', type: 'address' },
+                                    { name: 'fee', type: 'uint24' },
+                                    { name: 'tickSpacing', type: 'int24' },
+                                    { name: 'hooks', type: 'address' },
+                                ]}
+                            ], [{
+                                currency0: details.poolKey.currency0 as `0x${string}`,
+                                currency1: details.poolKey.currency1 as `0x${string}`,
+                                fee: Number(details.poolKey.fee),
+                                tickSpacing: Number(details.poolKey.tickSpacing),
+                                hooks: details.poolKey.hooks as `0x${string}`,
+                            }]);
+                            poolIdBytes32 = keccak256(encodedPoolKey) as `0x${string}`;
+                        }
+
+                        const tokenIdStr = r.id.includes('-') ? r.id.split('-').pop()! : r.id;
+                        const salt = `0x${BigInt(tokenIdStr).toString(16).padStart(64, '0')}` as `0x${string}`;
+
+                        feeMetadata.push({
+                            positionId: r.id,
+                            poolIdBytes32,
+                            tickLower: details.tickLower,
+                            tickUpper: details.tickUpper,
+                            salt,
+                        });
+
+                        // getPositionInfo: returns (liquidity, feeGrowthInside0LastX128, feeGrowthInside1LastX128)
+                        feeCalls.push({
+                            address: stateView as `0x${string}`,
+                            abi: stateViewAbiParsed,
+                            functionName: 'getPositionInfo',
+                            args: [poolIdBytes32, pmAddress as `0x${string}`, details.tickLower, details.tickUpper, salt],
+                        });
+
+                        // getFeeGrowthInside: returns (feeGrowthInside0X128, feeGrowthInside1X128)
+                        feeCalls.push({
+                            address: stateView as `0x${string}`,
+                            abi: stateViewAbiParsed,
+                            functionName: 'getFeeGrowthInside',
+                            args: [poolIdBytes32, details.tickLower, details.tickUpper],
+                        });
+                    }
+
+                    if (feeCalls.length > 0) {
+                        const feeResults = await client.multicall({ contracts: feeCalls });
+
+                        for (let i = 0; i < feeMetadata.length; i++) {
+                            try {
+                                const meta = feeMetadata[i];
+                                const posInfoResult = feeResults[i * 2];
+                                const feeInsideResult = feeResults[i * 2 + 1];
+
+                                if (posInfoResult.status === 'failure' || feeInsideResult.status === 'failure') continue;
+
+                                const posInfo = posInfoResult.result as readonly [bigint, bigint, bigint];
+                                const feeInside = feeInsideResult.result as readonly [bigint, bigint];
+
+                                // Calculate unclaimed fees (mirrors get-uncollected-fees.ts)
+                                const { token0Fees, token1Fees } = calculateUnclaimedFeesV4(
+                                    posInfo[0],      // liquidity
+                                    feeInside[0],    // feeGrowthInside0X128 (current)
+                                    feeInside[1],    // feeGrowthInside1X128 (current)
+                                    posInfo[1],      // feeGrowthInside0LastX128
+                                    posInfo[2],      // feeGrowthInside1LastX128
+                                );
+
+                                feeCache.set(meta.positionId, {
+                                    token0UncollectedFees: token0Fees.toString(),
+                                    token1UncollectedFees: token1Fees.toString(),
+                                });
+                            } catch (e) {
+                                // Skip fee calculation for this position on error
+                            }
+                        }
+                    }
+                } catch (e: any) {
+                    console.error('get-positions: failed to batch fetch fees', e?.message || e);
+                    // Continue without fees - they'll be undefined
+                }
+
+                // Step 4: Process positions with fetched data (including fees)
                 const processed: ProcessedPosition[] = [];
                 for (const { r, details } of positionsWithDetails) {
                     try {
@@ -322,6 +426,10 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
                         const createdTs = Number(r.creationTimestamp || (r as any).createdAtTimestamp || 0);
                         const lastTs = Number(r.lastTimestamp || 0);
 
+                        // Get fee data from cache (mirrors Uniswap's parseRestPosition pattern)
+                        // @see interface/apps/web/src/components/Liquidity/utils/parseFromRest.ts (lines 393-394)
+                        const feeData = feeCache.get(r.id);
+
                         processed.push({
                             positionId: r.id || '',
                             owner: r.owner,
@@ -335,6 +443,9 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
                             blockTimestamp: createdTs || 0,
                             lastTimestamp: lastTs || createdTs || 0,
                             isInRange: state.tick >= details.tickLower && state.tick < details.tickUpper,
+                            // Fee fields - matches Uniswap's token0UncollectedFees/token1UncollectedFees
+                            token0UncollectedFees: feeData?.token0UncollectedFees,
+                            token1UncollectedFees: feeData?.token1UncollectedFees,
                         });
                     } catch (e: any) {
                         console.error('get-positions: failed to process position id', r?.id, 'error:', e?.message || e);
@@ -401,53 +512,44 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
     }
   }
 
-  let allRawPositions: SubgraphPosition[] = [];
-  const seenPositionIds = new Set<string>(); // Track position IDs to prevent duplicates
+  // Fetch from all subgraphs in parallel (Promise.allSettled pattern identical to Uniswap getPool.ts)
+  const subgraphResults = await Promise.allSettled(subgraphUrls.map(async (subgraphUrl) => {
+    // AbortController timeout pattern for subgraph fetch
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s for subgraph
 
-  for (const subgraphUrl of subgraphUrls) {
     try {
-      const resp = await fetch(subgraphUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: hookPositionsQuery, variables: { owner: ownerAddress.toLowerCase() } }),
-      });
-      if (!resp.ok) continue;
+      const resp = await fetch(subgraphUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: hookPositionsQuery, variables: { owner: ownerAddress.toLowerCase() } }), signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!resp.ok) return [];
       const json = await resp.json() as any;
       let raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
-      // Fallback to legacy positions (testnet only)
       if (!isMainnet && (!Array.isArray(raw) || raw.length === 0)) {
         try {
-          const respLegacy = await fetch(subgraphUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }),
-          });
+          const legacyController = new AbortController();
+          const legacyTimeoutId = setTimeout(() => legacyController.abort(), 10000);
+          const respLegacy = await fetch(subgraphUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }), signal: legacyController.signal });
+          clearTimeout(legacyTimeoutId);
           if (respLegacy.ok) {
             const jsonLegacy = await respLegacy.json() as any;
             const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
-            raw = legacy.map((p) => ({
-              id: p.id,
-              owner: p.owner,
-              tickLower: '0',
-              tickUpper: '0',
-              liquidity: '0',
-              creationTimestamp: p.createdAtTimestamp || '0',
-              lastTimestamp: '0',
-              pool: { id: '' },
-            })) as any;
+            raw = legacy.map(p => ({ id: p.id, owner: p.owner, tickLower: '0', tickUpper: '0', liquidity: '0', creationTimestamp: p.createdAtTimestamp || '0', lastTimestamp: '0', pool: { id: '' } })) as any;
           }
         } catch {}
       }
-      // Deduplicate positions across subgraphs
-      for (const pos of raw) {
-        if (!seenPositionIds.has(pos.id)) {
-          seenPositionIds.add(pos.id);
-          allRawPositions.push(pos);
-        }
-      }
-    } catch (err) {
-      console.error('[get-positions] Error in fetchIdsOrCount from', subgraphUrl, err);
+      return raw;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
     }
+  }));
+
+  // Extract fulfilled results and deduplicate (Uniswap pattern)
+  let allRawPositions: SubgraphPosition[] = [];
+  const seenPositionIds = new Set<string>();
+  for (const result of subgraphResults) {
+    if (result.status !== 'fulfilled') continue;
+    for (const pos of result.value) { if (!seenPositionIds.has(pos.id)) { seenPositionIds.add(pos.id); allRawPositions.push(pos); } }
   }
 
   try {

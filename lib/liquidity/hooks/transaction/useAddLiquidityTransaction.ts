@@ -7,7 +7,6 @@
 import * as Sentry from '@sentry/nextjs';
 import { useCallback, useState, useRef } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, useBalance, usePublicClient, useSendTransaction } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BadgeCheck, OctagonX, InfoIcon } from 'lucide-react';
 import React from 'react';
@@ -69,8 +68,6 @@ export function useAddLiquidityTransaction({
   deadlineSeconds = 1800, // Default 30 minutes
 }: UseAddLiquidityTransactionProps) {
   const { address: accountAddress, chainId } = useAccount();
-  const queryClient = useQueryClient();
-
   const publicClient = usePublicClient();
 
   // Use balance hooks for refetching after swap (same pattern as swap-interface.tsx)

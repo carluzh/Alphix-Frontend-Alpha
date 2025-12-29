@@ -124,7 +124,8 @@ async function executeSubgraphQueryInternal<T>(req: GraphQLRequest, options: Exe
 }
 
 export async function executeSubgraphQuery<T>(req: GraphQLRequest, options: ExecuteGraphOptions = {}): Promise<T> {
-  const maxRetries = typeof options.maxRetries === 'number' ? Math.max(0, options.maxRetries) : 3;
+  // Conservative retry strategy (Uniswap pattern: max 2 attempts for 5xx errors only)
+  const maxRetries = typeof options.maxRetries === 'number' ? Math.max(0, options.maxRetries) : 1;
 
   return withRateLimitRetry(
     () => executeSubgraphQueryInternal<T>(req, { ...options, maxRetries: 0 }),

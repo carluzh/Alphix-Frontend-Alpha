@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { parseAbi, type Hex } from 'viem';
 import { getPoolSubgraphId, getAllPools, getStateViewAddress, getToken, getNetworkModeFromRequest } from '@/lib/pools-config';
 import { createNetworkClient } from '@/lib/viemClient';
-import { PoolStateSchema, validateApiResponse } from '@/lib/validation';
+import { PoolStateSchema, validateApiResponse, GetPoolStateInputSchema, validateApiInput } from '@/lib/validation';
 
 const stateViewAbi = parseAbi([
   'function getSlot0(bytes32 poolId) external view returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)',
@@ -39,8 +39,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Get network mode from cookies
   const networkMode = getNetworkModeFromRequest(req.headers.cookie);
 
-  const raw = String(req.query.poolId || '');
-  if (!raw) return res.status(400).json({ message: 'poolId is required' });
+  // Input validation (Uniswap safeParse pattern)
+  const inputValidation = validateApiInput(GetPoolStateInputSchema, req.query, 'get-pool-state');
+  if (!inputValidation.success) {
+    return res.status(400).json({ message: inputValidation.error });
+  }
+  const raw = inputValidation.data.poolId;
 
   // Accept either friendly route id or subgraph id
   const all = getAllPools(networkMode);
@@ -53,11 +57,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const address = getStateViewAddress(networkMode) as `0x${string}`;
     const client = createNetworkClient(networkMode);
 
-    const [slot0, liquidity] = await Promise.all([
+    // Promise.allSettled pattern (identical to Uniswap getPool.ts)
+    const [slot0Result, liquidityResult] = await Promise.allSettled([
       client.readContract({ address, abi: stateViewAbi, functionName: 'getSlot0', args: [poolIdHex] }) as Promise<readonly [bigint, number, number, number]>,
       client.readContract({ address, abi: stateViewAbi, functionName: 'getLiquidity', args: [poolIdHex] }) as Promise<bigint>,
     ]);
 
+    // Extract results - both required for pool state
+    if (slot0Result.status !== 'fulfilled' || liquidityResult.status !== 'fulfilled') {
+      const error = slot0Result.status === 'rejected' ? slot0Result.reason : liquidityResult.status === 'rejected' ? liquidityResult.reason : 'Unknown error';
+      console.error('[get-pool-state] RPC call failed:', error);
+      return res.status(500).json({ message: 'Failed to read pool state', error: String(error?.message || error) });
+    }
+
+    const slot0 = slot0Result.value;
+    const liquidity = liquidityResult.value;
     const [sqrtPriceX96, tick, protocolFee, lpFee] = slot0;
 
     // Compute price using bigint math (Number(sqrtPriceX96) loses precision; stable pools show as 1.00)
@@ -106,7 +120,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       currentPrice,
     };
 
-    const validated = validateApiResponse(PoolStateSchema, responseData, 'get-pool-state');
+    const validated = validateApiResponse(PoolStateSchema, responseData, 'get-pool-state', 'handler');
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json(validated);
   } catch (error: any) {

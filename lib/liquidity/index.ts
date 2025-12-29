@@ -9,11 +9,9 @@
  * - state/        State management
  */
 
-// =============================================================================
-// TYPES - Centralized type definitions
-// =============================================================================
-
-export * from './types';
+// TYPES - Selective exports (matching Uniswap pattern, no export *)
+export { PositionField, type FeeData, DEFAULT_FEE_DATA, PositionFlowStep, RangeAmountInputPriceMode, type InitialPosition, type PositionState, DEFAULT_POSITION_STATE, type PriceRangeState, DEFAULT_PRICE_RANGE_STATE, type CreatePositionInfo, type PriceRangeInfo, type DepositState, DEFAULT_DEPOSIT_STATE, type DepositInfo, type V4PositionInfo, type WarningSeverity, type PriceDifference, type DynamicFeeTierSpeedbumpData } from './types/position';
+export { TransactionStepType, LiquidityTransactionType, type ValidatedTransactionRequest, type OnChainTransactionFields, type OnChainTransactionFieldsBatched, type SignTypedDataStepFields, type TokenInfo, type TokenApprovalTransactionStep, type TokenRevocationTransactionStep, type Permit2SignatureStep, type Permit2TransactionStep, type IncreasePositionTransactionStep, type IncreasePositionTransactionStepAsync, type IncreasePositionTransactionStepBatched, type DecreasePositionTransactionStep, type CollectFeesTransactionStep, type IncreaseLiquiditySteps, type DecreaseLiquiditySteps, type CollectFeesSteps, type TransactionStep, type LiquidityAction, type IncreasePositionTxAndGasInfo, type CreatePositionTxAndGasInfo, type DecreasePositionTxAndGasInfo, type CollectFeesTxAndGasInfo, type LiquidityTxAndGasInfo, type ValidatedIncreasePositionTxAndGasInfo, type ValidatedCreatePositionTxAndGasInfo, type ValidatedDecreasePositionTxAndGasInfo, type ValidatedCollectFeesTxAndGasInfo, type ValidatedLiquidityTxContext, isValidLiquidityTxContext, type FlowStatus, type StepState, type LiquidityFlowState, type TokenApprovalStatus, type ApprovalCheckResult, type StepperStep } from './types/transaction';
 
 // =============================================================================
 // HOOKS - Custom React hooks for liquidity operations
@@ -184,8 +182,9 @@ export {
   type BuildDecreaseTxContext,
 } from './transaction/builders';
 
-// Step factory functions
+// Step factory functions - COPIED FROM UNISWAP
 export {
+  parseERC20ApproveCalldata,
   createApprovalTransactionStep,
   createRevocationTransactionStep,
   createPermit2SignatureStep,
@@ -206,9 +205,7 @@ export {
   type IncreaseLiquidityFlow,
   type DecreaseLiquidityFlow,
   type CollectFeesFlow,
-  type CreateApprovalStepParams,
-  type CreatePermit2SignatureStepParams,
-  type CreatePermit2TransactionStepParams,
+  type ValidatedPermit,
 } from './transaction/steps';
 
 // =============================================================================

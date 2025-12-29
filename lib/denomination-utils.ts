@@ -23,7 +23,20 @@ export function getDecimalsForDenomination(baseToken: string, poolType?: string)
 }
 
 /**
- * Convert a tick to a price in the desired denomination
+ * Convert a tick to a price in the desired denomination.
+ *
+ * IMPORTANT: For display purposes, at-limit tick handling should be done at the
+ * display layer using getIsTickAtLimit() from lib/liquidity/hooks/range.
+ * The at-limit checks below are legacy fallbacks and do NOT account for price inversion.
+ *
+ * Recommended pattern (mirrors Uniswap's formatTickPrice):
+ * ```typescript
+ * const isTickAtLimit = getIsTickAtLimit(tickSpacing, tickLower, tickUpper);
+ * if (isTickAtLimit[direction]) {
+ *   return direction === Bound.LOWER ? '0' : '∞';
+ * }
+ * return convertTickToPrice(...);
+ * ```
  *
  * @param tick - The tick to convert
  * @param currentPoolTick - Current pool tick (for relative calculation)
@@ -45,7 +58,8 @@ export function convertTickToPrice(
   token0Symbol: string,
   token1Symbol: string,
 ): string {
-  // Handle extreme values (using SDK constants)
+  // Legacy at-limit handling - prefer using getIsTickAtLimit() at display layer
+  // These checks do NOT account for price inversion and may produce incorrect results
   if (tick >= TickMath.MAX_TICK) return '∞';
   if (tick <= TickMath.MIN_TICK) return '0.00';
 

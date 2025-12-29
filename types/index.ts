@@ -51,6 +51,10 @@ export interface PositionTokenInfo {
 
 /**
  * Processed position type - standardized across the app
+ *
+ * Mirrors Uniswap's PositionInfo from:
+ * - interface/apps/web/src/components/Liquidity/types.ts (BasePositionInfo)
+ * - interface/apps/web/src/components/Liquidity/utils/parseFromRest.ts (parseRestPosition)
  */
 export interface ProcessedPosition {
   positionId: string;
@@ -65,4 +69,39 @@ export interface ProcessedPosition {
   blockTimestamp: number;
   liquidityRaw?: string;
   status?: PositionStatus;
+
+  // Fee fields - mirrors Uniswap's token0UncollectedFees/token1UncollectedFees
+  // @see interface/apps/web/src/components/Liquidity/types.ts (lines 48-49)
+  token0UncollectedFees?: string;
+  token1UncollectedFees?: string;
+}
+
+// =============================================================================
+// POINTS CAMPAIGN TYPES
+// Mirrors Uniswap's LP Incentives from:
+// - interface/apps/web/src/components/Liquidity/types.ts (V4PositionInfo)
+// =============================================================================
+
+/**
+ * Points data attached to a liquidity position.
+ * Mirrors V4PositionInfo reward fields (boostedApr, totalApr, unclaimedRewardsAmountUni).
+ *
+ * @example
+ * ```typescript
+ * const pointsData: PositionPointsData = {
+ *   pointsEarned: '1500',
+ *   pointsApr: 12.5,
+ *   isEligible: true,
+ * };
+ * ```
+ */
+export interface PositionPointsData {
+  /** Raw points earned (string for precision, mirrors unclaimedRewardsAmountUni) */
+  pointsEarned?: string;
+  /** Points APR equivalent (mirrors boostedApr) */
+  pointsApr?: number;
+  /** Total APR including points (mirrors totalApr) */
+  totalApr?: number;
+  /** Whether position is eligible for points campaign */
+  isEligible: boolean;
 }

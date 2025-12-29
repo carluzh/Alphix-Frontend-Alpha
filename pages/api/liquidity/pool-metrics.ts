@@ -167,61 +167,78 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           return EMPTY_METRICS;
         }
 
-        const [poolResponse, feeResponse] = await Promise.all([
+        // Promise.allSettled pattern (identical to Uniswap getPool.ts)
+        // AbortController timeout pattern for fetch calls
+        const poolController = new AbortController();
+        const poolTimeoutId = setTimeout(() => poolController.abort(), 10000); // 10s for subgraph
+        const feeController = new AbortController();
+        const feeTimeoutId = setTimeout(() => feeController.abort(), 10000); // 10s for internal API
+
+        const [poolResult, feeResult] = await Promise.allSettled([
           fetch(poolDataUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               query: poolQuery,
               variables: { poolId: apiId.toLowerCase(), days: daysNum }
-            })
+            }),
+            signal: poolController.signal
           }),
-          fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}&network=${networkMode}`)
+          fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}&network=${networkMode}`, {
+            signal: feeController.signal
+          })
         ]);
 
+        clearTimeout(poolTimeoutId);
+        clearTimeout(feeTimeoutId);
+
+        // Extract results - pool data required, fee data optional
+        const poolResponse = poolResult.status === 'fulfilled' ? poolResult.value : null;
+        const feeResponse = feeResult.status === 'fulfilled' ? feeResult.value : null;
+
         // Check response status first
-        if (!poolResponse.ok) {
-          console.error('[pool-metrics] Pool subgraph error:', poolResponse.status, poolResponse.statusText);
+        if (!poolResponse || !poolResponse.ok) {
+          console.error('[pool-metrics] Pool subgraph error:', poolResponse?.status, poolResponse?.statusText);
           return EMPTY_METRICS;
         }
 
-        if (!feeResponse.ok) {
-          console.error('[pool-metrics] Fee subgraph error:', feeResponse.status, feeResponse.statusText);
+        if (!feeResponse || !feeResponse.ok) {
+          console.error('[pool-metrics] Fee subgraph error:', feeResponse?.status, feeResponse?.statusText);
         }
 
         // Handle empty/malformed responses gracefully
-        let poolResult: any;
-        let feeResult: any;
+        let poolData: any;
+        let feeData: any;
 
         try {
           const poolText = await poolResponse.text();
           if (!poolText || poolText.trim() === '') {
             console.log('[pool-metrics] Empty pool response');
-            poolResult = { data: { trackedPool: null, poolDayDatas: [] } };
+            poolData = { data: { trackedPool: null, poolDayDatas: [] } };
           } else {
-            poolResult = JSON.parse(poolText);
+            poolData = JSON.parse(poolText);
           }
         } catch (e) {
           console.error('[pool-metrics] Failed to parse pool response:', e);
-          poolResult = { data: { trackedPool: null, poolDayDatas: [] } };
+          poolData = { data: { trackedPool: null, poolDayDatas: [] } };
         }
 
         try {
           // Fee events come from unified endpoint, already in array format
-          feeResult = await feeResponse.json();
+          feeData = feeResponse ? await feeResponse.json() : [];
         } catch (e) {
           console.error('[pool-metrics] Failed to parse fee response:', e);
-          feeResult = [];
+          feeData = [];
         }
 
-        if (poolResult?.errors) {
-          console.error('[pool-metrics] Pool query errors:', JSON.stringify(poolResult.errors, null, 2));
+        if (poolData?.errors) {
+          console.error('[pool-metrics] Pool query errors:', JSON.stringify(poolData.errors, null, 2));
           return EMPTY_METRICS;
         }
 
-        const { data } = poolResult;
+        const { data } = poolData;
         // Fee events already come as an array from the unified endpoint
-        const feeEvents = Array.isArray(feeResult) ? feeResult : [];
+        const feeEvents = Array.isArray(feeData) ? feeData : [];
 
         // Handle both schema types (mainnet uses same schema as DAI/Satsuma)
         const pool = (isMainnet || isDAI) ? data?.pool : data?.trackedPool;
@@ -311,8 +328,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     );
 
-    // Set cache headers (no-store to let Redis handle caching, not CDN)
-    res.setHeader('Cache-Control', 'no-store');
+    // Uniswap multi-layer caching pattern for dynamic data
+    res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
     if (result.isStale) {
       res.setHeader('X-Cache-Status', 'stale');
     }

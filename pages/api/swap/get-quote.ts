@@ -626,6 +626,9 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       });
     }
 
+    // Real-time quote data - never cache (Uniswap pattern)
+    res.setHeader('Cache-Control', 'no-store');
+
     return res.status(200).json({
       success: true,
       swapType,

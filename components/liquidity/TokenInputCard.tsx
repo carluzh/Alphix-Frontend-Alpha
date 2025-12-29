@@ -2,8 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
-import { motion, useAnimation } from "framer-motion";
-import type { LegacyAnimationControls } from "motion-dom";
+import { motion, useAnimation, type AnimationControls } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -75,7 +74,7 @@ interface TokenInputCardProps {
   /** Whether amount exceeds balance (triggers wiggle) */
   isOverBalance?: boolean;
   /** External animation controls (optional - creates internal if not provided) */
-  animationControls?: LegacyAnimationControls;
+  animationControls?: AnimationControls;
   /** Optional className override */
   className?: string;
 }

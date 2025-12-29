@@ -47,9 +47,8 @@ import {
 } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { useQueryClient } from '@tanstack/react-query';
 import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps, removePositionIdFromCache } from "@/lib/client-cache";
-import { invalidateAfterTx } from "@/lib/invalidation";
+import { invalidateAfterTx } from "@/lib/apollo/mutations";
 
 import type { Pool } from "@/types";
 import { AddLiquidityForm } from "@/components/liquidity/AddLiquidityForm";
@@ -62,6 +61,8 @@ import { ChevronDownIcon } from "lucide-react";
 
 import { PositionCardCompact } from '@/components/liquidity/PositionCardCompact';
 import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
+import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
+import { getOptimalBaseToken } from '@/lib/denomination-utils';
 
 const IncreaseLiquidityModal = dynamic(
   () => import("@/components/liquidity/increase").then(m => m.IncreaseLiquidityModal),
@@ -212,7 +213,6 @@ export default function PoolDetailPage() {
   const router = useRouter();
   const params = useParams<{ poolId: string }>();
   const poolId = params?.poolId || '';
-  const queryClient = useQueryClient();
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(true);
   const [isDerivingNewPosition, setIsDerivingNewPosition] = useState(false);
@@ -302,7 +302,7 @@ export default function PoolDetailPage() {
           : p
       ));
     }
-  }, [isCollectConfirmed, collectHash, lastCollectPositionId, queryClient]);
+  }, [isCollectConfirmed, collectHash, lastCollectPositionId]);
   // Guard to prevent duplicate toasts and unintended modal closes across re-renders
   const pendingActionRef = useRef<null | { type: 'increase' | 'decrease' | 'withdraw' | 'burn' | 'collect' | 'compound' }>(null);
 
@@ -334,6 +334,46 @@ export default function PoolDetailPage() {
       setCurrentPoolTick(Number(poolState.currentPoolTick));
     }
   }, [poolState]);
+
+  // ==========================================================================
+  // DENOMINATION TOGGLE
+  // User can override the auto-detected denomination base for price display.
+  // Mirrors Uniswap's pricesInverted pattern from LiquidityPositionCard.
+  // ==========================================================================
+  const [denominationBaseOverride, setDenominationBaseOverride] = useState<string | null>(null);
+
+  // Get token symbols for the toggle
+  const token0Symbol = basePoolInfo?.tokens?.[0]?.symbol || '';
+  const token1Symbol = basePoolInfo?.tokens?.[1]?.symbol || '';
+
+  // Calculate effective denomination base (override or auto-detect)
+  const effectiveDenominationBase = useMemo(() => {
+    // If user has set an override and it's valid for this pool, use it
+    if (
+      denominationBaseOverride &&
+      (denominationBaseOverride === token0Symbol || denominationBaseOverride === token1Symbol)
+    ) {
+      return denominationBaseOverride;
+    }
+    // Fall back to auto-detection
+    const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
+    return getOptimalBaseToken(token0Symbol, token1Symbol, priceNum);
+  }, [denominationBaseOverride, token0Symbol, token1Symbol, currentPrice]);
+
+  // Load saved preference on mount
+  useEffect(() => {
+    const storageKey = `denomination-base-${poolId}`;
+    const saved = SafeStorage.get(storageKey);
+    if (saved && (saved === token0Symbol || saved === token1Symbol)) {
+      setDenominationBaseOverride(saved);
+    }
+  }, [poolId, token0Symbol, token1Symbol]);
+
+  // Handler for toggle
+  const handleDenominationToggle = useCallback((newBase: string) => {
+    setDenominationBaseOverride(newBase);
+    SafeStorage.set(`denomination-base-${poolId}`, newBase);
+  }, [poolId]);
 
   const { data: allPrices } = useAllPrices();
   const isLoadingPrices = !allPrices;
@@ -392,10 +432,20 @@ export default function PoolDetailPage() {
   // State for optimistically cleared fees
   const [optimisticallyClearedFees, setOptimisticallyClearedFees] = useState<Set<string>>(new Set());
 
-  // Extract individual fee data from batch result
-  const getFeesForPosition = React.useCallback((positionId: string) => {
-    if (!batchFeesData || !positionId) return null;
-    
+  /**
+   * Extract fee data for a position.
+   * Mirrors Uniswap's pattern where fees come WITH position data.
+   *
+   * @see interface/apps/web/src/components/Liquidity/utils/parseFromRest.ts (lines 393-394)
+   *
+   * Priority:
+   * 1. Optimistically cleared fees (user just collected)
+   * 2. Position's built-in fees (token0UncollectedFees/token1UncollectedFees)
+   * 3. Fallback to batchFeesData (backward compat, will be removed)
+   */
+  const getFeesForPosition = React.useCallback((positionId: string, position?: ProcessedPosition) => {
+    if (!positionId) return null;
+
     // If this position has been optimistically cleared, return zero fees
     if (optimisticallyClearedFees.has(positionId)) {
       return {
@@ -405,7 +455,18 @@ export default function PoolDetailPage() {
         totalValueUSD: 0
       };
     }
-    
+
+    // Use position's built-in fees first (Uniswap-style)
+    if (position?.token0UncollectedFees !== undefined && position?.token1UncollectedFees !== undefined) {
+      return {
+        positionId,
+        amount0: position.token0UncollectedFees,
+        amount1: position.token1UncollectedFees,
+      };
+    }
+
+    // Fallback to batchFeesData (backward compat during transition)
+    if (!batchFeesData) return null;
     return batchFeesData.find(fee => fee.positionId === positionId) || null;
   }, [batchFeesData, optimisticallyClearedFees]);
 
@@ -772,7 +833,7 @@ export default function PoolDetailPage() {
           return [...newPositions, ...updated];
         });
 
-        invalidateAfterTx(queryClient, {
+        invalidateAfterTx(null, {
           owner: accountAddress,
           chainId,
           poolId,
@@ -788,7 +849,7 @@ export default function PoolDetailPage() {
         setIsDerivingNewPosition(false);
       }
     }
-  }, [accountAddress, poolId, chainId, queryClient, currentPoolData]);
+  }, [accountAddress, poolId, chainId, currentPoolData]);
 
   const silentRefreshTVL = useCallback(async () => {
     if (!poolId) return;
@@ -824,7 +885,7 @@ export default function PoolDetailPage() {
   const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => {
     if (!poolId || !isConnected || !accountAddress || !chainId) return;
 
-    await invalidateAfterTx(queryClient, {
+    await invalidateAfterTx(null, {
       owner: accountAddress,
       chainId,
       poolId,
@@ -861,13 +922,13 @@ export default function PoolDetailPage() {
         setOptimisticallyClearedFees(new Set());
       }
     });
-  }, [poolId, isConnected, accountAddress, silentRefreshTVL, queryClient]);
+  }, [poolId, isConnected, accountAddress, silentRefreshTVL]);
 
   // Refresh for position increases
   const refreshAfterIncrease = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
     if (!poolId || !isConnected || !accountAddress || !chainId) return;
 
-    await invalidateAfterTx(queryClient, {
+    await invalidateAfterTx(null, {
       owner: accountAddress,
       chainId,
       poolId,
@@ -893,7 +954,7 @@ export default function PoolDetailPage() {
         setOptimisticallyClearedFees(new Set());
       }
     });
-  }, [poolId, isConnected, accountAddress, fetchPageData, queryClient]);
+  }, [poolId, isConnected, accountAddress, fetchPageData]);
 
   const handledIncreaseHashRef = useRef<string | null>(null);
   const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string } }) => {
@@ -2325,8 +2386,18 @@ export default function PoolDetailPage() {
             {/* Static title - always visible */}
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-medium">Your Positions</h3>
-              {/* Add Liquidity button - only show below 1400px AND when there are positions (on mobile, large button shows when no positions) */}
-              {(userPositions.length > 0 || isDerivingNewPosition || !isMobile) && (
+              <div className="flex items-center gap-3">
+                {/* Denomination toggle - only show when there are positions */}
+                {(userPositions.length > 0 || isDerivingNewPosition) && token0Symbol && token1Symbol && (
+                  <DenominationToggle
+                    token0Symbol={token0Symbol}
+                    token1Symbol={token1Symbol}
+                    activeBase={effectiveDenominationBase}
+                    onToggle={handleDenominationToggle}
+                  />
+                )}
+                {/* Add Liquidity button - only show below 1400px AND when there are positions (on mobile, large button shows when no positions) */}
+                {(userPositions.length > 0 || isDerivingNewPosition || !isMobile) && (
                 <a
                   onClick={(e) => {
                     e.stopPropagation();
@@ -2339,6 +2410,7 @@ export default function PoolDetailPage() {
                   <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
                 </a>
               )}
+              </div>
             </div>
 
             {isLoadingPositions ? (
@@ -2352,7 +2424,8 @@ export default function PoolDetailPage() {
                     const poolAPR = isFinite(aprNum) ? aprNum : null;
 
                     return userPositions.map((position) => {
-                      const feeData = getFeesForPosition(position.positionId);
+                      // Get fees from position (Uniswap-style) with optimistic clearing support
+                      const feeData = getFeesForPosition(position.positionId, position as any);
                       const positionWithFees = {
                         ...position,
                         unclaimedRaw0: feeData?.amount0,
@@ -2384,9 +2457,11 @@ export default function PoolDetailPage() {
                           isLoadingPoolStates: !currentPoolData
                         }}
                         fees={{
-                          raw0: batchFeesData?.find(f => f.positionId === position.positionId)?.amount0 ?? null,
-                          raw1: batchFeesData?.find(f => f.positionId === position.positionId)?.amount1 ?? null
+                          // Use feeData which now prioritizes position's built-in fees
+                          raw0: feeData?.amount0 ?? null,
+                          raw1: feeData?.amount1 ?? null
                         }}
+                        denominationBaseOverride={effectiveDenominationBase}
                       />
                     );
                     });
@@ -2821,8 +2896,8 @@ export default function PoolDetailPage() {
           }}
           position={selectedPositionForDetails}
           valueUSD={calculatePositionUsd(selectedPositionForDetails)}
-          prefetchedRaw0={getFeesForPosition(selectedPositionForDetails.positionId)?.amount0}
-          prefetchedRaw1={getFeesForPosition(selectedPositionForDetails.positionId)?.amount1}
+          prefetchedRaw0={getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails as any)?.amount0}
+          prefetchedRaw1={getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails as any)?.amount1}
           formatTokenDisplayAmount={formatTokenDisplayAmount}
           getUsdPriceForSymbol={getUsdPriceForSymbol}
           onRefreshPosition={async () => {

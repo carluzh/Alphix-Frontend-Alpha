@@ -2,30 +2,39 @@
  * Transaction Steps
  *
  * Step factory functions for liquidity flows.
+ * COPIED FROM UNISWAP - DO NOT MODIFY WITHOUT UPDATING FROM SOURCE
  */
 
+// Main step generator - COPIED FROM UNISWAP
+export { generateLPTransactionSteps } from './generateLPTransactionSteps';
+
 export {
+  // Approval utilities
+  parseERC20ApproveCalldata,
+  // Step creation functions - COPIED FROM UNISWAP
   createApprovalTransactionStep,
   createRevocationTransactionStep,
   createPermit2SignatureStep,
   createPermit2TransactionStep,
   createIncreasePositionStep,
   createIncreasePositionAsyncStep,
+  createCreatePositionAsyncStep,
   createIncreasePositionStepBatched,
   createDecreasePositionStep,
   createCollectFeesStep,
+  // Flow ordering functions - COPIED FROM UNISWAP
   orderIncreaseLiquiditySteps,
   orderDecreaseLiquiditySteps,
   orderCollectFeesSteps,
+  // UI helpers
   generateStepperSteps,
   createInitialFlowState,
   getNextStep,
   isFlowComplete,
   hasFlowError,
+  // Flow types
   type IncreaseLiquidityFlow,
   type DecreaseLiquidityFlow,
   type CollectFeesFlow,
-  type CreateApprovalStepParams,
-  type CreatePermit2SignatureStepParams,
-  type CreatePermit2TransactionStepParams,
+  type ValidatedPermit,
 } from './steps';

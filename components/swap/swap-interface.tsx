@@ -15,7 +15,6 @@ import {
   BadgeCheck,
 } from "lucide-react"
 import { useAccount, useBalance } from "wagmi"
-import { useQueryClient } from "@tanstack/react-query"
 import { motion, AnimatePresence } from "framer-motion"
 import React from "react"
 import { activeChainId, isMainnet } from "../../lib/wagmiConfig";
@@ -161,8 +160,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const { networkMode } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
-  // Query client for cache invalidation
-  const queryClient = useQueryClient();
   // Removed route-row hover logic; arrows only show on preview hover
   const [isAttemptingSwitch, setIsAttemptingSwitch] = useState(false);
 
@@ -268,10 +265,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     if (!accountAddress) return;
 
     const onRefresh = () => {
+      // Refetch balances via wagmi hooks
       Promise.all([refetchFromTokenBalance?.(), refetchToTokenBalance?.()])
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['balance'] })
-      }, 2000)
     }
 
     const onStorage = (e: StorageEvent) => {
@@ -286,7 +281,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
       window.removeEventListener('storage', onStorage);
     };
-  }, [accountAddress, refetchFromTokenBalance, refetchToTokenBalance, queryClient]);
+  }, [accountAddress, refetchFromTokenBalance, refetchToTokenBalance]);
 
   // Update fromToken balance
   useEffect(() => {
@@ -397,7 +392,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     swapTxInfo,
     actions: swapActions,
   } = useSwapExecution({
-    queryClient,
+    queryClient: null,
     fromToken,
     toToken,
     fromAmount,

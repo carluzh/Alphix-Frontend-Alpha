@@ -96,7 +96,12 @@
       "Bash(# Search what subgraph Alphix currently uses echo \"\"=== Current Alphix Subgraph URLs ===\"\" grep -r \"\"SUBGRAPH_URL\\\\|thegraph\\\\|satsuma\"\" /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/.env*)",
       "Bash(# Check what queries the Uniswap app actually makes by looking at their GraphQL files echo \"\"=== Uniswap GraphQL Pool Query Patterns ===\"\" cat /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface/packages/api/src/clients/graphql/web/pool.graphql)",
       "Bash(npx vitest:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(du:*)",
+      "Bash(node -e \"require\\(''./app/api/liquidity/get-pools-batch/route.ts''\\)\")",
+      "Bash(dir /b:*)",
+      "Bash(xargs grep:*)",
+      "Bash(npm view:*)"
     ],
     "deny": [],
     "ask": []

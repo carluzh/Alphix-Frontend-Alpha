@@ -308,7 +308,8 @@ export default async function handler(
         let currentLiquidity: bigint;
 
         try {
-            const [slot0, liquidity] = await Promise.all([
+            // Promise.allSettled pattern (identical to Uniswap getPool.ts)
+            const [slot0Result, liquidityResult] = await Promise.allSettled([
                 publicClient.readContract({
                     address: STATE_VIEW_ADDRESS,
                     abi: stateViewAbiViem,
@@ -323,6 +324,15 @@ export default async function handler(
                 }) as Promise<bigint>
             ]);
 
+            // Extract results - both required for pool state
+            if (slot0Result.status !== 'fulfilled' || liquidityResult.status !== 'fulfilled') {
+                const error = slot0Result.status === 'rejected' ? slot0Result.reason : liquidityResult.status === 'rejected' ? liquidityResult.reason : 'Unknown error';
+                console.error("API Error (prepare-mint-tx) fetching pool slot0 data:", error);
+                return res.status(500).json({ message: "Failed to fetch current pool data.", error: String(error?.message || error) });
+            }
+
+            const slot0 = slot0Result.value;
+            const liquidity = liquidityResult.value;
             const sqrtPriceX96Current = slot0[0] as bigint;
             currentTick = slot0[1] as number;
             currentLiquidity = liquidity as bigint;
@@ -330,8 +340,8 @@ export default async function handler(
 
             // Check if pool is initialized
             if (sqrtPriceX96Current === 0n) {
-                return res.status(400).json({ 
-                    message: `Pool ${token0Symbol}/${token1Symbol} (${poolId}) is not initialized. sqrtPriceX96 = 0. This is likely why you're getting PoolNotInitialized errors.` 
+                return res.status(400).json({
+                    message: `Pool ${token0Symbol}/${token1Symbol} (${poolId}) is not initialized. sqrtPriceX96 = 0. This is likely why you're getting PoolNotInitialized errors.`
                 });
             }
 

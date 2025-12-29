@@ -829,7 +829,8 @@ export default async function handler(
         let currentLiquidity: bigint;
 
         try {
-            const [slot0, liquidity] = await Promise.all([
+            // Promise.allSettled pattern (identical to Uniswap getPool.ts)
+            const [slot0Result, liquidityResult] = await Promise.allSettled([
                 publicClient.readContract({
                     address: STATE_VIEW_ADDRESS,
                     abi: stateViewAbiViem,
@@ -844,6 +845,15 @@ export default async function handler(
                 }) as Promise<bigint>
             ]);
 
+            // Extract results - both required for pool state
+            if (slot0Result.status !== 'fulfilled' || liquidityResult.status !== 'fulfilled') {
+                const error = slot0Result.status === 'rejected' ? slot0Result.reason : liquidityResult.status === 'rejected' ? liquidityResult.reason : 'Unknown error';
+                console.error("Error fetching pool state:", error);
+                return res.status(500).json({ message: "Failed to fetch current pool data.", error: String(error?.message || error) });
+            }
+
+            const slot0 = slot0Result.value;
+            const liquidity = liquidityResult.value;
             const sqrtPriceX96Current = slot0[0] as bigint;
             currentTick = slot0[1] as number;
             currentLiquidity = liquidity as bigint;

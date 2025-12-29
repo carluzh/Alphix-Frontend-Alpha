@@ -31,8 +31,9 @@ export function MiniPoolChart({
   isFullRange,
   className
 }: MiniPoolChartProps) {
-  // Determine if we need to invert the price (same logic as PositionChartV2)
-  const priceInverted = denominationBase === token1;
+  // Determine if we need to invert the price (matches PositionCardCompact's shouldInvert)
+  // When denominationBase === token0, we invert to show "token0 per token1"
+  const priceInverted = denominationBase === token0;
 
   // Fetch data using Uniswap-style hook
   const { entries, loading: isLoading, dataQuality } = usePoolPriceChartData({

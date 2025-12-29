@@ -64,14 +64,13 @@ const BASE_CSP: Record<string, string[]> = {
   'upgrade-insecure-requests': [],
 };
 
-function buildCSP(): string {
-  return Object.entries(BASE_CSP)
-    .map(([key, values]) => values.length === 0 ? key : `${key} ${values.join(' ')}`)
-    .join('; ');
-}
+// Precompute CSP header string ONCE at module load (not per-request)
+const CSP_HEADER = Object.entries(BASE_CSP)
+  .map(([key, values]) => values.length === 0 ? key : `${key} ${values.join(' ')}`)
+  .join('; ');
 
 function addSecurityHeaders(response: NextResponse): void {
-  response.headers.set('Content-Security-Policy', buildCSP());
+  response.headers.set('Content-Security-Policy', CSP_HEADER);
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('X-XSS-Protection', '1; mode=block');

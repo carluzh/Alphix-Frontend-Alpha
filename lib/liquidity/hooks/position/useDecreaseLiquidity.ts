@@ -3,7 +3,6 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import React from 'react';
 import { OctagonX, BadgeCheck } from 'lucide-react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import { TickMath } from '@uniswap/v3-sdk';
@@ -46,7 +45,6 @@ interface UseDecreaseLiquidityProps {
 type DecreaseOptions = { slippageBps?: number; deadlineSeconds?: number };
 
 export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: UseDecreaseLiquidityProps) {
-  const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
   const { networkMode } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
@@ -774,7 +772,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             const isCollect = lastWasCollectOnly.current;
             const positionId = isCollect ? lastCollectPositionId.current : lastDecreaseData.current?.tokenId;
             const poolId = lastDecreaseData.current?.poolId;
-            invalidateAfterTx(queryClient, {
+            invalidateAfterTx(null, {
               owner: accountAddress,
               chainId,
               poolId: poolId,

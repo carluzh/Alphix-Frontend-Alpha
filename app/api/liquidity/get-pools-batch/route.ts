@@ -156,50 +156,24 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   const stateViewAddress = getStateViewAddress(networkMode);
   const client = createNetworkClient(networkMode);
 
-  // RUN EVERYTHING IN PARALLEL
+  // RUN EVERYTHING IN PARALLEL (Promise.allSettled pattern identical to Uniswap getPool.ts)
   console.time('[PERF] All data fetches (parallel)');
-  const [tokenPrices, feeResults, combinedResult, combinedResultDai] = await Promise.all([
-    // 1. Token prices
+  const [pricesResult, feesResult, combinedQueryResult, daiQueryResult] = await Promise.allSettled([
     batchGetTokenPrices(Array.from(tokenSymbols)),
-
-    // 2. Fee multicall
     (async () => {
-      try {
-        const feeCalls = targetPoolIds.map(poolId => ({
-          address: stateViewAddress as `0x${string}`,
-          abi: parseAbi(STATE_VIEW_ABI),
-          functionName: 'getSlot0',
-          args: [poolId as `0x${string}`],
-        }));
-        return await client.multicall({
-          contracts: feeCalls,
-          allowFailure: true,
-        });
-      } catch (e) {
-        console.error('[Batch] Multicall for fees failed:', e);
-        return [];
-      }
+      const feeCalls = targetPoolIds.map(poolId => ({ address: stateViewAddress as `0x${string}`, abi: parseAbi(STATE_VIEW_ABI), functionName: 'getSlot0', args: [poolId as `0x${string}`] }));
+      return client.multicall({ contracts: feeCalls, allowFailure: true });
     })(),
-
-    // 3. Main subgraph query (pools + poolHourDatas + poolDayDatas in single request)
-    nonDaiPoolIds.length > 0
-      ? fetchSubgraphDirect(POOL_SUBGRAPH_URL, buildPoolsQuery(nonDaiPoolIds.length), {
-          poolIds: nonDaiPoolIds.map((id) => id.toLowerCase()),
-          hourCutoff,
-          dayCutoff,
-        })
-      : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [], poolDayDatas: [] } } }),
-
-    // 4. DAI subgraph query (testnet only)
-    daiPoolIds.length > 0 && TESTNET_DAI_URL
-      ? fetchSubgraphDirect(TESTNET_DAI_URL, buildPoolsQuery(daiPoolIds.length), {
-          poolIds: daiPoolIds.map((id) => id.toLowerCase()),
-          hourCutoff,
-          dayCutoff,
-        })
-      : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [], poolDayDatas: [] } } }),
+    nonDaiPoolIds.length > 0 ? fetchSubgraphDirect(POOL_SUBGRAPH_URL, buildPoolsQuery(nonDaiPoolIds.length), { poolIds: nonDaiPoolIds.map(id => id.toLowerCase()), hourCutoff, dayCutoff }) : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [], poolDayDatas: [] } } }),
+    daiPoolIds.length > 0 && TESTNET_DAI_URL ? fetchSubgraphDirect(TESTNET_DAI_URL, buildPoolsQuery(daiPoolIds.length), { poolIds: daiPoolIds.map(id => id.toLowerCase()), hourCutoff, dayCutoff }) : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [], poolDayDatas: [] } } }),
   ]);
   console.timeEnd('[PERF] All data fetches (parallel)');
+
+  // Extract results (Uniswap pattern: safely extract fulfilled values)
+  const tokenPrices = pricesResult.status === 'fulfilled' ? pricesResult.value : {};
+  const feeResults = feesResult.status === 'fulfilled' ? feesResult.value : [];
+  const combinedResult = combinedQueryResult.status === 'fulfilled' ? combinedQueryResult.value : { success: false, data: {}, error: 'Query failed' };
+  const combinedResultDai = daiQueryResult.status === 'fulfilled' ? daiQueryResult.value : { success: false, data: {}, error: 'Query failed' };
 
   if (!combinedResult.success && 'error' in combinedResult) {
     errors.push(`Combined query failed: ${combinedResult.error}`);

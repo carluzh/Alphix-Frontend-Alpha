@@ -1,7 +1,6 @@
 import * as Sentry from '@sentry/nextjs';
 import React, { useState, useCallback, useEffect } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, usePublicClient } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import { Token, Ether, CurrencyAmount, Percent } from '@uniswap/sdk-core';
@@ -46,7 +45,6 @@ type IncreaseOptions = {
 };
 
 export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquidityProps) {
-  const queryClient = useQueryClient();
   const { address: accountAddress, chainId } = useAccount();
   const { networkMode } = useNetwork();
 
@@ -508,7 +506,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
             }
           }
           const { getPoolSubgraphId } = await import('@/lib/pools-config');
-          await invalidateAfterTx(queryClient, {
+          await invalidateAfterTx(null, {
             owner: accountAddress,
             chainId: chainId!,
             poolId: getPoolSubgraphId(`${posData.token0Symbol}/${posData.token1Symbol}`) || undefined,

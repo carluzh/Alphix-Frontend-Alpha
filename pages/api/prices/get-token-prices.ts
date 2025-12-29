@@ -32,8 +32,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // On success, update the cache
     serverCache.set(CACHE_KEY, { data: response, ts: Date.now() });
     
-    // Edge cache hint for successful responses
-    res.setHeader('Cache-control', 'public, s-maxage=60, stale-while-revalidate=300');
+    // Edge cache hint for successful responses (Uniswap multi-layer caching pattern)
+    res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
     return res.status(200).json(response);
   } catch (error: any) {
     console.error('[TokenPrices API] Error fetching fresh prices:', error.message);

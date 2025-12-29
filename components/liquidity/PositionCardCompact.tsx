@@ -5,7 +5,7 @@ import Image from "next/image";
 import { formatUnits } from "viem";
 import { TokenStack } from "./TokenStack";
 import { getTokenDefinitions, getPoolById } from '@/lib/pools-config';
-import { isFullRangePosition } from '@/lib/liquidity/hooks/range';
+import { isFullRangePosition, getIsTickAtLimit, Bound } from '@/lib/liquidity/hooks/range';
 import { useNetwork } from '@/lib/network-context';
 import { cn } from "@/lib/utils";
 import { MiniPoolChart } from './MiniPoolChart';
@@ -13,15 +13,13 @@ import { getDecimalsForDenomination, getOptimalBaseToken } from '@/lib/denominat
 import { calculateRealizedApr, formatApr } from '@/lib/apr';
 import { Percent } from '@uniswap/sdk-core';
 import { ArrowUpRight } from 'lucide-react';
-
-function StatusIndicatorCircle({ className }: { className?: string }) {
-  return (
-    <svg width="8" height="8" viewBox="0 0 8 8" fill="none" className={className}>
-      <circle cx="4" cy="4" r="4" fill="currentColor" fillOpacity="0.4" />
-      <circle cx="4" cy="4" r="2" fill="currentColor" />
-    </svg>
-  );
-}
+import { getPositionStatus, type PositionStatus, type PositionPointsData } from '@/types';
+import {
+    StatusIndicatorCircle,
+    getPositionStatusLabel,
+    getPositionStatusColor,
+} from './LiquidityPositionStatusIndicator';
+import { LiquidityPositionFeeStats } from './FeeStats';
 
 type ProcessedPosition = {
     positionId: string;
@@ -45,6 +43,7 @@ type ProcessedPosition = {
     ageSeconds: number;
     blockTimestamp: number;
     lastTimestamp: number; // Last modification timestamp (for APY calculation)
+    liquidityRaw?: string; // Raw liquidity amount for CLOSED status detection
     // Optimistic UI state - added dynamically during liquidity modifications
     isOptimisticallyUpdating?: boolean;
 };
@@ -71,6 +70,14 @@ interface PositionCardCompactProps {
     onVisitPool?: () => void;
     disableHover?: boolean;
     className?: string;
+    /** Optional denomination base override. If provided and valid, uses this instead of auto-detection. */
+    denominationBaseOverride?: string;
+    /**
+     * Optional points campaign data for this position.
+     * Mirrors Uniswap's lpIncentiveRewardApr/totalApr pattern from LiquidityPositionFeeStats.
+     * When provided and pointsApr > 0, displays PointsFeeStat instead of plain APR.
+     */
+    pointsData?: PositionPointsData;
 }
 
 export function PositionCardCompact({
@@ -84,10 +91,14 @@ export function PositionCardCompact({
     fees,
     showMenuButton = false,
     onVisitPool,
+    denominationBaseOverride,
     disableHover = false,
     className,
+    pointsData,
 }: PositionCardCompactProps) {
     const [isHovered, setIsHovered] = useState(false);
+    // Price inversion state for MinMaxRange toggle (mirrors Uniswap's pricesInverted)
+    const [pricesInverted, setPricesInverted] = useState(false);
     const { networkMode } = useNetwork();
     const TOKEN_DEFINITIONS = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
     const { currentPrice, currentPoolTick, poolAPR, isLoadingPrices, isLoadingPoolStates } = poolContext;
@@ -120,12 +131,43 @@ export function PositionCardCompact({
         }
     }, [prefetchedRaw0, prefetchedRaw1, position, getUsdPriceForSymbol]);
 
+    /**
+     * Determine denomination base token.
+     * Uses override if provided and valid, otherwise falls back to auto-detection.
+     * Mirrors Uniswap's pricesInverted pattern from LiquidityPositionCard.
+     */
     const denominationBase = React.useMemo(() => {
+        // Use override if provided and matches one of the pool's tokens
+        if (
+            denominationBaseOverride &&
+            (denominationBaseOverride === position.token0.symbol ||
+             denominationBaseOverride === position.token1.symbol)
+        ) {
+            return denominationBaseOverride;
+        }
+        // Fall back to auto-detection based on token priority
         const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
         return getOptimalBaseToken(position.token0.symbol, position.token1.symbol, priceNum);
-    }, [position.token0.symbol, position.token1.symbol, currentPrice]);
+    }, [denominationBaseOverride, position.token0.symbol, position.token1.symbol, currentPrice]);
 
+    // Combine denomination base with user toggle state
+    // shouldInvert controls chart/current price, pricesInverted controls range display
     const shouldInvert = denominationBase === position.token0.symbol;
+
+    // Formatted values for LiquidityPositionFeeStats (mirrors Uniswap pattern)
+    const formattedUsdValue = React.useMemo(() => {
+        if (!Number.isFinite(valueUSD)) return '-';
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(valueUSD);
+    }, [valueUSD]);
+
+    const formattedUsdFees = React.useMemo(() => {
+        return `$${feesUSD.toFixed(2)}`;
+    }, [feesUSD]);
 
     const displayedCurrentPrice = React.useMemo(() => {
         if (!currentPrice) return null;
@@ -145,29 +187,76 @@ export function PositionCardCompact({
         return isFullRangePosition(tickSpacing, position.tickLower, position.tickUpper);
     }, [tickSpacing, position.tickLower, position.tickUpper]);
 
+    /**
+     * Format price range for display.
+     * Mirrors Uniswap's useGetRangeDisplay / formatTickPrice pattern.
+     *
+     * Key insight: at-limit detection is based on BOUND DIRECTION, not tick value.
+     * - Bound.LOWER at limit → display '0'
+     * - Bound.UPPER at limit → display '∞'
+     * This ensures full-range positions always show "0 - ∞" regardless of price inversion.
+     */
     const { minPrice, maxPrice } = React.useMemo(() => {
-        const lowerPriceStr = convertTickToPrice(
-            position.tickLower, currentPoolTick ?? null, currentPrice ?? null,
-            denominationBase, position.token0.symbol, position.token1.symbol
-        );
+        const isTickAtLimit = getIsTickAtLimit(tickSpacing, position.tickLower, position.tickUpper);
 
-        const upperPriceStr = convertTickToPrice(
-            position.tickUpper, currentPoolTick ?? null, currentPrice ?? null,
-            denominationBase, position.token0.symbol, position.token1.symbol
-        );
+        // Format tick price with at-limit awareness
+        // Mirrors Uniswap's formatTickPrice from useGetRangeDisplay.ts
+        const formatTickPriceForDisplay = (
+            tick: number,
+            direction: Bound
+        ): string => {
+            // At-limit: show semantic limit value based on bound direction
+            if (isTickAtLimit[direction]) {
+                return direction === Bound.LOWER ? '0' : '∞';
+            }
 
-        return {
-            minPrice: shouldInvert ? upperPriceStr : lowerPriceStr,
-            maxPrice: shouldInvert ? lowerPriceStr : upperPriceStr,
+            // Not at limit: calculate actual price
+            return convertTickToPrice(
+                tick,
+                currentPoolTick ?? null,
+                currentPrice ?? null,
+                denominationBase,
+                position.token0.symbol,
+                position.token1.symbol
+            );
         };
-    }, [position.tickLower, position.tickUpper, currentPrice, currentPoolTick, denominationBase, position.token0.symbol, position.token1.symbol, convertTickToPrice, shouldInvert]);
+
+        // When inverted, swap which tick maps to which display slot
+        // The bound direction (LOWER/UPPER) stays semantic to the display position
+        return {
+            minPrice: formatTickPriceForDisplay(
+                shouldInvert ? position.tickUpper : position.tickLower,
+                Bound.LOWER
+            ),
+            maxPrice: formatTickPriceForDisplay(
+                shouldInvert ? position.tickLower : position.tickUpper,
+                Bound.UPPER
+            ),
+        };
+    }, [tickSpacing, position.tickLower, position.tickUpper, currentPrice, currentPoolTick, denominationBase, position.token0.symbol, position.token1.symbol, convertTickToPrice, shouldInvert]);
+
+    /**
+     * Derive position status from state.
+     * Mirrors Uniswap's PositionStatus enum handling from lpStatusConfig.
+     * Note: Calculated before APR since APR depends on status.
+     */
+    const positionStatus: PositionStatus = useMemo(() => {
+        return getPositionStatus(position.isInRange, position.liquidityRaw);
+    }, [position.isInRange, position.liquidityRaw]);
 
     // Calculate APR using fees, position value, lastTimestamp, and pool APR
     const { formattedAPR, isFallback: isAPRFallback, isLoading: isLoadingAPR } = React.useMemo(() => {
         if (isLoadingPrices || valueUSD <= 0) {
             return { formattedAPR: '-', isFallback: false, isLoading: true };
         }
-        if (!position.isInRange && !isFullRange) {
+
+        // Closed positions show 0% APR
+        if (positionStatus === 'CLOSED') {
+            return { formattedAPR: '0%', isFallback: false, isLoading: false };
+        }
+
+        // Out of range positions (non-full-range) show 0% APR
+        if (positionStatus === 'OUT_OF_RANGE' && !isFullRange) {
             return { formattedAPR: '0%', isFallback: false, isLoading: false };
         }
 
@@ -181,11 +270,11 @@ export function PositionCardCompact({
 
         const result = calculateRealizedApr(feesUSD, valueUSD, durationDays, fallbackApr);
         return { formattedAPR: formatApr(result.apr), isFallback: result.isFallback, isLoading: false };
-    }, [feesUSD, valueUSD, position.lastTimestamp, position.blockTimestamp, poolAPR, isLoadingPrices, position.isInRange, isFullRange]);
+    }, [feesUSD, valueUSD, position.lastTimestamp, position.blockTimestamp, poolAPR, isLoadingPrices, positionStatus, isFullRange]);
 
-    // Determine status
-    const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
-    const statusColor = isFullRange ? 'text-green-500' : position.isInRange ? 'text-green-500' : 'text-red-500';
+    // Get display properties from status config
+    const statusText = getPositionStatusLabel(positionStatus, isFullRange);
+    const statusColor = getPositionStatusColor(positionStatus, isFullRange);
 
     return (
         <div
@@ -278,85 +367,40 @@ export function PositionCardCompact({
                 )}
             </div>
 
-            {/* BOTTOM SECTION - Position, Range */}
-            <div className={cn(
-                "flex items-center justify-between gap-5 py-1.5 px-4 rounded-b-lg transition-colors",
-                isHovered ? "bg-muted/50" : "bg-muted/30"
-            )}>
-                {/* Position */}
-                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                    {isLoadingPrices ? (
-                        <div className="h-4 w-16 bg-muted/60 rounded animate-pulse mb-0.5" />
-                    ) : (
-                        <div className="text-xs font-medium font-mono">
-                            {new Intl.NumberFormat('en-US', {
-                                style: 'currency',
-                                currency: 'USD',
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2
-                            }).format(Number.isFinite(valueUSD) ? valueUSD : 0)}
-                        </div>
-                    )}
-                    <div className="text-[10px] text-muted-foreground">Position</div>
-                </div>
-
-                {/* Fees */}
-                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                    {isLoadingPrices || prefetchedRaw0 === null || prefetchedRaw1 === null || prefetchedRaw0 === undefined || prefetchedRaw1 === undefined ? (
-                        <div className="h-4 w-14 bg-muted/60 rounded animate-pulse mb-0.5" />
-                    ) : (
-                        <div className={cn(
-                            "text-xs font-medium font-mono",
-                            feesUSD === 0 && "text-white/50"
-                        )}>
-                            ${feesUSD.toFixed(2)}
-                        </div>
-                    )}
-                    <div className="text-[10px] text-muted-foreground">Fees</div>
-                </div>
-
-                {/* APR */}
-                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                    {isLoadingAPR ? (
-                        <div className="h-4 w-12 bg-muted/60 rounded animate-pulse" />
-                    ) : (
-                        <div className={cn(
-                            "text-xs font-medium font-mono",
-                            isAPRFallback && "text-white/50"
-                        )}>
-                            {formattedAPR}
-                        </div>
-                    )}
-                    <div className="text-[10px] text-muted-foreground">APR</div>
-                </div>
-
-                {/* Range - Hidden on mobile, shown on desktop */}
-                <div className="hidden lg:flex flex-col gap-0.5 flex-1 min-w-0">
-                    {isFullRange ? (
-                        <div className="text-xs font-medium font-mono">Full range</div>
-                    ) : (
-                        <div className="text-xs text-foreground truncate font-mono">
-                            {(() => {
-                                const decimals = getDecimalsForDenomination(denominationBase, poolType);
-                                const formatPrice = (price: string) => {
-                                    const v = parseFloat(price);
-                                    if (!isFinite(v)) return '∞';
-                                    const threshold = Math.pow(10, -decimals);
-                                    if (v > 0 && v < threshold) return `<${threshold.toFixed(decimals)}`;
-                                    const formatted = v.toLocaleString('en-US', {
-                                        maximumFractionDigits: decimals,
-                                        minimumFractionDigits: Math.min(2, decimals)
-                                    });
-                                    if (formatted === '0.00' && v > 0) return `<${threshold.toFixed(decimals)}`;
-                                    return formatted;
-                                };
-                                return `${formatPrice(minPrice)} - ${formatPrice(maxPrice)}`;
-                            })()}
-                        </div>
-                    )}
-                    <div className="text-[10px] text-muted-foreground">Range</div>
-                </div>
-            </div>
+            {/* BOTTOM SECTION - LiquidityPositionFeeStats (mirrors Uniswap architecture) */}
+            <LiquidityPositionFeeStats
+                // Value displays
+                formattedUsdValue={formattedUsdValue}
+                formattedUsdFees={formattedUsdFees}
+                // APR data
+                apr={poolAPR ?? undefined}
+                formattedApr={formattedAPR}
+                isAprFallback={isAPRFallback}
+                // Points campaign
+                pointsData={pointsData}
+                // Token symbols
+                token0Symbol={position.token0.symbol}
+                token1Symbol={position.token1.symbol}
+                // Card state
+                cardHovered={isHovered}
+                // Loading states
+                isLoading={isLoadingPrices || prefetchedRaw0 === null || prefetchedRaw1 === null}
+                isLoadingApr={isLoadingAPR}
+                // Range props (mirrors LiquidityPositionMinMaxRangeProps)
+                priceOrdering={undefined} // Using pre-formatted prices instead
+                tickSpacing={tickSpacing}
+                tickLower={position.tickLower}
+                tickUpper={position.tickUpper}
+                pricesInverted={pricesInverted}
+                setPricesInverted={setPricesInverted}
+                // Formatting context
+                poolType={poolType}
+                denominationBase={denominationBase}
+                // Pre-formatted range values
+                formattedMinPrice={minPrice}
+                formattedMaxPrice={maxPrice}
+                isFullRange={isFullRange}
+            />
         </div>
     );
 }

@@ -24,12 +24,8 @@
     ],
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./*"
-      ],
-      "@liquidity/*": [
-        "components/liquidity/*"
-      ]
+      "@/*": ["./*"],
+      "@liquidity/*": ["components/liquidity/*"]
     },
     "typeRoots": [
       "./node_modules/@types",
