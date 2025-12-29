@@ -32,3 +32,32 @@ export {
   needsDependentAmountCalculation,
   getExactFieldFromAmounts,
 } from './useDependentAmountFallback';
+
+export {
+  useIncreaseLiquidity,
+  providePreSignedIncreaseBatchPermit,
+  buildIncreaseLiquidityTx,
+  parseTokenIdFromPosition,
+  type IncreasePositionData,
+} from './useIncreaseLiquidity';
+
+export {
+  useDecreaseLiquidity,
+  buildDecreaseLiquidityTx,
+  buildCollectFeesTx,
+  type DecreasePositionData,
+} from './useDecreaseLiquidity';
+
+export {
+  useDerivedIncreaseInfo,
+  type UseDerivedIncreaseInfoParams,
+  type DerivedIncreaseInfo,
+  type UseDerivedIncreaseInfoResult,
+} from './useDerivedIncreaseInfo';
+
+export {
+  usePositionAPR,
+  type UsePositionAPRParams,
+  type UsePositionAPRResult,
+  type CachedPoolMetrics,
+} from './usePositionAPR';

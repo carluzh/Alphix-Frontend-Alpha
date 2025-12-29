@@ -106,25 +106,10 @@ function formatTickPrice({
 
 /**
  * Default number formatter.
+ * Mirrors Uniswap's behavior - just pass through toSignificant() result.
  */
 function defaultFormatNumber(value: string): string {
-  const num = parseFloat(value);
-  if (isNaN(num)) return value;
-
-  // Format with appropriate precision
-  if (num >= 1000000) {
-    return `${(num / 1000000).toFixed(2)}M`;
-  }
-  if (num >= 1000) {
-    return `${(num / 1000).toFixed(2)}K`;
-  }
-  if (num >= 1) {
-    return num.toFixed(4);
-  }
-  if (num >= 0.0001) {
-    return num.toFixed(6);
-  }
-  return num.toExponential(2);
+  return value;
 }
 
 // =============================================================================

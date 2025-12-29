@@ -1,19 +1,11 @@
 /**
- * Liquidity Hooks
+ * Liquidity UI Hooks
  *
- * Custom React hooks for liquidity operations.
+ * UI-specific hooks that remain in components/liquidity/hooks.
+ * Core calculation hooks have been moved to @/lib/liquidity/hooks.
  */
 
-export {
-  useAddLiquidityCalculation,
-  type CalculatedLiquidityData,
-  type CalculationInput,
-  type UseAddLiquidityCalculationParams,
-  type UseAddLiquidityCalculationResult,
-} from './useAddLiquidityCalculation';
-
-// Note: useOutOfRangeCheck removed - use isOutOfRange/isPositionInRange from @/lib/liquidity instead
-
+// UI-specific hooks that remain here
 export {
   useBalanceWiggle,
   useApprovalWiggle,
@@ -27,13 +19,6 @@ export {
 } from './useRangeDisplay';
 
 export {
-  usePositionAPY,
-  type UsePositionAPYParams,
-  type UsePositionAPYResult,
-  type CachedPoolMetrics,
-} from './usePositionAPY';
-
-export {
   useZapQuote,
   type UseZapQuoteParams,
   type UseZapQuoteResult,
@@ -42,9 +27,25 @@ export {
   type FetchZapQuoteParams,
 } from './useZapQuote';
 
+// Re-export from lib for backwards compatibility
+export {
+  useAddLiquidityCalculation,
+  type CalculatedLiquidityData,
+  type CalculationInput,
+  type UseAddLiquidityCalculationParams,
+  type UseAddLiquidityCalculationResult,
+} from '@/lib/liquidity/hooks';
+
+export {
+  usePositionAPR,
+  type UsePositionAPRParams,
+  type UsePositionAPRResult,
+  type CachedPoolMetrics,
+} from '@/lib/liquidity/hooks';
+
 export {
   useDerivedIncreaseInfo,
   type UseDerivedIncreaseInfoParams,
   type UseDerivedIncreaseInfoResult,
   type DerivedIncreaseInfo,
-} from './useDerivedIncreaseInfo';
+} from '@/lib/liquidity/hooks';

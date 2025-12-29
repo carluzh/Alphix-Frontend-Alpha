@@ -19,10 +19,10 @@ import { config, getExplorerTxUrl, getExplorerUrl } from '@/lib/wagmiConfig';
 import { parseUnits as viemParseUnits } from "viem";
 
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
-import type { DecreasePositionData } from "./useDecreaseLiquidity";
+import type { DecreasePositionData } from "@/lib/liquidity/hooks";
 import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
-import { useDecreaseLiquidity } from "./useDecreaseLiquidity";
+import { useDecreaseLiquidity } from "@/lib/liquidity/hooks";
 import { formatTokenDisplayAmount, getTokenIcon, sanitizeDecimalInput, debounce, getTokenSymbolByAddress, formatUncollectedFee, cn } from "@/lib/utils";
 import { useAllPrices } from "@/components/data/hooks";
 import { formatUSD } from "@/lib/format";

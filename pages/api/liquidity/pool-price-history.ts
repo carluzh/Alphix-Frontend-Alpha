@@ -1,0 +1,270 @@
+import type { NextApiRequest, NextApiResponse } from 'next'
+import { cacheService } from '@/lib/cache/CacheService'
+import { HistoryDuration, TimestampedPoolPrice } from '@/lib/chart/types'
+
+/**
+ * Pool Price History API
+ *
+ * Fetches historical price data from Uniswap Gateway (primary) with CoinGecko fallback.
+ * Returns token0Price and token1Price for flexible client-side denomination.
+ *
+ * @see interface/apps/web/src/hooks/usePoolPriceChartData.tsx
+ */
+
+// Uniswap Gateway configuration
+const UNISWAP_GATEWAY = 'https://interface.gateway.uniswap.org/v1/graphql'
+const UNISWAP_HEADERS = {
+  'Content-Type': 'application/json',
+  'Origin': 'https://app.uniswap.org',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+}
+
+// Cache TTL: 15min fresh, 30min stale
+const CACHE_TTL = { fresh: 900, stale: 1800 }
+
+// CoinGecko fallback configuration (temporary - goal is to remove)
+const COINGECKO_IDS: Record<string, string> = {
+  'ETH': 'ethereum',
+  'aETH': 'ethereum',
+  'WETH': 'ethereum',
+  'USDC': 'usd-coin',
+  'aUSDC': 'usd-coin',
+  'USDT': 'tether',
+  'aUSDT': 'tether',
+  'mUSDT': 'tether',
+}
+
+const STABLECOINS = ['USDC', 'aUSDC', 'USDT', 'aUSDT', 'mUSDT']
+
+interface UniswapPriceHistoryResponse {
+  data?: {
+    v4Pool?: {
+      id: string
+      priceHistory?: TimestampedPoolPrice[]
+    }
+  }
+  errors?: Array<{ message: string }>
+}
+
+interface ApiResponse {
+  data: TimestampedPoolPrice[]
+  source: 'uniswap' | 'coingecko'
+  cached?: boolean
+}
+
+/**
+ * Fetch price history from Uniswap Gateway
+ */
+async function fetchUniswapPriceHistory(
+  poolId: string,
+  duration: HistoryDuration
+): Promise<TimestampedPoolPrice[] | null> {
+  const query = `query GetPoolPriceHistory($poolId: String!, $duration: HistoryDuration!) {
+    v4Pool(chain: BASE, poolId: $poolId) {
+      id
+      priceHistory(duration: $duration) {
+        timestamp
+        token0Price
+        token1Price
+      }
+    }
+  }`
+
+  try {
+    const response = await fetch(UNISWAP_GATEWAY, {
+      method: 'POST',
+      headers: UNISWAP_HEADERS,
+      body: JSON.stringify({ query, variables: { poolId, duration } }),
+    })
+
+    if (!response.ok) {
+      console.warn(`[pool-price-history] Uniswap Gateway returned ${response.status}`)
+      return null
+    }
+
+    const result: UniswapPriceHistoryResponse = await response.json()
+
+    if (result.errors?.length) {
+      console.warn('[pool-price-history] Uniswap Gateway errors:', result.errors)
+      return null
+    }
+
+    return result.data?.v4Pool?.priceHistory ?? null
+  } catch (error) {
+    console.warn('[pool-price-history] Uniswap Gateway error:', error)
+    return null
+  }
+}
+
+/**
+ * Fetch price history from CoinGecko (fallback)
+ * Converts to TimestampedPoolPrice format for consistency
+ */
+async function fetchCoinGeckoPriceHistory(
+  token0: string,
+  token1: string,
+  duration: HistoryDuration
+): Promise<TimestampedPoolPrice[] | null> {
+  const token0Id = COINGECKO_IDS[token0]
+  const token1Id = COINGECKO_IDS[token1]
+
+  if (!token0Id || !token1Id) {
+    console.warn(`[pool-price-history] No CoinGecko ID for ${token0} or ${token1}`)
+    return null
+  }
+
+  // Map duration to CoinGecko days parameter
+  const daysMap: Record<HistoryDuration, number> = {
+    [HistoryDuration.HOUR]: 1,
+    [HistoryDuration.DAY]: 1,
+    [HistoryDuration.WEEK]: 7,
+    [HistoryDuration.MONTH]: 30,
+    [HistoryDuration.YEAR]: 365,
+  }
+  const days = daysMap[duration] || 7
+
+  try {
+    const isToken0Stable = STABLECOINS.includes(token0)
+    const isToken1Stable = STABLECOINS.includes(token1)
+
+    // Fetch prices based on token stability
+    if (isToken0Stable && !isToken1Stable) {
+      // token0 is stable - fetch token1 price
+      const response = await fetch(
+        `https://api.coingecko.com/api/v3/coins/${token1Id}/market_chart?vs_currency=usd&days=${days}`,
+        { headers: { 'Accept': 'application/json' } }
+      )
+      if (!response.ok) return null
+
+      const result = await response.json()
+      return (result.prices || []).map((p: [number, number]) => ({
+        timestamp: Math.floor(p[0] / 1000),
+        token0Price: 1 / p[1], // Inverse: how much token0 per token1
+        token1Price: p[1],     // Direct: USD price of token1
+      }))
+    } else if (!isToken0Stable && isToken1Stable) {
+      // token1 is stable - fetch token0 price
+      const response = await fetch(
+        `https://api.coingecko.com/api/v3/coins/${token0Id}/market_chart?vs_currency=usd&days=${days}`,
+        { headers: { 'Accept': 'application/json' } }
+      )
+      if (!response.ok) return null
+
+      const result = await response.json()
+      return (result.prices || []).map((p: [number, number]) => ({
+        timestamp: Math.floor(p[0] / 1000),
+        token0Price: p[1],     // Direct: USD price of token0
+        token1Price: 1 / p[1], // Inverse: how much token1 per token0
+      }))
+    } else {
+      // Both stable or both non-stable - fetch both and calculate ratio
+      const [res0, res1] = await Promise.all([
+        fetch(`https://api.coingecko.com/api/v3/coins/${token0Id}/market_chart?vs_currency=usd&days=${days}`, {
+          headers: { 'Accept': 'application/json' }
+        }),
+        fetch(`https://api.coingecko.com/api/v3/coins/${token1Id}/market_chart?vs_currency=usd&days=${days}`, {
+          headers: { 'Accept': 'application/json' }
+        })
+      ])
+
+      if (!res0.ok || !res1.ok) return null
+
+      const [result0, result1] = await Promise.all([res0.json(), res1.json()])
+      const prices0 = result0.prices || []
+      const prices1 = result1.prices || []
+
+      // Use token1 timestamps as base, find matching token0 prices
+      return prices1.map((p1: [number, number], i: number) => {
+        const p0 = prices0[i] || prices0[prices0.length - 1]
+        const token0USD = p0[1]
+        const token1USD = p1[1]
+        return {
+          timestamp: Math.floor(p1[0] / 1000),
+          token0Price: token0USD / token1USD, // token0 in terms of token1
+          token1Price: token1USD / token0USD, // token1 in terms of token0
+        }
+      })
+    }
+  } catch (error) {
+    console.warn('[pool-price-history] CoinGecko error:', error)
+    return null
+  }
+}
+
+/**
+ * Combined fetch with Uniswap primary, CoinGecko fallback
+ */
+async function fetchPriceHistory(
+  poolId: string,
+  token0: string,
+  token1: string,
+  duration: HistoryDuration
+): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'coingecko' }> {
+  // Try Uniswap Gateway first
+  const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
+
+  if (uniswapData && uniswapData.length >= 3) {
+    return { data: uniswapData, source: 'uniswap' }
+  }
+
+  // Fallback to CoinGecko
+  console.log(`[pool-price-history] Falling back to CoinGecko for ${poolId}`)
+  const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
+
+  if (coingeckoData && coingeckoData.length >= 3) {
+    return { data: coingeckoData, source: 'coingecko' }
+  }
+
+  // Both failed
+  return { data: [], source: 'coingecko' }
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResponse | { message: string }>) {
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', ['GET'])
+    return res.status(405).json({ message: `Method ${req.method} Not Allowed` })
+  }
+
+  const { poolId, token0, token1, duration = 'WEEK' } = req.query
+
+  if (!poolId || typeof poolId !== 'string') {
+    return res.status(400).json({ message: 'poolId is required' })
+  }
+
+  if (!token0 || typeof token0 !== 'string' || !token1 || typeof token1 !== 'string') {
+    return res.status(400).json({ message: 'token0 and token1 are required for fallback' })
+  }
+
+  const VALID_DURATIONS = ['HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR'] as const
+  if (duration && !VALID_DURATIONS.includes(duration as typeof VALID_DURATIONS[number])) {
+    return res.status(400).json({ message: 'Invalid duration parameter' })
+  }
+  const historyDuration = (duration as HistoryDuration) || HistoryDuration.WEEK
+
+  // Cache key includes poolId, tokens, and duration to prevent cache poisoning
+  const cacheKey = `price-history:${poolId}:${token0}:${token1}:${historyDuration}`
+
+  try {
+    const result = await cacheService.cachedApiCall(
+      cacheKey,
+      CACHE_TTL,
+      () => fetchPriceHistory(poolId, token0, token1, historyDuration)
+    )
+
+    res.setHeader('Cache-Control', 'no-store')
+    if (result.isStale) {
+      res.setHeader('X-Cache-Status', 'stale')
+    }
+
+    return res.status(200).json({
+      data: result.data.data,
+      source: result.data.source,
+      cached: !result.isStale,
+    })
+  } catch (error: unknown) {
+    console.error('[pool-price-history] Error:', error)
+    return res.status(500).json({
+      message: 'Failed to fetch price history',
+    })
+  }
+}

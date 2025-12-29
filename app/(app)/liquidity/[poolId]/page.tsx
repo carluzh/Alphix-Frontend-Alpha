@@ -56,8 +56,8 @@ import { invalidateAfterTx } from "@/lib/invalidation";
 import type { Pool } from "@/types";
 import { AddLiquidityForm } from "@/components/liquidity/AddLiquidityForm";
 import React from "react";
-import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
-import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
+import { useIncreaseLiquidity, useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
+import { TickMath } from '@uniswap/v3-sdk';
 
 
 import { ChevronDownIcon } from "lucide-react";
@@ -88,8 +88,8 @@ interface ChartDataPoint {
   dynamicFee: number;
 }
 
-const SDK_MIN_TICK = -887272;
-const SDK_MAX_TICK = 887272;
+const SDK_MIN_TICK = TickMath.MIN_TICK;
+const SDK_MAX_TICK = TickMath.MAX_TICK;
 const DEFAULT_TICK_SPACING = 60;
 
 const formatTokenDisplayAmount = (amount: string) => {
@@ -2357,7 +2357,7 @@ export default function PoolDetailPage() {
                   {isDerivingNewPosition && <PositionSkeleton key="deriving-skeleton" />}
                   {(() => {
                     const aprNum = parseFloat(currentPoolData?.apr?.replace(/[~%]/g, '') || '');
-                    const poolAPY = isFinite(aprNum) ? aprNum : null;
+                    const poolAPR = isFinite(aprNum) ? aprNum : null;
 
                     return userPositions.map((position) => {
                       const feeData = getFeesForPosition(position.positionId);
@@ -2387,7 +2387,7 @@ export default function PoolDetailPage() {
                         poolContext={{
                           currentPrice,
                           currentPoolTick,
-                          poolAPY,
+                          poolAPR,
                           isLoadingPrices,
                           isLoadingPoolStates: !currentPoolData
                         }}

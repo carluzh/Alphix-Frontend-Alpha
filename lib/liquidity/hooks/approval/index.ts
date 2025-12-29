@@ -15,3 +15,9 @@ export {
   type CheckIncreaseApprovalsParams,
   type LegacyApprovalResponse,
 } from './useApprovals';
+
+export {
+  useCheckZapApprovals,
+  type CheckZapApprovalsParams,
+  type CheckZapApprovalsResponse,
+} from './useCheckZapApprovals';

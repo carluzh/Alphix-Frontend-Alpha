@@ -8,7 +8,7 @@ import { Token, Percent, Ether } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position, V4PositionManager } from "@uniswap/v4-sdk";
 import type { MintOptions } from "@uniswap/v4-sdk";
 import { PermitBatch } from '@uniswap/permit2-sdk';
-import { nearestUsableTick } from '@uniswap/v3-sdk';
+import { nearestUsableTick, TickMath } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -35,8 +35,6 @@ import {
 // Note: POSITION_MANAGER_ADDRESS and STATE_VIEW_ADDRESS are now fetched dynamically per-request
 // using getPositionManagerAddress(networkMode) and getStateViewAddress(networkMode)
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
-const SDK_MIN_TICK = -887272;
-const SDK_MAX_TICK = 887272;
 
 interface PrepareMintAfterSwapTxRequest extends NextApiRequest {
     body: {

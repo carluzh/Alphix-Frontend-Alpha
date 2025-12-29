@@ -81,7 +81,22 @@
       "Bash(xargs ls:*)",
       "Bash(del \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\lib\\\\liquidity\\\\hooks\\\\pool\\\\usePoolState.ts\" \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\lib\\\\liquidity\\\\hooks\\\\pool\\\\index.ts\" \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\lib\\\\liquidity\\\\hooks\\\\position\\\\usePositionApy.ts\")",
       "Bash(xargs -I {} sh -c 'echo \"\"=== {} ===\"\" && wc -l {}')",
-      "Bash(for file in \"FeesCell\" \"InteractiveRangeChart\" \"MiniPoolChart\" \"RangeSelectionModalV2\")"
+      "Bash(for file in \"FeesCell\" \"InteractiveRangeChart\" \"MiniPoolChart\" \"RangeSelectionModalV2\")",
+      "Bash(npx tsc --noEmit --skipLibCheck)",
+      "Bash(for file in /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface/apps/web/src/components/Liquidity/*.tsx)",
+      "Bash(for file in /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface/apps/web/src/components/Liquidity/Create/*.tsx)",
+      "Bash(for file in /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface/apps/web/src/pages/Positions/*.tsx)",
+      "Bash(for file in /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface/apps/web/src/components/Liquidity/hooks/*.tsx /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface/apps/web/src/components/Liquidity/hooks/*.ts)",
+      "Bash(for:*)",
+      "Bash(\"https://interface.gateway.uniswap.org/v1/graphql\" )",
+      "Bash(# Search for gateway configuration in Uniswap interface echo \"\"=== Gateway Configuration Search ===\"\" grep -r \"\"gateway.uniswap\\\\|interface.gateway\\\\|GATEWAY\\\\|GQL_URL\"\" /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface/apps/web --include=\"\"*.ts\"\" --include=\"\"*.tsx\"\" --include=\"\"*.env*\"\")",
+      "Bash(# Check the actual client.ts file mentioned in research cat /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface/apps/web/functions/client.ts || echo \"\"File not found at expected path\"\" # Try to find it find /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface -name \"\"client.ts\"\" -type f)",
+      "Bash(__NEW_LINE__ echo \"\")",
+      "Bash(\"https://gateway.thegraph.com/api/subgraphs/id/GqzP4Xaehti8KSfQmv3ZctFSjnSUYZ4En5NRsiTbvZpz\" )",
+      "Bash(# Search what subgraph Alphix currently uses echo \"\"=== Current Alphix Subgraph URLs ===\"\" grep -r \"\"SUBGRAPH_URL\\\\|thegraph\\\\|satsuma\"\" /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/.env*)",
+      "Bash(# Check what queries the Uniswap app actually makes by looking at their GraphQL files echo \"\"=== Uniswap GraphQL Pool Query Patterns ===\"\" cat /Users/carlschmidt/Desktop/alphix/App/Alphix-Frontend-Alpha/interface/packages/api/src/clients/graphql/web/pool.graphql)",
+      "Bash(npx vitest:*)",
+      "Bash(git mv:*)"
     ],
     "deny": [],
     "ask": []

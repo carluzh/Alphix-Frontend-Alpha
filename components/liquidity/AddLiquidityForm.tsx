@@ -20,10 +20,8 @@ import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
 import { getAddableTokens, calculateTicksFromPercentage } from "@/lib/liquidity/utils/calculations";
 import { useMintState, useMintActionHandlers } from "@/lib/liquidity/state";
 import { PositionField } from "@/lib/liquidity/types";
-import { useAddLiquidityTransaction } from "./useAddLiquidityTransactionV2";
-import { useAddLiquidityCalculation } from "./hooks/useAddLiquidityCalculation";
+import { useAddLiquidityTransaction, useAddLiquidityCalculation, usePositionAPR } from "@/lib/liquidity/hooks";
 import { useRangeDisplay } from "./hooks/useRangeDisplay";
-import { usePositionAPY } from "./hooks/usePositionAPY";
 import { useZapQuote } from "./hooks/useZapQuote";
 import { motion } from "framer-motion";
 import { useBalanceWiggle } from "./hooks/useBalanceWiggle";
@@ -63,7 +61,7 @@ export interface AddLiquidityFormProps {
   initialTickLower?: number;
   initialTickUpper?: number;
   initialToken0Amount?: string;
-  onRangeChange?: (rangeInfo: { preset: string | null; label: string; estimatedApy: string; hasUserInteracted: boolean; isCalculating: boolean }) => void;
+  onRangeChange?: (rangeInfo: { preset: string | null; label: string; estimatedApr: string; hasUserInteracted: boolean; isCalculating: boolean }) => void;
   poolState?: { currentPrice: string; currentPoolTick: number; sqrtPriceX96: string; liquidity?: string };
 }
 
@@ -873,8 +871,8 @@ export function AddLiquidityForm({
 
   const hasRangeSelected = (activePreset !== null || initialDefaultApplied) && tickLower !== "" && tickUpper !== "";
 
-  // APY calculation hook
-  const { estimatedApy, isCalculatingApy, cachedPoolMetrics } = usePositionAPY({
+  // APR calculation hook
+  const { estimatedApr, isCalculatingApr, cachedPoolMetrics } = usePositionAPR({
     selectedPoolId,
     tickLower,
     tickUpper,
@@ -890,24 +888,24 @@ export function AddLiquidityForm({
     networkMode,
   });
 
-  // Notify parent of range/APY changes (mirrors form's visual state)
+  // Notify parent of range/APR changes (mirrors form's visual state)
   useEffect(() => {
     if (onRangeChange) {
       const label = getPresetDisplayLabel(activePreset, isStablePool);
       onRangeChange({
         preset: activePreset,
         label,
-        estimatedApy,
+        estimatedApr,
         hasUserInteracted,
-        isCalculating: isCalculatingApy,
+        isCalculating: isCalculatingApr,
       });
     }
-  }, [activePreset, estimatedApy, isStablePool, onRangeChange, getPresetDisplayLabel, hasUserInteracted, isCalculatingApy]);
+  }, [activePreset, estimatedApr, isStablePool, onRangeChange, getPresetDisplayLabel, hasUserInteracted, isCalculatingApr]);
 
-  // Wrapper for convertTickToPrice that uses component's sdkMinTick and sdkMaxTick
+  // Wrapper for convertTickToPrice
   const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
-    return convertTickToPriceUtil(tick, currentPoolTick, currentPrice, baseTokenForPriceDisplay, token0Symbol, token1Symbol, sdkMinTick, sdkMaxTick);
-  }, [sdkMinTick, sdkMaxTick]);
+    return convertTickToPriceUtil(tick, currentPoolTick, currentPrice, baseTokenForPriceDisplay, token0Symbol, token1Symbol);
+  }, []);
 
   // Range display hook - calculates formatted prices and labels
   const { rangeLabels, formattedCurrentPrice, minPriceInputString, maxPriceInputString } = useRangeDisplay({

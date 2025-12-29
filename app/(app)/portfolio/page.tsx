@@ -23,15 +23,16 @@ import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
 import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
-import { useIncreaseLiquidity } from "@/components/liquidity/useIncreaseLiquidity";
-import { useDecreaseLiquidity } from "@/components/liquidity/useDecreaseLiquidity";
+import { useIncreaseLiquidity, useDecreaseLiquidity } from "@/lib/liquidity/hooks";
 import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
 import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
 import { batchGetTokenPrices } from '@/lib/price-service';
-import { calculateClientAPY } from '@/lib/client-apy';
+import { calculateRealizedApr, formatApr } from '@/lib/apr';
+import { Percent } from '@uniswap/sdk-core';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNetwork } from "@/lib/network-context";
+import { TickMath } from '@uniswap/v3-sdk';
 
 const AddLiquidityModal = dynamic(
   () => import("@/components/liquidity/AddLiquidityModal").then(m => m.AddLiquidityModal),
@@ -853,13 +854,9 @@ export default function PortfolioPage() {
     }
   }, []);
 
-  // SDK tick bounds for full-range detection (match pool detail page)
-  const SDK_MIN_TICK = -887272;
-  const SDK_MAX_TICK = 887272;
-
   const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
-    if (tick === SDK_MAX_TICK) return '∞';
-    if (tick === SDK_MIN_TICK) return '0.00';
+    if (tick === TickMath.MAX_TICK) return '∞';
+    if (tick === TickMath.MIN_TICK) return '0.00';
 
     // Preferred: relative to current price when available
     if (currentPoolTick !== null && currentPrice) {
@@ -1952,8 +1949,11 @@ export default function PortfolioPage() {
       const aprStr = aprByPoolId[poolKey];
       const poolApr = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : null;
       const lastTs = p.lastTimestamp || p.blockTimestamp || 0;
-      const { apy } = calculateClientAPY(feesUSD, positionUsd, lastTs, poolApr);
-      const positionApy = apy ?? 0;
+      const nowTs = Math.floor(Date.now() / 1000);
+      const durationDays = (nowTs - lastTs) / 86400;
+      const fallbackAprPercent = poolApr !== null && isFinite(poolApr) ? new Percent(Math.round(poolApr * 100), 10000) : null;
+      const { apr } = calculateRealizedApr(feesUSD, positionUsd, durationDays, fallbackAprPercent);
+      const positionApy = apr ? parseFloat(apr.toFixed(2)) : 0;
 
       weighted += positionUsd * positionApy;
       totalUsd += positionUsd;
@@ -2538,8 +2538,11 @@ export default function PortfolioPage() {
                                                   } catch {}
                                                 }
                                                 const lastTs = pos.lastTimestamp || pos.blockTimestamp || 0;
-                                                const { apy } = calculateClientAPY(feesUSD, posUsd, lastTs, poolApr);
-                                                weightedApy += posUsd * (apy ?? 0);
+                                                const nowTs = Math.floor(Date.now() / 1000);
+                                                const durationDays = (nowTs - lastTs) / 86400;
+                                                const fallbackAprPercent = poolApr !== null && isFinite(poolApr) ? new Percent(Math.round(poolApr * 100), 10000) : null;
+                                                const { apr } = calculateRealizedApr(feesUSD, posUsd, durationDays, fallbackAprPercent);
+                                                weightedApy += posUsd * (apr ? parseFloat(apr.toFixed(2)) : 0);
                                                 groupTotalUsd += posUsd;
                                               }
 
@@ -2600,7 +2603,7 @@ export default function PortfolioPage() {
                                         poolContext={{
                                           currentPrice: null,
                                           currentPoolTick: null,
-                                          poolAPY: (() => {
+                                          poolAPR: (() => {
                                             const aprStr = aprByPoolId[poolKey];
                                             if (!aprStr || aprStr === 'N/A' || aprStr === 'Loading...') return 0;
                                             const parsed = parseFloat(aprStr.replace('%', ''));

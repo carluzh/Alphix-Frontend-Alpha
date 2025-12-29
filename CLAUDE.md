@@ -117,7 +117,7 @@ Alphix-Frontend-Alpha/
 │   ├── routing-engine.ts # Swap routing logic
 │   ├── swap.ts           # Swap execution utilities
 │   ├── liquidity-utils.ts # Liquidity calculations
-│   ├── apy-calculator.ts # APY/fee calculations
+│   ├── apr.ts            # APR calculations (Uniswap-aligned)
 │   ├── price-service.ts  # Price fetching and formatting
 │   ├── supabase.ts       # Supabase client
 │   └── abis/             # Smart contract ABIs

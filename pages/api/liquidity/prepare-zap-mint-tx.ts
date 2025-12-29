@@ -36,8 +36,6 @@ import {
 // Note: POSITION_MANAGER_ADDRESS, STATE_VIEW_ADDRESS, QUOTER_ADDRESS are now fetched dynamically per-request
 // using getPositionManagerAddress(networkMode), getStateViewAddress(networkMode), getQuoterAddress(networkMode)
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
-const SDK_MIN_TICK = -887272;
-const SDK_MAX_TICK = 887272;
 
 const Q96n = 1n << 96n;
 const Q192n = Q96n * Q96n;
@@ -802,8 +800,8 @@ export default async function handler(
         }
 
         // Clamp and align ticks
-        const clampedUserTickLower = Math.max(userTickLower, SDK_MIN_TICK);
-        const clampedUserTickUpper = Math.min(userTickUpper, SDK_MAX_TICK);
+        const clampedUserTickLower = Math.max(userTickLower, TickMath.MIN_TICK);
+        const clampedUserTickUpper = Math.min(userTickUpper, TickMath.MAX_TICK);
         let tickLower = nearestUsableTick(clampedUserTickLower, poolConfig.tickSpacing);
         let tickUpper = nearestUsableTick(clampedUserTickUpper, poolConfig.tickSpacing);
 

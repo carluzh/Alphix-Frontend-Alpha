@@ -68,10 +68,10 @@ export function PositionSkeleton({ token0Symbol, token1Symbol, className = "" }:
           <div className="text-[10px] text-muted-foreground">Fees</div>
         </div>
 
-        {/* APY Skeleton */}
+        {/* APR Skeleton */}
         <div className="flex flex-col gap-0.5 flex-1 min-w-0">
           <div className="h-4 w-12 bg-muted/60 rounded" />
-          <div className="text-[10px] text-muted-foreground">APY</div>
+          <div className="text-[10px] text-muted-foreground">APR</div>
         </div>
 
         {/* Range Skeleton - Hidden on mobile, shown on desktop */}

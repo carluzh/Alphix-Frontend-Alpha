@@ -3,26 +3,25 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { PlusIcon, BadgeCheck, OctagonX, Info as InfoIcon, RefreshCw as RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import Image from "next/image";
 import { useAccount, useBalance, useSignTypedData } from "wagmi";
 import { toast } from "sonner";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { getTokenDefinitions, TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
-import { useIncreaseLiquidity, type IncreasePositionData, providePreSignedIncreaseBatchPermit } from "./useIncreaseLiquidity";
-import { motion, useAnimation } from "framer-motion";
+import { useIncreaseLiquidity, type IncreasePositionData, providePreSignedIncreaseBatchPermit } from "@/lib/liquidity/hooks";
+import { useAnimation } from "framer-motion";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
-import { sanitizeDecimalInput, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
 import {
   getTokenIcon, formatCalculatedAmount,
-  PERMIT2_ADDRESS, MAX_UINT256, PERCENTAGE_OPTIONS
+  PERMIT2_ADDRESS, MAX_UINT256
 } from './liquidity-form-utils';
 import { getExplorerTxUrl } from '@/lib/wagmiConfig';
-import { useDerivedIncreaseInfo } from './hooks/useDerivedIncreaseInfo';
+import { useDerivedIncreaseInfo } from "@/lib/liquidity/hooks";
 import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
+import { TokenInputCard, TokenInputStyles } from './TokenInputCard';
 
 interface AddLiquidityFormPanelProps {
   position: ProcessedPosition;
@@ -95,8 +94,6 @@ export function AddLiquidityFormPanel({
 
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
-  const [balanceWiggleCount0, setBalanceWiggleCount0] = useState(0);
-  const [balanceWiggleCount1, setBalanceWiggleCount1] = useState(0);
   const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
   const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
 
@@ -183,25 +180,7 @@ export function AddLiquidityFormPanel({
     }
   }, [increaseAmount0, increaseAmount1, onAmountsChange]);
 
-  // Wiggle animation effects
-  useEffect(() => {
-    if (balanceWiggleCount0 > 0) {
-      wiggleControls0.start({
-        x: [0, -3, 3, -2, 2, 0],
-        transition: { duration: 0.22, ease: 'easeOut' },
-      }).catch(() => {});
-    }
-  }, [balanceWiggleCount0, wiggleControls0]);
-
-  useEffect(() => {
-    if (balanceWiggleCount1 > 0) {
-      wiggleControls1.start({
-        x: [0, -3, 3, -2, 2, 0],
-        transition: { duration: 0.22, ease: 'easeOut' },
-      }).catch(() => {});
-    }
-  }, [balanceWiggleCount1, wiggleControls1]);
-
+  // Track over-balance state for wiggle animation
   useEffect(() => {
     const amount0 = parseFloat(increaseAmount0 || "0");
     const balance0 = parseFloat(token0BalanceData?.formatted || "0");
@@ -213,38 +192,6 @@ export function AddLiquidityFormPanel({
     const balance1 = parseFloat(token1BalanceData?.formatted || "0");
     setIsAmount1OverBalance(amount1 > balance1 && amount1 > 0);
   }, [increaseAmount1, token1BalanceData]);
-
-  const handleIncreaseAmountChangeWithWiggle = (e: React.ChangeEvent<HTMLInputElement>, side: 'amount0' | 'amount1') => {
-    const sanitized = sanitizeDecimalInput(e.target.value);
-
-    if (side === 'amount0') {
-      const prevVal = parseFloat(increaseAmount0 || "");
-      const nextVal = parseFloat(sanitized || "");
-      const bal = parseFloat(token0BalanceData?.formatted || "0");
-
-      const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
-      const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
-
-      if (isOver && !wasOver) {
-        setBalanceWiggleCount0((c) => c + 1);
-      }
-
-      setIncreaseAmount0(sanitized);
-    } else {
-      const prevVal = parseFloat(increaseAmount1 || "");
-      const nextVal = parseFloat(sanitized || "");
-      const bal = parseFloat(token1BalanceData?.formatted || "0");
-
-      const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
-      const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
-
-      if (isOver && !wasOver) {
-        setBalanceWiggleCount1((c) => c + 1);
-      }
-
-      setIncreaseAmount1(sanitized);
-    }
-  };
 
   const handleContinue = () => {
     setShowTransactionOverview(true);
@@ -617,131 +564,25 @@ export function AddLiquidityFormPanel({
   // Input view
   return (
     <div className="space-y-4">
-      <style dangerouslySetInnerHTML={{__html: `
-        @keyframes inputGradientFlow {
-          from { background-position: 0% 0%; }
-          to { background-position: 300% 0%; }
-        }
-        .input-gradient-hover {
-          position: relative;
-          border-radius: 8px;
-        }
-        .input-gradient-hover::before {
-          content: '';
-          position: absolute;
-          inset: -1px;
-          border-radius: 9px;
-          background: linear-gradient(
-            45deg,
-            #f94706,
-            #ff7919 25%,
-            #f94706 50%,
-            #ff7919 75%,
-            #f94706 100%
-          );
-          background-size: 300% 100%;
-          opacity: 0;
-          transition: opacity 0.3s ease;
-          pointer-events: none;
-          z-index: 0;
-          animation: inputGradientFlow 10s linear infinite;
-        }
-        .input-gradient-hover:hover::before,
-        .input-gradient-hover:focus-within::before {
-          opacity: 1;
-        }
-      `}} />
+      <TokenInputStyles />
       <h3 className="text-base font-semibold">Add Liquidity</h3>
 
       {/* Token 0 Input */}
       {(!addProductiveSide || addProductiveSide === 'amount0') && parseFloat(position.token0.amount) >= 0 && (
-        <div className="input-gradient-hover">
-          <motion.div
-            className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
-            animate={wiggleControls0}
-          >
-            <div className="flex items-center justify-between">
-              <Label htmlFor="increase-amount0" className="text-sm font-medium">Add</Label>
-              <button
-                type="button"
-                className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
-                onClick={() => {
-                  const calculatedValue = handleToken0Percentage(100);
-                  if (calculatedValue && parseFloat(calculatedValue) > 0) {
-                    calculateDependentAmount(calculatedValue, 'amount0');
-                  }
-                }}
-              >
-  {token0BalanceData?.formatted || "0"} {position.token0.symbol}
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
-                <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={20} height={20} className="rounded-full" />
-                <span className="text-sm font-medium">{position.token0.symbol}</span>
-              </div>
-              <div className="flex-1">
-                <Input
-                  id="increase-amount0"
-                  placeholder="0.0"
-                  value={increaseAmount0}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  inputMode="decimal"
-                  enterKeyHint="done"
-                  onChange={(e) => {
-                    handleIncreaseAmountChangeWithWiggle(e, 'amount0');
-                    const newAmount = sanitizeDecimalInput(e.target.value);
-                    if (newAmount && parseFloat(newAmount) > 0) {
-                      calculateDependentAmount(newAmount, 'amount0');
-                    }
-                  }}
-                  className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                />
-                <div className="relative text-right text-xs min-h-5">
-                  <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                    "group-hover:opacity-0": token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0
-                  })}>
-                    {formatCalculatedAmount(parseFloat(increaseAmount0 || "0") * (token0USDPrice || 0))}
-                  </div>
-                  {token0BalanceData && parseFloat(token0BalanceData.formatted || "0") > 0 && (
-                    <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                      {PERCENTAGE_OPTIONS.map((percentage, index) => (
-                        <motion.div
-                          key={percentage}
-                          className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
-                          style={{
-                            transitionDelay: `${index * 40}ms`,
-                            transitionDuration: '200ms',
-                            transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
-                          }}
-                        >
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              // Get the calculated value from the percentage handler
-                              const calculatedValue = handleToken0Percentage(percentage);
-                              // Trigger API calculation with the new value
-                              if (calculatedValue && parseFloat(calculatedValue) > 0) {
-                                calculateDependentAmount(calculatedValue, 'amount0');
-                              }
-                            }}
-                          >
-                            {percentage === 100 ? 'MAX' : `${percentage}%`}
-                          </Button>
-                        </motion.div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        </div>
+        <TokenInputCard
+          id="increase-amount0"
+          tokenSymbol={position.token0.symbol}
+          value={increaseAmount0}
+          onChange={setIncreaseAmount0}
+          label="Add"
+          maxAmount={token0BalanceData?.formatted || "0"}
+          usdPrice={token0USDPrice || 0}
+          formatUsdAmount={formatCalculatedAmount}
+          isOverBalance={isAmount0OverBalance}
+          animationControls={wiggleControls0}
+          onPercentageClick={(percentage) => handleToken0Percentage(percentage)}
+          onCalculateDependentAmount={(value) => calculateDependentAmount(value, 'amount0')}
+        />
       )}
 
       {!addProductiveSide && (
@@ -754,93 +595,20 @@ export function AddLiquidityFormPanel({
 
       {/* Token 1 Input */}
       {(!addProductiveSide || addProductiveSide === 'amount1') && parseFloat(position.token1.amount) >= 0 && (
-        <div className="input-gradient-hover">
-          <motion.div
-            className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
-            animate={wiggleControls1}
-          >
-            <div className="flex items-center justify-between">
-              <Label htmlFor="increase-amount1" className="text-sm font-medium">Add</Label>
-              <button
-                type="button"
-                className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
-                onClick={() => {
-                  const calculatedValue = handleToken1Percentage(100);
-                  if (calculatedValue && parseFloat(calculatedValue) > 0) {
-                    calculateDependentAmount(calculatedValue, 'amount1');
-                  }
-                }}
-              >
-  {token1BalanceData?.formatted || "0"} {position.token1.symbol}
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
-                <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={20} height={20} className="rounded-full" />
-                <span className="text-sm font-medium">{position.token1.symbol}</span>
-              </div>
-              <div className="flex-1">
-                <Input
-                  id="increase-amount1"
-                  placeholder="0.0"
-                  value={increaseAmount1}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  inputMode="decimal"
-                  enterKeyHint="done"
-                  onChange={(e) => {
-                    handleIncreaseAmountChangeWithWiggle(e, 'amount1');
-                    const newAmount = sanitizeDecimalInput(e.target.value);
-                    if (newAmount && parseFloat(newAmount) > 0) {
-                      calculateDependentAmount(newAmount, 'amount1');
-                    }
-                  }}
-                  className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                />
-                <div className="relative text-right text-xs min-h-5">
-                  <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                    "group-hover:opacity-0": token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0
-                  })}>
-                    {formatCalculatedAmount(parseFloat(increaseAmount1 || "0") * (token1USDPrice || 0))}
-                  </div>
-                  {token1BalanceData && parseFloat(token1BalanceData.formatted || "0") > 0 && (
-                    <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                      {PERCENTAGE_OPTIONS.map((percentage, index) => (
-                        <motion.div
-                          key={percentage}
-                          className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
-                          style={{
-                            transitionDelay: `${index * 40}ms`,
-                            transitionDuration: '200ms',
-                            transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
-                          }}
-                        >
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              // Get the calculated value from the percentage handler
-                              const calculatedValue = handleToken1Percentage(percentage);
-                              // Trigger API calculation with the new value
-                              if (calculatedValue && parseFloat(calculatedValue) > 0) {
-                                calculateDependentAmount(calculatedValue, 'amount1');
-                              }
-                            }}
-                          >
-                            {percentage === 100 ? 'MAX' : `${percentage}%`}
-                          </Button>
-                        </motion.div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        </div>
+        <TokenInputCard
+          id="increase-amount1"
+          tokenSymbol={position.token1.symbol}
+          value={increaseAmount1}
+          onChange={setIncreaseAmount1}
+          label="Add"
+          maxAmount={token1BalanceData?.formatted || "0"}
+          usdPrice={token1USDPrice || 0}
+          formatUsdAmount={formatCalculatedAmount}
+          isOverBalance={isAmount1OverBalance}
+          animationControls={wiggleControls1}
+          onPercentageClick={(percentage) => handleToken1Percentage(percentage)}
+          onCalculateDependentAmount={(value) => calculateDependentAmount(value, 'amount1')}
+        />
       )}
 
       <Button

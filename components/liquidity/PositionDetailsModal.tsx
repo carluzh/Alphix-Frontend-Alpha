@@ -14,19 +14,21 @@ import { formatUSD } from "@/lib/format";
 import Image from "next/image";
 import { PositionChartV2 } from "./PositionChartV2";
 import { getOptimalBaseToken } from "@/lib/denomination-utils";
-import { calculateClientAPY } from "@/lib/client-apy";
+import { calculateRealizedApr, formatApr } from "@/lib/apr";
+import { Percent } from '@uniswap/sdk-core';
 import { AddLiquidityFormPanel } from "./AddLiquidityFormPanel";
 import { RemoveLiquidityFormPanel } from "./RemoveLiquidityFormPanel";
 import { TransactionFlowPanel } from "./TransactionFlowPanel";
+import { ClaimFeeModal } from "./ClaimFeeModal";
+import { PositionValueSection } from "./PositionValueSection";
+import { FeesEarnedSection } from "./FeesEarnedSection";
 import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, useBalance } from "wagmi";
 import { useChainMismatch } from "@/hooks/useChainMismatch";
 import { readContract } from '@wagmi/core';
 import { config } from '@/lib/wagmiConfig';
-import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
-import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
-import { useDecreaseLiquidity, type DecreasePositionData } from "./useDecreaseLiquidity";
+import { useIncreaseLiquidity, type IncreasePositionData, providePreSignedIncreaseBatchPermit, useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
-import { useCheckIncreaseApprovals } from "@/lib/liquidity";
+import { useCheckIncreaseApprovals, isFullRangePosition } from "@/lib/liquidity";
 import { useEthersSigner } from "@/hooks/useEthersSigner";
 import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings";
 import { toast } from "sonner";
@@ -92,8 +94,6 @@ interface PositionDetailsModalProps {
   selectedPoolId?: string;
   chainId?: number;
   currentPoolSqrtPriceX96?: string | null;
-  sdkMinTick?: number;
-  sdkMaxTick?: number;
   defaultTickSpacing?: number;
   poolToken0?: any;
   poolToken1?: any;
@@ -145,8 +145,6 @@ export function PositionDetailsModal({
   currentPrice,
   currentPoolTick,
   currentPoolSqrtPriceX96,
-  sdkMinTick = -887272,
-  sdkMaxTick = 887272,
   defaultTickSpacing = 60,
   poolToken0,
   poolToken1,
@@ -180,6 +178,9 @@ export function PositionDetailsModal({
   // Interim confirmation views (like the standalone modals)
   const [showInterimConfirmation, setShowInterimConfirmation] = useState(false);
   const [showTransactionOverview, setShowTransactionOverview] = useState(false);
+
+  // ClaimFeeModal state
+  const [showClaimFeeModal, setShowClaimFeeModal] = useState(false);
 
   // Add Liquidity transaction state
   const [increaseAmount0, setIncreaseAmount0] = useState<string>("");
@@ -593,13 +594,9 @@ export function PositionDetailsModal({
     setShowInterimConfirmation(false);
   };
 
-  const handleCollectFeesClick = async () => {
-    if (hasZeroFees || isDecreasingLiquidity) return;
-    try {
-      await claimFees(position.positionId);
-    } catch (e) {
-      console.error('[PositionDetailsModal] claimFees failed:', e);
-    }
+  const handleCollectFeesClick = () => {
+    if (hasZeroFees) return;
+    setShowClaimFeeModal(true);
   };
 
   const handleBackToDefault = () => {
@@ -733,25 +730,33 @@ export function PositionDetailsModal({
   const fee0USD = feeAmount0 * getUsdPriceForSymbol(position.token0.symbol);
   const fee1USD = feeAmount1 * getUsdPriceForSymbol(position.token1.symbol);
 
-  const { computedFormattedAPY, computedIsAPYFallback, computedIsLoadingAPY } = useMemo(() => {
+  const { computedFormattedAPR, computedIsAPRFallback, computedIsLoadingAPR } = useMemo(() => {
     if (prefetchedFormattedAPY !== undefined) {
       return {
-        computedFormattedAPY: prefetchedFormattedAPY,
-        computedIsAPYFallback: prefetchedIsAPYFallback ?? false,
-        computedIsLoadingAPY: prefetchedIsLoadingAPY ?? false,
+        computedFormattedAPR: prefetchedFormattedAPY,
+        computedIsAPRFallback: prefetchedIsAPYFallback ?? false,
+        computedIsLoadingAPR: prefetchedIsLoadingAPY ?? false,
       };
     }
     if (valueUSD <= 0) {
-      return { computedFormattedAPY: '—', computedIsAPYFallback: false, computedIsLoadingAPY: true };
+      return { computedFormattedAPR: '–', computedIsAPRFallback: false, computedIsLoadingAPR: true };
     }
     if (!position.isInRange) {
-      return { computedFormattedAPY: '0.00%', computedIsAPYFallback: false, computedIsLoadingAPY: false };
+      return { computedFormattedAPR: '0%', computedIsAPRFallback: false, computedIsLoadingAPR: false };
     }
-    const result = calculateClientAPY(feesUSD, valueUSD, position.blockTimestamp, apr ?? 0);
+
+    const nowTimestamp = Math.floor(Date.now() / 1000);
+    const durationDays = (nowTimestamp - position.blockTimestamp) / 86400;
+
+    const fallbackApr = apr !== null && apr !== undefined && isFinite(apr)
+      ? new Percent(Math.round(apr * 100), 10000)
+      : null;
+
+    const result = calculateRealizedApr(feesUSD, valueUSD, durationDays, fallbackApr);
     return {
-      computedFormattedAPY: result.formattedAPY,
-      computedIsAPYFallback: result.isFallback,
-      computedIsLoadingAPY: false,
+      computedFormattedAPR: formatApr(result.apr),
+      computedIsAPRFallback: result.isFallback,
+      computedIsLoadingAPR: false,
     };
   }, [prefetchedFormattedAPY, prefetchedIsAPYFallback, prefetchedIsLoadingAPY, feesUSD, valueUSD, position.blockTimestamp, position.isInRange, apr]);
 
@@ -848,11 +853,8 @@ export function PositionDetailsModal({
   const maxPriceActual = calculatedMaxPrice;
   const currentPriceActual = calculatedCurrentPrice;
 
-  // Check if full range
-  const SDK_MIN_TICK = -887272;
-  const SDK_MAX_TICK = 887272;
-  const isFullRange = Math.abs(position.tickLower - SDK_MIN_TICK) < 1000 &&
-                      Math.abs(position.tickUpper - SDK_MAX_TICK) < 1000;
+  // Check if full range (uses centralized detection mirroring Uniswap's useIsTickAtLimit)
+  const isFullRange = isFullRangePosition(defaultTickSpacing, position.tickLower, position.tickUpper);
 
   const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
   const statusColor = isFullRange ? 'text-green-500' : position.isInRange ? 'text-green-500' : 'text-red-500';
@@ -923,8 +925,9 @@ export function PositionDetailsModal({
     return null;
   }
 
-  return createPortal(
+  return [createPortal(
     <div
+      key="position-details-modal"
       className={`fixed inset-0 z-[9999] flex backdrop-blur-md cursor-default ${isMobile ? 'items-end' : 'items-center justify-center'}`}
       style={{
         pointerEvents: 'auto',
@@ -1105,21 +1108,21 @@ export function PositionDetailsModal({
                 <div className="flex flex-col gap-3 md:gap-5">
                   {/* Label + Total USD */}
                   <div className="flex flex-col gap-2 relative">
-                    {/* APY - only show if there are actual fees earned */}
-                    {mounted && !computedIsLoadingAPY && computedFormattedAPY && computedFormattedAPY !== '—' && computedFormattedAPY !== '0.00%' && feesUSD > 0 && (
-                      <div className="absolute top-0 right-0 border border-dashed border-sidebar-border/60 rounded-lg p-2 flex items-center gap-1 group/apy cursor-help">
+                    {/* APR - only show if there are actual fees earned */}
+                    {mounted && !computedIsLoadingAPR && computedFormattedAPR && computedFormattedAPR !== '–' && computedFormattedAPR !== '0%' && feesUSD > 0 && (
+                      <div className="absolute top-0 right-0 border border-dashed border-sidebar-border/60 rounded-lg p-2 flex items-center gap-1 group/apr cursor-help">
                         <div className="flex flex-col items-start gap-0">
                           <div className="text-sm font-normal leading-none">
-                            {computedFormattedAPY}
+                            {computedFormattedAPR}
                           </div>
                         </div>
 
                         {/* Tooltip */}
-                        <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-popover border border-sidebar-border rounded-md shadow-lg opacity-0 group-hover/apy:opacity-100 pointer-events-none transition-opacity duration-200 w-48 text-xs text-popover-foreground z-[100]">
-                          {computedIsAPYFallback ? (
-                            <p><span className="font-bold">APY:</span> Pool-wide estimate. Actual APY calculated from position fees.</p>
+                        <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 bg-popover border border-sidebar-border rounded-md shadow-lg opacity-0 group-hover/apr:opacity-100 pointer-events-none transition-opacity duration-200 w-48 text-xs text-popover-foreground z-[100]">
+                          {computedIsAPRFallback ? (
+                            <p><span className="font-bold">APR:</span> Pool-wide estimate. Actual APR calculated from position fees.</p>
                           ) : (
-                            <p><span className="font-bold">APY:</span> Calculated from your position's accumulated fees.</p>
+                            <p><span className="font-bold">APR:</span> Calculated from your position's accumulated fees.</p>
                           )}
                           {/* Tooltip arrow */}
                           <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-sidebar-border"></div>
@@ -2247,5 +2250,20 @@ export function PositionDetailsModal({
       </div>
     </div>,
     document.body
-  );
+  ),
+  /* ClaimFeeModal - Separate portal for fee collection */
+  <ClaimFeeModal
+    key="claim-fee-modal"
+    isOpen={showClaimFeeModal}
+    onClose={() => setShowClaimFeeModal(false)}
+    position={position}
+    feeAmount0={feeAmount0}
+    feeAmount1={feeAmount1}
+    fee0USD={fee0USD}
+    fee1USD={fee1USD}
+    getUsdPriceForSymbol={getUsdPriceForSymbol}
+    onFeesCollected={onFeesCollected}
+    onRefreshPosition={onRefreshPosition}
+  />
+  ];
 }

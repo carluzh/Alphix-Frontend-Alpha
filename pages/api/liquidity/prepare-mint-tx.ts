@@ -1,7 +1,7 @@
 import { Token, Percent, Ether } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position, V4PositionManager } from "@uniswap/v4-sdk";
 import type { MintOptions, AllowanceTransferPermitBatch } from "@uniswap/v4-sdk";
-import { nearestUsableTick } from '@uniswap/v3-sdk';
+import { nearestUsableTick, TickMath } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -31,8 +31,6 @@ import { AllowanceTransfer, permit2Address, PERMIT2_ADDRESS, PermitBatch } from 
 // Note: POSITION_MANAGER_ADDRESS and STATE_VIEW_ADDRESS are now fetched dynamically per-request
 // using getPositionManagerAddress(networkMode) and getStateViewAddress(networkMode)
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
-const SDK_MIN_TICK = -887272;
-const SDK_MAX_TICK = 887272;
 
 interface PrepareMintTxRequest extends NextApiRequest {
     body: {
@@ -279,8 +277,8 @@ export default async function handler(
             return res.status(400).json({ message: `No pool configuration found for ${token0Symbol}/${token1Symbol}` });
         }
 
-        const clampedUserTickLower = Math.max(userTickLower, SDK_MIN_TICK);
-        const clampedUserTickUpper = Math.min(userTickUpper, SDK_MAX_TICK);
+        const clampedUserTickLower = Math.max(userTickLower, TickMath.MIN_TICK);
+        const clampedUserTickUpper = Math.min(userTickUpper, TickMath.MAX_TICK);
         let tickLower = nearestUsableTick(clampedUserTickLower, poolConfig.tickSpacing);
         let tickUpper = nearestUsableTick(clampedUserTickUpper, poolConfig.tickSpacing);
         if (tickLower >= tickUpper) {

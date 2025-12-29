@@ -3,11 +3,13 @@
 import React, { useMemo } from 'react';
 import { Line, LineChart, ResponsiveContainer, YAxis, ReferenceLine, ReferenceArea } from 'recharts';
 import { cn } from '@/lib/utils';
-import { usePoolChartData } from '@/hooks/usePoolChartData';
+import { usePoolPriceChartData } from '@/lib/chart';
+import { HistoryDuration, DataQuality } from '@/lib/chart/types';
 
 interface MiniPoolChartProps {
   token0: string;
   token1: string;
+  selectedPoolId: string; // Required for new data fetching
   denominationBase: string; // The base token for denomination (passed from parent)
   currentPrice?: string | null; // Already in display denomination
   minPrice?: string; // Already in display denomination
@@ -20,6 +22,7 @@ interface MiniPoolChartProps {
 export function MiniPoolChart({
   token0,
   token1,
+  selectedPoolId,
   denominationBase,
   currentPrice,
   minPrice,
@@ -28,16 +31,29 @@ export function MiniPoolChart({
   isFullRange,
   className
 }: MiniPoolChartProps) {
-  const { data: priceResult, isLoading, error: priceError } = usePoolChartData(token0, token1);
-  const error = !!priceError;
+  // Determine if we need to invert the price (same logic as PositionChartV2)
+  const priceInverted = denominationBase === token1;
 
-  // API returns token1/token0; invert if denominationBase is token1
+  // Fetch data using Uniswap-style hook
+  const { entries, loading: isLoading, dataQuality } = usePoolPriceChartData({
+    variables: {
+      poolId: selectedPoolId,
+      token0,
+      token1,
+      duration: HistoryDuration.WEEK,
+    },
+    priceInverted,
+  });
+
+  const hasError = dataQuality === DataQuality.INVALID;
+
+  // Transform entries to data format for recharts
   const data = useMemo(() => {
-    const rawData = priceResult?.data || [];
-    if (rawData.length === 0) return [];
-    const needsInvert = denominationBase === token1;
-    return needsInvert ? rawData.map(d => ({ ...d, price: 1 / d.price })) : rawData;
-  }, [priceResult, denominationBase, token1]);
+    return entries.map((entry) => ({
+      timestamp: entry.time,
+      price: entry.value,
+    }));
+  }, [entries]);
 
   // Parse price bounds (already in display denomination from parent)
   const currentPriceNum = useMemo(() => {
@@ -130,7 +146,7 @@ export function MiniPoolChart({
     );
   }
 
-  if (error || data.length === 0) {
+  if (hasError || data.length === 0) {
     return (
       <div className={cn("flex items-center justify-center cursor-pointer", className)}>
         <div className="h-full w-full bg-muted/10 rounded-lg flex items-center justify-center">

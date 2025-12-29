@@ -19,7 +19,7 @@ import { type Hex, maxUint256, formatUnits, formatUnits as viemFormatUnits, pars
 import { addPositionIdToCache } from '@/lib/client-cache';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { useCheckMintApprovals } from '@/lib/liquidity';
-import { useCheckZapApprovals } from './useCheckZapApprovals';
+import { useCheckZapApprovals } from '../approval/useCheckZapApprovals';
 import { isInfiniteApprovalEnabled, getStoredSlippageBps, getStoredUserSettings } from '@/hooks/useUserSettings';
 
 type LiquidityOperation = 'liquidity_mint' | 'liquidity_zap' | 'liquidity_approve';

@@ -28,9 +28,9 @@ import { useMintState, useMintActionHandlers } from '@/lib/liquidity/state';
 import { PositionField } from '@/lib/liquidity/types';
 import { useUserSlippageTolerance } from '@/hooks/useSlippage';
 import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
-import { useAddLiquidityCalculation, CalculatedLiquidityData } from '../hooks/useAddLiquidityCalculation';
+import { useAddLiquidityCalculation, type CalculatedLiquidityData } from '@/lib/liquidity/hooks';
 import { useRangeDisplay } from '../hooks/useRangeDisplay';
-import { usePositionAPY, CachedPoolMetrics } from '../hooks/usePositionAPY';
+import { usePositionAPR, type CachedPoolMetrics } from '@/lib/liquidity/hooks';
 import { useZapQuote, ZapQuoteData } from '../hooks/useZapQuote';
 import { useBalanceWiggle } from '../hooks/useBalanceWiggle';
 import { getAddableTokens, calculateTicksFromPercentage } from '@/lib/liquidity/utils/calculations';
@@ -138,9 +138,9 @@ export interface AddLiquidityContextType {
   isCalculating: boolean;
   calculationError: string | null;
 
-  // APY data
-  estimatedApy: string;
-  isCalculatingApy: boolean;
+  // APR data
+  estimatedApr: string;
+  isCalculatingApr: boolean;
   cachedPoolMetrics: CachedPoolMetrics | null;
 
   // Range display
@@ -488,8 +488,8 @@ export function AddLiquidityProvider({
     return null;
   }, [priceImpact, zapQuote?.priceImpact, isZapMode]);
 
-  // APY hook
-  const { estimatedApy, isCalculatingApy, cachedPoolMetrics } = usePositionAPY({
+  // APR hook
+  const { estimatedApr, isCalculatingApr, cachedPoolMetrics } = usePositionAPR({
     selectedPoolId,
     tickLower,
     tickUpper,
@@ -759,9 +759,9 @@ export function AddLiquidityProvider({
       isCalculating,
       calculationError,
 
-      // APY data
-      estimatedApy,
-      isCalculatingApy,
+      // APR data
+      estimatedApr,
+      isCalculatingApr,
       cachedPoolMetrics,
 
       // Range display
@@ -887,8 +887,8 @@ export function AddLiquidityProvider({
       calculatedData,
       isCalculating,
       calculationError,
-      estimatedApy,
-      isCalculatingApy,
+      estimatedApr,
+      isCalculatingApr,
       cachedPoolMetrics,
       rangeLabels,
       formattedCurrentPrice,

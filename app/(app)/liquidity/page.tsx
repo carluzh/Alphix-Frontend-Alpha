@@ -37,16 +37,13 @@ import Link from "next/link";
 import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX } from "lucide-react";
 import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
-import { useIncreaseLiquidity, type IncreasePositionData } from "@/components/liquidity/useIncreaseLiquidity";
-import { useDecreaseLiquidity, type DecreasePositionData } from "@/components/liquidity/useDecreaseLiquidity";
+import { useIncreaseLiquidity, type IncreasePositionData, useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
 import { toast as sonnerToast } from "sonner";
 import { waitForSubgraphBlock } from "@/lib/client-cache";
 import { prefetchService } from "@/lib/prefetch-service";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TickMath } from '@uniswap/v3-sdk';
 
-
-const SDK_MIN_TICK = -887272;
-const SDK_MAX_TICK = 887272;
 const DEFAULT_TICK_SPACING = 60;
 
 const generatePoolsFromConfig = (): Pool[] => {
@@ -253,8 +250,8 @@ export default function LiquidityPage() {
   }, []);
 
   const convertTickToPrice = useMemo(() => (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
-    if (tick === SDK_MAX_TICK) return '∞';
-    if (tick === SDK_MIN_TICK) return '0.00';
+    if (tick === TickMath.MAX_TICK) return '∞';
+    if (tick === TickMath.MIN_TICK) return '0.00';
     if (currentPoolTick === null || !currentPrice) return 'N/A';
     const currentPriceNum = parseFloat(currentPrice);
     if (isNaN(currentPriceNum) || currentPriceNum <= 0) return 'N/A';

@@ -23,7 +23,7 @@ import { getTokenDefinitions, TokenSymbol, getToken, getAllTokens, getPoolById }
 import { useNetwork } from "@/lib/network-context";
 // Note: useAddLiquidityTransaction was removed - new positions use AddLiquidityForm instead
 // This modal now only supports increasing existing positions
-import { useIncreaseLiquidity, type IncreasePositionData } from "./useIncreaseLiquidity";
+import { useIncreaseLiquidity, type IncreasePositionData } from "@/lib/liquidity/hooks";
 import { TokenSelectorToken } from "../swap/TokenSelector";
 import { AnimatePresence, motion, useAnimation } from "framer-motion";
 import { readContract, getBalance } from '@wagmi/core';
@@ -36,7 +36,7 @@ import { formatUSD } from "@/lib/format";
 import { sanitizeDecimalInput, debounce, getTokenSymbolByAddress, formatUncollectedFee, cn } from "@/lib/utils";
 import { formatUnits } from "viem";
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
-import { providePreSignedIncreaseBatchPermit } from './useIncreaseLiquidity';
+import { providePreSignedIncreaseBatchPermit } from '@/lib/liquidity/hooks';
 
 // Utility functions
 const formatTokenDisplayAmount = (amount: string) => {

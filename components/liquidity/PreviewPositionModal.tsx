@@ -17,7 +17,8 @@ import { Pool as V4PoolSDK } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
 import { getAddress } from "viem";
 import { V4_POOL_FEE, V4_POOL_TICK_SPACING, V4_POOL_HOOKS } from "@/lib/swap-constants";
-import { calculateUserPositionAPY, formatUserAPY, type PoolMetrics } from "@/lib/apy-calculator";
+import { calculatePositionApr, type PoolMetrics } from "@/lib/apr";
+import { Percent } from '@uniswap/sdk-core';
 
 // Helper function to get token icon
 const getTokenIcon = (symbol?: string) => {
@@ -98,8 +99,8 @@ export function PreviewPositionModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
   
-  // State for APY calculation
-  const [calculatedAPY, setCalculatedAPY] = useState<number | null>(null);
+  // State for APR calculation
+  const [calculatedAPR, setCalculatedAPR] = useState<Percent | null>(null);
   const [cachedPoolMetrics, setCachedPoolMetrics] = useState<{ poolId: string; metrics: any; poolLiquidity: string } | null>(null);
   
   // Derived pool tokens
@@ -159,11 +160,11 @@ export function PreviewPositionModal({
     fetchPoolData();
   }, [selectedPoolId, cachedPoolMetrics]);
   
-  // Calculate APY using same logic as AddLiquidityForm
+  // Calculate APR using same logic as AddLiquidityForm
   useEffect(() => {
-    const calculateApy = async () => {
+    const calculateApr = async () => {
       if (!selectedPoolId || !tickLower || !tickUpper || !currentPoolSqrtPriceX96 || currentPoolTick === null) {
-        setCalculatedAPY(null);
+        setCalculatedAPR(null);
         return;
       }
 
@@ -171,14 +172,14 @@ export function PreviewPositionModal({
       const upperTick = parseInt(tickUpper);
 
       if (isNaN(lowerTick) || isNaN(upperTick) || lowerTick >= upperTick) {
-        setCalculatedAPY(null);
+        setCalculatedAPR(null);
         return;
       }
 
       const amount0Num = parseFloat(amount0 || '0');
       const amount1Num = parseFloat(amount1 || '0');
       if (amount0Num <= 0 && amount1Num <= 0) {
-        setCalculatedAPY(null);
+        setCalculatedAPR(null);
         return;
       }
 
@@ -187,14 +188,14 @@ export function PreviewPositionModal({
       }
 
       if (!cachedPoolMetrics.metrics || cachedPoolMetrics.metrics.days === 0) {
-        setCalculatedAPY(null);
+        setCalculatedAPR(null);
         return;
       }
 
       try {
         const poolConfig = getPoolById(selectedPoolId);
         if (!poolConfig) {
-          setCalculatedAPY(null);
+          setCalculatedAPR(null);
           return;
         }
 
@@ -202,7 +203,7 @@ export function PreviewPositionModal({
         const token1Def = tokenDefinitions[token1Symbol];
 
         if (!token0Def || !token1Def) {
-          setCalculatedAPY(null);
+          setCalculatedAPR(null);
           return;
         }
 
@@ -222,25 +223,24 @@ export function PreviewPositionModal({
 
         const userLiquidity = calculatedData?.liquidity;
 
-        const apy = await calculateUserPositionAPY(
+        const apr = await calculatePositionApr(
           sdkPool,
           lowerTick,
           upperTick,
-          amount0,
-          amount1,
           cachedPoolMetrics.metrics as PoolMetrics,
-          userLiquidity
+          100,
+          { amount0, amount1, liquidity: userLiquidity }
         );
 
-        setCalculatedAPY(apy);
+        setCalculatedAPR(apr);
       } catch (error) {
-        setCalculatedAPY(null);
+        setCalculatedAPR(null);
       }
     };
 
-    const timer = setTimeout(() => calculateApy(), 100);
+    const timer = setTimeout(() => calculateApr(), 100);
     return () => clearTimeout(timer);
-  }, [selectedPoolId, tickLower, tickUpper, currentPoolSqrtPriceX96, currentPoolTick, token0Symbol, token1Symbol, amount0, amount1, calculatedData, cachedPoolMetrics, poolToken0, poolToken1]);
+  }, [selectedPoolId, tickLower, tickUpper, currentPoolSqrtPriceX96, currentPoolTick, token0Symbol, token1Symbol, amount0, amount1, calculatedData, cachedPoolMetrics, poolToken0, poolToken1, targetChainId, tokenDefinitions]);
 
   // Ensure we're mounted before rendering portal (SSR safety)
   useEffect(() => {
@@ -456,7 +456,7 @@ export function PreviewPositionModal({
                   poolContext={{
                     currentPrice,
                     currentPoolTick,
-                    poolAPY: calculatedAPY,
+                    poolAPR: calculatedAPR ? parseFloat(calculatedAPR.toFixed(2)) : null,
                     isLoadingPrices: false,
                     isLoadingPoolStates: false,
                   }}

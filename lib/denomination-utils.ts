@@ -1,3 +1,5 @@
+import { TickMath } from '@uniswap/v3-sdk';
+
 // Quote token priority for determining base token in price display
 // Includes both mainnet (USDC, USDT, etc.) and testnet (aUSDC, aUSDT, etc.) symbols
 const QUOTE_TOKEN_PRIORITY: Record<string, number> = {
@@ -42,12 +44,10 @@ export function convertTickToPrice(
   baseToken: string,
   token0Symbol: string,
   token1Symbol: string,
-  sdkMinTick: number = -887272,
-  sdkMaxTick: number = 887272
 ): string {
-  // Handle extreme values
-  if (tick >= sdkMaxTick) return '∞';
-  if (tick <= sdkMinTick) return '0.00';
+  // Handle extreme values (using SDK constants)
+  if (tick >= TickMath.MAX_TICK) return '∞';
+  if (tick <= TickMath.MIN_TICK) return '0.00';
 
   // Calculate price relative to current if available
   if (currentPoolTick !== null && currentPrice) {

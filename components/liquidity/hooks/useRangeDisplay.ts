@@ -10,8 +10,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getPoolById } from '@/lib/pools-config';
 import { getDecimalsForDenomination } from '@/lib/denomination-utils';
-import { convertTickToPrice } from '@/lib/liquidity';
-import { CalculatedLiquidityData } from './useAddLiquidityCalculation';
+import { convertTickToPrice, isFullRangePosition } from '@/lib/liquidity';
+import { type CalculatedLiquidityData } from '@/lib/liquidity/hooks';
 
 export interface UseRangeDisplayParams {
   tickLower: string;
@@ -154,6 +154,8 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
     if (isNaN(lower) || isNaN(upper)) return null;
 
     const shouldInvert = baseTokenForPriceDisplay === token0Symbol;
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+
     // Use lib/liquidity utility for price calculation
     const priceAt = (tickVal: number): number => {
       const priceStr = convertTickToPrice({
@@ -166,8 +168,8 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
       return priceStr ? parseFloat(priceStr) : NaN;
     };
 
-    // Full range case
-    if (tickLower === sdkMinTick.toString() && tickUpper === sdkMaxTick.toString()) {
+    // Full range case - use centralized detection
+    if (isFullRangePosition(poolCfg?.tickSpacing, lower, upper)) {
       return { left: '0.00', right: '∞' };
     }
 
@@ -175,7 +177,6 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
     const pUpper = priceAt(upper);
 
     const denomToken = shouldInvert ? token0Symbol : token1Symbol;
-    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
     const decimals = getDecimalsForDenomination(denomToken, poolCfg?.type);
 
     const points = [
@@ -206,8 +207,6 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
     tickUpper,
     token0Symbol,
     token1Symbol,
-    sdkMinTick,
-    sdkMaxTick,
     baseTokenForPriceDisplay,
     selectedPoolId,
   ]);

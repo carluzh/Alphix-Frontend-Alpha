@@ -8,9 +8,6 @@ import { STATE_VIEW_ABI } from "@/lib/abis/state_view_abi";
 import { getToken, TokenSymbol, getStateViewAddress, getPoolByTokens } from "@/lib/pools-config";
 import { MAINNET_CHAIN_ID, type NetworkMode } from "@/lib/network-mode";
 
-const SDK_MIN_TICK = -887272;
-const SDK_MAX_TICK = 887272;
-
 interface CalculateLiquidityParams {
   token0Symbol: TokenSymbol;
   token1Symbol: TokenSymbol;
@@ -161,8 +158,8 @@ export async function calculateLiquidityParameters(
 
   let tickLower: number, tickUpper: number;
   if (fullRange) {
-    tickLower = nearestUsableTick(SDK_MIN_TICK, poolConfig.tickSpacing);
-    tickUpper = nearestUsableTick(SDK_MAX_TICK, poolConfig.tickSpacing);
+    tickLower = nearestUsableTick(TickMath.MIN_TICK, poolConfig.tickSpacing);
+    tickUpper = nearestUsableTick(TickMath.MAX_TICK, poolConfig.tickSpacing);
   } else if (typeof tickRangeAmount === 'number' && isFinite(tickRangeAmount)) {
     tickLower = nearestUsableTick(currentTickFromSlot0 - tickRangeAmount, poolConfig.tickSpacing);
     tickUpper = nearestUsableTick(currentTickFromSlot0 + tickRangeAmount, poolConfig.tickSpacing);

@@ -16,7 +16,8 @@ import {
   SeriesOptionsMap,
   Coordinate,
 } from 'lightweight-charts';
-import { usePoolChartData } from '@/hooks/usePoolChartData';
+import { usePoolPriceChartData } from '@/lib/chart';
+import { HistoryDuration, DataQuality } from '@/lib/chart/types';
 import { cn } from '@/lib/utils';
 import Image from 'next/image';
 import { ArrowLeftRight } from 'lucide-react';
@@ -252,19 +253,29 @@ export function PositionChartV2({
     setLocalDenominationBase(inheritedDenominationBase);
   }, [inheritedDenominationBase]);
 
-  // API returns token1/token0; check if we need to invert based on denomination
-  const apiNeedsInvert = inheritedDenominationBase === token1;
+  // Track if user has flipped the denomination
   const userFlipped = localDenominationBase !== inheritedDenominationBase;
 
-  // Fetch data with refetch capability
-  const {
-    data: priceResult,
-    isLoading: isPriceLoading,
-    error: priceError,
-    refetch: refetchPrice
-  } = usePoolChartData(token0, token1);
+  // Determine if we need to invert the price
+  // API returns token0Price and token1Price
+  // priceInverted=true uses token0Price, priceInverted=false uses token1Price
+  // XOR with userFlipped to handle both initial denomination and user flip
+  const priceInverted = (inheritedDenominationBase === token1) !== userFlipped;
 
-  const rawPriceData = priceResult?.data || [];
+  // Fetch data using Uniswap-style hook
+  const {
+    entries: rawEntries,
+    loading: isPriceLoading,
+    dataQuality,
+  } = usePoolPriceChartData({
+    variables: {
+      poolId: selectedPoolId,
+      token0,
+      token1,
+      duration: HistoryDuration.WEEK,
+    },
+    priceInverted,
+  });
 
   const parsedPrices = useMemo(() => {
     const minNum = minPrice ? parseFloat(minPrice) : null;
@@ -282,14 +293,13 @@ export function PositionChartV2({
 
   const { minPriceNum, maxPriceNum, currentPriceNum } = parsedPrices;
 
+  // Hook already applies priceInverted, just cast to our local type
   const priceData: PriceDataPoint[] = useMemo(() => {
-    return rawPriceData.map((point: any) => {
-      let price = point.price;
-      if (apiNeedsInvert) price = 1 / price;
-      if (userFlipped) price = 1 / price;
-      return { time: point.timestamp as UTCTimestamp, value: price };
-    });
-  }, [rawPriceData, apiNeedsInvert, userFlipped]);
+    return rawEntries.map((entry) => ({
+      time: entry.time,
+      value: entry.value,
+    }));
+  }, [rawEntries]);
 
   // Initialize and update chart
   useEffect(() => {
@@ -504,7 +514,7 @@ export function PositionChartV2({
   }, [priceData, minPriceNum, maxPriceNum, currentPriceNum, isInRange, isFullRange]);
 
   const isLoading = isPriceLoading;
-  const error = !!priceError;
+  const hasError = dataQuality === DataQuality.INVALID;
 
   if (isLoading) {
     return (
@@ -520,12 +530,12 @@ export function PositionChartV2({
     );
   }
 
-  if (error || priceData.length === 0) {
+  if (hasError || priceData.length === 0) {
     return (
       <div className={cn("flex items-center justify-center h-full w-full", className)}>
         <div className="h-full w-full bg-muted/10 rounded-lg flex items-center justify-center">
           <span className="text-xs text-muted-foreground">
-            {error ? 'Error loading chart' : 'No chart data available'}
+            {hasError ? 'Error loading chart' : 'No chart data available'}
           </span>
         </div>
       </div>

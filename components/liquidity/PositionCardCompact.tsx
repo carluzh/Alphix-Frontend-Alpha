@@ -4,12 +4,14 @@ import React, { useState, useMemo } from 'react';
 import Image from "next/image";
 import { formatUnits } from "viem";
 import { TokenStack } from "./TokenStack";
-import { getTokenDefinitions } from '@/lib/pools-config';
+import { getTokenDefinitions, getPoolById } from '@/lib/pools-config';
+import { isFullRangePosition } from '@/lib/liquidity/hooks/range';
 import { useNetwork } from '@/lib/network-context';
 import { cn } from "@/lib/utils";
 import { MiniPoolChart } from './MiniPoolChart';
 import { getDecimalsForDenomination, getOptimalBaseToken } from '@/lib/denomination-utils';
-import { calculateClientAPY } from '@/lib/client-apy';
+import { calculateRealizedApr, formatApr } from '@/lib/apr';
+import { Percent } from '@uniswap/sdk-core';
 import { ArrowUpRight } from 'lucide-react';
 
 function StatusIndicatorCircle({ className }: { className?: string }) {
@@ -57,7 +59,7 @@ interface PositionCardCompactProps {
     poolContext: {
         currentPrice: string | null;
         currentPoolTick: number | null;
-        poolAPY: number | null;
+        poolAPR: number | null;
         isLoadingPrices: boolean;
         isLoadingPoolStates: boolean;
     };
@@ -70,9 +72,6 @@ interface PositionCardCompactProps {
     disableHover?: boolean;
     className?: string;
 }
-
-const SDK_MIN_TICK = -887272;
-const SDK_MAX_TICK = 887272;
 
 export function PositionCardCompact({
     position,
@@ -91,7 +90,7 @@ export function PositionCardCompact({
     const [isHovered, setIsHovered] = useState(false);
     const { networkMode } = useNetwork();
     const TOKEN_DEFINITIONS = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
-    const { currentPrice, currentPoolTick, poolAPY, isLoadingPrices, isLoadingPoolStates } = poolContext;
+    const { currentPrice, currentPoolTick, poolAPR, isLoadingPrices, isLoadingPoolStates } = poolContext;
     const { raw0: prefetchedRaw0, raw1: prefetchedRaw1 } = fees;
 
     // Calculate fees USD from raw fee amounts
@@ -135,10 +134,18 @@ export function PositionCardCompact({
         return shouldInvert ? (1 / priceNum) : priceNum;
     }, [currentPrice, shouldInvert]);
 
-    const { minPrice, maxPrice, isFullRange } = React.useMemo(() => {
-        const isFull = Math.abs(position.tickLower - SDK_MIN_TICK) < 1000 &&
-                       Math.abs(position.tickUpper - SDK_MAX_TICK) < 1000;
+    // Get tickSpacing from pool config for accurate full-range detection
+    const tickSpacing = useMemo(() => {
+        const poolConfig = getPoolById(position.poolId, networkMode);
+        return poolConfig?.tickSpacing;
+    }, [position.poolId, networkMode]);
 
+    // Use centralized full-range detection (mirrors Uniswap's useIsTickAtLimit)
+    const isFullRange = useMemo(() => {
+        return isFullRangePosition(tickSpacing, position.tickLower, position.tickUpper);
+    }, [tickSpacing, position.tickLower, position.tickUpper]);
+
+    const { minPrice, maxPrice } = React.useMemo(() => {
         const lowerPriceStr = convertTickToPrice(
             position.tickLower, currentPoolTick ?? null, currentPrice ?? null,
             denominationBase, position.token0.symbol, position.token1.symbol
@@ -152,25 +159,29 @@ export function PositionCardCompact({
         return {
             minPrice: shouldInvert ? upperPriceStr : lowerPriceStr,
             maxPrice: shouldInvert ? lowerPriceStr : upperPriceStr,
-            isFullRange: isFull
         };
     }, [position.tickLower, position.tickUpper, currentPrice, currentPoolTick, denominationBase, position.token0.symbol, position.token1.symbol, convertTickToPrice, shouldInvert]);
 
-    // Calculate APY using fees, position value, lastTimestamp, and pool APY
-    const { formattedAPY, isFallback: isAPYFallback, isLoading: isLoadingAPY } = React.useMemo(() => {
+    // Calculate APR using fees, position value, lastTimestamp, and pool APR
+    const { formattedAPR, isFallback: isAPRFallback, isLoading: isLoadingAPR } = React.useMemo(() => {
         if (isLoadingPrices || valueUSD <= 0) {
-            return { formattedAPY: '—', isFallback: false, isLoading: true };
-        }
-        // Handle missing/invalid poolAPY - show 0% instead of skeleton
-        if (poolAPY === undefined || poolAPY === null || !isFinite(poolAPY)) {
-            return { formattedAPY: '0.00%', isFallback: true, isLoading: false };
+            return { formattedAPR: '-', isFallback: false, isLoading: true };
         }
         if (!position.isInRange && !isFullRange) {
-            return { formattedAPY: '0.00%', isFallback: false, isLoading: false };
+            return { formattedAPR: '0%', isFallback: false, isLoading: false };
         }
-        const result = calculateClientAPY(feesUSD, valueUSD, position.lastTimestamp || position.blockTimestamp, poolAPY);
-        return { ...result, isLoading: false };
-    }, [feesUSD, valueUSD, position.lastTimestamp, position.blockTimestamp, poolAPY, isLoadingPrices, position.isInRange, isFullRange]);
+
+        const nowTimestamp = Math.floor(Date.now() / 1000);
+        const durationDays = (nowTimestamp - (position.lastTimestamp || position.blockTimestamp)) / 86400;
+
+        // Convert poolAPR number to Percent for fallback
+        const fallbackApr = poolAPR !== null && poolAPR !== undefined && isFinite(poolAPR)
+            ? new Percent(Math.round(poolAPR * 100), 10000)
+            : null;
+
+        const result = calculateRealizedApr(feesUSD, valueUSD, durationDays, fallbackApr);
+        return { formattedAPR: formatApr(result.apr), isFallback: result.isFallback, isLoading: false };
+    }, [feesUSD, valueUSD, position.lastTimestamp, position.blockTimestamp, poolAPR, isLoadingPrices, position.isInRange, isFullRange]);
 
     // Determine status
     const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
@@ -228,6 +239,7 @@ export function PositionCardCompact({
                     <MiniPoolChart
                         token0={position.token0.symbol}
                         token1={position.token1.symbol}
+                        selectedPoolId={position.poolId}
                         denominationBase={denominationBase}
                         currentPrice={displayedCurrentPrice?.toString() || null}
                         minPrice={minPrice}
@@ -241,6 +253,7 @@ export function PositionCardCompact({
                     <MiniPoolChart
                         token0={position.token0.symbol}
                         token1={position.token1.symbol}
+                        selectedPoolId={position.poolId}
                         denominationBase={denominationBase}
                         currentPrice={displayedCurrentPrice?.toString() || null}
                         minPrice={minPrice}
@@ -302,19 +315,19 @@ export function PositionCardCompact({
                     <div className="text-[10px] text-muted-foreground">Fees</div>
                 </div>
 
-                {/* APY */}
+                {/* APR */}
                 <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                    {isLoadingAPY ? (
+                    {isLoadingAPR ? (
                         <div className="h-4 w-12 bg-muted/60 rounded animate-pulse" />
                     ) : (
                         <div className={cn(
                             "text-xs font-medium font-mono",
-                            isAPYFallback && "text-white/50"
+                            isAPRFallback && "text-white/50"
                         )}>
-                            {formattedAPY}
+                            {formattedAPR}
                         </div>
                     )}
-                    <div className="text-[10px] text-muted-foreground">APY</div>
+                    <div className="text-[10px] text-muted-foreground">APR</div>
                 </div>
 
                 {/* Range - Hidden on mobile, shown on desktop */}

@@ -1,0 +1,308 @@
+"use client";
+
+/**
+ * IncreaseLiquidityReview - Confirmation UI for increase liquidity flow
+ *
+ * Following Uniswap's pattern: Shows transaction details and progress,
+ * handles approval/permit/deposit flow.
+ *
+ * @see interface/apps/web/src/pages/IncreaseLiquidity/IncreaseLiquidityReview.tsx
+ */
+
+import React, { useMemo } from "react";
+import { BadgeCheck, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import Image from "next/image";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { getExplorerTxUrl } from "@/lib/wagmiConfig";
+import { getTokenIcon, formatCalculatedAmount } from "../liquidity-form-utils";
+import { LiquidityDetailRows } from "../shared/LiquidityDetailRows";
+import { LiquidityPositionInfo } from "../shared/LiquidityPositionInfo";
+import {
+  TransactionProgress,
+  createIncreaseLiquiditySteps,
+  type TransactionStepStatus,
+} from "../shared/TransactionProgress";
+import {
+  useIncreaseLiquidityContext,
+  IncreaseLiquidityStep,
+} from "./IncreaseLiquidityContext";
+import { useIncreaseLiquidityTxContext } from "./IncreaseLiquidityTxContext";
+
+interface IncreaseLiquidityReviewProps {
+  onClose: () => void;
+  onSuccess?: () => void;
+}
+
+export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidityReviewProps) {
+  const {
+    setStep,
+    increaseLiquidityState,
+    derivedIncreaseLiquidityInfo,
+  } = useIncreaseLiquidityContext();
+
+  const {
+    txStep,
+    isWorking,
+    error,
+    neededApprovals,
+    completedApprovals,
+    currentApprovalToken,
+    permitSigned,
+    isSuccess,
+    txHash,
+    token0USDPrice,
+    token1USDPrice,
+    executeApproval,
+    executePermit,
+    executeDeposit,
+  } = useIncreaseLiquidityTxContext();
+
+  const { position } = increaseLiquidityState;
+  const { formattedAmounts } = derivedIncreaseLiquidityInfo;
+
+  const amount0 = parseFloat(formattedAmounts?.TOKEN0 || "0");
+  const amount1 = parseFloat(formattedAmounts?.TOKEN1 || "0");
+  const usdValue0 = amount0 * token0USDPrice;
+  const usdValue1 = amount1 * token1USDPrice;
+  const totalUSDValue = usdValue0 + usdValue1;
+
+  // Generate transaction steps
+  const transactionSteps = useMemo(() => {
+    const getStepStatus = (
+      step: "approve" | "permit" | "deposit"
+    ): TransactionStepStatus => {
+      if (step === "approve") {
+        if (completedApprovals >= neededApprovals.length && neededApprovals.length > 0)
+          return "completed";
+        if (txStep === "approve" && isWorking) return "in_progress";
+        if (txStep === "approve") return "pending";
+        if (neededApprovals.length === 0) return "completed";
+        return "pending";
+      }
+      if (step === "permit") {
+        if (permitSigned) return "completed";
+        if (txStep === "permit" && isWorking) return "in_progress";
+        if (txStep === "permit") return "pending";
+        return "pending";
+      }
+      if (step === "deposit") {
+        if (isSuccess) return "completed";
+        if (txStep === "deposit" && isWorking) return "in_progress";
+        if (txStep === "deposit") return "pending";
+        return "pending";
+      }
+      return "pending";
+    };
+
+    // Calculate total approvals needed (tokens with amounts > 0)
+    const totalApprovals = [
+      { symbol: position.token0.symbol, amount: amount0 },
+      { symbol: position.token1.symbol, amount: amount1 },
+    ].filter((t) => t.amount > 0).length;
+
+    return createIncreaseLiquiditySteps({
+      approvalStatus: getStepStatus("approve"),
+      approvalCount: {
+        completed: neededApprovals.length === 0 ? totalApprovals : totalApprovals - neededApprovals.length + completedApprovals,
+        total: totalApprovals,
+      },
+      permitSigned,
+      permitStatus: getStepStatus("permit"),
+      depositStatus: getStepStatus("deposit"),
+    });
+  }, [
+    txStep,
+    isWorking,
+    neededApprovals,
+    completedApprovals,
+    permitSigned,
+    isSuccess,
+    position,
+    amount0,
+    amount1,
+  ]);
+
+  // Handle back button
+  const handleBack = () => {
+    setStep(IncreaseLiquidityStep.Input);
+  };
+
+  // Handle action button
+  const handleAction = () => {
+    if (txStep === "approve") {
+      executeApproval();
+    } else if (txStep === "permit") {
+      executePermit();
+    } else if (txStep === "deposit") {
+      executeDeposit();
+    }
+  };
+
+  // Handle done (after success)
+  const handleDone = () => {
+    onSuccess?.();
+    onClose();
+  };
+
+  // Get action button text
+  const getActionButtonText = () => {
+    if (isWorking) return "Processing...";
+    if (txStep === "approve" && currentApprovalToken) {
+      return `Approve ${currentApprovalToken}`;
+    }
+    if (txStep === "permit") return "Sign Permit";
+    if (txStep === "deposit") return "Add Liquidity";
+    return "Continue";
+  };
+
+  // Success view
+  if (isSuccess) {
+    return (
+      <div className="space-y-4">
+        {/* Success Header */}
+        <div className="text-center py-4">
+          <div className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
+            <BadgeCheck className="h-6 w-6 text-green-500" />
+          </div>
+          <h3 className="text-lg font-medium">Liquidity Added!</h3>
+          {txHash && (
+            <a
+              href={getExplorerTxUrl(txHash)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline mt-1"
+            >
+              View on Explorer
+              <ExternalLinkIcon className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+
+        {/* Summary */}
+        <div className="rounded-lg border border-primary p-4 bg-muted/30">
+          <div className="flex items-center justify-between">
+            {amount0 > 0 && (
+              <div className="flex items-center gap-2">
+                <Image
+                  src={getTokenIcon(position.token0.symbol)}
+                  alt=""
+                  width={28}
+                  height={28}
+                  className="rounded-full"
+                />
+                <div>
+                  <div className="font-medium text-sm">
+                    {amount0.toFixed(6)} {position.token0.symbol}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatCalculatedAmount(usdValue0)}
+                  </div>
+                </div>
+              </div>
+            )}
+            {amount0 > 0 && amount1 > 0 && (
+              <span className="text-muted-foreground">+</span>
+            )}
+            {amount1 > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="text-right">
+                  <div className="font-medium text-sm">
+                    {amount1.toFixed(6)} {position.token1.symbol}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatCalculatedAmount(usdValue1)}
+                  </div>
+                </div>
+                <Image
+                  src={getTokenIcon(position.token1.symbol)}
+                  alt=""
+                  width={28}
+                  height={28}
+                  className="rounded-full"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Done Button */}
+        <Button
+          onClick={handleDone}
+          className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
+        >
+          Done
+        </Button>
+      </div>
+    );
+  }
+
+  // Review view
+  return (
+    <div className="space-y-4">
+      {/* Position Info */}
+      <LiquidityPositionInfo
+        position={{
+          token0Symbol: position.token0.symbol,
+          token1Symbol: position.token1.symbol,
+          feeTier: position.feeTier,
+          isInRange: position.isInRange,
+        }}
+        isMiniVersion
+      />
+
+      {/* Amount Summary */}
+      <LiquidityDetailRows
+        token0Amount={formattedAmounts?.TOKEN0}
+        token0Symbol={position.token0.symbol}
+        token1Amount={formattedAmounts?.TOKEN1}
+        token1Symbol={position.token1.symbol}
+        token0USDValue={usdValue0}
+        token1USDValue={usdValue1}
+        totalValueUSD={totalUSDValue}
+        showNetworkCost={false}
+        title="Adding to position"
+      />
+
+      {/* Transaction Progress */}
+      <TransactionProgress steps={transactionSteps} />
+
+      {/* Error Display */}
+      {error && (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3">
+          <p className="text-sm text-red-400">{error}</p>
+        </div>
+      )}
+
+      {/* Action Buttons */}
+      <div className="grid grid-cols-2 gap-3">
+        <Button
+          variant="outline"
+          onClick={handleBack}
+          disabled={isWorking}
+          className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
+          style={{
+            backgroundImage: "url(/pattern.svg)",
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        >
+          Back
+        </Button>
+
+        <Button
+          onClick={handleAction}
+          disabled={isWorking}
+          className={cn(
+            "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90",
+            isWorking && "opacity-80"
+          )}
+        >
+          <span className={isWorking ? "animate-pulse" : ""}>
+            {getActionButtonText()}
+          </span>
+        </Button>
+      </div>
+    </div>
+  );
+}

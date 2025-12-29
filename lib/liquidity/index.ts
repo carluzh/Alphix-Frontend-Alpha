@@ -66,12 +66,12 @@ export {
   isFullRangePosition,
 } from './hooks/range';
 
-// Zap approvals (re-export from component - has API integration)
+// Zap approvals (re-export from hooks/approval)
 export {
   useCheckZapApprovals,
   type CheckZapApprovalsParams,
   type CheckZapApprovalsResponse,
-} from '@liquidity/useCheckZapApprovals';
+} from './hooks/approval';
 
 // =============================================================================
 // UTILITIES - Pure functions for calculations and validation

@@ -10,14 +10,14 @@ import { InteractiveRangeChart } from "../InteractiveRangeChart";
 import { PlusIcon, MinusIcon, ArrowLeftRight, CircleHelp, ChartBarBig, SquarePen } from "lucide-react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
-import { calculatePositionAPY, formatAPY, type PoolMetrics } from "@/lib/apy-calculator";
+import { calculatePositionApr, formatApr, type PoolMetrics } from "@/lib/apr";
 import { getPoolById } from "@/lib/pools-config";
 import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4Pool } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { convertTickToPrice, convertPriceToValidTick, calculateTicksFromPercentage } from '@/lib/liquidity';
+import { convertTickToPrice, convertPriceToValidTick, calculateTicksFromPercentage, isFullRangePosition } from '@/lib/liquidity';
 
 // Consolidated constants for range presets
 const PRESET_PERCENTAGES: Record<string, number> = {
@@ -207,7 +207,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
 
   const [denominationBase, setDenominationBase] = useState<TokenSymbol>(initialDenomination);
 
-  const [apyValues, setApyValues] = useState<Record<string, number>>({});
+  const [aprValues, setAprValues] = useState<Record<string, string>>({});
 
   const shouldInvert = denominationBase === token0Symbol;
 
@@ -265,10 +265,8 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
   };
 
   const detectedPreset = useMemo(() => {
-    const alignedMinTick = Math.ceil(sdkMinTick / defaultTickSpacing) * defaultTickSpacing;
-    const alignedMaxTick = Math.floor(sdkMaxTick / defaultTickSpacing) * defaultTickSpacing;
-
-    if (localTickLower === alignedMinTick.toString() && localTickUpper === alignedMaxTick.toString()) {
+    // Use centralized full-range detection
+    if (isFullRangePosition(defaultTickSpacing, parseInt(localTickLower), parseInt(localTickUpper))) {
       return "Full Range";
     }
 
@@ -425,7 +423,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
           days: poolMetrics.days
         };
 
-        const newApyValues: Record<string, number> = {};
+        const newAprValues: Record<string, string> = {};
 
         for (const rangeType of rangeTypes) {
           if (rangeType === "Custom") continue;
@@ -451,20 +449,20 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
             }
           }
 
-          const apy = await calculatePositionAPY(pool, tickLower, tickUpper, metrics, 100);
-          newApyValues[rangeType] = apy;
+          const apr = await calculatePositionApr(pool, tickLower, tickUpper, metrics, 100);
+          newAprValues[rangeType] = formatApr(apr);
         }
 
         const customTickLower = parseInt(localTickLower);
         const customTickUpper = parseInt(localTickUpper);
         if (!isNaN(customTickLower) && !isNaN(customTickUpper) && customTickLower < customTickUpper) {
-          const customAPY = await calculatePositionAPY(pool, customTickLower, customTickUpper, metrics, 100);
-          newApyValues["Custom"] = customAPY;
+          const customAPR = await calculatePositionApr(pool, customTickLower, customTickUpper, metrics, 100);
+          newAprValues["Custom"] = formatApr(customAPR);
         }
 
-        setApyValues(newApyValues);
+        setAprValues(newAprValues);
       } catch (error) {
-        console.error('[RangeSelectionModalV2] APY calculation error:', error);
+        console.error('[RangeSelectionModalV2] APR calculation error:', error);
       }
     };
 
@@ -595,17 +593,17 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       ? !rangeTypes.slice(0, -1).includes(activePreset || "")
                       : activePreset === rangeType;
 
-                  // Get APY for this range type from precomputed values
-                  let apyDisplay = "";
-                  // Only show APY for Custom if it's the active preset
-                  const shouldShowAPY = rangeType !== "Custom" || (rangeType === "Custom" && isActive);
+                  // Get APR for this range type from precomputed values
+                  let aprDisplay = "";
+                  // Only show APR for Custom if it's the active preset
+                  const shouldShowAPR = rangeType !== "Custom" || (rangeType === "Custom" && isActive);
 
-                  if (shouldShowAPY) {
+                  if (shouldShowAPR) {
                     // Show "..." while waiting for parent metrics or calculating
-                    if (!poolMetricsData || apyValues[rangeType] === undefined) {
-                      apyDisplay = "...";
+                    if (!poolMetricsData || !aprValues[rangeType]) {
+                      aprDisplay = "...";
                     } else {
-                      apyDisplay = formatAPY(apyValues[rangeType]);
+                      aprDisplay = aprValues[rangeType];
                     }
                   }
 
@@ -621,7 +619,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       style={!isActive && rangeType !== "Custom" ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                     >
                       <span className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium relative z-10`}>{label}</span>
-                      <span className="text-xs text-muted-foreground relative z-10">{apyDisplay}</span>
+                      <span className="text-xs text-muted-foreground relative z-10">{aprDisplay}</span>
                     </div>
                   );
                 });

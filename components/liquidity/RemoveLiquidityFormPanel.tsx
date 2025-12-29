@@ -1,30 +1,24 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { PlusIcon, BadgeCheck, OctagonX, RefreshCw as RefreshCwIcon } from "lucide-react";
+import { PlusIcon, BadgeCheck, RefreshCw as RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import Image from "next/image";
 import { useAccount } from "wagmi";
-import { toast } from "sonner";
 import { getTokenDefinitions, TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
-import { useDecreaseLiquidity, type DecreasePositionData } from "./useDecreaseLiquidity";
-import { motion, useAnimation } from "framer-motion";
+import { useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
+import { useAnimation } from "framer-motion";
 import type { ProcessedPosition } from "../../pages/api/liquidity/get-positions";
-import { sanitizeDecimalInput, cn, debounce, getTokenSymbolByAddress } from "@/lib/utils";
+import { cn, debounce, getTokenSymbolByAddress } from "@/lib/utils";
 import { calculatePercentageFromString } from "@/hooks/usePercentageInput";
 import { formatUnits } from "viem";
 import {
-  getTokenIcon,
   formatTokenDisplayAmount,
   formatCalculatedAmount,
-  calculateCorrespondingAmount,
-  PERCENTAGE_OPTIONS
 } from './liquidity-form-utils';
 import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
+import { TokenInputCard, TokenInputStyles } from './TokenInputCard';
 
 interface RemoveLiquidityFormPanelProps {
   position: ProcessedPosition;
@@ -68,8 +62,6 @@ export function RemoveLiquidityFormPanel({
 
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
-  const [balanceWiggleCount0, setBalanceWiggleCount0] = useState(0);
-  const [balanceWiggleCount1, setBalanceWiggleCount1] = useState(0);
   const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
   const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
 
@@ -249,25 +241,6 @@ export function RemoveLiquidityFormPanel({
     [position, formatCalculatedInput]
   );
 
-  // Wiggle animation effects
-  useEffect(() => {
-    if (balanceWiggleCount0 > 0) {
-      wiggleControls0.start({
-        x: [0, -3, 3, -2, 2, 0],
-        transition: { duration: 0.22, ease: 'easeOut' },
-      }).catch(() => {});
-    }
-  }, [balanceWiggleCount0, wiggleControls0]);
-
-  useEffect(() => {
-    if (balanceWiggleCount1 > 0) {
-      wiggleControls1.start({
-        x: [0, -3, 3, -2, 2, 0],
-        transition: { duration: 0.22, ease: 'easeOut' },
-      }).catch(() => {});
-    }
-  }, [balanceWiggleCount1, wiggleControls1]);
-
   // Check if withdrawal amounts exceed position balance
   useEffect(() => {
     const amount0 = parseFloat(withdrawAmount0 || "0");
@@ -280,48 +253,6 @@ export function RemoveLiquidityFormPanel({
     const positionBalance1 = parseFloat(position?.token1?.amount || "0");
     setIsAmount1OverBalance(amount1 > positionBalance1 && amount1 > 0);
   }, [withdrawAmount1, position]);
-
-  const handleWithdrawAmountChangeWithWiggle = (e: React.ChangeEvent<HTMLInputElement>, side: 'amount0' | 'amount1') => {
-    const sanitized = sanitizeDecimalInput(e.target.value);
-
-    if (side === 'amount0') {
-      const prevVal = parseFloat(withdrawAmount0 || "");
-      const nextVal = parseFloat(sanitized || "");
-      const bal = parseFloat(position?.token0?.amount || "0");
-
-      const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
-      const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
-
-      if (isOver && !wasOver) {
-        setBalanceWiggleCount0((c) => c + 1);
-      }
-
-      setWithdrawAmount0(sanitized);
-    } else {
-      const prevVal = parseFloat(withdrawAmount1 || "");
-      const nextVal = parseFloat(sanitized || "");
-      const bal = parseFloat(position?.token1?.amount || "0");
-
-      const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
-      const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
-
-      if (isOver && !wasOver) {
-        setBalanceWiggleCount1((c) => c + 1);
-      }
-
-      setWithdrawAmount1(sanitized);
-    }
-
-    // Check if this is a full withdraw
-    if (position && sanitized && parseFloat(sanitized) > 0) {
-      const maxAmount = side === 'amount0'
-        ? parseFloat(position.token0.amount)
-        : parseFloat(position.token1.amount);
-
-      const percentage = Math.min(100, (parseFloat(sanitized) / maxAmount) * 100);
-      setIsFullWithdraw(percentage >= 99);
-    }
-  };
 
   const handleMaxWithdraw = (side: 'amount0' | 'amount1') => {
     if (side === 'amount0') {
@@ -476,138 +407,84 @@ export function RemoveLiquidityFormPanel({
     );
   }
 
+  // Handler for percentage clicks with position amount
+  const handleToken0Percentage = useCallback((percentage: number) => {
+    const token0Decimals = tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals || 18;
+    const amount = calculatePercentageFromString(position.token0.amount, percentage, token0Decimals);
+    setWithdrawActiveInputSide('amount0');
+    if (percentage === 100) {
+      setIsFullWithdraw(true);
+    }
+    return amount;
+  }, [position.token0.amount, position.token0.symbol, tokenDefinitions]);
+
+  const handleToken1Percentage = useCallback((percentage: number) => {
+    const token1Decimals = tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals || 18;
+    const amount = calculatePercentageFromString(position.token1.amount, percentage, token1Decimals);
+    setWithdrawActiveInputSide('amount1');
+    if (percentage === 100) {
+      setIsFullWithdraw(true);
+    }
+    return amount;
+  }, [position.token1.amount, position.token1.symbol, tokenDefinitions]);
+
+  // Handler for token0 input changes
+  const handleToken0Change = useCallback((value: string) => {
+    setWithdrawAmount0(value);
+    setWithdrawActiveInputSide('amount0');
+
+    // Check if this is a full withdraw
+    if (value && parseFloat(value) > 0) {
+      const maxAmount = parseFloat(position.token0.amount);
+      const percentage = Math.min(100, (parseFloat(value) / maxAmount) * 100);
+      setIsFullWithdraw(percentage >= 99);
+    }
+  }, [position.token0.amount]);
+
+  // Handler for token1 input changes
+  const handleToken1Change = useCallback((value: string) => {
+    setWithdrawAmount1(value);
+    setWithdrawActiveInputSide('amount1');
+
+    // Check if this is a full withdraw
+    if (value && parseFloat(value) > 0) {
+      const maxAmount = parseFloat(position.token1.amount);
+      const percentage = Math.min(100, (parseFloat(value) / maxAmount) * 100);
+      setIsFullWithdraw(percentage >= 99);
+    }
+  }, [position.token1.amount]);
+
   // Input view
   return (
     <div className="space-y-4">
-      <style dangerouslySetInnerHTML={{__html: `
-        @keyframes inputGradientFlow {
-          from { background-position: 0% 0%; }
-          to { background-position: 300% 0%; }
-        }
-        .input-gradient-hover {
-          position: relative;
-          border-radius: 8px;
-        }
-        .input-gradient-hover::before {
-          content: '';
-          position: absolute;
-          inset: -1px;
-          border-radius: 9px;
-          background: linear-gradient(
-            45deg,
-            #f94706,
-            #ff7919 25%,
-            #f94706 50%,
-            #ff7919 75%,
-            #f94706 100%
-          );
-          background-size: 300% 100%;
-          opacity: 0;
-          transition: opacity 0.3s ease;
-          pointer-events: none;
-          z-index: 0;
-          animation: inputGradientFlow 10s linear infinite;
-        }
-        .input-gradient-hover:hover::before,
-        .input-gradient-hover:focus-within::before {
-          opacity: 1;
-        }
-      `}} />
+      <TokenInputStyles />
       <h3 className="text-base font-semibold">Remove Liquidity</h3>
 
       {position.isInRange ? (
         <>
           {/* Token 0 Input - In Range */}
-          <div className="input-gradient-hover">
-            <motion.div
-              className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
-              animate={wiggleControls0}
-            >
-              <div className="flex items-center justify-between">
-                <Label htmlFor="withdraw-amount0" className="text-sm font-medium">Withdraw</Label>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
-                  onClick={() => handleMaxWithdraw('amount0')}
-                >
-                  {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
-                  <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={20} height={20} className="rounded-full" />
-                  <span className="text-sm font-medium">{position.token0.symbol}</span>
-                </div>
-                <div className="flex-1">
-                  <Input
-                    id="withdraw-amount0"
-                    placeholder="0.0"
-                    value={withdrawAmount0}
-                    autoComplete="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    inputMode="decimal"
-                    enterKeyHint="done"
-                    onChange={(e) => {
-                      handleWithdrawAmountChangeWithWiggle(e, 'amount0');
-                      setWithdrawActiveInputSide('amount0');
-                      const newAmount = sanitizeDecimalInput(e.target.value);
-                      if (newAmount && parseFloat(newAmount) > 0) {
-                        calculateWithdrawAmount(newAmount, 'amount0');
-                      } else {
-                        setWithdrawAmount1("");
-                        setIsFullWithdraw(false);
-                      }
-                    }}
-                    className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                  />
-                  <div className="relative text-right text-xs min-h-5">
-                    <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                      "group-hover:opacity-0": parseFloat(position.token0.amount) > 0
-                    })}>
-                      {formatCalculatedAmount(parseFloat(withdrawAmount0 || "0") * (token0USDPrice || 0))}
-                    </div>
-                    {parseFloat(position.token0.amount) > 0 && (
-                      <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                        {PERCENTAGE_OPTIONS.map((percentage, index) => (
-                          <motion.div
-                            key={percentage}
-                            className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
-                            style={{
-                              transitionDelay: `${index * 40}ms`,
-                              transitionDuration: '200ms',
-                              transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
-                            }}
-                          >
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const token0Decimals = tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals || 18;
-                                const amount = calculatePercentageFromString(position.token0.amount, percentage, token0Decimals);
-                                const syntheticEvent = {
-                                  target: { value: amount }
-                                } as React.ChangeEvent<HTMLInputElement>;
-                                handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount0');
-                                setWithdrawActiveInputSide('amount0');
-                                if (amount && parseFloat(amount) > 0) {
-                                  calculateWithdrawAmount(amount, 'amount0');
-                                }
-                              }}
-                            >
-                              {percentage === 100 ? 'MAX' : `${percentage}%`}
-                            </Button>
-                          </motion.div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </div>
+          <TokenInputCard
+            id="withdraw-amount0"
+            tokenSymbol={position.token0.symbol}
+            value={withdrawAmount0}
+            onChange={handleToken0Change}
+            label="Withdraw"
+            maxAmount={position.token0.amount}
+            balanceDisplay={formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)}
+            usdPrice={token0USDPrice || 0}
+            formatUsdAmount={formatCalculatedAmount}
+            isOverBalance={isAmount0OverBalance}
+            animationControls={wiggleControls0}
+            onPercentageClick={handleToken0Percentage}
+            onCalculateDependentAmount={(value) => {
+              if (parseFloat(value) > 0) {
+                calculateWithdrawAmount(value, 'amount0');
+              } else {
+                setWithdrawAmount1("");
+                setIsFullWithdraw(false);
+              }
+            }}
+          />
 
           <div className="flex justify-center items-center">
             <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
@@ -616,268 +493,64 @@ export function RemoveLiquidityFormPanel({
           </div>
 
           {/* Token 1 Input - In Range */}
-          <div className="input-gradient-hover">
-            <motion.div
-              className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
-              animate={wiggleControls1}
-            >
-              <div className="flex items-center justify-between">
-                <Label htmlFor="withdraw-amount1" className="text-sm font-medium">Withdraw</Label>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
-                  onClick={() => handleMaxWithdraw('amount1')}
-                >
-                  {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
-                </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
-                  <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={20} height={20} className="rounded-full" />
-                  <span className="text-sm font-medium">{position.token1.symbol}</span>
-                </div>
-                <div className="flex-1">
-                  <Input
-                    id="withdraw-amount1"
-                    placeholder="0.0"
-                    value={withdrawAmount1}
-                    autoComplete="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    inputMode="decimal"
-                    enterKeyHint="done"
-                    onChange={(e) => {
-                      handleWithdrawAmountChangeWithWiggle(e, 'amount1');
-                      setWithdrawActiveInputSide('amount1');
-                      const newAmount = sanitizeDecimalInput(e.target.value);
-                      if (newAmount && parseFloat(newAmount) > 0) {
-                        calculateWithdrawAmount(newAmount, 'amount1');
-                      } else {
-                        setWithdrawAmount0("");
-                        setIsFullWithdraw(false);
-                      }
-                    }}
-                    className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                  />
-                  <div className="relative text-right text-xs min-h-5">
-                    <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                      "group-hover:opacity-0": parseFloat(position.token1.amount) > 0
-                    })}>
-                      {formatCalculatedAmount(parseFloat(withdrawAmount1 || "0") * (token1USDPrice || 0))}
-                    </div>
-                    {parseFloat(position.token1.amount) > 0 && (
-                      <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                        {PERCENTAGE_OPTIONS.map((percentage, index) => (
-                          <motion.div
-                            key={percentage}
-                            className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
-                            style={{
-                              transitionDelay: `${index * 40}ms`,
-                              transitionDuration: '200ms',
-                              transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
-                            }}
-                          >
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const token1Decimals = tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals || 18;
-                                const amount = calculatePercentageFromString(position.token1.amount, percentage, token1Decimals);
-                                const syntheticEvent = {
-                                  target: { value: amount }
-                                } as React.ChangeEvent<HTMLInputElement>;
-                                handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount1');
-                                setWithdrawActiveInputSide('amount1');
-                                if (amount && parseFloat(amount) > 0) {
-                                  calculateWithdrawAmount(amount, 'amount1');
-                                }
-                              }}
-                            >
-                              {percentage === 100 ? 'MAX' : `${percentage}%`}
-                            </Button>
-                          </motion.div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </div>
+          <TokenInputCard
+            id="withdraw-amount1"
+            tokenSymbol={position.token1.symbol}
+            value={withdrawAmount1}
+            onChange={handleToken1Change}
+            label="Withdraw"
+            maxAmount={position.token1.amount}
+            balanceDisplay={formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)}
+            usdPrice={token1USDPrice || 0}
+            formatUsdAmount={formatCalculatedAmount}
+            isOverBalance={isAmount1OverBalance}
+            animationControls={wiggleControls1}
+            onPercentageClick={handleToken1Percentage}
+            onCalculateDependentAmount={(value) => {
+              if (parseFloat(value) > 0) {
+                calculateWithdrawAmount(value, 'amount1');
+              } else {
+                setWithdrawAmount0("");
+                setIsFullWithdraw(false);
+              }
+            }}
+          />
         </>
       ) : (
         <>
           {/* Out-of-range: Single-sided inputs based on available liquidity */}
           {canWithdrawToken0 && parseFloat(position.token0.amount) > 0 && (
-            <div className="input-gradient-hover">
-              <motion.div
-                className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
-                animate={wiggleControls0}
-              >
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="withdraw-amount0-oor" className="text-sm font-medium">
-                    Withdraw {position.token0.symbol}
-                  </Label>
-                  <button
-                    type="button"
-                    className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
-                    onClick={() => handleMaxWithdraw('amount0')}
-                  >
-                    {formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)} {position.token0.symbol}
-                  </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
-                    <Image src={getTokenIcon(position.token0.symbol)} alt={position.token0.symbol} width={20} height={20} className="rounded-full" />
-                    <span className="text-sm font-medium">{position.token0.symbol}</span>
-                  </div>
-                  <div className="flex-1">
-                    <Input
-                      id="withdraw-amount0-oor"
-                      placeholder="0.0"
-                      value={withdrawAmount0}
-                      autoComplete="off"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      inputMode="decimal"
-                      enterKeyHint="done"
-                      onChange={(e) => {
-                        handleWithdrawAmountChangeWithWiggle(e, 'amount0');
-                        setWithdrawActiveInputSide('amount0');
-                      }}
-                      className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                    />
-                    <div className="relative text-right text-xs min-h-5">
-                      <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                        "group-hover:opacity-0": parseFloat(position.token0.amount) > 0
-                      })}>
-                        {formatCalculatedAmount(parseFloat(withdrawAmount0 || "0") * (token0USDPrice || 0))}
-                      </div>
-                      {parseFloat(position.token0.amount) > 0 && (
-                        <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                          {PERCENTAGE_OPTIONS.map((percentage, index) => (
-                            <motion.div
-                              key={percentage}
-                              className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
-                              style={{
-                                transitionDelay: `${index * 40}ms`,
-                                transitionDuration: '200ms',
-                                transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
-                              }}
-                            >
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const token0Decimals = tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals || 18;
-                                  const amount = calculatePercentageFromString(position.token0.amount, percentage, token0Decimals);
-                                  const syntheticEvent = {
-                                    target: { value: amount }
-                                  } as React.ChangeEvent<HTMLInputElement>;
-                                  handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount0');
-                                  setWithdrawActiveInputSide('amount0');
-                                }}
-                              >
-                                {percentage === 100 ? 'MAX' : `${percentage}%`}
-                              </Button>
-                            </motion.div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            </div>
+            <TokenInputCard
+              id="withdraw-amount0-oor"
+              tokenSymbol={position.token0.symbol}
+              value={withdrawAmount0}
+              onChange={handleToken0Change}
+              label={`Withdraw ${position.token0.symbol}`}
+              maxAmount={position.token0.amount}
+              balanceDisplay={formatTokenDisplayAmount(position.token0.amount, position.token0.symbol as TokenSymbol)}
+              usdPrice={token0USDPrice || 0}
+              formatUsdAmount={formatCalculatedAmount}
+              isOverBalance={isAmount0OverBalance}
+              animationControls={wiggleControls0}
+              onPercentageClick={handleToken0Percentage}
+            />
           )}
 
           {canWithdrawToken1 && parseFloat(position.token1.amount) > 0 && (
-            <div className="input-gradient-hover">
-              <motion.div
-                className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
-                animate={wiggleControls1}
-              >
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="withdraw-amount1-oor" className="text-sm font-medium">
-                    Withdraw {position.token1.symbol}
-                  </Label>
-                  <button
-                    type="button"
-                    className="text-xs text-muted-foreground hover:text-white transition-colors cursor-pointer"
-                    onClick={() => handleMaxWithdraw('amount1')}
-                  >
-                    {formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)} {position.token1.symbol}
-                  </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
-                    <Image src={getTokenIcon(position.token1.symbol)} alt={position.token1.symbol} width={20} height={20} className="rounded-full" />
-                    <span className="text-sm font-medium">{position.token1.symbol}</span>
-                  </div>
-                  <div className="flex-1">
-                    <Input
-                      id="withdraw-amount1-oor"
-                      placeholder="0.0"
-                      value={withdrawAmount1}
-                      autoComplete="off"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      inputMode="decimal"
-                      enterKeyHint="done"
-                      onChange={(e) => {
-                        handleWithdrawAmountChangeWithWiggle(e, 'amount1');
-                        setWithdrawActiveInputSide('amount1');
-                      }}
-                      className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
-                    />
-                    <div className="relative text-right text-xs min-h-5">
-                      <div className={cn("text-muted-foreground transition-opacity duration-100", {
-                        "group-hover:opacity-0": parseFloat(position.token1.amount) > 0
-                      })}>
-                        {formatCalculatedAmount(parseFloat(withdrawAmount1 || "0") * (token1USDPrice || 0))}
-                      </div>
-                      {parseFloat(position.token1.amount) > 0 && (
-                        <div className="absolute right-0 top-[3px] flex gap-1 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100">
-                          {PERCENTAGE_OPTIONS.map((percentage, index) => (
-                            <motion.div
-                              key={percentage}
-                              className="opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0"
-                              style={{
-                                transitionDelay: `${index * 40}ms`,
-                                transitionDuration: '200ms',
-                                transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)'
-                              }}
-                            >
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-5 px-2 text-[10px] font-medium rounded-md border-sidebar-border bg-muted/20 hover:bg-muted/40 transition-colors"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const token1Decimals = tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals || 18;
-                                  const amount = calculatePercentageFromString(position.token1.amount, percentage, token1Decimals);
-                                  const syntheticEvent = {
-                                    target: { value: amount }
-                                  } as React.ChangeEvent<HTMLInputElement>;
-                                  handleWithdrawAmountChangeWithWiggle(syntheticEvent, 'amount1');
-                                  setWithdrawActiveInputSide('amount1');
-                                }}
-                              >
-                                {percentage === 100 ? 'MAX' : `${percentage}%`}
-                              </Button>
-                            </motion.div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            </div>
+            <TokenInputCard
+              id="withdraw-amount1-oor"
+              tokenSymbol={position.token1.symbol}
+              value={withdrawAmount1}
+              onChange={handleToken1Change}
+              label={`Withdraw ${position.token1.symbol}`}
+              maxAmount={position.token1.amount}
+              balanceDisplay={formatTokenDisplayAmount(position.token1.amount, position.token1.symbol as TokenSymbol)}
+              usdPrice={token1USDPrice || 0}
+              formatUsdAmount={formatCalculatedAmount}
+              isOverBalance={isAmount1OverBalance}
+              animationControls={wiggleControls1}
+              onPercentageClick={handleToken1Percentage}
+            />
           )}
         </>
       )}
