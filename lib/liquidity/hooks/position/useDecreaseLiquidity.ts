@@ -777,7 +777,6 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               chainId,
               poolId: poolId,
               positionIds: positionId ? [String(positionId)] : undefined,
-              reason: isCollect ? 'collect' : 'decrease',
               optimisticUpdates: isCollect && positionId ? { clearFees: { positionId: String(positionId) } } : undefined,
             }).catch(() => {});
           }

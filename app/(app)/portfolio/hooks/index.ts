@@ -41,3 +41,4 @@ export {
 
 export { usePortfolioModals } from "./usePortfolioModals";
 export { useWalletBalances } from "./useWalletBalances";
+export { useFaucet } from "./useFaucet";

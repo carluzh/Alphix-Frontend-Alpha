@@ -8,6 +8,7 @@
  */
 
 import { usePlatformBasedFetchPolicy } from '@/hooks/usePlatformBasedFetchPolicy'
+import { usePollingIntervalByChain } from '@/hooks/usePollingIntervalByChain'
 import { useNetwork } from '@/lib/network-context'
 import { useGetPoolStateQuery, type Chain } from '../__generated__'
 
@@ -45,10 +46,13 @@ export function usePoolState(poolId: string): UsePoolStateResult {
   const chain: Chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
   const enabled = !!poolId && poolId.length > 0
 
+  // Chain-based polling interval (L2 = 3s base, x15 for pool state = 45s)
+  const chainPollingInterval = usePollingIntervalByChain()
+
   // Adaptive fetch policy - reduces polling when window not visible
   const { fetchPolicy, pollInterval } = usePlatformBasedFetchPolicy({
     fetchPolicy: 'cache-and-network',
-    pollInterval: 45000, // 45 seconds - pool state doesn't change frequently
+    pollInterval: chainPollingInterval * 15, // ~45 seconds - pool state doesn't change frequently
   })
 
   const { data, loading, error, refetch } = useGetPoolStateQuery({

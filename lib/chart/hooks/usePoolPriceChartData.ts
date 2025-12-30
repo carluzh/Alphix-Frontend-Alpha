@@ -10,6 +10,7 @@
 import { useMemo } from 'react'
 import type { UTCTimestamp } from 'lightweight-charts'
 import useIsWindowVisible from '@/hooks/useIsWindowVisible'
+import { usePollingIntervalByChain } from '@/hooks/usePollingIntervalByChain'
 import { useNetwork } from '@/lib/network-context'
 import {
   useGetPoolPriceHistoryQuery,
@@ -72,6 +73,9 @@ export function usePoolPriceChartData({
   // skip chart data requests if the window is not focused
   const isWindowVisible = useIsWindowVisible()
 
+  // Chain-based polling interval (L2 = 3s base, x100 for chart = 300s/5 min)
+  const chainPollingInterval = usePollingIntervalByChain()
+
   const { data, loading } = useGetPoolPriceHistoryQuery({
     variables: {
       chain,
@@ -80,7 +84,7 @@ export function usePoolPriceChartData({
     },
     skip: !enabled || !isWindowVisible,
     fetchPolicy: 'cache-and-network',
-    pollInterval: 5 * 60 * 1000, // 5 minutes
+    pollInterval: chainPollingInterval * 100, // ~5 minutes - chart data doesn't need frequent updates
   })
 
   return useMemo(() => {

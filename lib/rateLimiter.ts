@@ -10,8 +10,10 @@
  * @see interface/apps/web/src/rpc/AppJsonRpcProvider.ts (Uniswap's implementation)
  */
 
-// Default backoff time (12 seconds - average L1 block time)
-const AVERAGE_BLOCK_TIME_MS = 12000
+import { AVERAGE_L1_BLOCK_TIME_MS } from '@/hooks/usePollingIntervalByChain'
+
+// Default backoff time uses L1 block time for consistency
+const AVERAGE_BLOCK_TIME_MS = AVERAGE_L1_BLOCK_TIME_MS
 
 /**
  * Controller - Manages endpoint health with exponential backoff

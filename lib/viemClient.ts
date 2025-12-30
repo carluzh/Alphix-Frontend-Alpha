@@ -2,6 +2,7 @@ import { createPublicClient, http, fallback, custom, type PublicClient, type Cha
 import { activeChain, baseSepolia, baseMainnet, isMainnet } from './wagmiConfig';
 import { executeRPCCall, executeRPCBatch } from './rpcClient';
 import { type NetworkMode } from './network-mode';
+import { AppRpcClient } from './rpc/AppRpcClient';
 
 // Network-specific RPC endpoints
 const TESTNET_RPC_URLS = [
@@ -80,8 +81,22 @@ const fallbackTransport = fallback(
   }))
 );
 
-// Use rate-limited transport by default
-const transport = process.env.USE_RATE_LIMITED_RPC === 'true' ? rateLimitedTransport : fallbackTransport;
+// AppRpcClient transport with exponential backoff (Uniswap pattern)
+// This uses the Controller pattern from Uniswap's AppJsonRpcProvider
+// @see interface/apps/web/src/rpc/AppJsonRpcProvider.ts
+const appRpcClient = new AppRpcClient(RPC_URLS, {
+  minimumBackoffTime: 3000, // L2 block time
+  timeout: 10000,
+});
+
+const appRpcTransport = custom({
+  async request({ method, params }) {
+    return appRpcClient.request({ method, params: params as unknown[] });
+  },
+});
+
+// Use AppRpcClient transport by default (best reliability with exponential backoff)
+const transport = appRpcTransport;
 
 export const publicClient = createPublicClient({
     chain: activeChain,
@@ -100,18 +115,23 @@ export { baseSepolia };
 /**
  * Create a public client for a specific network mode.
  * Use this in API routes where network mode comes from request cookies.
+ * Uses AppRpcClient with exponential backoff for reliability.
  */
 export function createNetworkClient(networkMode: NetworkMode): PublicClient {
   const rpcUrls = getRpcUrlsForNetwork(networkMode);
   const chain = networkMode === 'mainnet' ? baseMainnet : baseSepolia;
 
-  const networkTransport = fallback(
-    rpcUrls.map(url => http(url, {
-      timeout: 12000,
-      retryCount: 1,
-      retryDelay: 800
-    }))
-  );
+  // Use AppRpcClient with exponential backoff (Uniswap pattern)
+  const networkAppRpcClient = new AppRpcClient(rpcUrls, {
+    minimumBackoffTime: 3000, // L2 block time
+    timeout: 10000,
+  });
+
+  const networkTransport = custom({
+    async request({ method, params }) {
+      return networkAppRpcClient.request({ method, params: params as unknown[] });
+    },
+  });
 
   return createPublicClient({
     chain,

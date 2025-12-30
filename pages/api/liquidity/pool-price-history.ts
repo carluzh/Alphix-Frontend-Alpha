@@ -252,6 +252,38 @@ async function fetchPriceHistory(
   return { data: [], source: 'coingecko' }
 }
 
+/**
+ * Fetch with optional CoinGecko fallback
+ * Used when called from GraphQL where token symbols may not be available
+ */
+async function fetchPriceHistoryWithOptionalFallback(
+  poolId: string,
+  token0: string | null,
+  token1: string | null,
+  duration: HistoryDuration
+): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'coingecko' }> {
+  // Try Uniswap Gateway first
+  const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
+
+  if (uniswapData && uniswapData.length >= 3) {
+    return { data: uniswapData, source: 'uniswap' }
+  }
+
+  // Only try CoinGecko fallback if tokens are provided
+  if (token0 && token1) {
+    console.log(`[pool-price-history] Falling back to CoinGecko for ${poolId}`)
+    const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
+
+    if (coingeckoData && coingeckoData.length >= 3) {
+      return { data: coingeckoData, source: 'coingecko' }
+    }
+  }
+
+  // Return empty - Uniswap failed and no fallback available
+  console.warn(`[pool-price-history] No data available for ${poolId}`)
+  return { data: [], source: 'uniswap' }
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResponse | { message: string }>) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET'])
@@ -264,9 +296,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(400).json({ message: 'poolId is required' })
   }
 
-  if (!token0 || typeof token0 !== 'string' || !token1 || typeof token1 !== 'string') {
-    return res.status(400).json({ message: 'token0 and token1 are required for fallback' })
-  }
+  // token0/token1 are optional - only needed for CoinGecko fallback
+  // If not provided, skip CoinGecko fallback entirely
+  const hasTokens = token0 && typeof token0 === 'string' && token1 && typeof token1 === 'string'
 
   const VALID_DURATIONS = ['HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR'] as const
   if (duration && !VALID_DURATIONS.includes(duration as typeof VALID_DURATIONS[number])) {
@@ -274,14 +306,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
   const historyDuration = (duration as HistoryDuration) || HistoryDuration.WEEK
 
-  // Cache key includes poolId, tokens, and duration to prevent cache poisoning
-  const cacheKey = `price-history:${poolId}:${token0}:${token1}:${historyDuration}`
+  // Cache key includes poolId, tokens (if provided), and duration to prevent cache poisoning
+  const cacheKey = hasTokens
+    ? `price-history:${poolId}:${token0}:${token1}:${historyDuration}`
+    : `price-history:${poolId}:${historyDuration}`
 
   try {
     const result = await cacheService.cachedApiCall(
       cacheKey,
       CACHE_TTL,
-      () => fetchPriceHistory(poolId, token0, token1, historyDuration)
+      () => fetchPriceHistoryWithOptionalFallback(poolId, hasTokens ? token0 as string : null, hasTokens ? token1 as string : null, historyDuration)
     )
 
     res.setHeader('Cache-Control', 'no-store')

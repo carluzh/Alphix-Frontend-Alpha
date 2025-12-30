@@ -4,7 +4,12 @@ export { PortfolioHeader } from "./PortfolioHeader";
 export { PositionsSection } from "./PositionsSection";
 export { StatsRow } from "./StatsRow";
 export { ActionGrid, ActionButtonsCompact } from "./ActionGrid";
-export { RecentActivity } from "./RecentActivity";
+export { PortfolioTabs } from "./PortfolioTabs";
+export type { PortfolioTabId } from "./PortfolioTabs";
+
+// Tab components
+export { OverviewTab, TokensTab, ActivityTab, ActivityType } from "./tabs";
+export type { ActivityItem, ActivityToken } from "./tabs";
 
 // Skeleton components
 export {

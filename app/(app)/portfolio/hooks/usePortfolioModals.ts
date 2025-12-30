@@ -4,9 +4,8 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import { getAllPools, getToken } from "@/lib/pools-config";
 import { prefetchService } from "@/lib/prefetch-service";
-import { invalidateAfterTx, apolloClient } from "@/lib/apollo";
+import { invalidateAfterTx } from "@/lib/apollo";
 import { useIncreaseLiquidity, useDecreaseLiquidity } from "@/lib/liquidity/hooks";
-import { waitForSubgraphBlock } from "@/lib/client-cache";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { usePublicClient } from "wagmi";
 import { markPositionAsRemoved } from "./usePortfolioData";
@@ -57,40 +56,32 @@ export function usePortfolioModals({
   const lastDecreaseWasFullRef = useRef<boolean>(false);
   const lastTxBlockRef = useRef<bigint | null>(null);
 
-  // Refresh after mutation
+  // Refresh after mutation - simplified to 2-layer pattern
   const refreshAfterMutation = useCallback(async (opts: {
     txHash?: `0x${string}`;
-    blockNumber?: bigint;
     poolId?: string;
     tvlDelta?: number;
     volumeDelta?: number;
     chainId?: number;
   }) => {
     if (!accountAddress) return;
-    const { poolId, chainId = 84532, blockNumber, tvlDelta, volumeDelta } = opts;
+    const { poolId, chainId = 84532, tvlDelta, volumeDelta } = opts;
     try {
       await invalidateAfterTx(null, {
         owner: accountAddress,
         chainId,
         poolId,
-        reason: 'liquidity-mutation',
-        awaitSubgraphSync: true,
-        blockNumber,
-        reloadPositions: true,
         optimisticUpdates: (tvlDelta !== undefined || volumeDelta !== undefined) ? {
           tvlDelta,
           volumeDelta,
         } : undefined,
-        onPositionsReloaded: () => {
-          try {
-            if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'manual_refresh');
-          } catch {}
-          setPositionsRefresh(k => k + 1);
-        },
         clearOptimisticStates: () => {
           setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
         }
       });
+      // Notify after invalidation completes (moved from dead callback)
+      prefetchService.notifyPositionsRefresh(accountAddress, 'manual_refresh');
+      setPositionsRefresh(k => k + 1);
     } catch (error) {
       console.error('[Portfolio refreshAfterMutation] failed:', error);
       setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
@@ -166,7 +157,7 @@ export function usePortfolioModals({
 
     if (modifiedPositionPoolInfoRef.current) {
       const { poolId } = modifiedPositionPoolInfoRef.current;
-      refreshAfterMutation({ txHash: info.txHash, blockNumber: info.blockNumber, poolId }).catch(console.error);
+      refreshAfterMutation({ txHash: info.txHash, poolId }).catch(console.error);
       modifiedPositionPoolInfoRef.current = null;
     }
   }, [refreshSinglePosition, refreshAfterMutation, bumpPositionsRefresh, positionToModify, setActivePositions]);
@@ -226,34 +217,37 @@ export function usePortfolioModals({
           refreshSinglePosition(targetPositionId).catch(console.error);
         }
       } else {
-        refreshAfterMutation({ ...info, poolId: poolIdForInvalidation }).catch(console.error);
+        refreshAfterMutation({ txHash: info?.txHash, poolId: poolIdForInvalidation }).catch(console.error);
       }
 
       if (poolIdForInvalidation) {
-        refreshAfterMutation({ txHash: info?.txHash, blockNumber: info?.blockNumber, poolId: poolIdForInvalidation }).catch(console.error);
+        refreshAfterMutation({ txHash: info?.txHash, poolId: poolIdForInvalidation }).catch(console.error);
       }
 
       modifiedPositionPoolInfoRef.current = null;
     }
   }, [refreshAfterMutation, refreshSinglePosition, bumpPositionsRefresh, positionToWithdraw, setActivePositions]);
 
-  // Fees collected callback
-  const onFeesCollected = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
-    if (lastTxBlockRef.current) {
-      await waitForSubgraphBlock(Number(lastTxBlockRef.current));
-      lastTxBlockRef.current = null;
-    }
-    apolloClient.cache.evict({ fieldName: 'uncollectedFees' });
-    apolloClient.cache.gc();
-  }, []);
-
-  const handleModalFeesCollected = useCallback((positionId: string) => {
-    apolloClient.cache.evict({
-      id: apolloClient.cache.identify({ __typename: 'FeeItem', positionId }),
+  // Fees collected callback - uses 2-layer invalidation pattern
+  const onFeesCollected = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; positionId?: string }) => {
+    if (!accountAddress) return;
+    lastTxBlockRef.current = null;
+    // Use invalidateAfterTx with clearFees optimistic update
+    await invalidateAfterTx(null, {
+      owner: accountAddress,
+      chainId: 84532,
+      optimisticUpdates: info?.positionId ? { clearFees: { positionId: info.positionId } } : undefined,
     });
-    apolloClient.cache.evict({ fieldName: 'uncollectedFees' });
-    apolloClient.cache.gc();
-  }, []);
+  }, [accountAddress]);
+
+  const handleModalFeesCollected = useCallback(async (positionId: string) => {
+    if (!accountAddress) return;
+    await invalidateAfterTx(null, {
+      owner: accountAddress,
+      chainId: 84532,
+      optimisticUpdates: { clearFees: { positionId } },
+    });
+  }, [accountAddress]);
 
   // Sync selectedPosition with activePositions
   useEffect(() => {

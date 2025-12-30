@@ -94,13 +94,10 @@ const invalidateSwapCache = async (
   if (!touchedPools?.length) return
   const volumePerPool = swapVolumeUSD / touchedPools.length
   for (const pool of touchedPools) {
-    invalidateAfterTx(queryClient, {
+    invalidateAfterTx(null, {
       owner: accountAddress,
       chainId,
       poolId: pool.poolId,
-      reason: "swap_complete",
-      awaitSubgraphSync: false,
-      blockNumber,
       optimisticUpdates: {
         volumeDelta: volumePerPool,
       },

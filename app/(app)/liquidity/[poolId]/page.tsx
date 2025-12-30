@@ -837,12 +837,8 @@ export default function PoolDetailPage() {
           owner: accountAddress,
           chainId,
           poolId,
-          reason: 'liquidity-added',
-          awaitSubgraphSync: false,
           optimisticUpdates: { tvlDelta: txInfo?.tvlDelta, volumeDelta: txInfo?.volumeDelta },
         }).catch(() => {});
-
-        silentRefreshTVL().catch(() => {});
       } catch (error) {
         console.error('[refreshAfterLiquidityAdded] Failed:', error);
       } finally {
@@ -882,79 +878,38 @@ export default function PoolDetailPage() {
     } catch (error) { console.error('[silentRefreshTVL] Failed:', error); }
   }, [poolId, networkMode]);
 
-  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number }) => {
+  // Refresh after mutation - simplified 2-layer pattern
+  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; tvlDelta?: number }) => {
     if (!poolId || !isConnected || !accountAddress || !chainId) return;
 
     await invalidateAfterTx(null, {
       owner: accountAddress,
       chainId,
       poolId,
-      reason: 'liquidity-withdrawn',
-      awaitSubgraphSync: true,
-      blockNumber: info?.blockNumber,
-      reloadPositions: true,
-      refreshPoolData: silentRefreshTVL, // Changed to silent refresh
-      onPositionsReloaded: (allDerived) => {
-        const subId = (getPoolConfiguration(poolId)?.subgraphId || '').toLowerCase();
-        const filtered = allDerived.filter((pos: any) => String(pos.poolId || '').toLowerCase() === subId);
-        // Merge positions: update existing, add new, remove burned
-        setUserPositions(prev => {
-          const freshIds = new Set(filtered.map(p => p.positionId));
-          const existingIds = new Set(prev.map(p => p.positionId));
-
-          // Update existing positions that still exist (removes burned positions)
-          const updated = prev
-            .filter(p => freshIds.has(p.positionId)) // Remove burned positions
-            .map(p => {
-              const fresh = filtered.find(f => f.positionId === p.positionId);
-              return fresh ? { ...fresh, isOptimisticallyUpdating: undefined } : p;
-            });
-
-          // Add new positions
-          const newPositions = filtered.filter(p => !existingIds.has(p.positionId));
-
-          // Put new positions at the beginning so they appear at the top
-          return [...newPositions, ...updated];
-        });
-      },
+      optimisticUpdates: info?.tvlDelta ? { tvlDelta: info.tvlDelta } : undefined,
       clearOptimisticStates: () => {
         setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
         setOptimisticallyClearedFees(new Set());
       }
     });
-  }, [poolId, isConnected, accountAddress, silentRefreshTVL]);
+    // Apollo refetchQueries handles position data refresh automatically
+  }, [poolId, isConnected, accountAddress, chainId]);
 
-  // Refresh for position increases
-  const refreshAfterIncrease = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
+  // Refresh for position increases - simplified 2-layer pattern
+  const refreshAfterIncrease = useCallback(async () => {
     if (!poolId || !isConnected || !accountAddress || !chainId) return;
 
     await invalidateAfterTx(null, {
       owner: accountAddress,
       chainId,
       poolId,
-      reason: 'liquidity-added',
-      awaitSubgraphSync: true,
-      blockNumber: info?.blockNumber,
-      reloadPositions: true,
-      refreshPoolData: async () => {
-        await fetchPageData(true, false);
-      },
-      onPositionsReloaded: (allDerived) => {
-        const subId = poolId.toLowerCase();
-        const filtered = allDerived.filter((pos: any) => {
-          const posPoolId = String(pos.poolId || '').toLowerCase();
-          return posPoolId === subId;
-        });
-        if (filtered.length > 0) {
-          setUserPositions(filtered);
-        }
-      },
       clearOptimisticStates: () => {
         setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
         setOptimisticallyClearedFees(new Set());
       }
     });
-  }, [poolId, isConnected, accountAddress, fetchPageData]);
+    // Apollo refetchQueries handles position data refresh automatically
+  }, [poolId, isConnected, accountAddress, chainId]);
 
   const handledIncreaseHashRef = useRef<string | null>(null);
   const onLiquidityIncreasedCallback = useCallback((info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string } }) => {
@@ -1021,7 +976,7 @@ export default function PoolDetailPage() {
     // Show toast immediately but let Success View handle modal closure
     // Toast is shown by useIncreaseLiquidity hook already - don't duplicate
     // IMMEDIATE refetch for increases - fees are critical and must be fresh
-    refreshAfterIncrease(info);
+    refreshAfterIncrease();
     pendingActionRef.current = null; // Moved here to ensure it's cleared AFTER refresh logic
   }, [refreshAfterIncrease, positionToModify]);
 

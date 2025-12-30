@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { parseAbi, type Abi } from "viem";
 import { formatUnits as viemFormatUnits } from "viem";
-import { getAllTokens, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
+import { getAllTokens, NATIVE_TOKEN_ADDRESS, type NetworkMode } from "@/lib/pools-config";
 import { batchGetTokenPrices } from "@/lib/price-service";
 import type { PublicClient } from "viem";
 
@@ -18,7 +18,7 @@ interface UseWalletBalancesConfig {
   isConnected: boolean;
   accountAddress?: `0x${string}`;
   publicClient: PublicClient | undefined;
-  networkMode: string;
+  networkMode: NetworkMode;
   tokenDefinitions: Record<string, { decimals: number }>;
   setPositionsRefresh: (fn: (prev: number) => number) => void;
 }

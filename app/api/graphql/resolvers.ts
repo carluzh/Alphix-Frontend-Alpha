@@ -53,9 +53,25 @@ export const resolvers = {
     // Token queries
     tokenPrices: async (_: unknown, args: { chain: string }, ctx: Context) => {
       const data = await fetchInternal(ctx, '/api/prices/get-token-prices')
+      // Extract .usd values from price objects (API returns { usd, usd_24h_change })
+      const extractUsd = (priceObj: any): number | null => {
+        if (typeof priceObj === 'number') return priceObj
+        if (priceObj && typeof priceObj.usd === 'number') return priceObj.usd
+        return null
+      }
+      // Ensure timestamp is in seconds (Int32 safe), not milliseconds
+      const rawTs = data.timestamp || data.lastUpdated || Date.now()
+      const timestamp = rawTs > 1e12 ? Math.floor(rawTs / 1000) : rawTs
       return {
-        ...data,
-        timestamp: data.timestamp || Math.floor(Date.now() / 1000),
+        BTC: extractUsd(data.BTC),
+        aBTC: extractUsd(data.aBTC || data.BTC),
+        ETH: extractUsd(data.ETH),
+        aETH: extractUsd(data.aETH || data.ETH),
+        USDC: extractUsd(data.USDC),
+        aUSDC: extractUsd(data.aUSDC || data.USDC),
+        USDT: extractUsd(data.USDT),
+        aUSDT: extractUsd(data.aUSDT || data.USDT),
+        timestamp,
       }
     },
 

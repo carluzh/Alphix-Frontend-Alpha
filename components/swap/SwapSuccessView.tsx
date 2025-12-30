@@ -5,13 +5,10 @@ import { motion } from 'framer-motion';
 import Image from 'next/image';
 import {
   ChevronRightIcon,
-  WalletIcon,
   CircleCheck
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { useAccount } from "wagmi";
-import { useEffect } from "react";
 import { Token, SwapTxInfo } from './swap-interface';
 import { getExplorerUrl } from '@/lib/wagmiConfig';
 import type { SwapTradeModel } from "./useSwapTrade";
@@ -22,10 +19,10 @@ interface SwapSuccessViewProps {
   trade: SwapTradeModel;
   swapTxInfo: SwapTxInfo | null;
   handleChangeButton: () => void;
-  formatTokenAmountDisplay: (amount: string, token: Token) => string; // Updated to use Token objects
+  formatTokenAmountDisplay: (amount: string, token: Token) => string;
 }
 
-export function SwapSuccessView({ 
+export function SwapSuccessView({
   displayFromToken,
   displayToToken,
   trade,
@@ -33,17 +30,7 @@ export function SwapSuccessView({
   handleChangeButton,
   formatTokenAmountDisplay
 }: SwapSuccessViewProps) {
-  const { address: accountAddress } = useAccount();
-
-  useEffect(() => {
-    if (!accountAddress || !swapTxInfo?.hash) return;
-
-    fetch('/api/cache/invalidate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerAddress: accountAddress, reason: 'swap_complete' })
-    }).catch(err => console.error('[Cache] Failed to invalidate after swap:', err));
-  }, [accountAddress, swapTxInfo?.hash]);
+  // Cache invalidation is handled by useSwapExecution via invalidateAfterTx
   return (
     <motion.div key="success" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
       <div 

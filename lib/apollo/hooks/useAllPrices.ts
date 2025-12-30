@@ -8,6 +8,7 @@
  */
 
 import { usePlatformBasedFetchPolicy } from '@/hooks/usePlatformBasedFetchPolicy'
+import { usePollingIntervalByChain } from '@/hooks/usePollingIntervalByChain'
 import { useNetwork } from '@/lib/network-context'
 import { useGetTokenPricesQuery, type Chain } from '../__generated__'
 
@@ -44,10 +45,13 @@ export function useAllPrices(): UseAllPricesResult {
   const { networkMode } = useNetwork()
   const chain: Chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
 
+  // Chain-based polling interval (L2 = 3s base, x20 for prices = 60s)
+  const chainPollingInterval = usePollingIntervalByChain()
+
   // Adaptive fetch policy - reduces polling when window not visible
   const { fetchPolicy, pollInterval } = usePlatformBasedFetchPolicy({
     fetchPolicy: 'cache-and-network',
-    pollInterval: 60000, // Refresh every minute
+    pollInterval: chainPollingInterval * 20, // ~60 seconds - prices don't need frequent updates
   })
 
   const { data, loading, error, refetch } = useGetTokenPricesQuery({

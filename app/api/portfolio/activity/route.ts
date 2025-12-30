@@ -4,17 +4,16 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAllPools, getToken } from "@/lib/pools-config";
+import { getAllPools } from "@/lib/pools-config";
 import { batchGetTokenPrices } from "@/lib/price-service";
+import { getAlphixSubgraphUrl, getDaiSubgraphUrl, isMainnetSubgraphMode } from "@/lib/subgraph-url-helper";
 
 /**
  * Activity types for portfolio
  */
 enum ActivityType {
-  SWAP = "swap",
   ADD_LIQUIDITY = "add_liquidity",
-  REMOVE_LIQUIDITY = "remove_liquidity",
-  COLLECT_FEES = "collect_fees",
+  MODIFY_LIQUIDITY = "modify_liquidity",
   UNKNOWN = "unknown",
 }
 
@@ -36,107 +35,67 @@ interface ActivityItem {
 }
 
 /**
- * GraphQL query for user transactions
- * Queries swaps, mints (add liquidity), burns (remove liquidity), and collects (fee claims)
- *
- * NOTE: The exact query structure depends on your subgraph schema.
- * This is a general pattern that may need adjustment.
+ * GraphQL query for user positions with timestamps
+ * V4 subgraph uses hookPositions entity
  */
-const buildActivityQuery = (limit: number) => `
-  query GetUserActivity($owner: String!, $first: Int!) {
-    # Swaps involving the user (as sender)
-    swaps(
-      first: $first
-      where: { sender: $owner }
-      orderBy: timestamp
-      orderDirection: desc
-    ) {
-      id
-      transaction { id blockNumber }
-      timestamp
-      pool { id }
-      sender
-      amount0
-      amount1
-      amountUSD
-    }
-
-    # Mints (add liquidity) for positions owned by user
-    mints(
+const GET_POSITION_ACTIVITY_TESTNET = `
+  query GetPositionActivity($owner: Bytes!, $first: Int!) {
+    hookPositions(
       first: $first
       where: { owner: $owner }
-      orderBy: timestamp
+      orderBy: creationTimestamp
       orderDirection: desc
     ) {
       id
-      transaction { id blockNumber }
-      timestamp
-      pool { id }
       owner
-      amount0
-      amount1
-      amountUSD
-    }
-
-    # Burns (remove liquidity) for positions owned by user
-    burns(
-      first: $first
-      where: { owner: $owner }
-      orderBy: timestamp
-      orderDirection: desc
-    ) {
-      id
-      transaction { id blockNumber }
-      timestamp
+      tickLower
+      tickUpper
+      liquidity
+      creationTimestamp
+      lastTimestamp
       pool { id }
-      owner
-      amount0
-      amount1
-      amountUSD
-    }
-
-    # Collects (fee claims) for positions owned by user
-    collects(
-      first: $first
-      where: { owner: $owner }
-      orderBy: timestamp
-      orderDirection: desc
-    ) {
-      id
-      transaction { id blockNumber }
-      timestamp
-      pool { id }
-      owner
-      amount0
-      amount1
     }
   }
 `;
 
-/**
- * Alternative query using positions to find user activity
- * This may work better depending on your subgraph schema
- */
-const buildPositionActivityQuery = (limit: number) => `
-  query GetPositionActivity($owner: String!, $first: Int!) {
-    positions(
-      first: 100
+const GET_POSITION_ACTIVITY_MAINNET = `
+  query GetPositionActivity($owner: Bytes!, $first: Int!) {
+    hookPositions(
+      first: $first
       where: { owner: $owner }
+      orderBy: creationTimestamp
+      orderDirection: desc
     ) {
       id
-      pool {
-        id
-        token0 { symbol decimals }
-        token1 { symbol decimals }
-      }
-      # Transaction history through position
-      transaction { id }
+      owner
+      tickLower
+      tickUpper
+      liquidity
+      creationTimestamp
+      lastTimestamp
+      poolId
     }
   }
 `;
 
+interface SubgraphPosition {
+  id: string;
+  owner: string;
+  tickLower: string;
+  tickUpper: string;
+  liquidity: string;
+  creationTimestamp: string;
+  lastTimestamp: string;
+  pool?: { id: string };
+  poolId?: string;
+}
+
+function getPoolIdFromPosition(pos: SubgraphPosition): string {
+  return pos.poolId || pos.pool?.id || '';
+}
+
 /**
- * Fetch activity data from subgraph
+ * Fetch activity data from subgraph - derived from position timestamps
  */
 async function fetchActivityFromSubgraph(
   address: string,
@@ -144,44 +103,75 @@ async function fetchActivityFromSubgraph(
   networkMode: "mainnet" | "testnet"
 ): Promise<ActivityItem[]> {
   try {
-    // Get subgraph URL based on network mode
-    const subgraphUrl = networkMode === "mainnet"
-      ? process.env.MAINNET_SUBGRAPH_URL
-      : process.env.SUBGRAPH_URL;
+    const isMainnet = isMainnetSubgraphMode(networkMode);
+    const query = isMainnet ? GET_POSITION_ACTIVITY_MAINNET : GET_POSITION_ACTIVITY_TESTNET;
 
-    if (!subgraphUrl) {
+    // Get subgraph URLs
+    const subgraphUrls: string[] = [];
+    const primaryUrl = getAlphixSubgraphUrl(networkMode);
+    if (primaryUrl) subgraphUrls.push(primaryUrl);
+
+    if (!isMainnet) {
+      const daiUrl = getDaiSubgraphUrl(networkMode);
+      if (daiUrl && daiUrl !== primaryUrl) {
+        subgraphUrls.push(daiUrl);
+      }
+    }
+
+    if (subgraphUrls.length === 0) {
       console.warn("[Activity API] No subgraph URL configured");
       return [];
     }
 
-    // Build and execute query
-    const query = buildActivityQuery(limit);
-    const variables = {
-      owner: address.toLowerCase(),
-      first: limit,
-    };
+    // Fetch from all subgraphs in parallel
+    const subgraphResults = await Promise.allSettled(
+      subgraphUrls.map(async (subgraphUrl) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch(subgraphUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, variables }),
-      cache: "no-store",
-    });
+        try {
+          const response = await fetch(subgraphUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query,
+              variables: { owner: address.toLowerCase(), first: limit * 2 },
+            }),
+            signal: controller.signal,
+            cache: "no-store",
+          });
+          clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      console.error("[Activity API] Subgraph request failed:", response.status);
-      return [];
+          if (!response.ok) {
+            return [];
+          }
+
+          const result = await response.json();
+          if (result.errors) {
+            console.error("[Activity API] Subgraph query errors:", result.errors);
+            return [];
+          }
+
+          return (result.data?.hookPositions || []) as SubgraphPosition[];
+        } catch (error) {
+          clearTimeout(timeoutId);
+          throw error;
+        }
+      })
+    );
+
+    // Deduplicate positions from all subgraphs
+    const allPositions: SubgraphPosition[] = [];
+    const seenIds = new Set<string>();
+    for (const result of subgraphResults) {
+      if (result.status !== "fulfilled") continue;
+      for (const pos of result.value) {
+        if (!seenIds.has(pos.id)) {
+          seenIds.add(pos.id);
+          allPositions.push(pos);
+        }
+      }
     }
-
-    const result = await response.json();
-
-    if (result.errors) {
-      console.error("[Activity API] Subgraph query errors:", result.errors);
-      // Return empty - the query structure may not match the subgraph schema
-      return [];
-    }
-
-    const data = result.data || {};
 
     // Get pool configs for token mapping
     const pools = getAllPools();
@@ -195,118 +185,60 @@ async function fetchActivityFromSubgraph(
     });
     const prices = await batchGetTokenPrices(Array.from(allSymbols));
 
-    // Combine and format activities
+    // Convert positions to activity items
     const activities: ActivityItem[] = [];
 
-    // Process swaps
-    const swaps = data.swaps || [];
-    for (const swap of swaps) {
-      const pool = poolMap.get(swap.pool?.id?.toLowerCase());
+    for (const pos of allPositions) {
+      const poolId = getPoolIdFromPosition(pos);
+      const pool = poolMap.get(poolId?.toLowerCase());
       const token0Symbol = pool?.token0 || "Token0";
       const token1Symbol = pool?.token1 || "Token1";
+      const creationTs = parseInt(pos.creationTimestamp) || 0;
+      const lastTs = parseInt(pos.lastTimestamp) || 0;
 
-      activities.push({
-        id: swap.id,
-        type: ActivityType.SWAP,
-        timestamp: parseInt(swap.timestamp) || 0,
-        txHash: swap.transaction?.id || "",
-        poolId: swap.pool?.id,
-        token0: {
-          symbol: token0Symbol,
-          amount: formatAmount(swap.amount0 || "0"),
-          usdValue: calcUsdValue(swap.amount0, prices[token0Symbol]),
-        },
-        token1: {
-          symbol: token1Symbol,
-          amount: formatAmount(swap.amount1 || "0"),
-          usdValue: calcUsdValue(swap.amount1, prices[token1Symbol]),
-        },
-        totalUsdValue: parseFloat(swap.amountUSD || "0"),
-      });
-    }
+      // Add creation activity
+      if (creationTs > 0) {
+        activities.push({
+          id: `${pos.id}-create`,
+          type: ActivityType.ADD_LIQUIDITY,
+          timestamp: creationTs,
+          txHash: "", // Not available in position data
+          poolId,
+          token0: {
+            symbol: token0Symbol,
+            amount: "0", // Position amounts require on-chain calculation
+            usdValue: undefined,
+          },
+          token1: {
+            symbol: token1Symbol,
+            amount: "0",
+            usdValue: undefined,
+          },
+          totalUsdValue: undefined,
+        });
+      }
 
-    // Process mints (add liquidity)
-    const mints = data.mints || [];
-    for (const mint of mints) {
-      const pool = poolMap.get(mint.pool?.id?.toLowerCase());
-      const token0Symbol = pool?.token0 || "Token0";
-      const token1Symbol = pool?.token1 || "Token1";
-
-      activities.push({
-        id: mint.id,
-        type: ActivityType.ADD_LIQUIDITY,
-        timestamp: parseInt(mint.timestamp) || 0,
-        txHash: mint.transaction?.id || "",
-        poolId: mint.pool?.id,
-        token0: {
-          symbol: token0Symbol,
-          amount: formatAmount(mint.amount0 || "0"),
-          usdValue: calcUsdValue(mint.amount0, prices[token0Symbol]),
-        },
-        token1: {
-          symbol: token1Symbol,
-          amount: formatAmount(mint.amount1 || "0"),
-          usdValue: calcUsdValue(mint.amount1, prices[token1Symbol]),
-        },
-        totalUsdValue: parseFloat(mint.amountUSD || "0"),
-      });
-    }
-
-    // Process burns (remove liquidity)
-    const burns = data.burns || [];
-    for (const burn of burns) {
-      const pool = poolMap.get(burn.pool?.id?.toLowerCase());
-      const token0Symbol = pool?.token0 || "Token0";
-      const token1Symbol = pool?.token1 || "Token1";
-
-      activities.push({
-        id: burn.id,
-        type: ActivityType.REMOVE_LIQUIDITY,
-        timestamp: parseInt(burn.timestamp) || 0,
-        txHash: burn.transaction?.id || "",
-        poolId: burn.pool?.id,
-        token0: {
-          symbol: token0Symbol,
-          amount: formatAmount(burn.amount0 || "0"),
-          usdValue: calcUsdValue(burn.amount0, prices[token0Symbol]),
-        },
-        token1: {
-          symbol: token1Symbol,
-          amount: formatAmount(burn.amount1 || "0"),
-          usdValue: calcUsdValue(burn.amount1, prices[token1Symbol]),
-        },
-        totalUsdValue: parseFloat(burn.amountUSD || "0"),
-      });
-    }
-
-    // Process collects (fee claims)
-    const collects = data.collects || [];
-    for (const collect of collects) {
-      const pool = poolMap.get(collect.pool?.id?.toLowerCase());
-      const token0Symbol = pool?.token0 || "Token0";
-      const token1Symbol = pool?.token1 || "Token1";
-
-      const usd0 = calcUsdValue(collect.amount0, prices[token0Symbol]);
-      const usd1 = calcUsdValue(collect.amount1, prices[token1Symbol]);
-
-      activities.push({
-        id: collect.id,
-        type: ActivityType.COLLECT_FEES,
-        timestamp: parseInt(collect.timestamp) || 0,
-        txHash: collect.transaction?.id || "",
-        poolId: collect.pool?.id,
-        token0: {
-          symbol: token0Symbol,
-          amount: formatAmount(collect.amount0 || "0"),
-          usdValue: usd0,
-        },
-        token1: {
-          symbol: token1Symbol,
-          amount: formatAmount(collect.amount1 || "0"),
-          usdValue: usd1,
-        },
-        totalUsdValue: (usd0 || 0) + (usd1 || 0),
-      });
+      // Add modification activity if lastTimestamp differs from creation
+      if (lastTs > 0 && lastTs !== creationTs) {
+        activities.push({
+          id: `${pos.id}-modify`,
+          type: ActivityType.MODIFY_LIQUIDITY,
+          timestamp: lastTs,
+          txHash: "",
+          poolId,
+          token0: {
+            symbol: token0Symbol,
+            amount: "0",
+            usdValue: undefined,
+          },
+          token1: {
+            symbol: token1Symbol,
+            amount: "0",
+            usdValue: undefined,
+          },
+          totalUsdValue: undefined,
+        });
+      }
     }
 
     // Sort by timestamp (newest first) and limit
@@ -319,34 +251,12 @@ async function fetchActivityFromSubgraph(
 }
 
 /**
- * Format amount for display
- */
-function formatAmount(amount: string): string {
-  const num = parseFloat(amount);
-  if (isNaN(num)) return "0";
-  if (Math.abs(num) < 0.0001) return num.toExponential(2);
-  if (Math.abs(num) < 1) return num.toFixed(4);
-  if (Math.abs(num) < 1000) return num.toFixed(2);
-  return num.toFixed(0);
-}
-
-/**
- * Calculate USD value
- */
-function calcUsdValue(amount: string | number, price: number | undefined): number | undefined {
-  if (!price) return undefined;
-  const num = typeof amount === "string" ? parseFloat(amount) : amount;
-  if (isNaN(num)) return undefined;
-  return Math.abs(num) * price;
-}
-
-/**
  * GET /api/portfolio/activity
  *
  * Query parameters:
  * - address: User wallet address (required)
  * - limit: Maximum number of activities to return (default: 10, max: 50)
- * - network: Network mode (mainnet/testnet, default: from request)
+ * - network: Network mode (mainnet/testnet, default: testnet)
  */
 export async function GET(request: NextRequest) {
   try {
@@ -369,7 +279,7 @@ export async function GET(request: NextRequest) {
     // Determine network mode
     const networkMode = (networkParam === "mainnet" || networkParam === "testnet")
       ? networkParam
-      : "testnet"; // Default to testnet for now
+      : "testnet";
 
     // Fetch activity
     const activities = await fetchActivityFromSubgraph(address, limit, networkMode);

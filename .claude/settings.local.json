@@ -112,7 +112,8 @@
       "Bash(npm run codegen:check:*)",
       "Bash(npm run test:watch:*)",
       "Bash(ls -la \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\interface\\\\apps\\\\web\\\\src\"\" | grep -E \"^d \")",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(git status:*)"
     ],
     "deny": [],
     "ask": []

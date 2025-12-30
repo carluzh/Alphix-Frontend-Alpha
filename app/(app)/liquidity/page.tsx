@@ -39,7 +39,6 @@ import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useIncreaseLiquidity, type IncreasePositionData, useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
 import { toast as sonnerToast } from "sonner";
-import { waitForSubgraphBlock } from "@/lib/client-cache";
 import { prefetchService } from "@/lib/prefetch-service";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TickMath } from '@uniswap/v3-sdk';

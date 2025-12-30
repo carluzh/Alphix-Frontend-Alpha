@@ -8,6 +8,7 @@
  */
 
 import { usePlatformBasedFetchPolicy } from '@/hooks/usePlatformBasedFetchPolicy'
+import { usePollingIntervalByChain } from '@/hooks/usePollingIntervalByChain'
 import { useNetwork } from '@/lib/network-context'
 import { useGetUserPositionsQuery, type Chain } from '../__generated__'
 
@@ -61,10 +62,13 @@ export function useUserPositions(ownerAddress: string): UseUserPositionsResult {
   const ownerLc = (ownerAddress || '').toLowerCase()
   const enabled = !!ownerLc && ownerLc.length > 0
 
+  // Chain-based polling interval (L2 = 3s base, x10 for positions = 30s)
+  const chainPollingInterval = usePollingIntervalByChain()
+
   // Adaptive fetch policy - reduces polling when window not visible
   const { fetchPolicy, pollInterval } = usePlatformBasedFetchPolicy({
     fetchPolicy: 'cache-and-network',
-    pollInterval: 30000, // 30 seconds - positions can change after transactions
+    pollInterval: chainPollingInterval * 10, // ~30 seconds - positions can change after transactions
   })
 
   const { data, loading, error, refetch } = useGetUserPositionsQuery({

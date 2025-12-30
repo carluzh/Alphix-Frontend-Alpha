@@ -4,21 +4,12 @@ import React from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
-import { parseAbi } from "viem";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient } from "wagmi";
-import { baseSepolia, getExplorerTxUrl } from "@/lib/wagmiConfig";
-import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
-import { prefetchService } from "@/lib/prefetch-service";
-import { invalidateAfterTx, apolloClient } from "@/lib/apollo";
-import { toast } from "sonner";
-import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
-import poolsConfig from "@/config/pools.json";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, BadgeCheck, X, Folder, Rows3, Filter as FilterIcon } from "lucide-react";
-import { cn } from '@/lib/utils';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { getAllPools, getToken, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
-import { useIncreaseLiquidity, useDecreaseLiquidity } from "@/lib/liquidity/hooks";
+import { useAccount, usePublicClient } from "wagmi";
+import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, X, Folder, Rows3, Filter as FilterIcon } from "lucide-react";
+import { cn } from '@/lib/utils';
+import { getAllPools, getToken, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { calculateRealizedApr } from '@/lib/apr';
 import { Percent } from '@uniswap/sdk-core';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -26,24 +17,27 @@ import { useNetwork } from "@/lib/network-context";
 import { TickMath } from '@uniswap/v3-sdk';
 import {
   PortfolioChart,
-  PortfolioHeader,
   PositionsSection,
   StatsRow,
   ActionGrid,
-  RecentActivity,
-  PortfolioHeaderSkeleton,
   ActivePositionsSkeleton,
   BalancesPanel,
-  BalancesList,
   SkeletonLine,
   TokenPairLogoSkeleton,
+  PortfolioHeaderSkeleton,
+  PortfolioTabs,
+  OverviewTab,
+  TokensTab,
+  ActivityTab,
 } from "./components";
+import type { PortfolioTabId, ActivityItem } from "./components";
 import {
   PortfolioFilterContext,
   useLoadPhases,
   usePortfolio,
   useWalletBalances,
   usePortfolioModals,
+  useFaucet,
 } from "./hooks";
 import { derivePositionsFromIds, getCachedPositionTimestamps } from '@/lib/client-cache';
 
@@ -60,14 +54,6 @@ const PositionDetailsModal = dynamic(
   { ssr: false }
 );
 
-function formatUSD(num: number) {
-  return formatUSDShared(num);
-}
-
-function formatUSDHeader(num: number) {
-  return formatUSDHeaderShared(num);
-}
-
 export default function PortfolioPage() {
   const router = useRouter();
   const { isTestnet, networkMode, chainId: targetChainId } = useNetwork();
@@ -81,29 +67,23 @@ export default function PortfolioPage() {
   const isPositionsStale = isPositionsFetching && !isLoadingUserPositions; // Pulsing during refetch
 
   // Centralized hook for prices (Category 1: infrequent)
-  const { data: pricesData, loading: isLoadingPrices } = useAllPrices();
+  const { data: pricesData } = useAllPrices();
 
   const {
     portfolioData,
     activePositions,
     aprByPoolId,
-    isLoadingPositions,
     readiness,
     isLoadingPoolStates,
     setActivePositions,
-    setIsLoadingPositions,
-    setAprByPoolId,
   } = usePortfolio(networkMode, positionsRefresh, userPositionsData, pricesData, isLoadingUserPositions);
 
-  const isLoading = !readiness.core;
-  const { phase, showSkeletonFor } = useLoadPhases(readiness);
+  const { showSkeletonFor } = useLoadPhases(readiness);
 
   const [hoveredSegment, setHoveredSegment] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const netApyRef = useRef<HTMLDivElement>(null);
   const [isMobileVisOpen, setIsMobileVisOpen] = useState<boolean>(false);
-  const [collapseMaxHeight, setCollapseMaxHeight] = useState<number>(0);
-  const [isMobileVisReady, setIsMobileVisReady] = useState<boolean>(false);
   const blockVisContainerRef = useRef<HTMLDivElement>(null);
   const [viewportWidth, setViewportWidth] = useState(1440);
   useEffect(() => {
@@ -117,16 +97,6 @@ export default function PortfolioPage() {
   const isHiddenVis = viewportWidth <= 1000;
   const isVerySmallScreen = viewportWidth < 695;
   const isNarrowScreen = viewportWidth < 400;
-  const poolConfigBySubgraphId = useMemo(() => {
-    try {
-      const map = new Map<string, any>();
-      (poolsConfig?.pools || []).forEach((p: any) => map.set(String(p.subgraphId || '').toLowerCase(), p));
-      return map;
-    } catch {
-      return new Map<string, any>();
-    }
-  }, []);
-
   const convertTickToPrice = useCallback((tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
     if (tick === TickMath.MAX_TICK) return '∞';
     if (tick === TickMath.MIN_TICK) return '0.00';
@@ -177,94 +147,47 @@ export default function PortfolioPage() {
     }
   }, []);
 
-  // Dynamic layout helpers
-  const getColumnGapPx = useCallback((vw: number) => {
-    // Mobile: match pool page spacing (~mt-6 = 24px)
-    if (vw <= 768) return 24;
-    // Desktop/tablet: prior behavior
-    if (vw >= 1280) return 16; // gap-4 baseline
-    if (vw >= 1100) return 14;
-    return 12; // small gap as window shrinks
-  }, []);
-
-  // Aliases for faucet logic (uses accountAddress, isConnected, chainId from above)
-  const userAddress = accountAddress;
-  const userIsConnected = isConnected;
-  const currentChainId = chainId;
-  const { writeContract } = useWriteContract();
-  const faucetAbi = parseAbi(['function faucet() external']);
-  const [faucetHash, setFaucetHash] = useState<`0x${string}` | undefined>(undefined);
-  const { isLoading: isFaucetConfirming, isSuccess: isFaucetConfirmed } = useWaitForTransactionReceipt({ hash: faucetHash });
-  // -1 means unknown (prevents showing active state before cache check like sidebar)
-  const [faucetLastClaimTs, setFaucetLastClaimTs] = useState<number>(-1);
-  const [isFaucetBusy, setIsFaucetBusy] = useState<boolean>(false);
-  const { data: faucetLastCalledOnchain, refetch: refetchFaucetOnchain } = useReadContract({
-    address: FAUCET_CONTRACT_ADDRESS,
-    abi: faucetContractAbi,
-    functionName: 'lastCalled',
-    args: [userAddress!],
-    chainId: baseSepolia.id,
-    query: {
-      enabled: userIsConnected && currentChainId === baseSepolia.id && !!userAddress,
-    },
+  // Faucet hook (testnet only)
+  const {
+    writeContract,
+    faucetAbi,
+    setFaucetHash,
+    isFaucetConfirming,
+    faucetLastClaimTs,
+    isFaucetBusy,
+    setIsFaucetBusy,
+    faucetLastCalledOnchain,
+    refetchFaucetOnchain,
+  } = useFaucet({
+    userAddress: accountAddress,
+    userIsConnected: isConnected,
+    currentChainId: chainId,
   });
 
-  // When confirmed, mirror sidebar behavior: update local cache and button state immediately
-  useEffect(() => {
-    if (!isFaucetConfirmed || !userAddress) return;
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      localStorage.setItem(`faucetLastClaimTimestamp_${userAddress}`, String(now));
-      // Signal sidebar listeners to update unread badge
-      localStorage.setItem(`faucetClaimLastSeenAt_${userAddress}`, String(now));
-      setFaucetLastClaimTs(now);
-      setIsFaucetBusy(false);
-      // Success toast for faucet claim
-      toast.success('Faucet Claimed', {
-        icon: <BadgeCheck className="h-4 w-4 text-sidebar-primary" />,
-        className: 'faucet-claimed'
-      });
-      // Also trigger wallet balances refetch after a brief delay to allow chain state to settle
-      setTimeout(() => {
-        try {
-          localStorage.setItem(`walletBalancesRefreshAt_${userAddress}`, String(Date.now()));
-          window.dispatchEvent(new Event('walletBalancesRefresh'));
-        } catch {}
-      }, 2000);
-    } catch {}
-  }, [isFaucetConfirmed, userAddress]);
+  // Tab state for Uniswap-style navigation
+  const [activeTab, setActiveTab] = useState<PortfolioTabId>("overview");
 
-  // Sync cached faucet last-claim timestamp like sidebar does
-  useEffect(() => {
-    if (!userAddress) {
-      setFaucetLastClaimTs(-1);
-      return;
-    }
-    // Prefer onchain if available
-    if (faucetLastCalledOnchain !== undefined && faucetLastCalledOnchain !== null) {
-      const n = Number(faucetLastCalledOnchain);
-      if (Number.isFinite(n) && n > 0) {
-        setFaucetLastClaimTs(n);
-      }
-    }
-    try {
-      const cached = localStorage.getItem(`faucetLastClaimTimestamp_${userAddress}`);
-      setFaucetLastClaimTs(cached ? Number(cached) : 0);
-    } catch {
-      setFaucetLastClaimTs(0);
-    }
-    const onStorage = (e: StorageEvent) => {
-      if (!e.key) return;
-      if (e.key === `faucetLastClaimTimestamp_${userAddress}`) {
-        const next = Number(localStorage.getItem(`faucetLastClaimTimestamp_${userAddress}`) || '0');
-        setFaucetLastClaimTs(Number.isFinite(next) ? next : 0);
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, [userAddress, faucetLastCalledOnchain]);
+  // Activity data state (fetched from API)
+  const [activityData, setActivityData] = useState<ActivityItem[]>([]);
+  const [isLoadingActivity, setIsLoadingActivity] = useState(false);
 
-  // NEW: selector state for switching between sections
+  // Fetch activity when tab changes to activity or overview (both need activity data)
+  useEffect(() => {
+    if ((activeTab === "activity" || activeTab === "overview") && accountAddress && activityData.length === 0) {
+      setIsLoadingActivity(true);
+      fetch(`/api/portfolio/activity?address=${accountAddress}&limit=20&network=${networkMode}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.activities) {
+            setActivityData(data.activities);
+          }
+        })
+        .catch(console.error)
+        .finally(() => setIsLoadingActivity(false));
+    }
+  }, [activeTab, accountAddress, activityData.length, networkMode]);
+
+  // Selector state for switching between sections (legacy - keeping for balances integration)
   const [selectedSection, setSelectedSection] = useState<string>('Active Positions');
   const isMobile = viewportWidth <= 768;
   const isIntegrateBalances = isTestnet && viewportWidth < 1400 && !isMobile;
@@ -274,24 +197,6 @@ export default function PortfolioPage() {
       setSelectedSection('Active Positions');
     }
   }, [isIntegrateBalances, selectedSection]);
-
-  // Fee fetching for modals
-  const allPositionIds = React.useMemo(() => {
-    const ids = new Set<string>();
-    // Add positions from the table
-    if (userPositionsData) {
-      userPositionsData.forEach(pos => ids.add(pos.positionId));
-    }
-    // Add modal positions
-    if (positionToModify?.positionId) ids.add(positionToModify.positionId);
-    if (positionToWithdraw?.positionId) ids.add(positionToWithdraw.positionId);
-    return Array.from(ids).filter(Boolean);
-  }, [userPositionsData, positionToModify?.positionId, positionToWithdraw?.positionId]);
-
-  const { data: batchFeesData } = useUncollectedFeesBatch(allPositionIds, 60_000);
-
-  const lastDecreaseWasFullRef = useRef<boolean>(false);
-  const lastTxBlockRef = useRef<bigint | null>(null);
 
   // Wallet balances hook (extracted for cleaner code)
   const { walletBalances, isLoadingWalletBalances } = useWalletBalances({
@@ -303,23 +208,13 @@ export default function PortfolioPage() {
     setPositionsRefresh,
   });
 
-  // Helpers
-  const formatTokenDisplayAmount = (amount: string) => {
-    const num = parseFloat(amount);
-    if (isNaN(num)) return amount;
-    if (num === 0) return "0";
-    if (num > 0 && num < 0.000001) return "< 0.000001";
-    return num.toFixed(6);
-  };
-
-  // Enhanced refetching functions (based on pool page logic)
+  // Enhanced refetching function for single position
   const refreshSinglePosition = useCallback(async (positionId: string) => {
     if (!accountAddress || !chainId) return;
     try {
       const timestamps = getCachedPositionTimestamps(accountAddress);
       const updatedPositions = await derivePositionsFromIds(accountAddress, [positionId], chainId, timestamps);
       const updatedPosition = updatedPositions[0];
-
       if (updatedPosition) {
         setActivePositions(prev => {
           const preservedAgeSeconds = updatedPosition.ageSeconds && updatedPosition.ageSeconds > 0
@@ -331,262 +226,66 @@ export default function PortfolioPage() {
               : p
           );
         });
-        setSelectedPosition(prev => prev?.positionId === positionId ? updatedPosition : prev);
       } else {
         setActivePositions(prev => prev.map(p =>
           p.positionId === positionId ? { ...p, isOptimisticallyUpdating: undefined } : p
         ));
       }
-    } catch (error) {
+    } catch {
       setActivePositions(prev => prev.map(p =>
         p.positionId === positionId ? { ...p, isOptimisticallyUpdating: undefined } : p
       ));
     }
-  }, [accountAddress, chainId]);
+  }, [accountAddress, chainId, setActivePositions]);
 
-  const refreshAfterMutation = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; poolId?: string; tvlDelta?: number; volumeDelta?: number }) => {
-    if (!accountAddress || !chainId) return;
-
-    try {
-      await invalidateAfterTx(null, {
-        owner: accountAddress,
-        chainId,
-        poolId: info?.poolId, // Can be undefined for portfolio-wide operations
-        reason: 'liquidity-withdrawn',
-        awaitSubgraphSync: true,
-        blockNumber: info?.blockNumber,
-        reloadPositions: true,
-        // Pass optimistic updates for pool cache invalidation
-        optimisticUpdates: (info?.tvlDelta !== undefined || info?.volumeDelta !== undefined) ? {
-          tvlDelta: info.tvlDelta,
-          volumeDelta: info.volumeDelta,
-        } : undefined,
-        onPositionsReloaded: () => {
-          // Inline position refresh logic to avoid circular dependency
-          try {
-            if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'manual_refresh');
-          } catch {}
-          setPositionsRefresh((k) => k + 1);
-        },
-        clearOptimisticStates: () => {
-          setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-        }
-      });
-    } catch (error) {
-      console.error('[Portfolio refreshAfterMutation] failed:', error);
-      setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-    }
-  }, [accountAddress]);
-
-  // After-confirmation refresh using the same centralized prefetch hook as pool page
-  const bumpPositionsRefresh = useCallback(() => { // Refresh positions after add/withdraw
-    try {
-      if (accountAddress) prefetchService.notifyPositionsRefresh(accountAddress, 'manual_refresh');
-    } catch {}
-    setPositionsRefresh((k) => k + 1);
-  }, [accountAddress]);
-
-  useEffect(() => {
-    // subscribe to centralized refresh events like pool page
-    if (!accountAddress) return;
-    const unsubscribe = prefetchService.addPositionsListener(accountAddress, () => {
-      setPositionsRefresh((k) => k + 1);
-    });
-    return unsubscribe;
-  }, [accountAddress]);
-
-  // Enhanced liquidity hooks with optimistic updates and proper error handling
-  const onLiquidityIncreasedCallback = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint, increaseAmounts?: { amount0: string; amount1: string }, positionId?: string }) => {
-    if (!info?.txHash) return;
-    if (handledIncreaseHashRef.current === info.txHash) return;
-    handledIncreaseHashRef.current = info.txHash;
-    if (pendingActionRef.current?.type !== 'increase') return;
-    const now = Date.now();
-    if (now - lastRevalidationRef.current < 15000) return;
-    lastRevalidationRef.current = now;
-
-    // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
-    const targetPositionId = info?.positionId || positionToModify?.positionId;
-    if (targetPositionId && info?.increaseAmounts) {
-      // If we have the exact amounts, update optimistically with real values
-      setActivePositions(prev => prev.map(p => {
-        if (p.positionId === targetPositionId) {
-          const currentAmount0 = parseFloat(p.token0.amount || '0');
-          const currentAmount1 = parseFloat(p.token1.amount || '0');
-          const addedAmount0 = parseFloat(info.increaseAmounts!.amount0 || '0');
-          const addedAmount1 = parseFloat(info.increaseAmounts!.amount1 || '0');
-          
-          return { 
-            ...p, 
-            token0: { ...p.token0, amount: (currentAmount0 + addedAmount0).toString() },
-            token1: { ...p.token1, amount: (currentAmount1 + addedAmount1).toString() },
-            isOptimisticallyUpdating: true 
-          };
-        }
-        return p;
-      }));
-    } else if (targetPositionId) {
-      // Fallback to just showing loading state
-      setActivePositions(prev => prev.map(p => 
-        p.positionId === targetPositionId 
-          ? { ...p, isOptimisticallyUpdating: true } 
-          : p
-      ));
-      
-      // Safety timeout to clear loading state if refresh fails
-      setTimeout(() => {
-        setActivePositions(prev => prev.map(p => 
-          p.positionId === targetPositionId 
-            ? { ...p, isOptimisticallyUpdating: undefined } 
-            : p
-        ));
-      }, 30000); // 30 second timeout
-    }
-
-    // Set pool info for stats refresh
-    if (positionToModify?.poolId) {
-      const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === positionToModify.poolId.toLowerCase());
-      if (poolConfig) {
-        modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: positionToModify.poolId };
-      }
-    }
-
-    setShowIncreaseModal(false);
-    pendingActionRef.current = null;
-    
-    // Background refetch to get updated position data and invalidate global TVL cache
-    if (targetPositionId) {
-      refreshSinglePosition(targetPositionId).catch(console.error);
-    } else {
-      bumpPositionsRefresh();
-    }
-
-    // Invalidate global pool stats cache for the affected pool
-    if (modifiedPositionPoolInfoRef.current) {
-      const { poolId } = modifiedPositionPoolInfoRef.current;
-      refreshAfterMutation({ txHash: info.txHash, blockNumber: info.blockNumber, poolId }).catch(console.error);
-      modifiedPositionPoolInfoRef.current = null;
-    }
-  }, [refreshSinglePosition, refreshAfterMutation, bumpPositionsRefresh, positionToModify]);
-
-  const onLiquidityDecreasedCallback = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
-    if (!info?.txHash) return;
-    if (handledDecreaseHashRef.current === info.txHash) return;
-    handledDecreaseHashRef.current = info.txHash;
-    if (pendingActionRef.current?.type !== 'decrease' && pendingActionRef.current?.type !== 'withdraw') return;
-
-    const closing = info?.isFullBurn ?? !!lastDecreaseWasFullRef.current;
-    const targetPositionId = positionToWithdraw?.positionId;
-    
-    // IMMEDIATE OPTIMISTIC UPDATES (happen with toast)
-    if (targetPositionId) {
-      if (closing) {
-        // For full burns: immediately remove position from UI and track for flash prevention
-        markPositionAsRemoved(targetPositionId);
-        setActivePositions(prev => prev.filter(p => p.positionId !== targetPositionId));
-      } else {
-        // For partial withdrawals: show loading state on the position
-        setActivePositions(prev => prev.map(p => 
-          p.positionId === targetPositionId 
-            ? { ...p, isOptimisticallyUpdating: true } 
-            : p
-        ));
-        
-        // Safety timeout to clear loading state if refresh fails
-        setTimeout(() => {
-          setActivePositions(prev => prev.map(p => 
-            p.positionId === targetPositionId 
-              ? { ...p, isOptimisticallyUpdating: undefined } 
-              : p
-          ));
-        }, 30000); // 30 second timeout
-      }
-    }
-
-    // Set pool info for stats refresh
-    if (positionToWithdraw?.poolId) {
-      const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === positionToWithdraw.poolId.toLowerCase());
-      if (poolConfig) {
-        modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: positionToWithdraw.poolId };
-      }
-    }
-    
-    // Success notification is handled by useDecreaseLiquidity hook
-    setShowWithdrawModal(false);
-    setPositionToWithdraw(null);
-    pendingActionRef.current = null;
-
-    // Background refetch to correct any optimistic errors and invalidate global TVL cache (guard with 15s cooldown)
-    const now = Date.now();
-    if (now - lastRevalidationRef.current >= 15000) {
-      lastRevalidationRef.current = now;
-
-      // Get poolId for global cache invalidation
-      const poolIdForInvalidation = modifiedPositionPoolInfoRef.current?.poolId;
-
-      if (targetPositionId) {
-        if (closing) {
-          bumpPositionsRefresh();
-        } else {
-          refreshSinglePosition(targetPositionId).catch(console.error);
-        }
-      } else {
-        refreshAfterMutation({ ...info, poolId: poolIdForInvalidation }).catch(console.error);
-      }
-
-      // Invalidate global pool stats cache for the affected pool
-      if (poolIdForInvalidation) {
-        refreshAfterMutation({ txHash: info?.txHash, blockNumber: info?.blockNumber, poolId: poolIdForInvalidation }).catch(console.error);
-      }
-
-      modifiedPositionPoolInfoRef.current = null;
-    }
-  }, [refreshAfterMutation, refreshSinglePosition, bumpPositionsRefresh, positionToWithdraw]);
-
-  // Enhanced liquidity hooks with proper callbacks
-  const { increaseLiquidity, isLoading: isIncreasingLiquidity, isSuccess: isIncreaseSuccess, hash: increaseTxHash } = useIncreaseLiquidity({ 
-    onLiquidityIncreased: onLiquidityIncreasedCallback 
-  });
-  
-  const onFeesCollected = useCallback(async (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => {
-    toast.success('Fees Collected', {
-      icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
-      description: 'Fees successfully collected',
-      action: info?.txHash ? {
-        label: "View Transaction",
-        onClick: () => window.open(getExplorerTxUrl(info.txHash!), '_blank')
-      } : undefined
-    });
-    if (lastTxBlockRef.current) {
-      await waitForSubgraphBlock(Number(lastTxBlockRef.current));
-      lastTxBlockRef.current = null;
-    }
-    // Invalidate fees cache so UI shows fees as zero (Apollo cache)
-    apolloClient.cache.evict({ fieldName: 'uncollectedFees' });
-    apolloClient.cache.gc();
-  }, []);
-
-  const handleModalFeesCollected = useCallback((positionId: string) => {
-    // Evict the specific position's fees from Apollo cache
-    apolloClient.cache.evict({
-      id: apolloClient.cache.identify({ __typename: 'FeeItem', positionId }),
-    });
-    apolloClient.cache.evict({ fieldName: 'uncollectedFees' });
-    apolloClient.cache.gc();
-  }, []);
-  
-  const { decreaseLiquidity, claimFees, isLoading: isDecreasingLiquidity, isSuccess: isDecreaseSuccess, hash: decreaseTxHash } = useDecreaseLiquidity({ 
-    onLiquidityDecreased: onLiquidityDecreasedCallback, 
-    onFeesCollected 
+  // Portfolio modals hook - handles all modal state and callbacks
+  const {
+    showIncreaseModal,
+    showWithdrawModal,
+    positionToModify,
+    positionToWithdraw,
+    selectedPosition,
+    isPositionModalOpen,
+    closeIncreaseModal,
+    closeWithdrawModal,
+    openPositionModal,
+    closePositionModal,
+    setPositionToWithdraw,
+    onIncreaseSuccess,
+    onDecreaseSuccess,
+    handleModalFeesCollected,
+    onLiquidityDecreasedCallback,
+    refreshAfterMutation,
+    pendingActionRef,
+  } = usePortfolioModals({
+    accountAddress,
+    activePositions,
+    setActivePositions,
+    setPositionsRefresh,
+    refreshSinglePosition,
   });
 
-  // Clear optimistic loading state when hook finishes (success or error)
-  useEffect(() => {
-    if (!isDecreasingLiquidity && pendingActionRef.current?.type === 'collect') {
-      setActivePositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-      pendingActionRef.current = null;
+  // Fee fetching for all positions
+  const allPositionIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    if (userPositionsData) {
+      userPositionsData.forEach(pos => ids.add(pos.positionId));
     }
-  }, [isDecreasingLiquidity]);
+    if (positionToModify?.positionId) ids.add(positionToModify.positionId);
+    if (positionToWithdraw?.positionId) ids.add(positionToWithdraw.positionId);
+    return Array.from(ids).filter(Boolean);
+  }, [userPositionsData, positionToModify?.positionId, positionToWithdraw?.positionId]);
+
+  const { data: batchFeesData } = useUncollectedFeesBatch(allPositionIds, 60_000);
+
+  // Helpers
+  const formatTokenDisplayAmount = (amount: string) => {
+    const num = parseFloat(amount);
+    if (isNaN(num)) return amount;
+    if (num === 0) return "0";
+    if (num > 0 && num < 0.000001) return "< 0.000001";
+    return num.toFixed(6);
+  };
 
   // Token filter state controlled by clicking portfolio composition segments
   const [activeTokenFilter, setActiveTokenFilter] = useState<string | null>(null);
@@ -643,22 +342,6 @@ export default function PortfolioPage() {
 
   const [expandedPools, setExpandedPools] = useState<Record<string, boolean>>({});
   const [balancesSortDir, setBalancesSortDir] = useState<'asc' | 'desc'>('desc');
-  const [selectedPosition, setSelectedPosition] = useState<any | null>(null);
-  const [isPositionModalOpen, setIsPositionModalOpen] = useState(false);
-
-  // Sync selectedPosition with activePositions when positions change
-  useEffect(() => {
-    if (!selectedPosition || activePositions.length === 0) return;
-    const updatedPosition = activePositions.find(p => p.positionId === selectedPosition.positionId);
-    if (!updatedPosition) return;
-
-    const hasChanged =
-      updatedPosition.token0?.amount !== selectedPosition.token0?.amount ||
-      updatedPosition.token1?.amount !== selectedPosition.token1?.amount ||
-      updatedPosition.liquidityRaw !== selectedPosition.liquidityRaw;
-
-    if (hasChanged) setSelectedPosition(updatedPosition);
-  }, [activePositions, selectedPosition]);
 
   // Auto-expand pools with <= 2 positions by default
   useEffect(() => {
@@ -755,23 +438,6 @@ export default function PortfolioPage() {
     setExpandedPools(prev => ({ ...prev, [poolId]: !prev[poolId] }));
   };
 
-  // Enhanced menu actions with pending action tracking
-  const openAddLiquidity = useCallback((pos: any, onModalClose?: () => void) => {
-    setPositionToModify(pos);
-    pendingActionRef.current = { type: 'increase' };
-    setShowIncreaseModal(true);
-    // Close the menu if callback provided
-    if (onModalClose) onModalClose();
-  }, []);
-  
-  const openWithdraw = useCallback((pos: any, onModalClose?: () => void) => {
-    setPositionToWithdraw(pos);
-    pendingActionRef.current = { type: 'withdraw' };
-    setShowWithdrawModal(true);
-    // Close the menu if callback provided
-    if (onModalClose) onModalClose();
-  }, []);
-
   // Portfolio composition - group into Rest if there are more than 4 assets
   const composition = useMemo(() => {
     const total = portfolioData.totalValue;
@@ -798,41 +464,13 @@ export default function PortfolioPage() {
     return allItems;
   }, [portfolioData.tokenBalances, portfolioData.totalValue]);
   const isPlaceholderComposition = composition.length === 1 && composition[0]?.label === 'All' && Math.round((composition[0]?.pct || 0)) === 100;
-  // Keep collapse height in sync when opened and when layout/data change
+
+  // Reset mobile vis state when screen size changes
   useLayoutEffect(() => {
     if (!isHiddenVis) {
       setIsMobileVisOpen(false);
-      setCollapseMaxHeight(0);
-      return;
     }
-    const measure = () => {
-      if (blockVisContainerRef.current) {
-        setCollapseMaxHeight(blockVisContainerRef.current.scrollHeight);
-      }
-    };
-    if (isMobileVisOpen) {
-      // Reset ready state when opening
-      setIsMobileVisReady(false);
-      
-      // measure now and shortly after mount/layout settles
-      measure();
-      const id = setTimeout(measure, 60);
-      
-      // Delay rendering the visualization until container is stable
-      const readyId = setTimeout(() => {
-        setIsMobileVisReady(true);
-      }, 150);
-      
-      window.addEventListener('resize', measure);
-      return () => {
-        clearTimeout(id);
-        clearTimeout(readyId);
-        window.removeEventListener('resize', measure);
-      };
-    } else {
-      setIsMobileVisReady(false);
-    }
-  }, [isHiddenVis, isMobileVisOpen, composition.length]);
+  }, [isHiddenVis]);
 
   // Calculate proportional value with persistent selection via token filter
   const selectedSegmentIndex = activeTokenFilter
@@ -1146,7 +784,6 @@ export default function PortfolioPage() {
     return sum;
   })();
 
-  const isPositive = pnl24hPct >= 0;
   const forceHideLabels = (!isConnected || activePositions.length === 0) && portfolioData.tokenBalances.length === 0;
 
   // Show skeleton during loading, empty state only after data is loaded
@@ -1190,63 +827,67 @@ export default function PortfolioPage() {
     <PortfolioFilterContext.Provider value={{ activeTokenFilter, setActiveTokenFilter, isStickyHover, setIsStickyHover, hoverTokenLabel: effectiveTokenLabel }}>
       <>
       <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden max-w-full w-full">
-        {/* Portfolio header */}
-        <PortfolioHeader
-          displayValue={displayValue}
-          pnl24hPct={pnl24hPct}
-          isPlaceholderComposition={isPlaceholderComposition}
-          filteredPositionCount={filteredPositionCount}
-          effectiveAprPct={effectiveAprPct}
-          totalFeesUSD={totalFeesUSD}
-          composition={composition}
-          hoveredSegment={hoveredSegment}
-          setHoveredSegment={setHoveredSegment}
-          forceHideLabels={forceHideLabels}
-          handleRestClick={handleRestClick}
-          setIsRestCycling={setIsRestCycling}
-          isRestCycling={isRestCycling}
-          restCycleIndex={restCycleIndex}
-          activeTokenFilter={activeTokenFilter}
-          setActiveTokenFilter={setActiveTokenFilter}
-          setHoveredTokenLabel={setHoveredTokenLabel}
-          containerRef={containerRef}
-          netApyRef={netApyRef}
-          viewportWidth={viewportWidth}
-          isVerySmallScreen={isVerySmallScreen}
-          isNarrowScreen={isNarrowScreen}
-          showSkeleton={showSkeletonFor.header}
-        />
-
-        {/* NEW: Portfolio Overview Section - Chart, Stats, Actions */}
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Portfolio Chart - spans 2 columns on desktop */}
-          <div className="lg:col-span-2">
-            <PortfolioChart currentValue={displayValue} />
-          </div>
-
-          {/* Right sidebar: Stats + Actions */}
-          <div className="flex flex-col gap-4">
-            <StatsRow />
-            <ActionGrid layout="2x2" />
-          </div>
+        {/* Uniswap-style tabs at top */}
+        <div className="mb-4">
+          <PortfolioTabs
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            positionCount={activePositions.length}
+            tokenCount={walletBalances.length}
+            activityCount={activityData.length}
+          />
         </div>
 
-        {/* NEW: Portfolio sections with selector + right Balances aside */}
-        <div className="mt-6 flex flex-col lg:flex-row" style={{ gap: `${getColumnGapPx(viewportWidth)}px` }}>
-          {/* Mobile: Show Balances first (only on testnet) */}
-          {showBalancesPanel && isMobile && !isIntegrateBalances && (
+        {/* Tab Content */}
+        <div className="mt-4">
+          {/* Overview Tab */}
+          {activeTab === "overview" && (
+            <OverviewTab
+              walletBalances={walletBalances}
+              activePositions={activePositions}
+              priceMap={portfolioData.priceMap}
+              onNavigateToTab={setActiveTab}
+              isLoading={showSkeletonFor.table}
+              activities={activityData}
+              totalValue={portfolioData.totalValue}
+            />
+          )}
+
+          {/* Tokens Tab */}
+          {activeTab === "tokens" && (
+            <TokensTab
+              walletBalances={walletBalances}
+              isLoading={isLoadingWalletBalances}
+              sortDir={balancesSortDir}
+              onSortChange={setBalancesSortDir}
+            />
+          )}
+
+          {/* Activity Tab */}
+          {activeTab === "activity" && (
+            <ActivityTab
+              activities={activityData}
+              isLoading={isLoadingActivity}
+              accountAddress={accountAddress}
+            />
+          )}
+
+        </div>
+
+        {/* Testnet Faucet Panel - shown as side panel on desktop */}
+        {showBalancesPanel && !isMobile && (
+          <div className="mt-6">
             <BalancesPanel
-              width={viewportWidth >= 1024 ? '450px' : '100%'}
+              width="100%"
               walletBalances={walletBalances}
               isLoadingWalletBalances={isLoadingWalletBalances}
               isConnected={isConnected}
               balancesSortDir={balancesSortDir}
               setBalancesSortDir={setBalancesSortDir}
               renderSortIcon={renderSortIcon}
-              showSkeleton={showSkeletonFor.table}
               faucetLastClaimTs={faucetLastClaimTs}
               faucetLastCalledOnchain={faucetLastCalledOnchain}
-              currentChainId={currentChainId}
+              currentChainId={chainId}
               isFaucetBusy={isFaucetBusy}
               isFaucetConfirming={isFaucetConfirming}
               accountAddress={accountAddress}
@@ -1256,228 +897,16 @@ export default function PortfolioPage() {
               faucetAbi={faucetAbi}
               refetchFaucetOnchain={refetchFaucetOnchain}
             />
-          )}
-
-          <div className="flex-1 min-w-0">
-          {/* Your Positions title */}
-          <div className="flex items-center gap-2 mb-4 justify-between">
-            <h3 className={`text-lg font-medium ${isPositionsStale ? 'cache-stale' : ''}`}>Your Positions</h3>
-            {/* Right: token filter badge area + Faucet (only show faucet when Balances tab active in integrated mode) */}
-            <div className="ml-auto flex items-center gap-2">
-              {selectedSection === 'Active Positions' && activePositions.length > 0 && (
-                <>
-                  {hasFolders && (
-                    <div className="h-8 rounded-md border border-sidebar-border bg-container flex items-center p-0.5 gap-0.5">
-                      <button
-                        onClick={() => {
-                          setViewMode('folder');
-                        }}
-                        className={cn(
-                          "h-full px-2 rounded flex items-center justify-center transition-all",
-                          viewMode === 'folder' ? "bg-button text-foreground" : "bg-transparent text-muted-foreground hover:text-foreground"
-                        )}
-                        style={viewMode === 'folder' ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                      >
-                        <Folder className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setViewMode('list');
-                          setExpandedPools({});
-                        }}
-                        className={cn(
-                          "h-full px-2 rounded flex items-center justify-center transition-all",
-                          viewMode === 'list' ? "bg-button text-foreground" : "bg-transparent text-muted-foreground hover:text-foreground"
-                        )}
-                        style={viewMode === 'list' ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                      >
-                        <Rows3 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  )}
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <button className="h-8 px-3 rounded-md border border-sidebar-border bg-container hover:bg-surface text-muted-foreground hover:text-foreground flex items-center gap-2 text-xs transition-colors">
-                        <FilterIcon className="h-3.5 w-3.5" />
-                        <span>Filter</span>
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-64 p-0 bg-container border-sidebar-border" align="end">
-                      <div className="p-4 space-y-4">
-                        <div className="space-y-2">
-                          <label className="text-xs font-medium text-muted-foreground">Status</label>
-                          <div className="space-y-1">
-                            {[
-                              { value: 'all', label: 'All Positions' },
-                              { value: 'in-range', label: 'In Range' },
-                              { value: 'out-of-range', label: 'Out of Range' }
-                            ].map(option => (
-                              <button
-                                key={option.value}
-                                onClick={() => setPositionStatusFilter(option.value as any)}
-                                className={cn(
-                                  "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
-                                  positionStatusFilter === option.value
-                                    ? "bg-surface text-foreground font-medium"
-                                    : "text-muted-foreground hover:text-foreground hover:bg-surface/50"
-                                )}
-                              >
-                                {option.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        {/* TODO: Sort By - to be implemented */}
-                        {/* <Separator className="bg-sidebar-border" />
-                        <div className="space-y-2">
-                          <label className="text-xs font-medium text-muted-foreground">Sort By</label>
-                          <div className="space-y-1">
-                            {[
-                              { value: 'value', label: 'Position Size' },
-                              { value: 'fees', label: 'Fees' },
-                              { value: 'apr', label: 'APR' }
-                            ].map(option => (
-                              <button
-                                key={option.value}
-                                onClick={() => {}}
-                                className="w-full text-left px-2 py-1.5 rounded text-xs transition-colors text-muted-foreground hover:text-foreground hover:bg-surface/50"
-                              >
-                                {option.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div> */}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </>
-              )}
-              {activeTokenFilter && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveTokenFilter(null);
-                    setIsStickyHover(false);
-                    setIsRestCycling(false);
-                  }}
-                  className="group flex items-center gap-1 px-2 py-1 rounded-md border border-sidebar-border/60 bg-muted/40 text-xs text-muted-foreground hover:bg-muted/50 relative"
-                >
-                  {isRestCycling && (
-                    <div 
-                      className="absolute left-0 top-0 bottom-0 w-1 rounded-l-md"
-                      style={{ backgroundColor: 'hsl(var(--sidebar-primary))' }}
-                    />
-                  )}
-                  <X className="h-3 w-3 text-muted-foreground transition-colors group-hover:text-foreground" />
-                  <span className="uppercase tracking-wider text-muted-foreground font-mono font-bold text-xs">{activeTokenFilter}</span>
-                </button>
-              )}
-              
-              {/* Filter removed */}
-            </div>
           </div>
-          <div>
-            <div>
-              {/* Active Positions */}
-              {selectedSection === 'Active Positions' && (
-                <PositionsSection
-                  groupedByPool={groupedByPool}
-                  activePositions={activePositions}
-                  portfolioData={portfolioData}
-                  aprByPoolId={aprByPoolId}
-                  batchFeesData={batchFeesData}
-                  tokenDefinitions={tokenDefinitions}
-                  expandedPools={expandedPools}
-                  togglePoolExpanded={togglePoolExpanded}
-                  isConnected={isConnected}
-                  showSkeleton={showSkeletonFor.table}
-                  isPositionsStale={isPositionsStale}
-                  isNarrowScreen={isNarrowScreen}
-                  viewMode={viewMode}
-                  readiness={readiness}
-                  isLoadingPoolStates={isLoadingPoolStates}
-                  getUsdPriceForSymbol={getUsdPriceForSymbol}
-                  convertTickToPrice={convertTickToPrice}
-                  onPositionClick={(position) => {
-                    setSelectedPosition(position);
-                    setIsPositionModalOpen(true);
-                  }}
-                  onVisitPool={(position) => {
-                    const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === position.poolId.toLowerCase());
-                    if (poolConfig) {
-                      window.open(`/liquidity/${poolConfig.id}`, '_blank');
-                    }
-                  }}
-                />
-              )}
-
-              {/* Balances as a tab when integrated (desktop/tablet only) */}
-              {isIntegrateBalances && selectedSection === 'Balances' && (
-                <BalancesList
-                  walletBalances={walletBalances}
-                  isLoadingWalletBalances={isLoadingWalletBalances}
-                  isConnected={isConnected}
-                  balancesSortDir={balancesSortDir}
-                  setBalancesSortDir={setBalancesSortDir}
-                  renderSortIcon={renderSortIcon}
-                  variant="card"
-                />
-              )}
-
-            </div>
-          </div>
-          </div>
-          {/* Right-side: Balances (desktop only, testnet only) */}
-          {showBalancesPanel && !isIntegrateBalances && !isMobile && (
-            <BalancesPanel
-              width={viewportWidth >= 1024 ? '450px' : '100%'}
-              walletBalances={walletBalances}
-              isLoadingWalletBalances={isLoadingWalletBalances}
-              isConnected={isConnected}
-              balancesSortDir={balancesSortDir}
-              setBalancesSortDir={setBalancesSortDir}
-              renderSortIcon={renderSortIcon}
-              faucetLastClaimTs={faucetLastClaimTs}
-              faucetLastCalledOnchain={faucetLastCalledOnchain}
-              currentChainId={currentChainId}
-              isFaucetBusy={isFaucetBusy}
-              isFaucetConfirming={isFaucetConfirming}
-              accountAddress={accountAddress}
-              setIsFaucetBusy={setIsFaucetBusy}
-              setFaucetHash={setFaucetHash}
-              writeContract={writeContract}
-              faucetAbi={faucetAbi}
-              refetchFaucetOnchain={refetchFaucetOnchain}
-            />
-          )}
-        </div>
-
-        {/* Recent Activity Section */}
-        <div className="mt-6">
-          <RecentActivity maxItems={5} />
-        </div>
-        {/* no third state below 1100px */}
+        )}
       </div>
         {/* Increase Liquidity Modal */}
         {positionToModify && (
           <IncreaseLiquidityModal
             isOpen={showIncreaseModal}
-            onClose={() => {
-              setShowIncreaseModal(false);
-              setPositionToModify(null);
-            }}
+            onClose={closeIncreaseModal}
             position={positionToModify}
-            onSuccess={() => {
-              const poolSubgraphId = positionToModify?.poolId;
-              if (poolSubgraphId) {
-                const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
-                if (poolConfig) {
-                  modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
-                }
-              }
-              publicClient?.getBlockNumber().then(block => lastTxBlockRef.current = block);
-              pendingActionRef.current = { type: 'increase' };
-            }}
+            onSuccess={onIncreaseSuccess}
           />
         )}
 
@@ -1485,32 +914,16 @@ export default function PortfolioPage() {
         {positionToWithdraw && (
           <DecreaseLiquidityModal
             isOpen={showWithdrawModal}
-            onClose={() => {
-              setShowWithdrawModal(false);
-              setPositionToWithdraw(null);
-            }}
+            onClose={closeWithdrawModal}
             position={positionToWithdraw}
-            onSuccess={() => {
-              const poolSubgraphId = positionToWithdraw?.poolId;
-              if (poolSubgraphId) {
-                const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === poolSubgraphId.toLowerCase());
-                if (poolConfig) {
-                  modifiedPositionPoolInfoRef.current = { poolId: poolConfig.id, subgraphId: poolSubgraphId };
-                }
-              }
-              publicClient?.getBlockNumber().then(block => lastTxBlockRef.current = block);
-              pendingActionRef.current = { type: 'decrease' };
-            }}
+            onSuccess={onDecreaseSuccess}
           />
         )}
 
       {selectedPosition && (
         <PositionDetailsModal
           isOpen={isPositionModalOpen}
-          onClose={() => {
-            setIsPositionModalOpen(false);
-            setSelectedPosition(null);
-          }}
+          onClose={closePositionModal}
           position={selectedPosition}
           valueUSD={(() => {
             const sym0 = selectedPosition.token0?.symbol;
@@ -1538,9 +951,8 @@ export default function PortfolioPage() {
             if (poolConfig?.id) {
               refreshAfterMutation({
                 txHash: info.txHash,
-                blockNumber: info.blockNumber,
                 poolId: poolConfig.id,
-                tvlDelta, // Pass TVL delta for pool cache invalidation
+                tvlDelta,
               }).catch(console.error);
             }
           }}
@@ -1550,9 +962,8 @@ export default function PortfolioPage() {
             if (poolConfig?.id) {
               refreshAfterMutation({
                 txHash: info.txHash,
-                blockNumber: info.blockNumber,
                 poolId: poolConfig.id,
-                tvlDelta, // Pass TVL delta (negative for removal) for pool cache invalidation
+                tvlDelta,
               }).catch(console.error);
             }
           }}

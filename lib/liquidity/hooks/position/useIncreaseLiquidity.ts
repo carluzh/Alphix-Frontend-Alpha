@@ -511,9 +511,6 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
             chainId: chainId!,
             poolId: getPoolSubgraphId(`${posData.token0Symbol}/${posData.token1Symbol}`) || undefined,
             positionIds: currentPositionIdRef.current ? [currentPositionIdRef.current] : undefined,
-            blockNumber: receipt?.blockNumber,
-            reason: 'liquidity-added',
-            awaitSubgraphSync: true,
             optimisticUpdates: tvlDelta > 0 ? {
               tvlDelta,
               positionUpdates: currentPositionIdRef.current ? [{

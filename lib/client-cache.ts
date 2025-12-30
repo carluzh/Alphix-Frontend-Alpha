@@ -3,9 +3,7 @@
  *
  * Provides client-side caching and coordination:
  * - Request deduplication (prevents duplicate in-flight requests)
- * - Indexing barriers (coordinates fetches until subgraph syncs)
  * - User position IDs (localStorage-based, 24h TTL)
- * - Subgraph sync waiter
  */
 
 import { SafeStorage } from './safe-storage';
@@ -20,40 +18,6 @@ function getNetworkPrefix(): string {
 
 // Request deduplication: track ongoing requests to prevent duplicates
 const ongoingRequests = new Map<string, Promise<any>>();
-
-// Indexing barriers: gate fresh fetches until subgraph head reaches tx block
-const indexingBarriers = new Map<string, Promise<boolean>>();
-
-/**
- * Set an indexing barrier for a user
- * Used after transactions to prevent stale data from being cached before subgraph sync
- */
-export function setIndexingBarrier(ownerAddress: string, barrier: Promise<boolean>): void {
-  const key = (ownerAddress || '').toLowerCase();
-  indexingBarriers.set(key, barrier);
-
-  // IMPORTANT: If a fresh barrier is set, purge any ongoing position IDs request
-  // This prevents pre-barrier promises from completing and poisoning the cache
-  try {
-    const idsKey = `userPositionIds_${key}`;
-    ongoingRequests.delete(idsKey);
-  } catch {}
-
-  barrier.finally(() => {
-    // Auto-cleanup when barrier resolves
-    if (indexingBarriers.get(key) === barrier) {
-      indexingBarriers.delete(key);
-    }
-  });
-}
-
-/**
- * Get the current indexing barrier for a user (if any)
- */
-export function getIndexingBarrier(ownerAddress: string): Promise<boolean> | null {
-  const key = (ownerAddress || '').toLowerCase();
-  return indexingBarriers.get(key) || null;
-}
 
 /**
  * Get an ongoing request to prevent duplicate fetches
@@ -203,18 +167,6 @@ export async function loadUserPositionIds(
     }
   } catch {}
 
-  // Check for indexing barrier - if present, return cached and wait for barrier before refresh
-  const barrier = getIndexingBarrier(ownerAddress);
-  if (barrier) {
-    barrier.then(async (ok) => {
-      if (ok && options?.onRefreshed) {
-        const freshIds = await fetchAndCachePositionIds(ownerAddress, key);
-        if (freshIds) options.onRefreshed(freshIds);
-      }
-    }).catch(() => {});
-    return cachedIds;
-  }
-
   // SWR: If we have cached data, return it and refresh in background
   if (cachedIds.length > 0) {
     if (options?.onRefreshed) {
@@ -326,12 +278,6 @@ async function fetchAndCachePositionIds(
 
   const { ids, itemsPersist } = result.data;
 
-  // Don't cache if there's an active barrier (data might be stale)
-  const barrierFinal = getIndexingBarrier(ownerAddress);
-  if (barrierFinal) {
-    return ids;
-  }
-
   // Preserve optimistic entries not yet indexed by subgraph
   const now = Date.now();
   let mergedItems = [...itemsPersist];
@@ -369,100 +315,6 @@ function arraysEqual(a: string[], b: string[]): boolean {
   const sortedA = [...a].sort();
   const sortedB = [...b].sort();
   return sortedA.every((val, i) => val === sortedB[i]);
-}
-
-/**
- * Wait for subgraph to index a specific block number
- *
- * Used after transactions to ensure subgraph has processed the tx before fetching data.
- * Polls /api/liquidity/subgraph-head endpoint until block number is reached.
- *
- * @param targetBlock - Block number to wait for
- * @param opts - Configuration options
- * @returns true if subgraph reached target block, false if timeout
- */
-export async function waitForSubgraphBlock(
-  targetBlock: number,
-  opts?: { timeoutMs?: number; minWaitMs?: number; maxIntervalMs?: number }
-): Promise<boolean> {
-  const timeoutMs = opts?.timeoutMs ?? 15000;
-  const minWaitMs = opts?.minWaitMs ?? 800;
-  const maxIntervalMs = opts?.maxIntervalMs ?? 1200;
-
-  const start = Date.now();
-  let interval = 250;
-  const jitter = () => Math.floor(Math.random() * 80);
-
-  try {
-    // Small initial wait to smooth indexing jitter
-    await new Promise((r) => setTimeout(r, minWaitMs));
-
-    for (;;) {
-      if (Date.now() - start > timeoutMs) return false;
-
-      const resp = await fetch('/api/liquidity/subgraph-head', { cache: 'no-store' });
-      if (resp.ok) {
-        const { subgraphHead } = await resp.json();
-        if (typeof subgraphHead === 'number' && subgraphHead >= targetBlock) return true;
-      }
-
-      await new Promise((r) => setTimeout(r, Math.min(maxIntervalMs, interval) + jitter()));
-      interval = Math.min(maxIntervalMs, Math.floor(interval * 1.6));
-    }
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Clear deprecated cache entries from localStorage
- * Called on app mount to clean up old caching system before Redis migration
- *
- * Removes all old client-side cache keys that have been migrated to Redis.
- */
-export function clearDeprecatedCaches(): void {
-  try {
-    const keysToRemove: string[] = [];
-
-    // Find all deprecated cache keys
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-
-      // Remove old alphix:cache:* keys (pre-Redis system)
-      if (key.startsWith('alphix:cache:')) {
-        keysToRemove.push(key);
-      }
-
-      // Remove old activity:* keys (activity feed removed)
-      if (key.startsWith('activity:')) {
-        keysToRemove.push(key);
-      }
-
-      // Remove old pool:* keys (migrated to Redis)
-      if (key.startsWith('pool:stats:') || key.startsWith('pool:state:') || key.startsWith('pool:chart:')) {
-        keysToRemove.push(key);
-      }
-
-      // Remove old user:positions:* keys (now uses derivePositionsFromIds)
-      if (key.startsWith('user:positions:')) {
-        keysToRemove.push(key);
-      }
-
-      // Keep userPositionIds_* keys (still used for localStorage-only position IDs)
-    }
-
-    // Remove all deprecated keys
-    for (const key of keysToRemove) {
-      localStorage.removeItem(key);
-    }
-
-    if (keysToRemove.length > 0) {
-      console.log(`[Cache] Cleaned up ${keysToRemove.length} deprecated cache entries from pre-Redis system`);
-    }
-  } catch (error) {
-    console.warn('[Cache] Failed to clear deprecated caches:', error);
-  }
 }
 
 export { derivePositionsFromIds, decodePositionInfo } from './on-chain-data';
