@@ -217,3 +217,62 @@ Subagent Review & Critical Fixes:
 - Home/Maintenance routes under 300KB ✅
 - Web3 routes (swap, liquidity, portfolio) 600KB-1MB due to SDK dependencies
 - This is expected for DeFi apps - Uniswap has similar bundle sizes
+
+### Session 4 (2024-12-30) - Window Visibility Optimization
+
+**Problem:** Lag when returning to site after being idle - Apollo polling continues when tab is hidden, causing "thundering herd" of requests on return.
+
+**Solution:** Implemented Uniswap's `useIsWindowVisible` hook pattern to skip queries when tab is hidden.
+
+**Created Files (Uniswap-Identical):**
+- hooks/useIsWindowVisible.ts (identical to interface/apps/web/src/hooks/useIsWindowVisible.ts)
+
+**Modified Files:**
+- lib/apollo/hooks/useAllPrices.ts - Added `skip: !isWindowVisible` (identical to useUSDPrice.ts pattern)
+- lib/apollo/hooks/usePoolState.ts - Added `skip: !enabled || !isWindowVisible`
+- lib/apollo/hooks/useUserPositions.ts - Added `skip: !enabled || !isWindowVisible` (identical to useAllTransactions.ts pattern)
+- lib/chart/hooks/usePoolPriceChartData.ts - Added `skip: !enabled || !isWindowVisible`
+- hooks/useTokenUSDPrice.ts - Added visibility check for setInterval polling (identical to useBlockNumber.tsx pattern)
+
+**Uniswap Reference Files:**
+| Alphix Hook | Uniswap Pattern |
+|-------------|-----------------|
+| useIsWindowVisible.ts | hooks/useIsWindowVisible.ts |
+| useAllPrices.ts | hooks/useUSDPrice.ts (line 138, 145) |
+| useUserPositions.ts | appGraphql/data/useAllTransactions.ts (line 39-40) |
+| useTokenUSDPrice.ts | lib/hooks/useBlockNumber.tsx (line 69-86) |
+
+**Status:** Phase 3 COMPLETE - Window visibility optimization implemented
+
+### Session 4 Continued - Performance Utilities
+
+**Added Uniswap-Identical Utilities:**
+
+1. **lazyWithRetry.ts** - Enhanced React.lazy with automatic retry for chunk load failures
+   - File: lib/lazyWithRetry.ts
+   - Source: interface/apps/web/src/utils/lazyWithRetry.ts
+   - Features:
+     - 3 retries with exponential backoff (1s → 2s → 4s)
+     - Detects chunk load failures vs code errors
+     - Auto page refresh on final failure
+     - 5-minute cooldown to prevent infinite loops
+   - Usage: Replace `next/dynamic` with `createLazy(() => import(...))`
+
+2. **useEvent hook** - Stable callback for preventing O(n) re-renders in map loops
+   - File: hooks/useThrottledCallback.ts (now exported)
+   - Source: interface/packages/utilities/src/react/hooks.ts
+   - Usage: Wrap callbacks in child components instead of inline in map loops
+
+**Performance Investigation Notes:**
+
+The following issues were investigated but found to be **already handled correctly**:
+- PositionChartV2.tsx segment logic: Inside useEffect with memoized dependencies ✓
+- Chart data processing: Already wrapped in useMemo ✓
+
+**Files Created:**
+- lib/lazyWithRetry.ts (identical to Uniswap)
+
+**Files Modified:**
+- hooks/useThrottledCallback.ts - Exported useEvent hook
+
+**Status:** Phase 4 utilities added - lazyWithRetry + useEvent available for use

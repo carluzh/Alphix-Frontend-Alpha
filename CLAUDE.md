@@ -85,6 +85,19 @@ npx tsc --noEmit
 
 **IMPORTANT**: Always run type checking before committing code changes, even though build errors are suppressed in the Next.js config.
 
+### GraphQL Codegen
+
+```bash
+# Regenerate TypeScript types from GraphQL schema
+npm run codegen
+
+# CI check: Verify generated files are in sync with schema
+# Fails if generated files differ from what codegen produces
+npm run codegen:check
+```
+
+**IMPORTANT**: If you modify GraphQL schema (`lib/apollo/schema/schema.graphql`) or queries (`lib/apollo/queries/`), run `npm run codegen` to regenerate types. The `codegen:check` script should be run in CI to catch stale generated files.
+
 ### Testing
 
 ```bash

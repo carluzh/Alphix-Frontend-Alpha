@@ -9,6 +9,7 @@
 
 import { useMemo } from 'react'
 import type { UTCTimestamp } from 'lightweight-charts'
+import useIsWindowVisible from '@/hooks/useIsWindowVisible'
 import { useNetwork } from '@/lib/network-context'
 import {
   useGetPoolPriceHistoryQuery,
@@ -68,13 +69,16 @@ export function usePoolPriceChartData({
   const { poolId, duration = HistoryDuration.WEEK } = variables ?? {}
   const enabled = !!poolId && poolId.length > 0
 
+  // skip chart data requests if the window is not focused
+  const isWindowVisible = useIsWindowVisible()
+
   const { data, loading } = useGetPoolPriceHistoryQuery({
     variables: {
       chain,
       poolId: poolId ?? '',
       duration: duration as GqlHistoryDuration,
     },
-    skip: !enabled,
+    skip: !enabled || !isWindowVisible,
     fetchPolicy: 'cache-and-network',
     pollInterval: 5 * 60 * 1000, // 5 minutes
   })

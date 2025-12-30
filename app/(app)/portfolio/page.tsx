@@ -3,11 +3,8 @@
 import React from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { useMemo, useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
-import { formatUSD as formatUSDShared, formatUSDHeader as formatUSDHeaderShared, formatNumber, formatPercent } from "@/lib/format";
-import { getAllPools, getToken, getAllTokens, NATIVE_TOKEN_ADDRESS } from "@/lib/pools-config";
-import { parseAbi, type Abi } from "viem";
+import { parseAbi } from "viem";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient } from "wagmi";
 import { baseSepolia, getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { useUserPositions, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
@@ -16,22 +13,39 @@ import { invalidateAfterTx, apolloClient } from "@/lib/apollo";
 import { toast } from "sonner";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import poolsConfig from "@/config/pools.json";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, OctagonX, BadgeCheck, ArrowUpRight, ArrowDownRight, X, Folder, Rows3, Filter as FilterIcon } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, BadgeCheck, X, Folder, Rows3, Filter as FilterIcon } from "lucide-react";
+import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { PortfolioTickBar } from "@/components/portfolio/PortfolioTickBar";
-import { ConnectWalletButton } from "@/components/ConnectWalletButton";
-import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
+import { getAllPools, getToken, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { formatUnits as viemFormatUnits } from "viem";
 import { useIncreaseLiquidity, useDecreaseLiquidity } from "@/lib/liquidity/hooks";
-import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
-import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
-import { batchGetTokenPrices } from '@/lib/price-service';
 import { calculateRealizedApr } from '@/lib/apr';
 import { Percent } from '@uniswap/sdk-core';
-import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNetwork } from "@/lib/network-context";
 import { TickMath } from '@uniswap/v3-sdk';
+import {
+  PortfolioChart,
+  PortfolioHeader,
+  PositionsSection,
+  StatsRow,
+  ActionGrid,
+  RecentActivity,
+  PortfolioHeaderSkeleton,
+  ActivePositionsSkeleton,
+  BalancesPanel,
+  BalancesList,
+  SkeletonLine,
+  TokenPairLogoSkeleton,
+} from "./components";
+import {
+  PortfolioFilterContext,
+  useLoadPhases,
+  usePortfolio,
+  useWalletBalances,
+  usePortfolioModals,
+} from "./hooks";
+import { derivePositionsFromIds, getCachedPositionTimestamps } from '@/lib/client-cache';
 
 const IncreaseLiquidityModal = dynamic(
   () => import("@/components/liquidity/increase").then(m => m.IncreaseLiquidityModal),
@@ -46,745 +60,12 @@ const PositionDetailsModal = dynamic(
   { ssr: false }
 );
 
-// Loading phases for skeleton system
-type LoadPhases = { phase: 0 | 1 | 2 | 3; startedAt: number };
-type Readiness = {
-  core: boolean;            // positions, balances loaded
-  prices: boolean;          // price map available
-  apr: boolean;             // APR calculations done
-};
-
-// Multi-phase skeleton loading orchestration hook
-function useLoadPhases(readiness: Readiness) {
-  const [phases, setPhases] = useState<LoadPhases>({ phase: 0, startedAt: Date.now() });
-  const [showSkeletonFor, setShowSkeletonFor] = useState({
-    header: true,
-    table: true,
-    charts: true,
-    actions: true,
-  });
-
-  useEffect(() => {
-    const now = Date.now();
-    const elapsed = now - phases.startedAt;
-    const minShowTime = 350; // minimum skeleton visibility time
-    const initialDelay = 100; // initial delay to avoid flicker
-    
-    // Determine target phase based on readiness
-    let targetPhase: 0 | 1 | 2 | 3 = 0;
-    if (readiness.core && readiness.prices) {
-      targetPhase = 2; // core data ready
-    }
-    if (readiness.core && readiness.prices && readiness.apr) {
-      targetPhase = 3; // APR ready (everything ready)
-    }
-    if (readiness.core || readiness.prices) {
-      targetPhase = Math.max(targetPhase, 1) as 0 | 1 | 2 | 3; // at least show layout
-    }
-
-    // Only advance phases, never regress
-    if (targetPhase > phases.phase) {
-      setPhases({ phase: targetPhase, startedAt: phases.startedAt });
-    }
-
-    // Control skeleton visibility with staggered timing for smooth transitions
-    const headerReady = targetPhase >= 3;
-    const tableReady = targetPhase >= 2;
-
-    if (elapsed >= minShowTime || targetPhase >= 3) {
-      setShowSkeletonFor({
-        header: !headerReady,
-        table: !tableReady,
-        charts: false,
-        actions: false,
-      });
-    } else if (elapsed >= initialDelay) {
-      setShowSkeletonFor({
-        header: targetPhase < 2,
-        table: targetPhase < 2,
-        charts: false,
-        actions: targetPhase < 2,
-      });
-    }
-  }, [readiness, phases.phase, phases.startedAt]);
-
-  return { phase: phases.phase, showSkeletonFor };
-}
-
-const SkeletonBlock = ({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={`bg-muted/60 rounded ${className}`} {...props} />
-);
-
-const SkeletonLine = ({ className = "", ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={`bg-muted/60 rounded h-4 w-20 ${className}`} {...props} />
-);
-
-const TokenPairLogoSkeleton = ({ size = 28, className = "" }: { size?: number; className?: string }) => (
-  <div className={`rounded-full bg-muted/60 ${className}`} style={{ width: `${size}px`, height: `${size}px` }} />
-);
-
-// New Portfolio Header Skeleton that matches the responsive 3/2/1 card layout
-const PortfolioHeaderSkeleton = ({ viewportWidth = 1440 }: { viewportWidth?: number }) => {
-  if (viewportWidth <= 1000) {
-    // Mobile/Tablet collapsible header skeleton
-    return (
-      <div className="w-full max-w-full overflow-x-clip rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 animate-skeleton-pulse">
-        <div className="flex items-center justify-between gap-3 min-w-0">
-          <div className="flex-1 min-w-0 space-y-3">
-            <SkeletonLine className="h-3 w-24" />
-            <SkeletonBlock className="h-10 w-full max-w-[180px]" />
-            <SkeletonLine className="h-3 w-32" />
-          </div>
-          <div className="flex-none w-[120px] max-w-[42%] min-w-0 space-y-2">
-            <div className="flex justify-between items-center pl-2"><SkeletonLine className="h-3 w-16" /><SkeletonLine className="h-3 w-8" /></div>
-            <div className="flex justify-between items-center pl-2"><SkeletonLine className="h-3 w-12" /><SkeletonLine className="h-3 w-10" /></div>
-            <div className="flex justify-between items-center pl-2"><SkeletonLine className="h-3 w-8" /><SkeletonLine className="h-3 w-12" /></div>
-          </div>
-          <div className="h-5 w-5 bg-muted/60 rounded-full" />
-        </div>
-      </div>
-    );
-  }
-
-  const isThreeCard = viewportWidth > 1400;
-
-  return (
-    <div className="grid items-start gap-4" style={{ gridTemplateColumns: isThreeCard ? 'minmax(240px, max-content) minmax(240px, max-content) 1fr' : 'minmax(240px, max-content) 1fr' }}>
-      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between animate-skeleton-pulse space-y-3">
-        <SkeletonLine className="h-3 w-24" />
-        <div>
-          <SkeletonBlock className="h-10 w-40" />
-          <SkeletonLine className="h-4 w-32 mt-2" />
-        </div>
-        <div />
-      </div>
-      {isThreeCard && (
-        <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 py-1.5 px-4 h-full flex flex-col justify-center animate-skeleton-pulse">
-          <div className="w-full divide-y divide-sidebar-border/40 space-y-2 py-2">
-            <div className="flex justify-between items-center pt-1"><SkeletonLine className="h-3 w-16" /><SkeletonLine className="h-3 w-8" /></div>
-            <div className="flex justify-between items-center pt-2"><SkeletonLine className="h-3 w-12" /><SkeletonLine className="h-3 w-10" /></div>
-            <div className="flex justify-between items-center pt-2"><SkeletonLine className="h-3 w-8" /><SkeletonLine className="h-3 w-12" /></div>
-          </div>
-        </div>
-      )}
-      <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between animate-skeleton-pulse space-y-3">
-        <SkeletonLine className="h-3 w-32" />
-        <div className="space-y-2">
-           <SkeletonBlock className="h-2 w-full rounded-full" />
-           <div className="flex justify-between">
-             <SkeletonLine className="h-3 w-12" />
-             <SkeletonLine className="h-3 w-10" />
-             <SkeletonLine className="h-3 w-16" />
-           </div>
-        </div>
-        <div />
-      </div>
-    </div>
-  );
-};
-
-// Balances list skeleton (matches integrated balances list layout)
-const BalancesListSkeleton = () => (
-  <div className="flex flex-col divide-y divide-sidebar-border/60">
-    {[...Array(6)].map((_, idx) => (
-      <div key={idx} className="flex items-center justify-between h-[64px] pl-6 pr-6">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-6 h-6 rounded-full bg-muted/60 flex-shrink-0" />
-          <div className="flex flex-col min-w-0 gap-1">
-            <SkeletonLine className="h-3 w-16" />
-            <SkeletonLine className="h-3 w-24 opacity-80" />
-          </div>
-        </div>
-        <div className="flex flex-col items-end whitespace-nowrap pl-2 gap-1">
-          <SkeletonLine className="h-4 w-20" />
-          <SkeletonLine className="h-3 w-14 opacity-80" />
-        </div>
-      </div>
-    ))}
-  </div>
-);
-
-const ActivePositionsSkeleton = () => (
-  <div className="flex flex-col gap-3 lg:gap-4">
-      {[...Array(4)].map((_, idx) => (
-        <PositionSkeleton key={idx} />
-    ))}
-  </div>
-);
-
-// Context for portfolio token filter, so inner components can toggle it
-const PortfolioFilterContext = React.createContext<{
-  activeTokenFilter: string | null;
-  setActiveTokenFilter: React.Dispatch<React.SetStateAction<string | null>>;
-  isStickyHover: boolean;
-  setIsStickyHover: React.Dispatch<React.SetStateAction<boolean>>;
-  hoverTokenLabel?: string | null;
-}>({
-  activeTokenFilter: null,
-  setActiveTokenFilter: (() => {}) as React.Dispatch<React.SetStateAction<string | null>>,
-  isStickyHover: false,
-  setIsStickyHover: (() => {}) as React.Dispatch<React.SetStateAction<boolean>>,
-  hoverTokenLabel: null,
-});
-
-interface TokenBalance {
-  symbol: string;
-  balance: number;
-  usdValue: number;
-  color: string;
-}
-
-interface PortfolioData {
-  totalValue: number;
-  tokenBalances: TokenBalance[];
-  isLoading: boolean;
-  error?: string;
-  priceMap: Record<string, number>;
-  pnl24hPct: number;
-  priceChange24hPctMap: Record<string, number>;
-}
-
-import { derivePositionsFromIds, waitForSubgraphBlock, getCachedPositionTimestamps } from '@/lib/client-cache';
-
 function formatUSD(num: number) {
   return formatUSDShared(num);
 }
 
 function formatUSDHeader(num: number) {
   return formatUSDHeaderShared(num);
-}
-
-// =============================================================================
-// EXTRACTED COMPONENTS: BalancesPanel, FaucetButton, BalancesList
-// =============================================================================
-
-interface FaucetButtonProps {
-  faucetLastClaimTs: number;
-  faucetLastCalledOnchain: bigint | undefined;
-  isConnected: boolean;
-  currentChainId: number | undefined;
-  walletBalancesLength: number;
-  isLoadingWalletBalances: boolean;
-  isFaucetBusy: boolean;
-  isFaucetConfirming: boolean;
-  accountAddress: `0x${string}` | undefined;
-  setIsFaucetBusy: (busy: boolean) => void;
-  setFaucetHash: (hash: `0x${string}`) => void;
-  writeContract: any;
-  faucetAbi: any;
-  refetchFaucetOnchain?: () => void;
-}
-
-const FaucetButton = ({
-  faucetLastClaimTs,
-  faucetLastCalledOnchain,
-  isConnected,
-  currentChainId,
-  walletBalancesLength,
-  isLoadingWalletBalances,
-  isFaucetBusy,
-  isFaucetConfirming,
-  accountAddress,
-  setIsFaucetBusy,
-  setFaucetHash,
-  writeContract,
-  faucetAbi,
-  refetchFaucetOnchain,
-}: FaucetButtonProps) => {
-  const last = faucetLastClaimTs < 0 ? -1 : Number(faucetLastClaimTs || 0);
-  const now = Math.floor(Date.now() / 1000);
-  const onchainLast = faucetLastCalledOnchain ? Number(faucetLastCalledOnchain) : null;
-  const effectiveLast = onchainLast && onchainLast > 0 ? onchainLast : (last >= 0 ? last : -1);
-  const canClaim = isConnected && currentChainId === baseSepolia.id && effectiveLast >= 0 && (effectiveLast === 0 || now - effectiveLast >= 24 * 60 * 60);
-  const isPortfolioEmpty = walletBalancesLength === 0 && !isLoadingWalletBalances;
-
-  if (isPortfolioEmpty) return null;
-
-  const handleClick = async () => {
-    if (!canClaim) {
-      toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-      return;
-    }
-    try {
-      setIsFaucetBusy(true);
-      const res = await fetch('/api/misc/faucet', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userAddress: accountAddress, chainId: baseSepolia.id })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        const msg = (data?.errorDetails || data?.message || '').toLowerCase();
-        if (msg.includes('once per day')) {
-          toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-        } else {
-          toast.error(data?.errorDetails || data?.message || 'API Error', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-        }
-        setIsFaucetBusy(false);
-        return;
-      }
-      toast.info('Sending faucet transaction to wallet...');
-      writeContract({
-        address: data.to as `0x${string}`,
-        abi: faucetAbi,
-        functionName: 'faucet',
-        args: [],
-        chainId: data.chainId,
-      }, {
-        onSuccess: (hash: `0x${string}`) => {
-          setFaucetHash(hash);
-          if (refetchFaucetOnchain) {
-            setTimeout(() => { try { refetchFaucetOnchain(); } catch {} }, 1000);
-          }
-        }
-      });
-    } catch (e: any) {
-      toast.error(`Error during faucet action: ${e?.message || 'Unknown error'}`, { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
-      setIsFaucetBusy(false);
-    }
-  };
-
-  const disabled = Boolean(isFaucetBusy || isFaucetConfirming);
-  const className = canClaim
-    ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-button-primary text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover-button-primary'}`
-    : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
-  const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
-
-  return (
-    <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
-      {disabled ? 'Processing…' : (last < 0 ? '—' : 'Claim Faucet')}
-    </button>
-  );
-};
-
-interface BalancesListProps {
-  walletBalances: TokenBalance[];
-  isLoadingWalletBalances: boolean;
-  isConnected: boolean;
-  balancesSortDir: 'asc' | 'desc';
-  setBalancesSortDir: (fn: (d: 'asc' | 'desc') => 'asc' | 'desc') => void;
-  renderSortIcon: (state: 'asc' | 'desc' | null) => React.ReactNode;
-  showSkeleton?: boolean;
-  variant?: 'card' | 'inline'; // card has border, inline doesn't when empty
-}
-
-const BalancesList = ({
-  walletBalances,
-  isLoadingWalletBalances,
-  isConnected,
-  balancesSortDir,
-  setBalancesSortDir,
-  renderSortIcon,
-  showSkeleton = false,
-  variant = 'card',
-}: BalancesListProps) => {
-  const isEmpty = walletBalances.length === 0 && !isLoadingWalletBalances;
-  const wrapperClass = variant === 'card'
-    ? `${isEmpty ? "" : "rounded-lg bg-muted/30 border border-sidebar-border/60"} ${isLoadingWalletBalances ? 'animate-pulse' : ''}`
-    : `rounded-lg bg-muted/30 border border-sidebar-border/60 ${showSkeleton ? 'animate-skeleton-pulse' : ''}`;
-
-  if (showSkeleton) {
-    return (
-      <div className={wrapperClass}>
-        <BalancesListSkeleton />
-      </div>
-    );
-  }
-
-  if (!isConnected) {
-    return (
-      <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-        <div className="w-48">
-          <ConnectWalletButton />
-        </div>
-      </div>
-    );
-  }
-
-  if (isEmpty) {
-    return (
-      <div className="border border-dashed rounded-lg bg-muted/10 p-8 w-full flex items-center justify-center">
-        <div className="text-sm text-white/75">No Balances</div>
-      </div>
-    );
-  }
-
-  const sorted = [...walletBalances].sort((a, b) =>
-    balancesSortDir === 'asc' ? a.usdValue - b.usdValue : b.usdValue - a.usdValue
-  );
-
-  return (
-    <div className={wrapperClass}>
-      <div className={isEmpty ? "hidden" : "flex items-center justify-between pl-6 pr-6 py-3 border-b border-sidebar-border/60 text-xs text-muted-foreground"}>
-        <span className="tracking-wider font-mono font-bold">TOKEN</span>
-        <button type="button" className="group inline-flex items-center" onClick={() => setBalancesSortDir((d) => d === 'desc' ? 'asc' : 'desc')}>
-          <span className="uppercase tracking-wider font-mono font-bold group-hover:text-foreground">VALUE</span>
-          {renderSortIcon(balancesSortDir)}
-        </button>
-      </div>
-      <div className="p-0">
-        {isLoadingWalletBalances ? (
-          <BalancesListSkeleton />
-        ) : (
-          <div className="flex flex-col divide-y divide-sidebar-border/60">
-            {sorted.map((tb) => {
-              const tokenInfo = getToken(tb.symbol) as any;
-              const iconSrc = tokenInfo?.icon || '/placeholder.svg';
-              return (
-                <div key={tb.symbol} className="flex items-center justify-between h-[64px] pl-6 pr-6 group">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-6 h-6 rounded-full overflow-hidden bg-background flex-shrink-0">
-                      <Image src={iconSrc} alt={tb.symbol} width={24} height={24} className="w-full h-full object-cover" />
-                    </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-medium truncate max-w-[140px]">{tb.symbol}</span>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end whitespace-nowrap pl-2 gap-1">
-                    <span className="text-sm text-foreground font-medium leading-none">{formatUSD(tb.usdValue)}</span>
-                    <span className="text-xs text-muted-foreground" style={{ marginTop: 2 }}>
-                      {formatNumber(tb.balance, { min: 6, max: 6 })}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-interface BalancesPanelProps {
-  walletBalances: TokenBalance[];
-  isLoadingWalletBalances: boolean;
-  isConnected: boolean;
-  balancesSortDir: 'asc' | 'desc';
-  setBalancesSortDir: (fn: (d: 'asc' | 'desc') => 'asc' | 'desc') => void;
-  renderSortIcon: (state: 'asc' | 'desc' | null) => React.ReactNode;
-  showSkeleton?: boolean;
-  // Faucet props
-  faucetLastClaimTs: number;
-  faucetLastCalledOnchain: bigint | undefined;
-  currentChainId: number | undefined;
-  isFaucetBusy: boolean;
-  isFaucetConfirming: boolean;
-  accountAddress: `0x${string}` | undefined;
-  setIsFaucetBusy: (busy: boolean) => void;
-  setFaucetHash: (hash: `0x${string}`) => void;
-  writeContract: any;
-  faucetAbi: any;
-  refetchFaucetOnchain?: () => void;
-  // Layout
-  width?: string | number;
-}
-
-const BalancesPanel = (props: BalancesPanelProps) => {
-  const { width, showSkeleton, ...rest } = props;
-
-  return (
-    <aside className="lg:flex-none" style={{ width: width || '100%' }}>
-      <div className="mb-2 flex items-center gap-2 justify-between">
-        <button
-          type="button"
-          className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
-          style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-        >
-          Balances
-        </button>
-        <FaucetButton
-          faucetLastClaimTs={rest.faucetLastClaimTs}
-          faucetLastCalledOnchain={rest.faucetLastCalledOnchain}
-          isConnected={rest.isConnected}
-          currentChainId={rest.currentChainId}
-          walletBalancesLength={rest.walletBalances.length}
-          isLoadingWalletBalances={rest.isLoadingWalletBalances}
-          isFaucetBusy={rest.isFaucetBusy}
-          isFaucetConfirming={rest.isFaucetConfirming}
-          accountAddress={rest.accountAddress}
-          setIsFaucetBusy={rest.setIsFaucetBusy}
-          setFaucetHash={rest.setFaucetHash}
-          writeContract={rest.writeContract}
-          faucetAbi={rest.faucetAbi}
-          refetchFaucetOnchain={rest.refetchFaucetOnchain}
-        />
-      </div>
-      <BalancesList
-        walletBalances={rest.walletBalances}
-        isLoadingWalletBalances={rest.isLoadingWalletBalances}
-        isConnected={rest.isConnected}
-        balancesSortDir={rest.balancesSortDir}
-        setBalancesSortDir={rest.setBalancesSortDir}
-        renderSortIcon={rest.renderSortIcon}
-        showSkeleton={showSkeleton}
-      />
-    </aside>
-  );
-};
-
-// =============================================================================
-function usePortfolioData(refreshKey: number = 0, userPositionsData?: any[], pricesData?: any): PortfolioData {
-  const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
-  const [portfolioData, setPortfolioData] = useState<PortfolioData>({
-    totalValue: 0,
-    tokenBalances: [],
-    isLoading: true,
-    error: undefined,
-    priceMap: {},
-    pnl24hPct: 0,
-    priceChange24hPctMap: {},
-  });
-
-  useEffect(() => {
-    if (!isConnected || !accountAddress) {
-      setPortfolioData({
-        totalValue: 0,
-        tokenBalances: [],
-        isLoading: false,
-        error: undefined,
-        priceMap: {},
-        pnl24hPct: 0,
-        priceChange24hPctMap: {},
-      });
-      return;
-    }
-
-    const fetchPortfolioData = async (positionsData: any[], priceData: any) => {
-      try {
-
-        setPortfolioData(prev => ({ ...prev, isLoading: true, error: undefined }));
-
-        // 1. Use passed hook data for user positions
-        const positionsRaw = positionsData || [];
-        // Filter to configured pools only
-        let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
-        try {
-          const pools = getAllPools();
-          const allowedIds = new Set((pools || []).map((p: any) => String(p?.subgraphId || '').toLowerCase()));
-          positions = positions.filter((pos: any) => {
-            const pid = String(pos?.poolId || '').toLowerCase();
-            return pid && allowedIds.has(pid);
-          });
-        } catch {}
-        // 2. Aggregate token balances from positions
-        const tokenBalanceMap = new Map<string, number>();
-        if (Array.isArray(positions)) {
-          positions.forEach((position: any) => {
-            const t0 = position.token0?.symbol;
-            const a0 = parseFloat(position.token0?.amount || '0');
-            if (t0 && a0 > 0) tokenBalanceMap.set(t0, (tokenBalanceMap.get(t0) || 0) + a0);
-            const t1 = position.token1?.symbol;
-            const a1 = parseFloat(position.token1?.amount || '0');
-            if (t1 && a1 > 0) tokenBalanceMap.set(t1, (tokenBalanceMap.get(t1) || 0) + a1);
-          });
-        }
-        
-
-        // 3. Resolve prices for all tokens (use price-service batch with quote API)
-        const tokenSymbols = Array.from(tokenBalanceMap.keys());
-        const priceMap = new Map<string, number>();
-        try {
-          const svc = await import('@/lib/price-service');
-          const batch = await svc.batchGetTokenPrices(tokenSymbols);
-          tokenSymbols.forEach(symbol => {
-            const px = batch[symbol];
-            if (typeof px === 'number') priceMap.set(symbol, px);
-          });
-        } catch (err) {
-          // Fallback to existing hook-provided shape when price-service import fails
-          const prices = priceData || {};
-          tokenSymbols.forEach(symbol => {
-            const mapped = String(symbol).toUpperCase();
-            const px = prices[mapped];
-            if (typeof px === 'number') priceMap.set(symbol, px);
-          });
-        }
-
-        // 4. Create token balances with USD values and colors
-        const tokenBalances: TokenBalance[] = Array.from(tokenBalanceMap.entries())
-          .map(([symbol, balance]) => ({
-            symbol,
-            balance,
-            usdValue: balance * (priceMap.get(symbol) || 0),
-            color: '', // Will assign after sorting
-          }))
-          .filter(token => token.usdValue > 0.01) // Filter out dust
-          .sort((a, b) => b.usdValue - a.usdValue); // Sort by value desc
-
-        // Assign colors after sorting - using visible greyscale range from globals.css
-        const colors = [
-          "hsl(0 0% 30%)",   // Darker but visible
-          "hsl(0 0% 40%)",   // --chart-2
-          "hsl(0 0% 60%)",   // --chart-3
-          "hsl(0 0% 80%)",   // --chart-4
-          "hsl(0 0% 95%)",   // --chart-5 (lightest)
-        ];
-        tokenBalances.forEach((token, index) => {
-          token.color = colors[index % colors.length];
-        });
-
-        const totalValue = tokenBalances.reduce((sum, token) => sum + token.usdValue, 0);
-
-        // Compute portfolio 24h PnL % using per-token 24h change (note: 24h change not available from quote API)
-        let deltaNowUSD = 0;
-        if (totalValue > 0) {
-          tokenBalances.forEach((tb) => {
-            // Map any wrapped/suffixed symbol to base asset used by price-service
-            const s = String(tb.symbol || '').toUpperCase();
-            const base = s.includes('BTC') ? 'BTC' : s.includes('ETH') ? 'ETH' : s.includes('USDC') ? 'USDC' : s.includes('USDT') ? 'USDT' : tb.symbol;
-            const coinData = priceData?.[base] || priceData?.[tb.symbol];
-            const ch = coinData?.usd_24h_change; // percent if server includes
-            if (typeof ch === 'number' && isFinite(ch)) {
-              // exact delta using current value and inverse of (1 + ch/100)
-              const pastUsd = tb.usdValue / (1 + ch / 100);
-              const delta = tb.usdValue - pastUsd;
-              deltaNowUSD += delta;
-            }
-          });
-        }
-        const pnl24hPct = totalValue > 0 ? (deltaNowUSD / totalValue) * 100 : 0;
-
-        const priceChange24hPctMap: Record<string, number> = {};
-        tokenSymbols.forEach(symbol => {
-          const s = String(symbol || '').toUpperCase();
-          const base = s.includes('BTC') ? 'BTC' : s.includes('ETH') ? 'ETH' : s.includes('USDC') ? 'USDC' : s.includes('USDT') ? 'USDT' : symbol;
-          const coinData = priceData?.[base] || priceData?.[symbol];
-          const ch = coinData?.usd_24h_change;
-          if (typeof ch === 'number' && isFinite(ch)) {
-            priceChange24hPctMap[symbol] = ch; // original key (e.g., aETH)
-            priceChange24hPctMap[base] = ch;   // base key (ETH) for aggregated views
-          }
-        });
-
-        setPortfolioData({
-          totalValue,
-          tokenBalances,
-          isLoading: false,
-          error: undefined,
-          priceMap: Object.fromEntries(priceMap.entries()),
-          pnl24hPct,
-          priceChange24hPctMap,
-        });
-
-      } catch (error) {
-        console.error('Failed to fetch portfolio data:', error);
-        setPortfolioData({
-          totalValue: 0,
-          tokenBalances: [],
-          isLoading: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          priceMap: {},
-          pnl24hPct: 0,
-          priceChange24hPctMap: {},
-        });
-      }
-    };
-
-    fetchPortfolioData(userPositionsData || [], pricesData || {});
-  }, [isConnected, accountAddress, refreshKey, userPositionsData, pricesData]);
-
-  return portfolioData;
-}
-
-// Track optimistically removed position IDs (module-level Set, cleared when confirmed by fresh data)
-const optimisticallyRemovedIds = new Set<string>();
-
-function usePortfolio(networkMode: 'mainnet' | 'testnet', refreshKey: number = 0, userPositionsData?: any[], pricesData?: any, isLoadingHookPositions?: boolean) {
-  const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount();
-
-  // Use the portfolio data hook with passed parameters
-  const portfolioData = usePortfolioData(refreshKey, userPositionsData, pricesData);
-
-  // All other data states
-  const [activePositions, setActivePositions] = useState<any[]>([]);
-  const [aprByPoolId, setAprByPoolId] = useState<Record<string, string>>({});
-  // All loading states
-  const [isLoadingPositions, setIsLoadingPositions] = useState<boolean>(true);
-  const [isLoadingPoolStates, setIsLoadingPoolStates] = useState<boolean>(true);
-
-  // Process positions using centralized hooks
-  useEffect(() => {
-    setIsLoadingPositions(!!isLoadingHookPositions);
-
-    if (!isConnected || !accountAddress) {
-      setActivePositions([]);
-      if (!isLoadingHookPositions) setIsLoadingPositions(false);
-      return;
-    }
-
-    // Use hook data instead of manual fetch
-    const positionsRaw = userPositionsData || [];
-    let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
-    // Filter to configured pools only (use pools-config)
-    try {
-      const pools = getAllPools();
-      const allowedIds = new Set((pools || []).map((p: any) => String(p?.subgraphId || '').toLowerCase()));
-      positions = positions.filter((pos: any) => {
-        const pid = String(pos?.poolId || '').toLowerCase();
-        return pid && allowedIds.has(pid);
-      });
-    } catch {}
-
-    // Filter out optimistically removed positions to prevent flash-back
-    if (optimisticallyRemovedIds.size > 0) {
-      const filteredPositions = positions.filter((pos: any) => !optimisticallyRemovedIds.has(pos.positionId));
-      // If fresh data confirms removal (position not in raw data), clear from tracking
-      const stillInData = new Set(positions.map((p: any) => p.positionId));
-      optimisticallyRemovedIds.forEach(id => {
-        if (!stillInData.has(id)) {
-          optimisticallyRemovedIds.delete(id);
-        }
-      });
-      setActivePositions(filteredPositions);
-    } else {
-      setActivePositions(positions);
-    }
-  }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions]);
-
-  useEffect(() => {
-    const fetchApr = async () => {
-      try {
-        const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
-        if (!response.ok) return;
-        const data = await response.json();
-        if (!data?.success || !Array.isArray(data.pools)) return;
-        const map: Record<string, string> = {};
-        for (const p of data.pools as any[]) {
-          const apr = typeof p.apr === 'number' && isFinite(p.apr) && p.apr > 0 ? `${p.apr.toFixed(2)}%` : 'N/A';
-          if (p.poolId) map[String(p.poolId).toLowerCase()] = apr;
-        }
-        setAprByPoolId(map);
-      } catch {}
-    };
-    fetchApr();
-  }, [networkMode]);
-
-  useEffect(() => {
-    setIsLoadingPoolStates(false);
-  }, [activePositions, isLoadingPositions]);
-
-  const readiness: Readiness = useMemo(() => {
-    const isPositionsLoaded = !isLoadingPositions;
-    const isEmptyPortfolio = isPositionsLoaded && activePositions.length === 0;
-    return {
-      core: isPositionsLoaded && !isLoadingPoolStates,
-      prices: isEmptyPortfolio || Object.keys(portfolioData.priceMap).length > 0,
-      apr: isEmptyPortfolio || Object.keys(aprByPoolId).length > 0,
-    };
-  }, [portfolioData.priceMap, aprByPoolId, activePositions, isLoadingPositions, isLoadingPoolStates]);
-
-  return {
-    portfolioData,
-    activePositions,
-    aprByPoolId,
-    readiness,
-    isLoadingPositions,
-    isLoadingPoolStates,
-    setActivePositions,
-    setIsLoadingPositions,
-    setAprByPoolId,
-  };
 }
 
 export default function PortfolioPage() {
@@ -796,11 +77,11 @@ export default function PortfolioPage() {
   const publicClient = usePublicClient();
 
   // Centralized hooks for positions (Category 2: user-action invalidated)
-  const { data: userPositionsData, isLoading: isLoadingUserPositions, isFetching: isPositionsFetching } = useUserPositions(accountAddress || '');
+  const { data: userPositionsData, loading: isLoadingUserPositions, isFetching: isPositionsFetching } = useUserPositions(accountAddress || '');
   const isPositionsStale = isPositionsFetching && !isLoadingUserPositions; // Pulsing during refetch
 
   // Centralized hook for prices (Category 1: infrequent)
-  const { data: pricesData, isLoading: isLoadingPrices } = useAllPrices();
+  const { data: pricesData, loading: isLoadingPrices } = useAllPrices();
 
   const {
     portfolioData,
@@ -813,12 +94,6 @@ export default function PortfolioPage() {
     setIsLoadingPositions,
     setAprByPoolId,
   } = usePortfolio(networkMode, positionsRefresh, userPositionsData, pricesData, isLoadingUserPositions);
-
-  const modifiedPositionPoolInfoRef = useRef<{ poolId: string; subgraphId: string } | null>(null);
-  const pendingActionRef = useRef<null | { type: 'increase' | 'decrease' | 'withdraw' | 'collect' }>(null);
-  const lastRevalidationRef = useRef<number>(0);
-  const handledIncreaseHashRef = useRef<string | null>(null);
-  const handledDecreaseHashRef = useRef<string | null>(null);
 
   const isLoading = !readiness.core;
   const { phase, showSkeletonFor } = useLoadPhases(readiness);
@@ -1000,12 +275,6 @@ export default function PortfolioPage() {
     }
   }, [isIntegrateBalances, selectedSection]);
 
-  // Modals: Add Liquidity / Withdraw (Decrease)
-  const [showIncreaseModal, setShowIncreaseModal] = useState(false);
-  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
-  const [positionToModify, setPositionToModify] = useState<any | null>(null);
-  const [positionToWithdraw, setPositionToWithdraw] = useState<any | null>(null);
-
   // Fee fetching for modals
   const allPositionIds = React.useMemo(() => {
     const ids = new Set<string>();
@@ -1023,8 +292,16 @@ export default function PortfolioPage() {
 
   const lastDecreaseWasFullRef = useRef<boolean>(false);
   const lastTxBlockRef = useRef<bigint | null>(null);
-  const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; balance: number; usdValue: number; color: string }>>([]);
-  const [isLoadingWalletBalances, setIsLoadingWalletBalances] = useState<boolean>(false);
+
+  // Wallet balances hook (extracted for cleaner code)
+  const { walletBalances, isLoadingWalletBalances } = useWalletBalances({
+    isConnected,
+    accountAddress,
+    publicClient,
+    networkMode,
+    tokenDefinitions,
+    setPositionsRefresh,
+  });
 
   // Helpers
   const formatTokenDisplayAmount = (amount: string) => {
@@ -1205,7 +482,7 @@ export default function PortfolioPage() {
     if (targetPositionId) {
       if (closing) {
         // For full burns: immediately remove position from UI and track for flash prevention
-        optimisticallyRemovedIds.add(targetPositionId);
+        markPositionAsRemoved(targetPositionId);
         setActivePositions(prev => prev.filter(p => p.positionId !== targetPositionId));
       } else {
         // For partial withdrawals: show loading state on the position
@@ -1382,111 +659,6 @@ export default function PortfolioPage() {
 
     if (hasChanged) setSelectedPosition(updatedPosition);
   }, [activePositions, selectedPosition]);
-
-  // Wallet balances (for Balances UI only; excluded from global portfolio worth)
-  useEffect(() => {
-    const run = async () => {
-      if (!isConnected || !accountAddress || !publicClient) {
-        setWalletBalances([]);
-        return;
-      }
-      setIsLoadingWalletBalances(true);
-      try {
-        // Collect configured tokens (pass networkMode to get correct token addresses)
-        const tokenMapOrArray = getAllTokens?.(networkMode) as any;
-        const tokens = Array.isArray(tokenMapOrArray) ? tokenMapOrArray : Object.values(tokenMapOrArray || {});
-        // Fetch raw balances
-        const balances: Record<string, number> = {};
-        for (const t of tokens) {
-          const symbol = t?.symbol as string | undefined;
-          if (!symbol) continue;
-          const addr = (t as any)?.address as `0x${string}` | undefined;
-          try {
-            let raw: bigint = 0n;
-            if (!addr || addr.toLowerCase() === NATIVE_TOKEN_ADDRESS?.toLowerCase?.()) {
-              raw = await publicClient.getBalance({ address: accountAddress as `0x${string}` });
-            } else {
-              // balanceOf(address)
-              const bal = await publicClient.readContract({
-                address: addr,
-                abi: parseAbi(['function balanceOf(address) view returns (uint256)']) as unknown as Abi,
-                functionName: 'balanceOf',
-                args: [accountAddress as `0x${string}`],
-              });
-              raw = BigInt(bal as any);
-            }
-            const dec = (tokenDefinitions as any)?.[symbol]?.decimals ?? 18;
-            const asFloat = parseFloat(viemFormatUnits(raw, dec));
-            balances[symbol] = asFloat;
-          } catch {}
-        }
-
-        // Build price map via quote API (replaces CoinGecko)
-        const symbols = Object.keys(balances);
-        const priceMap = new Map<string, number>();
-        let priceData: any = {};
-        try {
-          const prices = await batchGetTokenPrices(symbols);
-          priceData = prices; // The batch result is the price map
-          symbols.forEach((symbol) => {
-            if (prices[symbol]) priceMap.set(symbol, prices[symbol]);
-          });
-
-        } catch (error) {
-          console.warn('Failed to fetch prices from quote API:', error);
-        }
-        symbols.forEach((symbol) => {
-          const px = priceData[symbol];
-          if (px) priceMap.set(symbol, px);
-          else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
-        });
-
-        // Construct balances array (filter out zeros), assign colors
-        const entries = symbols
-          .map((symbol) => ({
-            symbol,
-            balance: balances[symbol] || 0,
-            usdValue: (balances[symbol] || 0) * (priceMap.get(symbol) || 0),
-            color: '',
-          }))
-          .filter((x) => x.usdValue > 0.01)
-          .sort((a, b) => b.usdValue - a.usdValue);
-        const colors = [
-          'hsl(0 0% 30%)',
-          'hsl(0 0% 40%)',
-          'hsl(0 0% 60%)',
-          'hsl(0 0% 80%)',
-          'hsl(0 0% 95%)',
-        ];
-        entries.forEach((e, i) => { e.color = colors[i % colors.length]; });
-
-        setWalletBalances(entries);
-      } finally {
-        setIsLoadingWalletBalances(false);
-      }
-    };
-    run();
-    // Listen for global balance refresh triggers (from faucet claim)
-    const onRefresh = () => {
-      // Re-run balances fetch immediately
-      run();
-      // Also trigger portfolio data refresh
-      setPositionsRefresh(prev => prev + 1);
-    };
-    const onStorage = (e: StorageEvent) => {
-      if (!e.key || !accountAddress) return;
-      if (e.key === `walletBalancesRefreshAt_${accountAddress}`) {
-        run();
-        setPositionsRefresh(prev => prev + 1);
-      }
-    };
-    window.addEventListener('walletBalancesRefresh', onRefresh as EventListener);
-    window.addEventListener('storage', onStorage);
-    return () => {
-      window.removeEventListener('walletBalancesRefresh', onRefresh as EventListener);
-      window.removeEventListener('storage', onStorage);
-    };
-  }, [isConnected, accountAddress, publicClient, networkMode]);
 
   // Auto-expand pools with <= 2 positions by default
   useEffect(() => {
@@ -2018,269 +1190,46 @@ export default function PortfolioPage() {
     <PortfolioFilterContext.Provider value={{ activeTokenFilter, setActiveTokenFilter, isStickyHover, setIsStickyHover, hoverTokenLabel: effectiveTokenLabel }}>
       <>
       <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden max-w-full w-full">
-        {/* Portfolio header with skeleton gate */}
-        {showSkeletonFor.header ? (
-          <PortfolioHeaderSkeleton viewportWidth={viewportWidth} />
-        ) : (
-          <div>
-            {viewportWidth > 1000 ? (
-            <div
-              ref={containerRef}
-              className="grid items-start relative w-full"
-              style={{
-                gridTemplateColumns: viewportWidth > 1800
-                  ? "280px 280px 1fr"
-                  : viewportWidth > 1400
-                    ? "minmax(200px, 1fr) minmax(200px, 1fr) 2fr"
-                    : "minmax(200px, 1fr) 2fr",
-                gridTemplateRows: "auto auto",
-                columnGap: "1rem",
-              }}
-            >
-            {/* Container 1: CURRENT VALUE */}
-            <div className="col-[1] row-[1/3] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between">
-              <div>
-                <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold mb-3">CURRENT VALUE</h1>
-                <div className={`${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
-                  {isPlaceholderComposition ? (
-                    <span className="text-muted-foreground">-</span>
-                  ) : (
-                    <div className="flex flex-col gap-1">
-                      <span className="font-medium tracking-tight">{formatUSDHeader(displayValue)}</span>
-                      {(() => {
-                        const deltaUsd = (() => {
-                          try {
-                            const total = Number(displayValue) || 0;
-                            if (!Number.isFinite(pnl24hPct) || !isFinite(total)) return 0;
-                            return (total * pnl24hPct) / 100;
-                          } catch { return 0; }
-                        })();
-                        const isPos = (pnl24hPct || 0) >= 0;
-                        const absDelta = Math.abs(deltaUsd);
-                        return (
-                          <div className="flex items-center gap-2 text-xs">
-                            <span className="text-muted-foreground font-medium">
-                              {isPos ? '+' : '-'}{formatUSDShared(absDelta)}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              {isPos ? (
-                                <ArrowUpRight className="h-3 w-3 text-green-500" />
-                              ) : (
-                                <ArrowDownRight className="h-3 w-3 text-red-500" />
-                              )}
-                              <TooltipProvider delayDuration={0}>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} font-medium cursor-default`}>
-                                      {formatPercent(Math.abs(pnl24hPct || 0), { min: 2, max: 2 })}
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                    24h Performance
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+        {/* Portfolio header */}
+        <PortfolioHeader
+          displayValue={displayValue}
+          pnl24hPct={pnl24hPct}
+          isPlaceholderComposition={isPlaceholderComposition}
+          filteredPositionCount={filteredPositionCount}
+          effectiveAprPct={effectiveAprPct}
+          totalFeesUSD={totalFeesUSD}
+          composition={composition}
+          hoveredSegment={hoveredSegment}
+          setHoveredSegment={setHoveredSegment}
+          forceHideLabels={forceHideLabels}
+          handleRestClick={handleRestClick}
+          setIsRestCycling={setIsRestCycling}
+          isRestCycling={isRestCycling}
+          restCycleIndex={restCycleIndex}
+          activeTokenFilter={activeTokenFilter}
+          setActiveTokenFilter={setActiveTokenFilter}
+          setHoveredTokenLabel={setHoveredTokenLabel}
+          containerRef={containerRef}
+          netApyRef={netApyRef}
+          viewportWidth={viewportWidth}
+          isVerySmallScreen={isVerySmallScreen}
+          isNarrowScreen={isNarrowScreen}
+          showSkeleton={showSkeletonFor.header}
+        />
 
-                {/* Container 2: Single card with dividers */}
-                <div ref={netApyRef} className={`col-[2] row-[1/3] rounded-lg bg-muted/30 border border-sidebar-border/60 py-1.5 px-4 h-full flex flex-col justify-center ${viewportWidth <= 1400 ? 'hidden' : ''}`}>
-                  <div className="w-full divide-y divide-sidebar-border/40">
-                  <div className="flex justify-between items-center py-1.5">
-                      <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Positions</span>
-                      <span className="text-[11px] font-medium">{filteredPositionCount}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1.5">
-                      <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Net APY</span>
-                      <span className="text-[11px] font-medium">
-              {isPlaceholderComposition ? (
-                         '-'
-              ) : (
-                effectiveAprPct !== null ? (
-                  effectiveAprPct > 999 ? (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="cursor-default">&gt;999%</span>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{formatPercent(effectiveAprPct, { min: 2, max: 2 })}</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  ) : (
-                    formatPercent(effectiveAprPct, { min: 1, max: 1 })
-                  )
-                         ) : '—'
-                       )}
-                     </span>
-            </div>
-                    <div className="flex justify-between items-center py-1.5">
-                      <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
-                      <span className="text-[11px] font-medium">{formatUSD(totalFeesUSD)}</span>
-                </div>
-            </div>
-            </div>
-
-                {/* Container 3: Percentage Split Viewer (spreads when middle is hidden) */}
-                <div className={`${viewportWidth > 1400 ? 'col-[3]' : 'col-[2]'} row-[1/3] rounded-lg bg-muted/30 border border-sidebar-border/60 p-4 h-full flex flex-col justify-between`}>
-              <div>
-                <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold mb-3">ASSET ALLOCATION</h1>
-                <div className="flex-1 flex items-center justify-start">
-                  {(() => {
-                    if (isPlaceholderComposition) {
-                      const fallback = [{ label: 'All', pct: 100, color: composition?.[0]?.color || 'hsl(0 0% 30%)' }];
-                      return (
-                        <div className="w-full pr-0 pl-2">
-                          <div className="relative">
-                            <PortfolioTickBar
-                              composition={fallback}
-                              onHover={setHoveredSegment}
-                              hoveredSegment={hoveredSegment}
-                              containerRef={containerRef}
-                              netApyRef={netApyRef}
-                              handleRestClick={handleRestClick}
-                              setIsRestCycling={setIsRestCycling}
-                              isRestCycling={isRestCycling}
-                              restCycleIndex={restCycleIndex}
-                              forceHideLabels={true}
-                              onApplySort={undefined}
-                              onHoverToken={setHoveredTokenLabel}
-                              activeTokenFilter={activeTokenFilter}
-                              setActiveTokenFilter={setActiveTokenFilter}
-                            />
-                          </div>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div className="w-full pr-0 pl-2">
-                        <div className="relative">
-                          <PortfolioTickBar
-                            composition={composition}
-                            onHover={setHoveredSegment}
-                            hoveredSegment={hoveredSegment}
-                            containerRef={containerRef}
-                            netApyRef={netApyRef}
-                            handleRestClick={handleRestClick}
-                            setIsRestCycling={setIsRestCycling}
-                            isRestCycling={isRestCycling}
-                            restCycleIndex={restCycleIndex}
-                            forceHideLabels={forceHideLabels}
-                            onApplySort={undefined}
-                            onHoverToken={setHoveredTokenLabel}
-                            activeTokenFilter={activeTokenFilter}
-                            setActiveTokenFilter={setActiveTokenFilter}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })()}
-                      </div>
-                    </div>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-4">
-                <div className="flex items-center justify-between gap-4">
-                  {/* Left: CURRENT VALUE */}
-                  <div className="flex-1 min-w-0">
-                    <h1 className="text-xs tracking-wider text-muted-foreground font-mono font-bold mb-3">CURRENT VALUE</h1>
-                    <div className={`${isVerySmallScreen ? 'text-2xl' : 'text-3xl sm:text-4xl'}`}>
-                      {isPlaceholderComposition ? (
-                        <span className="text-muted-foreground">-</span>
-                      ) : (
-                        <div className="flex flex-col gap-1">
-                          <span className="font-medium tracking-tight">{formatUSDHeader(displayValue)}</span>
-                          {(() => {
-                            const deltaUsd = (() => {
-                              try {
-                                const total = Number(displayValue) || 0;
-                                if (!Number.isFinite(pnl24hPct) || !isFinite(total)) return 0;
-                                return (total * pnl24hPct) / 100;
-                              } catch { return 0; }
-                            })();
-                            const isPos = (pnl24hPct || 0) >= 0;
-                            const absDelta = Math.abs(deltaUsd);
-                            return (
-                              <div className="flex items-center gap-2 text-xs">
-                                <span className="text-muted-foreground font-medium">
-                                  {isPos ? '+' : '-'}{formatUSDShared(absDelta)}
-                                </span>
-                                <div className="flex items-center gap-1">
-                                  {isPos ? (
-                                    <ArrowUpRight className="h-3 w-3 text-green-500" />
-                                  ) : (
-                                    <ArrowDownRight className="h-3 w-3 text-red-500" />
-                                  )}
-                              <TooltipProvider delayDuration={0}>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className={`${isPos ? 'text-green-500' : 'text-red-500'} font-medium cursor-default`}>
-                                      {formatPercent(Math.abs(pnl24hPct || 0), { min: 2, max: 2 })}
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">
-                                    24h Performance
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                </div>
-              </div>
-                            );
-                          })()}
-            </div>
-                      )}
-                    </div>
-                  </div>
-                  {/* Right: metrics rows - hidden below 400px */}
-                  {!isNarrowScreen && (
-                    <div className="flex-none min-w-[140px]">
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-center pl-4">
-                          <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Positions</span>
-                          <span className="text-[11px] font-medium">{filteredPositionCount}</span>
-                        </div>
-                        <div className="flex justify-between items-center pl-4">
-                          <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Net APY</span>
-                          <span className="text-[11px] font-medium">
-                            {isPlaceholderComposition ? (
-                              '-'
-                            ) : (
-                              effectiveAprPct !== null ? (
-                                effectiveAprPct > 999 ? (
-                                  <TooltipProvider>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span className="cursor-default">&gt;999%</span>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">{formatPercent(effectiveAprPct, { min: 2, max: 2 })}</TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                ) : (
-                                  formatPercent(effectiveAprPct, { min: 1, max: 1 })
-                                )
-                              ) : '—'
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between items-center pl-4">
-                          <span className="text-[11px] tracking-wider text-muted-foreground font-mono font-bold uppercase">Fees</span>
-                          <span className="text-[11px] font-medium">{formatUSD(totalFeesUSD)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-          )}
+        {/* NEW: Portfolio Overview Section - Chart, Stats, Actions */}
+        <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Portfolio Chart - spans 2 columns on desktop */}
+          <div className="lg:col-span-2">
+            <PortfolioChart currentValue={displayValue} />
           </div>
-        )}
+
+          {/* Right sidebar: Stats + Actions */}
+          <div className="flex flex-col gap-4">
+            <StatsRow />
+            <ActionGrid layout="2x2" />
+          </div>
+        </div>
 
         {/* NEW: Portfolio sections with selector + right Balances aside */}
         <div className="mt-6 flex flex-col lg:flex-row" style={{ gap: `${getColumnGapPx(viewportWidth)}px` }}>
@@ -2431,200 +1380,35 @@ export default function PortfolioPage() {
             <div>
               {/* Active Positions */}
               {selectedSection === 'Active Positions' && (
-                <div>
-                  <div>
-                    {showSkeletonFor.table ? (
-                      <ActivePositionsSkeleton />
-                    ) : (!isConnected) ? (
-                      <div className="border border-dashed rounded-lg bg-muted/10 p-6 w-full flex items-center justify-center">
-                        <div className="w-48">
-                          <ConnectWalletButton />
-                        </div>
-                      </div>
-                    ) : showSkeletonFor.table === false && activePositions.length === 0 ? (
-                      <div className="border border-dashed rounded-lg bg-muted/10 p-6 w-full flex items-center justify-center">
-                        <div className="text-sm text-white/75">No active positions.</div>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-3 lg:gap-4" key={`view-${viewMode}`}>
-                        {groupedByPool.map(({ poolId, items, totalUSD }, groupIndex) => {
-                          const poolKey = String(poolId).toLowerCase();
-                          const first = items[0];
-                          const isSinglePosition = items.length === 1;
-                          const isExpanded = !!expandedPools[poolKey];
-                          const token0Icon = getToken(first?.token0?.symbol || '')?.icon || '/placeholder.svg';
-                          const token1Icon = getToken(first?.token1?.symbol || '')?.icon || '/placeholder.svg';
-                          const uniqueKey = viewMode === 'list' ? `list-${first?.positionId}` : `folder-${poolKey}`;
-                          return (
-                            <React.Fragment key={uniqueKey}>
-                              {!isSinglePosition && (
-                                <div
-                                  className={`flex items-center justify-between px-4 py-3 rounded-lg border border-sidebar-border/60 bg-muted/30 hover:bg-muted/40 cursor-pointer`}
-                                  onClick={() => togglePoolExpanded(poolKey)}
-                                >
-                                  <div className="flex items-center gap-3 min-w-0">
-                                    <div className="relative" style={{ width: '3.5rem', height: '1.75rem' }}>
-                                      <div className="absolute top-1/2 -translate-y-1/2 left-0 rounded-full overflow-hidden bg-background z-10" style={{ width: 28, height: 28 }}>
-                                        <Image src={token0Icon} alt={first?.token0?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
-                                      </div>
-                                      <div className="absolute top-1/2 -translate-y-1/2" style={{ left: '1rem', width: '1.75rem', height: '1.75rem' }}>
-                                        <div className="absolute inset-0 rounded-full overflow-hidden bg-background z-30">
-                                          <Image src={token1Icon} alt={first?.token1?.symbol || ''} width={28} height={28} className="w-full h-full object-cover" />
-                                        </div>
-                                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-main z-20" style={{ width: 32, height: 32 }}></div>
-                                      </div>
-                                    </div>
-                                    <div className="truncate font-normal text-sm">{first?.token0?.symbol}/{first?.token1?.symbol}</div>
-                                    <TooltipProvider delayDuration={0}>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <span className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] rounded bg-button text-muted-foreground cursor-default">
-                                            {items.length}
-                                          </span>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Position Count</TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                  </div>
-                                  <div className="flex items-center gap-3">
-                                    <TooltipProvider delayDuration={0}>
-                                      {!isNarrowScreen && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <div className="text-xs text-muted-foreground whitespace-nowrap cursor-default">{formatUSD(totalUSD)}</div>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">Total Value</TooltipContent>
-                                        </Tooltip>
-                                      )}
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <div>
-                                            {(() => {
-                                              const aprStr = aprByPoolId[poolKey];
-                                              const poolApr = typeof aprStr === 'string' && aprStr.endsWith('%') ? parseFloat(aprStr.replace('%', '')) : null;
-
-                                              let weightedApy = 0;
-                                              let groupTotalUsd = 0;
-                                              for (const pos of items) {
-                                                const s0 = pos?.token0?.symbol as string | undefined;
-                                                const s1 = pos?.token1?.symbol as string | undefined;
-                                                const a0 = parseFloat(pos?.token0?.amount || '0');
-                                                const a1 = parseFloat(pos?.token1?.amount || '0');
-                                                const p0 = (s0 && portfolioData.priceMap[s0.toUpperCase()]) || (s0 && portfolioData.priceMap[s0]) || 0;
-                                                const p1 = (s1 && portfolioData.priceMap[s1.toUpperCase()]) || (s1 && portfolioData.priceMap[s1]) || 0;
-                                                const posUsd = (isFinite(a0) ? a0 : 0) * p0 + (isFinite(a1) ? a1 : 0) * p1;
-                                                if (posUsd <= 0) continue;
-
-                                                const feeData = batchFeesData?.find(f => f.positionId === pos.positionId);
-                                                let feesUSD = 0;
-                                                if (feeData) {
-                                                  const d0 = (s0 ? tokenDefinitions?.[s0 as string]?.decimals : undefined) ?? 18;
-                                                  const d1 = (s1 ? tokenDefinitions?.[s1 as string]?.decimals : undefined) ?? 18;
-                                                  try {
-                                                    const f0 = parseFloat(viemFormatUnits(BigInt(feeData.amount0 || '0'), d0));
-                                                    const f1 = parseFloat(viemFormatUnits(BigInt(feeData.amount1 || '0'), d1));
-                                                    feesUSD = (isFinite(f0) ? f0 : 0) * p0 + (isFinite(f1) ? f1 : 0) * p1;
-                                                  } catch {}
-                                                }
-                                                const lastTs = pos.lastTimestamp || pos.blockTimestamp || 0;
-                                                const nowTs = Math.floor(Date.now() / 1000);
-                                                const durationDays = (nowTs - lastTs) / 86400;
-                                                const fallbackAprPercent = poolApr !== null && isFinite(poolApr) ? new Percent(Math.round(poolApr * 100), 10000) : null;
-                                                const { apr } = calculateRealizedApr(feesUSD, posUsd, durationDays, fallbackAprPercent);
-                                                weightedApy += posUsd * (apr ? parseFloat(apr.toFixed(2)) : 0);
-                                                groupTotalUsd += posUsd;
-                                              }
-
-                                              const groupApy = groupTotalUsd > 0 ? weightedApy / groupTotalUsd : null;
-                                              const formatAprShort = (n: number): string => {
-                                                if (!Number.isFinite(n)) return '—';
-                                                if (n >= 1000) return `${(n / 1000).toFixed(1)}K%`;
-                                                if (n > 99.99) return `${Math.round(n)}%`;
-                                                if (n > 9.99) return `${n.toFixed(1)}%`;
-                                                return `${n.toFixed(2)}%`;
-                                              };
-                                              return groupApy !== null && groupApy > 0 ? (
-                                                <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-green-500/20 text-green-500 font-medium">{formatAprShort(groupApy)}</span>
-                                              ) : (
-                                                <span className="h-5 px-2 flex items-center justify-center text-[10px] rounded bg-muted/30 text-muted-foreground font-medium">0%</span>
-                                              );
-                                            })()}
-                                          </div>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-xs">APY</TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
-                                      <path d="m9 18 6-6-6-6" />
-                                    </svg>
-                                  </div>
-                                </div>
-                              )}
-                              {(isSinglePosition || isExpanded) && (
-                                <div className={cn("flex flex-col gap-3 lg:gap-4", !isSinglePosition && "pl-4 border-l border-dashed border-sidebar-border/60 ml-4")}>
-                                  {items.map((position) => {
-                                    const poolCfgForCard = getAllPools().find(p => p.subgraphId?.toLowerCase() === position.poolId.toLowerCase());
-                                    const valueUSD = (() => {
-                                      const sym0 = position?.token0?.symbol as string | undefined;
-                                      const sym1 = position?.token1?.symbol as string | undefined;
-                                      const amt0 = parseFloat(position?.token0?.amount || '0');
-                                      const amt1 = parseFloat(position?.token1?.amount || '0');
-                                      const price0 = (sym0 && portfolioData.priceMap[sym0]) || 0;
-                                      const price1 = (sym1 && portfolioData.priceMap[sym1]) || 0;
-                                      const a0 = isFinite(amt0) ? amt0 : 0;
-                                      const a1 = isFinite(amt1) ? amt1 : 0;
-                                      const p0 = isFinite(price0) ? price0 : 0;
-                                      const p1 = isFinite(price1) ? price1 : 0;
-                                      return a0 * p0 + a1 * p1;
-                                    })();
-                                    return (
-                                      <PositionCardCompact
-                                        key={position.positionId}
-                                        position={position}
-                                        valueUSD={valueUSD}
-                                        onClick={() => {
-                                          setSelectedPosition(position);
-                                          setIsPositionModalOpen(true);
-                                        }}
-                                        getUsdPriceForSymbol={getUsdPriceForSymbol}
-                                        convertTickToPrice={convertTickToPrice}
-                                        poolType={poolCfgForCard?.type}
-                                        poolContext={{
-                                          currentPrice: null,
-                                          currentPoolTick: null,
-                                          poolAPR: (() => {
-                                            const aprStr = aprByPoolId[poolKey];
-                                            if (!aprStr || aprStr === 'N/A' || aprStr === 'Loading...') return 0;
-                                            const parsed = parseFloat(aprStr.replace('%', ''));
-                                            return isFinite(parsed) ? parsed : 0;
-                                          })(),
-                                          isLoadingPrices: !readiness.prices,
-                                          isLoadingPoolStates: isLoadingPoolStates,
-                                        }}
-                                        fees={{
-                                          raw0: batchFeesData?.find(f => f.positionId === position.positionId)?.amount0 ?? null,
-                                          raw1: batchFeesData?.find(f => f.positionId === position.positionId)?.amount1 ?? null
-                                        }}
-                                        className={isPositionsStale ? 'cache-stale' : undefined}
-                                        showMenuButton={true}
-                                        onVisitPool={() => {
-                                          const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === position.poolId.toLowerCase());
-                                          if (poolConfig) {
-                                            window.open(`/liquidity/${poolConfig.id}`, '_blank');
-                                          }
-                                        }}
-                                      />
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <PositionsSection
+                  groupedByPool={groupedByPool}
+                  activePositions={activePositions}
+                  portfolioData={portfolioData}
+                  aprByPoolId={aprByPoolId}
+                  batchFeesData={batchFeesData}
+                  tokenDefinitions={tokenDefinitions}
+                  expandedPools={expandedPools}
+                  togglePoolExpanded={togglePoolExpanded}
+                  isConnected={isConnected}
+                  showSkeleton={showSkeletonFor.table}
+                  isPositionsStale={isPositionsStale}
+                  isNarrowScreen={isNarrowScreen}
+                  viewMode={viewMode}
+                  readiness={readiness}
+                  isLoadingPoolStates={isLoadingPoolStates}
+                  getUsdPriceForSymbol={getUsdPriceForSymbol}
+                  convertTickToPrice={convertTickToPrice}
+                  onPositionClick={(position) => {
+                    setSelectedPosition(position);
+                    setIsPositionModalOpen(true);
+                  }}
+                  onVisitPool={(position) => {
+                    const poolConfig = getAllPools().find(p => p.subgraphId?.toLowerCase() === position.poolId.toLowerCase());
+                    if (poolConfig) {
+                      window.open(`/liquidity/${poolConfig.id}`, '_blank');
+                    }
+                  }}
+                />
               )}
 
               {/* Balances as a tab when integrated (desktop/tablet only) */}
@@ -2666,6 +1450,11 @@ export default function PortfolioPage() {
               refetchFaucetOnchain={refetchFaucetOnchain}
             />
           )}
+        </div>
+
+        {/* Recent Activity Section */}
+        <div className="mt-6">
+          <RecentActivity maxItems={5} />
         </div>
         {/* no third state below 1100px */}
       </div>

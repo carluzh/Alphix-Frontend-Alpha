@@ -4,9 +4,9 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     globals: true,
-    environment: 'node', // Use node for faster tests, jsdom only when needed
+    environment: 'jsdom', // Use jsdom for React component/hook tests
     setupFiles: ['./test/setupTests.ts'],
-    include: ['lib/**/*.test.ts', 'lib/**/*.test.tsx'],
+    include: ['lib/**/*.test.ts', 'lib/**/*.test.tsx', 'test/**/*.test.ts', 'test/**/*.test.tsx'],
     exclude: [
       'node_modules',
       'interface',

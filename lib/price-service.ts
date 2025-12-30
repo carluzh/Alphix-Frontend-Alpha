@@ -34,17 +34,42 @@ export interface AllPricesData {
 }
 
 /**
+ * Get base URL for API calls
+ * Follows Uniswap's fail-fast pattern - no localhost fallback in production
+ * @see interface/apps/web/src/state/routing/slice.ts
+ */
+function getApiBaseUrl(): string {
+  // Client-side: Use relative URL (always works)
+  if (typeof window !== 'undefined') {
+    return ''
+  }
+
+  // Server-side: Check environment variables
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL
+  if (baseUrl) {
+    return baseUrl
+  }
+
+  // Vercel deployment: Use VERCEL_URL
+  const vercelUrl = process.env.VERCEL_URL
+  if (vercelUrl) {
+    return `https://${vercelUrl}`
+  }
+
+  // Fail-fast: No localhost fallback in production
+  throw new Error(
+    'NEXT_PUBLIC_BASE_URL environment variable is required for server-side price fetching. ' +
+    'Set it to http://localhost:3000 in .env.local for development.'
+  )
+}
+
+/**
  * Get all token prices from centralized /api/prices endpoint
  * This is the single source of truth for all pricing data
  */
 export async function getAllTokenPrices(params?: { signal?: AbortSignal }): Promise<AllPricesData> {
   try {
-    const isBrowser = typeof window !== 'undefined';
-    const baseUrl = isBrowser
-      ? ''
-      : (process.env.NEXT_PUBLIC_BASE_URL ||
-         (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'));
-
+    const baseUrl = getApiBaseUrl()
     const url = `${baseUrl}/api/prices`;
     const response = await fetch(url, {
       method: 'GET',

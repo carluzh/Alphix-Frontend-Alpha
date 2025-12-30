@@ -14,6 +14,7 @@
     "build:analyze": "cross-env ANALYZE=true next build",
     "start": "next start",
     "codegen": "graphql-codegen --config lib/apollo/codegen.config.ts",
+    "codegen:check": "npm run codegen && git diff --exit-code lib/apollo/__generated__",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

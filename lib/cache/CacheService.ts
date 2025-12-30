@@ -14,8 +14,8 @@ import { redis, getCachedDataWithStale, setCachedData, deleteCachedData, invalid
 import type { TTLConfig, CacheOptions, CacheResult, CacheApiResult } from './types'
 
 export class CacheService {
-  // Request deduplication: Track ongoing requests to prevent duplicates
-  private ongoingRequests = new Map<string, Promise<any>>()
+  // NOTE: In-memory request deduplication removed for serverless compatibility
+  // Redis handles concurrent request coordination via atomic operations
 
   /**
    * Get cached data with stale-while-revalidate support
@@ -89,8 +89,6 @@ export class CacheService {
   /**
    * Higher-level helper: Cached API call with stale-while-revalidate
    * This is the pattern all endpoints should use
-   *
-   * INCLUDES REQUEST DEDUPLICATION - prevents duplicate in-flight API calls
    */
   async cachedApiCall<T>(
     key: string,
@@ -104,63 +102,45 @@ export class CacheService {
       return { data, isStale: false }
     }
 
-    // REQUEST DEDUPLICATION: Check for ongoing request
-    const ongoing = this.ongoingRequests.get(key)
-    if (ongoing) {
-      return ongoing
+    // Check cache first (now includes noCacheUntil for cooldown protection)
+    const result = await getCachedDataWithStale<T>(key, ttl.fresh, ttl.stale)
+    const { data: cachedData, isStale, isInvalidated, noCacheUntil } = result
+
+    // Fresh cache hit - return immediately
+    if (cachedData && !isStale && !isInvalidated) {
+      return { data: cachedData, isStale: false }
     }
 
-    // Create promise for this request
-    const promise = (async () => {
-      try {
-        // Check cache first (now includes noCacheUntil for cooldown protection)
-        const result = await getCachedDataWithStale<T>(key, ttl.fresh, ttl.stale)
-        const { data: cachedData, isStale, isInvalidated, noCacheUntil } = result
-
-        // Fresh cache hit - return immediately
-        if (cachedData && !isStale && !isInvalidated) {
-          return { data: cachedData, isStale: false }
-        }
-
-        if (cachedData && isInvalidated) {
-          const freshData = await fetchFn()
-          const isInCooldown = noCacheUntil && Date.now() < noCacheUntil
-          if (isInCooldown) {
-          } else {
-            if (options?.shouldCache && !options.shouldCache(freshData)) {
-            } else {
-              await this.set(key, freshData, ttl.stale)
-            }
-          }
-          return { data: freshData, isStale: false }
-        }
-
-        if (cachedData && isStale) {
-          fetchFn()
-            .then(freshData => {
-              if (options?.shouldCache && !options.shouldCache(freshData)) {
-                return
-              }
-              return this.set(key, freshData, ttl.stale)
-            })
-            .catch(err => console.error('[CacheService] Background refresh failed:', err))
-
-          return { data: cachedData, isStale: true }
-        }
-
-        const freshData = await fetchFn()
-        if (options?.shouldCache && !options.shouldCache(freshData)) {
-        } else {
+    if (cachedData && isInvalidated) {
+      const freshData = await fetchFn()
+      const isInCooldown = noCacheUntil && Date.now() < noCacheUntil
+      if (!isInCooldown) {
+        if (!options?.shouldCache || options.shouldCache(freshData)) {
           await this.set(key, freshData, ttl.stale)
         }
-        return { data: freshData, isStale: false }
-      } finally {
-        this.ongoingRequests.delete(key)
       }
-    })()
+      return { data: freshData, isStale: false }
+    }
 
-    this.ongoingRequests.set(key, promise)
-    return promise
+    if (cachedData && isStale) {
+      // Background refresh - stale-while-revalidate pattern
+      fetchFn()
+        .then(freshData => {
+          if (!options?.shouldCache || options.shouldCache(freshData)) {
+            return this.set(key, freshData, ttl.stale)
+          }
+        })
+        .catch(err => console.error('[CacheService] Background refresh failed:', err))
+
+      return { data: cachedData, isStale: true }
+    }
+
+    // No cached data - fetch fresh
+    const freshData = await fetchFn()
+    if (!options?.shouldCache || options.shouldCache(freshData)) {
+      await this.set(key, freshData, ttl.stale)
+    }
+    return { data: freshData, isStale: false }
   }
 
   /**

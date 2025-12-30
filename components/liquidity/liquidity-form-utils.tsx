@@ -60,14 +60,15 @@ export const formatCalculatedAmount = (value: number): React.ReactNode => {
 
 /**
  * Get USD price for a token symbol from price data
+ * Note: Apollo useAllPrices returns direct numbers, not objects with .usd
  */
 export const getUSDPriceForSymbol = (symbol: string | undefined, allPrices: any): number => {
   if (!symbol) return 0;
   const s = symbol.toUpperCase();
-  if (s.includes('BTC')) return allPrices?.BTC?.usd ?? 0;
-  if (s.includes('ETH')) return allPrices?.ETH?.usd ?? 0;
-  if (s.includes('USDC')) return allPrices?.USDC?.usd ?? 1;
-  if (s.includes('USDT')) return allPrices?.USDT?.usd ?? 1;
+  if (s.includes('BTC')) return allPrices?.BTC ?? 0;
+  if (s.includes('ETH')) return allPrices?.ETH ?? 0;
+  if (s.includes('USDC')) return allPrices?.USDC ?? 1;
+  if (s.includes('USDT')) return allPrices?.USDT ?? 1;
   return 0;
 };
 

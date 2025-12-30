@@ -39,16 +39,23 @@ interface NetworkProviderProps {
   initialNetworkMode?: NetworkMode;
 }
 
+// Get default network from env var (used for SSR and new users)
+function getEnvDefault(): NetworkMode {
+  const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
+  return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
+}
+
 export function NetworkProvider({ children, initialNetworkMode }: NetworkProviderProps) {
   const [networkMode, setNetworkModeState] = useState<NetworkMode>(() => {
+    // Priority: initialNetworkMode prop > localStorage > env var default
     if (initialNetworkMode) return initialNetworkMode;
-    if (typeof window === 'undefined') return 'mainnet';
+    if (typeof window === 'undefined') return getEnvDefault();
     try {
       const stored = localStorage.getItem(NETWORK_STORAGE_KEY);
       if (stored === 'mainnet' || stored === 'testnet') return stored;
-      return 'mainnet';
+      return getEnvDefault();
     } catch {
-      return 'mainnet';
+      return getEnvDefault();
     }
   });
 

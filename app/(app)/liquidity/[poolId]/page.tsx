@@ -1,6 +1,7 @@
 "use client";
 
-import dynamic from "next/dynamic";
+import { Suspense } from "react";
+import { createLazy } from "@/lib/lazyWithRetry";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { PlusIcon, RefreshCwIcon, Check, BadgeCheck, OctagonX, ChevronLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -64,17 +65,16 @@ import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
 import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
 import { getOptimalBaseToken } from '@/lib/denomination-utils';
 
-const IncreaseLiquidityModal = dynamic(
-  () => import("@/components/liquidity/increase").then(m => m.IncreaseLiquidityModal),
-  { ssr: false }
+// Lazy load heavy modals with retry logic (identical to Uniswap modalRegistry.tsx pattern)
+// @see interface/apps/web/src/components/TopLevelModals/modalRegistry.tsx
+const IncreaseLiquidityModal = createLazy(() =>
+  import("@/components/liquidity/increase").then(m => ({ default: m.IncreaseLiquidityModal }))
 );
-const DecreaseLiquidityModal = dynamic(
-  () => import("@/components/liquidity/decrease").then(m => m.DecreaseLiquidityModal),
-  { ssr: false }
+const DecreaseLiquidityModal = createLazy(() =>
+  import("@/components/liquidity/decrease").then(m => ({ default: m.DecreaseLiquidityModal }))
 );
-const PositionDetailsModal = dynamic(
-  () => import("@/components/liquidity/PositionDetailsModal").then(m => m.PositionDetailsModal),
-  { ssr: false }
+const PositionDetailsModal = createLazy(() =>
+  import("@/components/liquidity/PositionDetailsModal").then(m => ({ default: m.PositionDetailsModal }))
 );
 
 
@@ -2496,34 +2496,38 @@ export default function PoolDetailPage() {
 
       {/* Withdraw Position Modal */}
       {positionToBurn && (
-        <DecreaseLiquidityModal
-          isOpen={showBurnConfirmDialog}
-          onClose={() => {
-            setShowBurnConfirmDialog(false);
-            setPositionToBurn(null);
-          }}
-          position={positionToBurn}
-          onSuccess={() => {
-            // Trigger data refresh after successful withdrawal
-            pendingActionRef.current = { type: 'decrease' };
-          }}
-        />
+        <Suspense fallback={null}>
+          <DecreaseLiquidityModal
+            isOpen={showBurnConfirmDialog}
+            onClose={() => {
+              setShowBurnConfirmDialog(false);
+              setPositionToBurn(null);
+            }}
+            position={positionToBurn}
+            onSuccess={() => {
+              // Trigger data refresh after successful withdrawal
+              pendingActionRef.current = { type: 'decrease' };
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Increase Liquidity Modal - for position card submenu */}
       {positionToModify && (
-        <IncreaseLiquidityModal
-          isOpen={showIncreaseModal}
-          onClose={() => {
-            setShowIncreaseModal(false);
-            setPositionToModify(null);
-          }}
-          position={positionToModify}
-          onSuccess={() => {
-            // Trigger data refresh after successful increase
-            pendingActionRef.current = { type: 'increase' };
-          }}
-        />
+        <Suspense fallback={null}>
+          <IncreaseLiquidityModal
+            isOpen={showIncreaseModal}
+            onClose={() => {
+              setShowIncreaseModal(false);
+              setPositionToModify(null);
+            }}
+            position={positionToModify}
+            onSuccess={() => {
+              // Trigger data refresh after successful increase
+              pendingActionRef.current = { type: 'increase' };
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Add Liquidity Form Modal - for top button */}
@@ -2887,52 +2891,54 @@ export default function PoolDetailPage() {
 
       {/* Position Details Modal */}
       {selectedPositionForDetails && (
-        <PositionDetailsModal
-          isOpen={isPositionDetailsModalOpen}
-          onClose={() => {
-            setIsPositionDetailsModalOpen(false);
-            setSelectedPositionForDetails(null);
-            setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
-          }}
-          position={selectedPositionForDetails}
-          valueUSD={calculatePositionUsd(selectedPositionForDetails)}
-          prefetchedRaw0={getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails as any)?.amount0}
-          prefetchedRaw1={getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails as any)?.amount1}
-          formatTokenDisplayAmount={formatTokenDisplayAmount}
-          getUsdPriceForSymbol={getUsdPriceForSymbol}
-          onRefreshPosition={async () => {
-            await fetchPageData(true, false);
-          }}
-          onLiquidityDecreased={onLiquidityDecreasedCallback}
-          onAfterLiquidityAdded={(tvlDelta, info) => {
-            // Immediate optimistic TVL update
-            if (currentPoolData?.liquidity) {
-              const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
-              if (Number.isFinite(currentTvl)) {
-                const optimisticTvl = Math.max(0, currentTvl + tvlDelta);
-                setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
+        <Suspense fallback={null}>
+          <PositionDetailsModal
+            isOpen={isPositionDetailsModalOpen}
+            onClose={() => {
+              setIsPositionDetailsModalOpen(false);
+              setSelectedPositionForDetails(null);
+              setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+            }}
+            position={selectedPositionForDetails}
+            valueUSD={calculatePositionUsd(selectedPositionForDetails)}
+            prefetchedRaw0={getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails as any)?.amount0}
+            prefetchedRaw1={getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails as any)?.amount1}
+            formatTokenDisplayAmount={formatTokenDisplayAmount}
+            getUsdPriceForSymbol={getUsdPriceForSymbol}
+            onRefreshPosition={async () => {
+              await fetchPageData(true, false);
+            }}
+            onLiquidityDecreased={onLiquidityDecreasedCallback}
+            onAfterLiquidityAdded={(tvlDelta, info) => {
+              // Immediate optimistic TVL update
+              if (currentPoolData?.liquidity) {
+                const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
+                if (Number.isFinite(currentTvl)) {
+                  const optimisticTvl = Math.max(0, currentTvl + tvlDelta);
+                  setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
+                }
               }
-            }
-            // Silent background refresh for actual data
-            silentRefreshTVL();
-          }}
-          onAfterLiquidityRemoved={(tvlDelta, info) => {
-            // Immediate optimistic TVL update (tvlDelta is already negative)
-            if (currentPoolData?.liquidity) {
-              const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
-              if (Number.isFinite(currentTvl)) {
-                const optimisticTvl = Math.max(0, currentTvl + tvlDelta);
-                setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
+              // Silent background refresh for actual data
+              silentRefreshTVL();
+            }}
+            onAfterLiquidityRemoved={(tvlDelta, info) => {
+              // Immediate optimistic TVL update (tvlDelta is already negative)
+              if (currentPoolData?.liquidity) {
+                const currentTvl = parseFloat(String(currentPoolData.liquidity).replace(/[$,]/g, ''));
+                if (Number.isFinite(currentTvl)) {
+                  const optimisticTvl = Math.max(0, currentTvl + tvlDelta);
+                  setCurrentPoolData(prev => prev ? { ...prev, liquidity: formatUSD(optimisticTvl) } : prev);
+                }
               }
-            }
-            // Don't call silentRefreshTVL here - let refreshAfterMutation handle it post-sync
-          }}
-          currentPrice={currentPrice}
-          currentPoolTick={currentPoolTick}
-          convertTickToPrice={boundConvertTickToPrice}
-          selectedPoolId={selectedPositionForDetails.poolId}
-          chainId={chainId}
-        />
+              // Don't call silentRefreshTVL here - let refreshAfterMutation handle it post-sync
+            }}
+            currentPrice={currentPrice}
+            currentPoolTick={currentPoolTick}
+            convertTickToPrice={boundConvertTickToPrice}
+            selectedPoolId={selectedPositionForDetails.poolId}
+            chainId={chainId}
+          />
+        </Suspense>
       )}
     </>
   )

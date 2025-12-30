@@ -7,6 +7,7 @@
  * @see interface/packages/api/src/clients/graphql/web/pool.graphql
  */
 
+import { usePlatformBasedFetchPolicy } from '@/hooks/usePlatformBasedFetchPolicy'
 import { useNetwork } from '@/lib/network-context'
 import { useGetPoolStateQuery, type Chain } from '../__generated__'
 
@@ -23,10 +24,10 @@ interface PoolStateData {
 
 interface UsePoolStateResult {
   data: PoolStateData | undefined
-  isLoading: boolean
-  isError: boolean
-  error: Error | undefined
-  refetch: () => void
+  loading: boolean
+  error: boolean
+  errorDetails: Error | undefined
+  refetch: () => Promise<void>
 }
 
 /**
@@ -36,7 +37,7 @@ interface UsePoolStateResult {
  * @returns Pool state with loading/error states
  *
  * @example
- * const { data: poolState, isLoading } = usePoolState(poolId)
+ * const { data: poolState, loading } = usePoolState(poolId)
  * const currentTick = poolState?.tick
  */
 export function usePoolState(poolId: string): UsePoolStateResult {
@@ -44,18 +45,24 @@ export function usePoolState(poolId: string): UsePoolStateResult {
   const chain: Chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
   const enabled = !!poolId && poolId.length > 0
 
-  const { data, loading, error, refetch } = useGetPoolStateQuery({
-    variables: { chain, poolId },
-    skip: !enabled,
+  // Adaptive fetch policy - reduces polling when window not visible
+  const { fetchPolicy, pollInterval } = usePlatformBasedFetchPolicy({
     fetchPolicy: 'cache-and-network',
     pollInterval: 45000, // 45 seconds - pool state doesn't change frequently
   })
 
+  const { data, loading, error, refetch } = useGetPoolStateQuery({
+    variables: { chain, poolId },
+    skip: !enabled,
+    fetchPolicy,
+    pollInterval,
+  })
+
   return {
     data: data?.poolState as PoolStateData | undefined,
-    isLoading: loading,
-    isError: !!error,
-    error: error as Error | undefined,
-    refetch: () => { refetch() },
+    loading: loading,
+    error: !!error,
+    errorDetails: error as Error | undefined,
+    refetch: async () => { await refetch() },
   }
 }

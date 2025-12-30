@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { TokenSymbol } from '@/lib/pools-config';
+import useIsWindowVisible from '@/hooks/useIsWindowVisible';
 
 const POLL_INTERVAL_MS = 60 * 1000; // Poll every 60 seconds for price updates
 const CACHE_DURATION_MS = 10 * 1000; // Client cache for 10 seconds (very short)
@@ -97,6 +98,9 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
   const [price, setPrice] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // skip price fetching if the window is not focused
+  const isWindowVisible = useIsWindowVisible();
+
   const fetchPrice = useCallback(async (symbol: TokenSymbol) => {
     // Check cache first
     if (allPricesCache && Date.now() - allPricesCache.timestamp < CACHE_DURATION_MS) {
@@ -149,6 +153,11 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
     fetchPrice(tokenSymbol);
 
     // Set up polling for real-time price updates (AMM prices change with every trade)
+    // Only poll when window is visible (Uniswap pattern from useBlockNumber.tsx)
+    if (!isWindowVisible) {
+      return;
+    }
+
     const intervalId = setInterval(() => {
       fetchPrice(tokenSymbol);
     }, POLL_INTERVAL_MS);
@@ -156,7 +165,7 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
     // Cleanup interval on unmount
     return () => clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenSymbol]); // Only depend on tokenSymbol, fetchPrice is stable
+  }, [tokenSymbol, isWindowVisible]); // Re-run when visibility changes
 
   return { price, isLoading };
 }

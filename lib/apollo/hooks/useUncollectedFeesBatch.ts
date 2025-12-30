@@ -17,9 +17,9 @@ interface FeeItem {
 
 interface UseUncollectedFeesBatchResult {
   data: FeeItem[] | undefined
-  isLoading: boolean
-  isError: boolean
-  error: Error | undefined
+  loading: boolean
+  error: boolean
+  errorDetails: Error | undefined
   refetch: () => void
 }
 
@@ -56,9 +56,9 @@ export function useUncollectedFeesBatch(
 
   return {
     data: undefined,
-    isLoading: false,
-    isError: false,
-    error: undefined,
+    loading: false,
+    error: false,
+    errorDetails: undefined,
     refetch: () => {},
   }
 }

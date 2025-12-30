@@ -57,8 +57,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days: daysNum, isDAI, isMainnet, networkMode });
 
+  // Construct base URL from request headers (fail-fast, no localhost fallback)
   const protocol = req.headers['x-forwarded-proto'] || 'http';
-  const host = req.headers.host || 'localhost:3000';
+  const host = req.headers.host;
+  if (!host) {
+    console.error('[pool-metrics] Missing host header');
+    return res.status(500).json({ error: 'Missing host header' });
+  }
   const baseUrl = `${protocol}://${host}`;
 
   // Mainnet query: Uses Uniswap v4 subgraph schema

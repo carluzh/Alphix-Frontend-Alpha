@@ -7,6 +7,7 @@
  * @see interface/packages/api/src/clients/graphql/web/positions.graphql
  */
 
+import { usePlatformBasedFetchPolicy } from '@/hooks/usePlatformBasedFetchPolicy'
 import { useNetwork } from '@/lib/network-context'
 import { useGetUserPositionsQuery, type Chain } from '../__generated__'
 
@@ -38,10 +39,10 @@ interface Position {
 
 interface UseUserPositionsResult {
   data: Position[] | undefined
-  isLoading: boolean
+  loading: boolean
   isFetching: boolean
-  isError: boolean
-  error: Error | undefined
+  error: boolean
+  errorDetails: Error | undefined
   refetch: () => Promise<void>
 }
 
@@ -52,7 +53,7 @@ interface UseUserPositionsResult {
  * @returns Positions data with loading/error states
  *
  * @example
- * const { data: positions, isLoading } = useUserPositions(address)
+ * const { data: positions, loading } = useUserPositions(address)
  */
 export function useUserPositions(ownerAddress: string): UseUserPositionsResult {
   const { networkMode } = useNetwork()
@@ -60,19 +61,25 @@ export function useUserPositions(ownerAddress: string): UseUserPositionsResult {
   const ownerLc = (ownerAddress || '').toLowerCase()
   const enabled = !!ownerLc && ownerLc.length > 0
 
-  const { data, loading, error, refetch } = useGetUserPositionsQuery({
-    variables: { chain, owner: ownerLc },
-    skip: !enabled,
+  // Adaptive fetch policy - reduces polling when window not visible
+  const { fetchPolicy, pollInterval } = usePlatformBasedFetchPolicy({
     fetchPolicy: 'cache-and-network',
     pollInterval: 30000, // 30 seconds - positions can change after transactions
   })
 
+  const { data, loading, error, refetch } = useGetUserPositionsQuery({
+    variables: { chain, owner: ownerLc },
+    skip: !enabled,
+    fetchPolicy,
+    pollInterval,
+  })
+
   return {
     data: data?.userPositions as Position[] | undefined,
-    isLoading: loading && !data?.userPositions,
+    loading: loading && !data?.userPositions,
     isFetching: loading,
-    isError: !!error,
-    error: error as Error | undefined,
+    error: !!error,
+    errorDetails: error as Error | undefined,
     refetch: async () => { await refetch() },
   }
 }

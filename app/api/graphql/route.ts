@@ -1,10 +1,9 @@
 import { createSchema, createYoga } from 'graphql-yoga'
-import { readFileSync } from 'fs'
-import { join } from 'path'
 import { cookies } from 'next/headers'
 
-// Import resolvers
+// Import resolvers and schema as string (works in serverless)
 import { resolvers } from './resolvers'
+import { typeDefs } from '@/lib/apollo/schema/typeDefs'
 
 /**
  * GraphQL API Route
@@ -12,23 +11,11 @@ import { resolvers } from './resolvers'
  * Full GraphQL server endpoint using graphql-yoga.
  * Resolvers call our existing REST API endpoints internally.
  *
+ * NOTE: Schema is imported as a string literal instead of reading from
+ * filesystem, which doesn't work in serverless environments (Vercel).
+ *
  * @see interface/packages/api/src/graphql (Uniswap's data-api)
  */
-
-// Read schema from file
-const schemaPath = join(process.cwd(), 'lib/apollo/schema/schema.graphql')
-let typeDefs: string
-
-try {
-  typeDefs = readFileSync(schemaPath, 'utf-8')
-} catch {
-  // Fallback for build time when file might not be available
-  typeDefs = `
-    type Query {
-      _health: String
-    }
-  `
-}
 
 const schema = createSchema({
   typeDefs,
@@ -46,10 +33,19 @@ const { handleRequest } = createYoga({
     const networkModeCookie = cookieStore.get('network-mode')
     const networkMode = networkModeCookie?.value === 'testnet' ? 'testnet' : 'mainnet'
 
+    // Fail-fast: No localhost fallback in production
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+    if (!baseUrl) {
+      throw new Error(
+        'NEXT_PUBLIC_APP_URL environment variable is required for GraphQL resolvers. ' +
+        'Set it to http://localhost:3000 in .env.local for development.'
+      )
+    }
+
     return {
       networkMode,
       request,
-      baseUrl: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+      baseUrl,
     }
   },
 })

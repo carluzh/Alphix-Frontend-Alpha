@@ -39,11 +39,6 @@ function getTokenSymbol(baseSymbol: string, networkMode: NetworkMode): string {
   return `a${baseSymbol}`; // aBTC, aETH, aUSDT, aUSDC
 }
 
-// In-memory cache fallback when Redis is unavailable (development)
-// Keyed by network mode to support both mainnet and testnet
-const memoryCacheByNetwork: Map<NetworkMode, { data: TokenPriceData; timestamp: number }> = new Map();
-const MEMORY_CACHE_TTL_MS = 30 * 1000; // 30 seconds
-
 interface TokenPriceData {
   BTC: { usd: number; usd_24h_change?: number };
   USDC: { usd: number; usd_24h_change?: number };
@@ -216,32 +211,6 @@ async function fetchAllPricesFresh(networkMode: NetworkMode, baseUrl: string): P
   };
 }
 
-// Per-network deduplication to prevent cache stampede
-const ongoingFetchByNetwork: Map<NetworkMode, Promise<TokenPriceData>> = new Map();
-
-/**
- * Fetch prices with request deduplication
- * If multiple requests arrive simultaneously, they all wait for and share the same fetch
- * This prevents cache stampede and reduces RPC/Redis load
- */
-async function fetchAllPricesWithDedup(networkMode: NetworkMode, baseUrl: string): Promise<TokenPriceData> {
-  // If there's already an ongoing fetch for this network, wait for it
-  const existingFetch = ongoingFetchByNetwork.get(networkMode);
-  if (existingFetch) {
-    return await existingFetch;
-  }
-
-  // Start a new fetch for this network
-  const fetchPromise = fetchAllPricesFresh(networkMode, baseUrl)
-    .finally(() => {
-      // Clean up after fetch completes (success or failure)
-      ongoingFetchByNetwork.delete(networkMode);
-    });
-
-  ongoingFetchByNetwork.set(networkMode, fetchPromise);
-  return await fetchPromise;
-}
-
 export async function GET(request: Request) {
   try {
     const baseUrl = new URL(request.url).origin;
@@ -267,11 +236,10 @@ export async function GET(request: Request) {
 
       if (cachedData && !isInvalidated) {
         if (isStale) {
-          // Background refresh
-          fetchAllPricesWithDedup(networkMode, baseUrl)
+          // Background refresh - stale-while-revalidate pattern
+          fetchAllPricesFresh(networkMode, baseUrl)
             .then(freshData => {
               setCachedData(cacheKey, freshData, 60);
-              memoryCacheByNetwork.set(networkMode, { data: freshData, timestamp: Date.now() });
             })
             .catch(err => console.error('[Prices API] Background refresh failed:', err));
         }
@@ -294,34 +262,18 @@ export async function GET(request: Request) {
       }
     }
 
-    // Fallback: Check in-memory cache (for development without Redis)
-    const memoryCache = memoryCacheByNetwork.get(networkMode);
-    if (memoryCache && Date.now() - memoryCache.timestamp < MEMORY_CACHE_TTL_MS) {
-      const response: PriceResponse['data'] = {
-        ...memoryCache.data,
-        aBTC: memoryCache.data.BTC,
-        aUSDC: memoryCache.data.USDC,
-        aETH: memoryCache.data.ETH,
-        aUSDT: memoryCache.data.USDT,
-      };
-
-      return NextResponse.json({
-        success: true,
-        data: response,
-        isStale: false,
-      } as PriceResponse, {
-        headers: { 'Cache-Control': 'no-store' },
-      });
+    // Production without Redis - log warning (no in-memory fallback for serverless)
+    if (!redis) {
+      console.warn('[Prices API] Redis unavailable - caching disabled');
     }
 
-    // No cached data - fetch fresh (with deduplication)
-    const freshData = await fetchAllPricesWithDedup(networkMode, baseUrl);
+    // No cached data - fetch fresh
+    const freshData = await fetchAllPricesFresh(networkMode, baseUrl);
 
-    // Store in both Redis and memory cache
+    // Store in Redis
     if (redis) {
       await setCachedData(cacheKey, freshData, 60);
     }
-    memoryCacheByNetwork.set(networkMode, { data: freshData, timestamp: Date.now() });
 
     const response: PriceResponse['data'] = {
       ...freshData,

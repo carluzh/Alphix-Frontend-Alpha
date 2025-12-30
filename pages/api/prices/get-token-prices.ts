@@ -1,10 +1,16 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAllTokenPrices } from '../../../lib/price-service';
 
-// Simple in-memory server cache to hold the last successful price payload
-const serverCache = new Map<string, { data: any; ts: number }>();
-const CACHE_KEY = 'all-token-prices';
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+/**
+ * Token Prices API
+ *
+ * NOTE: In-memory caching removed - ineffective in serverless environments.
+ * Caching is now handled by:
+ * 1. HTTP Cache-Control headers (Vercel Edge CDN)
+ * 2. Redis (Upstash) in the upstream /api/prices endpoint
+ *
+ * @see interface/apps/web/functions/utils/cache.ts (Uniswap uses Cloudflare edge cache)
+ */
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
@@ -13,9 +19,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // Attempt to fetch fresh prices
+    // Fetch prices from upstream service (has Redis caching)
     const allPrices = await getAllTokenPrices();
-    
+
     // Provide aliases expected by UI - maintain object structure for consistency
     const response = {
       BTC: allPrices.BTC,
@@ -29,24 +35,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       timestamp: allPrices.lastUpdated
     };
 
-    // On success, update the cache
-    serverCache.set(CACHE_KEY, { data: response, ts: Date.now() });
-    
-    // Edge cache hint for successful responses (Uniswap multi-layer caching pattern)
+    // Edge cache: 60s fresh, serve stale for 5 mins while revalidating
+    // This is handled by Vercel's CDN (equivalent to Uniswap's Cloudflare edge cache)
     res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
     return res.status(200).json(response);
   } catch (error: any) {
-    console.error('[TokenPrices API] Error fetching fresh prices:', error.message);
-    
-    // On failure, try to serve from cache
-    const cached = serverCache.get(CACHE_KEY);
-    if (cached && (Date.now() - cached.ts) < CACHE_TTL_MS * 6) { // Allow stale for up to 30 mins
-      console.warn('[TokenPrices API] Serving stale prices due to fetch error.');
-      res.setHeader('Cache-Control', 'no-store'); // Do not cache the stale response
-      return res.status(200).json(cached.data);
-    }
+    console.error('[TokenPrices API] Error fetching prices:', error.message);
 
-    // If fetch fails and cache is empty or too old, return an error
+    // Return error - no in-memory fallback (serverless-safe)
+    // Vercel CDN will serve stale-while-revalidate if available
     return res.status(500).json({
       success: false,
       error: error.message || 'An unexpected error occurred'

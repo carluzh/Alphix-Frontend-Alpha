@@ -7,6 +7,7 @@
  * @see interface/packages/api/src/clients/graphql/web/token.graphql
  */
 
+import { usePlatformBasedFetchPolicy } from '@/hooks/usePlatformBasedFetchPolicy'
 import { useNetwork } from '@/lib/network-context'
 import { useGetTokenPricesQuery, type Chain } from '../__generated__'
 
@@ -24,10 +25,10 @@ interface TokenPricesData {
 
 interface UseAllPricesResult {
   data: TokenPricesData | undefined
-  isLoading: boolean
-  isError: boolean
-  error: Error | undefined
-  refetch: () => void
+  loading: boolean
+  error: boolean
+  errorDetails: Error | undefined
+  refetch: () => Promise<void>
 }
 
 /**
@@ -36,24 +37,30 @@ interface UseAllPricesResult {
  * @returns Token prices data with loading/error states
  *
  * @example
- * const { data: prices, isLoading } = useAllPrices()
+ * const { data: prices, loading } = useAllPrices()
  * const ethPrice = prices?.ETH
  */
 export function useAllPrices(): UseAllPricesResult {
   const { networkMode } = useNetwork()
   const chain: Chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
 
+  // Adaptive fetch policy - reduces polling when window not visible
+  const { fetchPolicy, pollInterval } = usePlatformBasedFetchPolicy({
+    fetchPolicy: 'cache-and-network',
+    pollInterval: 60000, // Refresh every minute
+  })
+
   const { data, loading, error, refetch } = useGetTokenPricesQuery({
     variables: { chain },
-    pollInterval: 60000, // Refresh every minute
-    fetchPolicy: 'cache-and-network',
+    fetchPolicy,
+    pollInterval,
   })
 
   return {
     data: data?.tokenPrices as TokenPricesData | undefined,
-    isLoading: loading,
-    isError: !!error,
-    error: error as Error | undefined,
-    refetch: () => { refetch() },
+    loading: loading,
+    error: !!error,
+    errorDetails: error as Error | undefined,
+    refetch: async () => { await refetch() },
   }
 }
