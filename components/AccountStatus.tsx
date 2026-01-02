@@ -3,11 +3,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
 import { Button } from '@/components/ui/button'
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { LogOutIcon, MoreVerticalIcon, CopyIcon, CheckIcon, XIcon, HomeIcon } from "lucide-react"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { Input } from "@/components/ui/input"
 import { motion, AnimatePresence } from "framer-motion"
+import { DeterministicAvatar } from "@/lib/avatar"
 
 // Account Status component
 export function AccountStatus() {
@@ -93,9 +93,11 @@ export function AccountStatus() {
                   setIsDisconnectExpanded(!isDisconnectExpanded);
                 }}
               >
-              <Avatar className="h-8 w-8 rounded-lg">
-                <AvatarFallback className="rounded-lg">{displayedName.charAt(0).toUpperCase() || "C"}</AvatarFallback>
-              </Avatar>
+              {address && (
+                <div style={{ width: 30, height: 30, flexShrink: 0 }}>
+                  <DeterministicAvatar address={address} size={30} />
+                </div>
+              )}
               <div className="grid flex-1 text-left text-sm leading-tight">
                 {displayedName ? (
                   <>

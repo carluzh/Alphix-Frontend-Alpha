@@ -5,13 +5,14 @@ import { useAccount } from "wagmi";
 
 /**
  * Chart time periods following Uniswap's pattern
+ * Using string values to match the PortfolioChart component
  */
 export enum ChartPeriod {
-  HOUR = 1,
-  DAY = 2,
-  WEEK = 3,
-  MONTH = 4,
-  YEAR = 5,
+  HOUR = "1H",
+  DAY = "1D",
+  WEEK = "1W",
+  MONTH = "1M",
+  YEAR = "1Y",
 }
 
 export interface ChartDataPoint {

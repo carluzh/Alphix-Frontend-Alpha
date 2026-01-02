@@ -113,7 +113,11 @@
       "Bash(npm run test:watch:*)",
       "Bash(ls -la \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\interface\\\\apps\\\\web\\\\src\"\" | grep -E \"^d \")",
       "Bash(npm test:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\app\\\\\\(app\\)\\\\portfolio\\\\activity\")",
+      "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\app\\\\\\(app\\)\\\\portfolio\\\\tokens\")",
+      "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\app\\\\\\(app\\)\\\\portfolio\\\\components\\\\Tokens\")",
+      "Bash(Remove-Item -Recurse -Force \"c:\\\\Users\\\\Carl\\\\Desktop\\\\Alphix It\\\\Frontend\\\\Alphix-Frontend-Alpha\\\\app\\\\\\(app\\)\\\\portfolio\\\\components\\\\Activity\")"
     ],
     "deny": [],
     "ask": []

@@ -1,0 +1,49 @@
+"use client";
+
+import { memo } from "react";
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
+
+interface ViewAllButtonProps {
+  label: string;
+  href?: string;
+  onPress?: () => void;
+}
+
+/**
+ * ViewAllButton - matches Uniswap's ViewAllButton exactly
+ *
+ * Styling:
+ * - Button: variant="default" emphasis="tertiary" size="small"
+ * - borderRadius="$roundedFull" (pill shape)
+ * - width="max-content"
+ * - Icon: ArrowRight, position="after"
+ */
+export const ViewAllButton = memo(function ViewAllButton({
+  href,
+  label,
+  onPress,
+}: ViewAllButtonProps) {
+  const content = (
+    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer rounded-full hover:bg-surface/50">
+      {label}
+      <ArrowRight className="h-4 w-4" />
+    </span>
+  );
+
+  if (href) {
+    return (
+      <div className="flex w-max">
+        <Link href={href}>{content}</Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex w-max">
+      <button onClick={onPress}>{content}</button>
+    </div>
+  );
+});
+
+export default ViewAllButton;

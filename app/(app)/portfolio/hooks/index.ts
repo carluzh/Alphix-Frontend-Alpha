@@ -19,17 +19,6 @@ export {
   type PortfolioChartData,
 } from "./usePortfolioChart";
 
-export {
-  useRecentActivity,
-  getActivityTypeLabel,
-  getActivityTypeIcon,
-  formatTimeAgo,
-  groupActivitiesByPeriod,
-  ActivityType,
-  type ActivityItem,
-  type ActivityToken,
-  type ActivityStats,
-} from "./useRecentActivity";
 
 export {
   PortfolioFilterContext,
@@ -42,3 +31,5 @@ export {
 export { usePortfolioModals } from "./usePortfolioModals";
 export { useWalletBalances } from "./useWalletBalances";
 export { useFaucet } from "./useFaucet";
+export { useShouldHeaderBeCompact } from "./useShouldHeaderBeCompact";
+export { usePortfolioPageData } from "./usePortfolioPageData";
