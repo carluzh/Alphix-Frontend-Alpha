@@ -105,18 +105,6 @@ export const DynamicFeeSchema = z.object({
 
 export type DynamicFee = z.infer<typeof DynamicFeeSchema>;
 
-// Swap Quote API Response Schema
-export const SwapQuoteSchema = z.object({
-  quote: z.object({
-    amountIn: z.string(),
-    amountOut: z.string(),
-    path: z.array(z.string()),
-    fees: z.array(z.number()),
-  }),
-});
-
-export type SwapQuote = z.infer<typeof SwapQuoteSchema>;
-
 // Portfolio Activity API Response Schema
 export const PortfolioActivitySchema = z.object({
   success: z.boolean(),

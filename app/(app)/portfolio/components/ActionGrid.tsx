@@ -1,125 +1,177 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { ArrowLeftRight, Plus, Wallet, MoreHorizontal } from "lucide-react";
+import { Plus, Send, MoreHorizontal } from "lucide-react";
 
+// ============================================================================
+// CONSTANTS (Matching Uniswap exactly)
+// ============================================================================
+const ACTION_TILE_GAP = 12; // px
+const OVERVIEW_RIGHT_COLUMN_WIDTH = 360; // px
+
+// ============================================================================
+// WIGGLE ANIMATION CSS
+// Matches Uniswap's wiggle effect exactly:
+// - Rotation: 0 → 10deg → -5deg → 0
+// - Scale: 1 → 1.05 → 1.1 → 1.06
+// - Duration: 500ms, ease-in-out
+// ============================================================================
+const wiggleKeyframes = `
+@keyframes wiggle {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  30% {
+    transform: rotate(10deg) scale(1.05);
+  }
+  60% {
+    transform: rotate(-5deg) scale(1.1);
+  }
+  100% {
+    transform: rotate(0deg) scale(1.06);
+  }
+}
+`;
+
+// ============================================================================
+// ACTION TILE COMPONENT
+// ============================================================================
 interface ActionTileProps {
   href: string;
   icon: React.ReactNode;
   label: string;
-  description?: string;
   className?: string;
+  singleRow?: boolean;
 }
 
-/**
- * Individual action tile
- * Following Uniswap's action tile pattern with Alphix styling
- */
-function ActionTile({ href, icon, label, description, className }: ActionTileProps) {
+function ActionTile({ href, icon, label, className, singleRow }: ActionTileProps) {
+  const [isHovered, setIsHovered] = useState(false);
+
   return (
     <Link
       href={href}
       className={cn(
-        "flex flex-col items-center justify-center p-4",
-        "rounded-lg border border-sidebar-border bg-container",
-        "hover:bg-muted/30 hover:border-white/20 transition-colors",
-        "min-h-[80px]",
+        // Base flex layout
+        "flex flex-col items-center justify-center gap-3",
+        // Sizing
+        "p-4 h-full",
+        // Border and radius (Uniswap: $rounded16 = 16px)
+        "rounded-2xl border border-transparent",
+        // Background (Uniswap: $accent2 - we use a similar pink/magenta tint)
+        "bg-pink-500/[0.08]",
+        // Hover state (Uniswap: $accent2Hovered)
+        "hover:bg-pink-500/[0.12] hover:cursor-pointer",
+        // Animation
+        "transition-colors",
+        // Width for grid
+        !singleRow && "w-full",
         className
       )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
-      <div className="text-muted-foreground mb-2">{icon}</div>
-      <div className="text-sm font-medium text-foreground">{label}</div>
-      {description && (
-        <div className="text-xs text-muted-foreground mt-1">{description}</div>
-      )}
+      {/* Icon with wiggle animation */}
+      <div
+        className="text-pink-500"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          animationName: isHovered ? "wiggle" : "none",
+          animationDuration: "0.5s",
+          animationTimingFunction: "ease-in-out",
+          animationFillMode: "forwards",
+          animationIterationCount: 1,
+        }}
+      >
+        {icon}
+      </div>
+      {/* Label (Uniswap: buttonLabel2) */}
+      <span className="text-sm font-medium text-pink-500">{label}</span>
     </Link>
   );
 }
 
+// ============================================================================
+// ACTION GRID COMPONENT
+// ============================================================================
 interface ActionGridProps {
   className?: string;
-  /**
-   * Layout mode:
-   * - "2x2": 2x2 grid (default, matches Uniswap)
-   * - "row": Single row of 4
-   */
   layout?: "2x2" | "row";
 }
 
-/**
- * Action tiles grid component
- * Adapted from Uniswap's OverviewActionTiles.tsx
- *
- * Displays quick action buttons:
- * - Swap
- * - Add Liquidity
- * - Portfolio (wallet view)
- * - More (placeholder for future actions)
- */
 export function ActionGrid({ className, layout = "2x2" }: ActionGridProps) {
-  const gridClass = layout === "2x2"
-    ? "grid grid-cols-2 gap-3"
-    : "grid grid-cols-4 gap-3";
+  const isSingleRow = layout === "row";
 
   return (
-    <div className={cn(gridClass, className)}>
-      <ActionTile
-        href="/swap"
-        icon={<ArrowLeftRight className="h-5 w-5" />}
-        label="Swap"
-      />
-      <ActionTile
-        href="/liquidity"
-        icon={<Plus className="h-5 w-5" />}
-        label="Add Liquidity"
-      />
-      <ActionTile
-        href="/portfolio"
-        icon={<Wallet className="h-5 w-5" />}
-        label="Portfolio"
-      />
-      <ActionTile
-        href="#"
-        icon={<MoreHorizontal className="h-5 w-5" />}
-        label="More"
-      />
-    </div>
-  );
-}
+    <>
+      {/* Inject keyframes */}
+      <style dangerouslySetInnerHTML={{ __html: wiggleKeyframes }} />
 
-/**
- * Compact action buttons for mobile/narrow layouts
- */
-export function ActionButtonsCompact({ className }: { className?: string }) {
-  return (
-    <div className={cn("flex gap-2", className)}>
-      <Link
-        href="/swap"
+      {/* Grid container */}
+      <div
         className={cn(
-          "flex-1 flex items-center justify-center gap-2 py-2 px-3",
-          "rounded-md border border-sidebar-border bg-container",
-          "hover:bg-muted/30 transition-colors",
-          "text-sm font-medium text-foreground"
+          "flex flex-wrap",
+          isSingleRow && "flex-nowrap",
+          className
         )}
+        style={{
+          gap: ACTION_TILE_GAP,
+          width: isSingleRow ? "100%" : OVERVIEW_RIGHT_COLUMN_WIDTH,
+        }}
       >
-        <ArrowLeftRight className="h-4 w-4" />
-        Swap
-      </Link>
-      <Link
-        href="/liquidity"
-        className={cn(
-          "flex-1 flex items-center justify-center gap-2 py-2 px-3",
-          "rounded-md border border-sidebar-border bg-container",
-          "hover:bg-muted/30 transition-colors",
-          "text-sm font-medium text-foreground"
-        )}
-      >
-        <Plus className="h-4 w-4" />
-        Add
-      </Link>
-    </div>
+        {/* Tile wrappers with correct width */}
+        <div
+          className={cn(isSingleRow && "flex-1")}
+          style={{
+            width: isSingleRow ? "auto" : `calc(50% - ${ACTION_TILE_GAP / 2}px)`,
+            flexGrow: isSingleRow ? 1 : undefined,
+            flexBasis: isSingleRow ? 0 : undefined,
+          }}
+        >
+          <ActionTile
+            href="/liquidity"
+            icon={<Plus className="h-6 w-6" />}
+            label="Add Liquidity"
+            singleRow={isSingleRow}
+          />
+        </div>
+
+        <div
+          className={cn(isSingleRow && "flex-1")}
+          style={{
+            width: isSingleRow ? "auto" : `calc(50% - ${ACTION_TILE_GAP / 2}px)`,
+            flexGrow: isSingleRow ? 1 : undefined,
+            flexBasis: isSingleRow ? 0 : undefined,
+          }}
+        >
+          <ActionTile
+            href="/portfolio"
+            icon={<Send className="h-6 w-6" />}
+            label="Send"
+            singleRow={isSingleRow}
+          />
+        </div>
+
+        <div
+          className={cn(isSingleRow && "flex-1")}
+          style={{
+            width: isSingleRow ? "auto" : `calc(50% - ${ACTION_TILE_GAP / 2}px)`,
+            flexGrow: isSingleRow ? 1 : undefined,
+            flexBasis: isSingleRow ? 0 : undefined,
+          }}
+        >
+          <ActionTile
+            href="#"
+            icon={<MoreHorizontal className="h-6 w-6" />}
+            label="More"
+            singleRow={isSingleRow}
+          />
+        </div>
+      </div>
+    </>
   );
 }
 

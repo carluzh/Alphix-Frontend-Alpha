@@ -6,7 +6,6 @@ import Image from "next/image"
 import Link from "next/link"
 import {
   HelpCircleIcon,
-  ArrowRightLeftIcon,
   LayersIcon,
   ChartPieIcon,
   CoinsIcon,
@@ -40,11 +39,6 @@ import { useNetwork } from "@/lib/network-context"
 
 // Base navigation items (always shown)
 const baseNavItems = [
-  {
-    title: "Swap",
-    url: "/swap",
-    icon: ArrowRightLeftIcon,
-  },
   {
     title: "Liquidity",
     url: "/liquidity",

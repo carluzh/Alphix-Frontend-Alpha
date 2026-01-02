@@ -88,7 +88,7 @@ const LandingPageNavigation = () => {
           </Link>
           </div>
         </div>
-        <Link href="/swap" onClick={() => setIsLaunching(true)} prefetch>
+        <Link href="/liquidity" onClick={() => setIsLaunching(true)} prefetch>
           <Button
             className={`h-8 rounded-md px-4 md:px-5 text-sm font-semibold transition-all active:scale-[0.97] ${
               isLaunching

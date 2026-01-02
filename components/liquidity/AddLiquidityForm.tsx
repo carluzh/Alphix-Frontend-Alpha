@@ -34,7 +34,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { TransactionFlowPanel } from "./TransactionFlowPanel";
-import { SlippageControl } from "@/components/swap/SlippageControl";
+import { SlippageControl } from "@/components/settings/SlippageControl";
 import { useUserSlippageTolerance } from "@/hooks/useSlippage";
 import { showErrorToast as baseShowErrorToast, showInfoToast as baseShowInfoToast } from "@/lib/ui/toasts";
 

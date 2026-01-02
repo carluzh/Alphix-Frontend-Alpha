@@ -204,26 +204,6 @@ type FeeItem {
 }
 
 # =============================================================================
-# SWAP TYPES
-# =============================================================================
-
-type SwapQuote {
-  amountIn: String!
-  amountOut: String!
-  path: [String!]!
-  fees: [Int!]!
-  priceImpact: Float
-  minimumReceived: String
-}
-
-type SwapTransaction {
-  to: String!
-  data: String!
-  value: String!
-  gasLimit: String
-}
-
-# =============================================================================
 # PRICE TYPES
 # =============================================================================
 
@@ -249,23 +229,6 @@ type AllTokenPrices {
 # =============================================================================
 # INPUT TYPES
 # =============================================================================
-
-input SwapQuoteInput {
-  tokenIn: String!
-  tokenOut: String!
-  amount: String!
-  exactIn: Boolean!
-  slippageTolerance: Float
-}
-
-input BuildSwapTxInput {
-  tokenIn: String!
-  tokenOut: String!
-  amountIn: String!
-  amountOutMin: String!
-  recipient: String!
-  deadline: Int!
-}
 
 input TicksInput {
   poolId: String!
@@ -297,9 +260,6 @@ type Query {
   position(chain: Chain!, positionId: String!): Position
   userPositions(chain: Chain!, owner: String!): [Position!]!
   positionFees(chain: Chain!, positionId: String!): FeeItem
-
-  # Swap queries
-  swapQuote(chain: Chain!, input: SwapQuoteInput!): SwapQuote
 }
 
 # =============================================================================
@@ -307,6 +267,5 @@ type Query {
 # =============================================================================
 
 type Mutation {
-  # Swap mutations
-  buildSwapTransaction(chain: Chain!, input: BuildSwapTxInput!): SwapTransaction
+  _placeholder: String
 }

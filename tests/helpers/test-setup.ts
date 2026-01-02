@@ -183,26 +183,26 @@ export async function initializeTestEnvironment(): Promise<TestContext> {
 }
 
 /**
- * Navigate to swap page and connect wallet
+ * Navigate to liquidity page and connect wallet
  */
 export async function navigateAndConnectWallet(
   page: Page,
   context: BrowserContext
 ): Promise<void> {
-  console.log('[NAVIGATE] Opening swap page and connecting wallet...')
-  await page.goto('/swap?e2e=true', { waitUntil: 'domcontentloaded' })
+  console.log('[NAVIGATE] Opening liquidity page and connecting wallet...')
+  await page.goto('/liquidity?e2e=true', { waitUntil: 'domcontentloaded' })
   await connectMetaMaskWallet(page, context)
 
-  const swapAmountInput = page.locator('input[type="number"], input[placeholder*="0"]').first()
-  await swapAmountInput.waitFor({ state: 'visible', timeout: 10000 })
+  // Wait for page to be ready
+  await page.waitForLoadState('networkidle', { timeout: 10000 })
   console.log('[NAVIGATE] ✓ Ready\n')
 }
 
 /**
- * Helper to click action buttons in review view (Approve, Sign, Confirm Swap)
+ * Helper to click action buttons in review view (Approve, Sign, Confirm)
  */
 export async function clickActionButton(page: Page): Promise<string> {
-  const buttonTexts = ['Approve', 'Sign', 'Confirm Swap']
+  const buttonTexts = ['Approve', 'Sign', 'Confirm']
   for (const text of buttonTexts) {
     const candidate = page.getByRole('button', { name: text, exact: true })
     try {

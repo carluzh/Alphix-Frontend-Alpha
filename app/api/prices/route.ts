@@ -7,37 +7,15 @@
  * - All prices cached in Redis with 5min fresh / 15min stale window
  *
  * Price Strategy:
- * - Mainnet: Uses CoinGecko API for reliable market prices (no liquidity depth issues)
- * - Testnet: Uses quote-based prices against aUSDC (test tokens don't have CoinGecko prices)
+ * - Uses CoinGecko API for reliable market prices
+ * - Testnet tokens use mainnet prices for display purposes
  */
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { redis, getCachedDataWithStale, setCachedData } from '@/lib/redis';
 import { priceKeys } from '@/lib/redis-keys';
-import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID, type NetworkMode } from '@/lib/network-mode';
-
-const QUOTE_AMOUNT_USDC = 1;
-
-// Get chain ID based on network mode
-function getTargetChainId(networkMode: NetworkMode): number {
-  return networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
-}
-
-// Get the stable token symbol based on network (aUSDC on testnet, USDC on mainnet)
-function getStableTokenSymbol(networkMode: NetworkMode): string {
-  return networkMode === 'mainnet' ? 'USDC' : 'aUSDC';
-}
-
-// Get token symbol for a base asset based on network mode
-function getTokenSymbol(baseSymbol: string, networkMode: NetworkMode): string {
-  // Mainnet uses standard symbols, testnet uses 'a' prefixed symbols
-  if (networkMode === 'mainnet') {
-    return baseSymbol; // BTC, ETH, USDT, USDC
-  }
-  // Testnet uses 'a' prefix
-  return `a${baseSymbol}`; // aBTC, aETH, aUSDT, aUSDC
-}
+import { type NetworkMode } from '@/lib/network-mode';
 
 interface TokenPriceData {
   BTC: { usd: number; usd_24h_change?: number };
@@ -60,41 +38,6 @@ interface PriceResponse {
   error?: string;
 }
 
-/**
- * Get USD price for a token by quoting against stable token (USDC on mainnet, aUSDC on testnet)
- */
-async function getTokenUSDPriceViaQuote(tokenSymbol: string, networkMode: NetworkMode, baseUrl: string): Promise<number | null> {
-  const stableSymbol = getStableTokenSymbol(networkMode);
-  if (tokenSymbol === stableSymbol) return 1;
-
-  try {
-    const response = await fetch(`${baseUrl}/api/swap/get-quote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fromTokenSymbol: stableSymbol,
-        toTokenSymbol: tokenSymbol,
-        amountDecimalsStr: QUOTE_AMOUNT_USDC.toString(),
-        swapType: 'ExactIn',
-        chainId: getTargetChainId(networkMode),
-        network: networkMode,
-        debug: false,
-      }),
-    });
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    if (data.success && data.toAmount) {
-      const tokenAmount = parseFloat(data.toAmount);
-      return tokenAmount > 0 ? QUOTE_AMOUNT_USDC / tokenAmount : null;
-    }
-    return null;
-  } catch (error) {
-    console.error(`[Prices API] Error fetching quote for ${tokenSymbol}:`, error);
-    return null;
-  }
-}
 
 // CoinGecko ID mapping for supported tokens
 const COINGECKO_IDS: Record<string, string> = {
@@ -147,74 +90,27 @@ async function fetchCoinGeckoPrices(): Promise<Record<string, CoinGeckoPriceData
   }
 }
 
-// Stablecoins should be ~$1; reject quote prices with >5% deviation (low liquidity pools)
-function sanitizeStablecoinPrice(quotePrice: number | null): number {
-  if (!quotePrice || quotePrice < 0.95 || quotePrice > 1.05) return 1;
-  return quotePrice;
-}
-
 /**
  * Fetch all prices fresh (no cache)
  *
  * Strategy:
- * - Mainnet: Use CoinGecko API directly for reliable market prices
- *   (avoids liquidity depth issues when quoting against pools)
- * - Testnet: Use quote-based approach (test tokens don't have CoinGecko prices)
+ * - Uses CoinGecko API for reliable market prices for all networks
+ * - Testnet tokens will use mainnet prices for display purposes
  */
-async function fetchAllPricesFresh(networkMode: NetworkMode, baseUrl: string): Promise<TokenPriceData> {
-
-  if (networkMode === 'mainnet') {
-    // MAINNET: Use CoinGecko for reliable market prices
-    // This avoids issues with low liquidity pools affecting price quotes
-    const coinGeckoPrices = await fetchCoinGeckoPrices();
-
-    return {
-      BTC: coinGeckoPrices.BTC || { usd: 0 },
-      USDC: coinGeckoPrices.USDC || { usd: 1, usd_24h_change: 0 },
-      ETH: coinGeckoPrices.ETH || { usd: 0 },
-      USDT: coinGeckoPrices.USDT || { usd: 1, usd_24h_change: 0 },
-      lastUpdated: Date.now(),
-    };
-  }
-
-  // TESTNET: Use quote-based prices (test tokens don't have CoinGecko prices)
-  // Fetch both quote prices and 24h changes (for display purposes) in parallel
-  const [quotePrices, coinGeckoPrices] = await Promise.all([
-    Promise.all([
-      getTokenUSDPriceViaQuote(getTokenSymbol('BTC', networkMode), networkMode, baseUrl),
-      getTokenUSDPriceViaQuote(getTokenSymbol('ETH', networkMode), networkMode, baseUrl),
-      getTokenUSDPriceViaQuote(getTokenSymbol('USDT', networkMode), networkMode, baseUrl),
-    ]),
-    fetchCoinGeckoPrices() // Still fetch for 24h change display
-  ]);
-
-  const [btcPrice, ethPrice, usdtPrice] = quotePrices;
+async function fetchAllPricesFresh(): Promise<TokenPriceData> {
+  const coinGeckoPrices = await fetchCoinGeckoPrices();
 
   return {
-    BTC: {
-      usd: btcPrice || 0,
-      usd_24h_change: coinGeckoPrices.BTC?.usd_24h_change,
-    },
-    USDC: {
-      usd: 1,
-      usd_24h_change: coinGeckoPrices.USDC?.usd_24h_change || 0,
-    },
-    ETH: {
-      usd: ethPrice || 0,
-      usd_24h_change: coinGeckoPrices.ETH?.usd_24h_change,
-    },
-    USDT: {
-      usd: sanitizeStablecoinPrice(usdtPrice),
-      usd_24h_change: coinGeckoPrices.USDT?.usd_24h_change || 0,
-    },
+    BTC: coinGeckoPrices.BTC || { usd: 0 },
+    USDC: coinGeckoPrices.USDC || { usd: 1, usd_24h_change: 0 },
+    ETH: coinGeckoPrices.ETH || { usd: 0 },
+    USDT: coinGeckoPrices.USDT || { usd: 1, usd_24h_change: 0 },
     lastUpdated: Date.now(),
   };
 }
 
 export async function GET(request: Request) {
   try {
-    const baseUrl = new URL(request.url).origin;
-
     // Get network mode from cookies (defaults to env var for new users)
     const cookieStore = await cookies();
     const networkCookie = cookieStore.get('alphix-network-mode');
@@ -237,7 +133,7 @@ export async function GET(request: Request) {
       if (cachedData && !isInvalidated) {
         if (isStale) {
           // Background refresh - stale-while-revalidate pattern
-          fetchAllPricesFresh(networkMode, baseUrl)
+          fetchAllPricesFresh()
             .then(freshData => {
               setCachedData(cacheKey, freshData, 60);
             })
@@ -268,7 +164,7 @@ export async function GET(request: Request) {
     }
 
     // No cached data - fetch fresh
-    const freshData = await fetchAllPricesFresh(networkMode, baseUrl);
+    const freshData = await fetchAllPricesFresh();
 
     // Store in Redis
     if (redis) {

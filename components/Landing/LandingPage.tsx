@@ -182,7 +182,7 @@ export const PageContent = () => {
           title="Building smarter onchain markets."
           description="Our Unified Pools compound innovation into one secure pool. Empowering liquidity instead of fragmenting it."
         >
-          <Link href="/swap">
+          <Link href="/liquidity">
             <Button size="lg" className="rounded-md font-semibold transition-all bg-button-primary text-sidebar-primary border border-sidebar-primary hover-button-primary">
               Launch App
             </Button>

@@ -209,22 +209,3 @@ export function calculateTotalUSD(
   return (isNaN(token0USD) ? 0 : token0USD) + (isNaN(token1USD) ? 0 : token1USD);
 }
 
-/**
- * Calculate swap volume in USD (avoids double counting by taking the max of both sides)
- * This prevents the issue where a $1 swap appears as $2 volume
- */
-export function calculateSwapVolumeUSD(
-  token0Amount: string | number,
-  token1Amount: string | number,
-  token0Price: number,
-  token1Price: number
-): number {
-  const token0USD = typeof token0Amount === 'string' ? parseFloat(token0Amount) * token0Price : token0Amount * token0Price;
-  const token1USD = typeof token1Amount === 'string' ? parseFloat(token1Amount) * token1Price : token1Amount * token1Price;
-
-  const safeToken0USD = isNaN(token0USD) ? 0 : token0USD;
-  const safeToken1USD = isNaN(token1USD) ? 0 : token1USD;
-
-  // Return the max of both sides to avoid double counting while handling price discrepancies
-  return Math.max(safeToken0USD, safeToken1USD);
-}

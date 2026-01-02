@@ -323,54 +323,9 @@ export const resolvers = {
       // This would be for fetching fees separately
       return null
     },
-
-    // Swap queries
-    swapQuote: async (
-      _: unknown,
-      args: { chain: string; input: any },
-      ctx: Context
-    ) => {
-      const data = await fetchInternal(ctx, '/api/swap/get-quote', {
-        method: 'POST',
-        body: JSON.stringify({
-          tokenIn: args.input.tokenIn,
-          tokenOut: args.input.tokenOut,
-          amount: args.input.amount,
-          exactIn: args.input.exactIn,
-          slippageTolerance: args.input.slippageTolerance,
-        }),
-      })
-
-      return {
-        amountIn: data.quote?.amountIn,
-        amountOut: data.quote?.amountOut,
-        path: data.quote?.path || [],
-        fees: data.quote?.fees || [],
-        priceImpact: data.quote?.priceImpact,
-        minimumReceived: data.quote?.minimumReceived,
-      }
-    },
   },
 
-  Mutation: {
-    buildSwapTransaction: async (
-      _: unknown,
-      args: { chain: string; input: any },
-      ctx: Context
-    ) => {
-      const data = await fetchInternal(ctx, '/api/swap/build-tx', {
-        method: 'POST',
-        body: JSON.stringify(args.input),
-      })
-
-      return {
-        to: data.to,
-        data: data.data,
-        value: data.value,
-        gasLimit: data.gasLimit,
-      }
-    },
-  },
+  Mutation: {},
 
   // Field resolvers for nested types
   Pool: {

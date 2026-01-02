@@ -2,22 +2,11 @@
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { useState, useEffect } from "react"
+import { useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { motion, useAnimation, AnimatePresence } from 'framer-motion'
-import { cn } from "@/lib/utils"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { KeyRound } from "lucide-react"
 
 export default function MaintenancePage() {
   const router = useRouter()
-  const [password, setPassword] = useState('')
-  const [hasError, setHasError] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
-  const [showLoginForm, setShowLoginForm] = useState(false)
-  const [passwordWiggleCount, setPasswordWiggleCount] = useState(0)
-  const passwordWiggleControls = useAnimation() as any
 
   useEffect(() => {
     let cancelled = false
@@ -27,7 +16,7 @@ export default function MaintenancePage() {
         if (!res.ok) return
         const data = await res.json()
         if (!cancelled && data && data.maintenance === false) {
-          router.replace('/swap')
+          router.replace('/liquidity')
         }
       } catch {}
     }
@@ -35,55 +24,6 @@ export default function MaintenancePage() {
     const id = setInterval(check, 5000)
     return () => { cancelled = true; clearInterval(id) }
   }, [router])
-
-  // Trigger wiggle on new error
-  useEffect(() => {
-    if (hasError) {
-      setPasswordWiggleCount((prev) => prev + 1)
-    }
-  }, [hasError])
-
-  // Password wiggle animation effect
-  useEffect(() => {
-    if (passwordWiggleCount > 0) {
-      passwordWiggleControls
-        .start({ x: [0, -3, 3, -2, 2, 0], transition: { duration: 0.22, ease: 'easeOut' } })
-        .catch(() => {})
-    }
-  }, [passwordWiggleCount, passwordWiggleControls])
-
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setIsLoading(true)
-    setHasError(false)
-
-    try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      })
-
-      if (res.ok) {
-        try { sessionStorage.setItem('came_from_login', '1') } catch {}
-        router.push('/swap')
-      } else {
-        setHasError(true)
-      }
-    } catch (err) {
-      console.error("Login error:", err)
-      setHasError(true)
-    }
-
-    setIsLoading(false)
-  }
-
-  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setPassword(e.target.value)
-    if (hasError) {
-      setHasError(false)
-    }
-  }
 
   return (
     <div className="relative min-h-screen p-6">
@@ -165,89 +105,7 @@ export default function MaintenancePage() {
           </div>
         </div>
         </div>
-
-        {/* Admin Login Toggle or Login Form - Positioned below with absolute */}
-        <div className="relative mt-6">
-          <AnimatePresence mode="wait">
-            {!showLoginForm ? (
-              <motion.div
-                key="admin-toggle"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2 }}
-                className="text-center"
-              >
-                <button
-                  onClick={() => setShowLoginForm(true)}
-                  className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-white hover:underline transition-colors cursor-pointer"
-                >
-                  <KeyRound size={14} />
-                  <span>Admin Login</span>
-                </button>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="login-form"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 10 }}
-                transition={{ duration: 0.3, ease: "easeOut" }}
-                className="rounded-lg bg-muted/30 border border-sidebar-border/60 p-6"
-              >
-                <form onSubmit={handleSubmit} noValidate>
-                  <div className="grid gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="password" className="text-xs">Password</Label>
-                      <motion.div animate={passwordWiggleControls}>
-                        <Input
-                          id="password"
-                          type="password"
-                          required
-                          value={password}
-                          onChange={handlePasswordChange}
-                          className={cn(
-                            "bg-muted/30 text-sm",
-                            hasError ? "border-red-500 border" : "border-none"
-                          )}
-                          autoComplete="off"
-                          data-lpignore="true"
-                          autoFocus
-                        />
-                      </motion.div>
-                    </div>
-                    <Button
-                      type="submit"
-                      className={
-                        !password.trim()
-                          ? "w-full relative border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 hover:bg-button"
-                          : isLoading
-                            ? "w-full text-sidebar-primary border border-sidebar-primary bg-button-primary/50 hover:bg-button-primary/60 opacity-75 cursor-not-allowed"
-                            : "w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
-                      }
-                      disabled={isLoading}
-                      style={!password.trim() ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
-                    >
-                      {isLoading ? (
-                        <span className="animate-pulse relative overflow-hidden"
-                          style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                        >
-                          Login
-                        </span>
-                      ) : (
-                        "Login"
-                      )}
-                    </Button>
-                  </div>
-                </form>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
       </div>
     </div>
   )
 }
-
-
-

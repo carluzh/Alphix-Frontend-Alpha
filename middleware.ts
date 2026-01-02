@@ -117,7 +117,6 @@ export function middleware(request: NextRequest) {
     return createSecureResponse('rewrite', url);
   }
 
-  const authToken = request.cookies.get('site_auth_token');
   const { pathname } = request.nextUrl;
   const maintenanceEnabled = process.env.MAINTENANCE === 'true';
 
@@ -126,12 +125,9 @@ export function middleware(request: NextRequest) {
   }
 
   if (maintenanceEnabled) {
-    if (pathname.startsWith('/maintenance') || pathname.startsWith('/api/login') ||
+    if (pathname.startsWith('/maintenance') ||
         pathname.startsWith('/api/maintenance-status') || pathname.startsWith('/_next') ||
         pathname.includes('.')) {
-      return createSecureResponse('next');
-    }
-    if (authToken && authToken.value === 'valid') {
       return createSecureResponse('next');
     }
     return createSecureResponse('redirect', new URL('/maintenance', request.url));

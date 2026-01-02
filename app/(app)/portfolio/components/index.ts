@@ -3,7 +3,7 @@ export { PortfolioChart } from "./PortfolioChart";
 export { PortfolioHeader } from "./PortfolioHeader";
 export { PositionsSection } from "./PositionsSection";
 export { StatsRow } from "./StatsRow";
-export { ActionGrid, ActionButtonsCompact } from "./ActionGrid";
+export { ActionGrid } from "./ActionGrid";
 export { PortfolioTabs } from "./PortfolioTabs";
 export type { PortfolioTabId } from "./PortfolioTabs";
 
