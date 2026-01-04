@@ -1,14 +1,8 @@
 /**
  * PointsFeeStat
  *
- * Displays pool APR with points bonus badge in position fee stats.
- * Mirrors Uniswap's LPIncentiveFeeStat from:
- * - interface/apps/web/src/components/Liquidity/LiquidityPositionFeeStats.tsx (lines 281-327)
- *
- * IMPORTANT: Backend logic is IDENTICAL to Uniswap's implementation.
- *
- * This component is used within LiquidityPositionFeeStats to show
- * combined pool APR + points APR when a position is earning points.
+ * Displays total APR with points icon for positions earning points.
+ * Shows breakdown tooltip on hover with Pool APR and Points APR.
  *
  * @example
  * ```tsx
@@ -25,10 +19,12 @@
 "use client"
 
 import React from 'react';
-import { PointsRewardBadge } from './PointsRewardBadge';
+import Image from 'next/image';
+import { cn } from '@/lib/utils';
 import { PointsTooltip, TooltipSize } from './PointsTooltip';
 import { PointsFeeStatTooltip } from './PointsFeeStatTooltip';
 import { formatPercent, PLACEHOLDER_TEXT } from './formatters';
+import { POINTS_CAMPAIGN_ICON } from './constants';
 
 interface PointsFeeStatProps {
   /** Pool APR from trading fees */
@@ -47,18 +43,12 @@ interface PointsFeeStatProps {
 
 /**
  * Points fee stat component.
- * Displays pool APR with points bonus badge and hover tooltip.
+ * Displays total APR with points icon and hover tooltip for breakdown.
  *
- * Mirrors Uniswap's LPIncentiveFeeStat:
- * - Layout: Flex row gap="$spacing6" alignItems="center"
- * - Pool APR: Text variant="body2" color="$neutral1"
- * - Points badge: LPIncentiveRewardsBadge
- * - Label: Text variant="body3" color="$neutral2"
- * - Tooltip: MouseoverTooltip with LPIncentiveFeeStatTooltip
- *
- * Backend logic is IDENTICAL to Uniswap:
- * - formatPercent divides by 100 for Intl.NumberFormat percent style
- * - Tooltip shows Pool APR, Points APR, Total APR breakdown
+ * Design:
+ * - Shows total APR value with Alphix icon on the right
+ * - Icon indicates this APR includes points bonus
+ * - Hover shows breakdown: Pool APR + Points APR
  */
 export function PointsFeeStat({
   poolApr,
@@ -68,32 +58,35 @@ export function PointsFeeStat({
   token1Symbol,
   className,
 }: PointsFeeStatProps) {
-  // Format using identical logic to Uniswap's formatPercent
-  const formattedPoolApr = poolApr !== undefined ? formatPercent(poolApr) : PLACEHOLDER_TEXT;
-  const formattedPointsApr = `+${formatPercent(pointsApr)}`;
+  // Format total APR for display
+  const formattedTotalApr = totalApr !== undefined ? formatPercent(totalApr) : PLACEHOLDER_TEXT;
 
   // Content to display (wrapped in tooltip)
-  // Mirrors Uniswap's LPIncentiveFeeStat structure
   const content = (
-    <div className={className}>
-      {/* APR row - mirrors Flex row gap="$spacing6" alignItems="center" */}
+    <div className={cn("flex flex-col gap-0.5 flex-1 min-w-0", className)}>
+      {/* APR row with icon */}
       <div className="flex items-center gap-1.5">
-        {/* Pool APR - mirrors Text variant="body2" color="$neutral1" */}
-        <span className="text-sm text-foreground">
-          {formattedPoolApr}
+        {/* Total APR value */}
+        <span className="text-xs font-medium font-mono text-primary">
+          {formattedTotalApr}
         </span>
-        {/* Points badge - mirrors LPIncentiveRewardsBadge */}
-        <PointsRewardBadge formattedPointsApr={formattedPointsApr} />
+        {/* Points icon indicating bonus APR */}
+        <Image
+          src={POINTS_CAMPAIGN_ICON}
+          alt="Points bonus"
+          width={12}
+          height={12}
+          className="rounded-full"
+        />
       </div>
-      {/* Label - mirrors SecondaryText variant="body3" color="$neutral2" */}
-      <span className="text-xs text-muted-foreground">
-        Total APR
+      {/* Label */}
+      <span className="text-[10px] text-muted-foreground">
+        APR
       </span>
     </div>
   );
 
-  // Wrap with tooltip - mirrors MouseoverTooltip with LPIncentiveFeeStatTooltip
-  // Uniswap uses: padding={0}, size={TooltipSize.Small}, placement="top"
+  // Wrap with tooltip for breakdown
   return (
     <PointsTooltip
       content={
@@ -102,7 +95,6 @@ export function PointsFeeStat({
           token1Symbol={token1Symbol}
           poolApr={poolApr}
           pointsApr={pointsApr}
-          totalApr={totalApr}
         />
       }
       size={TooltipSize.Small}

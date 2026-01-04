@@ -130,8 +130,8 @@ export function PointsTooltip({
         <TooltipContent
           side={placement}
           className={cn(
-            // Mirrors Uniswap's TooltipContainer styled component
-            "bg-popover border border-sidebar-border rounded-xl shadow-lg",
+            // Matches Alphix design system border radius
+            "bg-popover border border-sidebar-border rounded-lg shadow-lg",
             "text-xs font-medium text-foreground",
             className
           )}

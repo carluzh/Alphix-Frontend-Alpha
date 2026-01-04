@@ -47,21 +47,22 @@ export function PointsRewardBadge({
     <div
       className={cn(
         // Badge container - mirrors BadgeVariant.SOFT with $rounded6
-        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
+        // Compact: minimal vertical padding to align with other stats
+        "inline-flex items-center gap-0.5 rounded px-1 py-px",
         "bg-primary/10",
         className
       )}
     >
       {/* Points APR text - mirrors Text variant="buttonLabel4" color="$accent1" */}
-      <span className="text-xs font-medium text-primary">
+      <span className="text-[10px] font-medium text-primary leading-none">
         {formattedPointsApr}
       </span>
       {/* Points icon - mirrors CurrencyLogo size={12} */}
       <Image
         src={POINTS_CAMPAIGN_ICON}
         alt="Points"
-        width={12}
-        height={12}
+        width={10}
+        height={10}
         className="rounded-full"
       />
     </div>

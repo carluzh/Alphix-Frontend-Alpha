@@ -7,6 +7,40 @@ import { cn } from "@/lib/utils";
 import { Check, Copy } from "lucide-react";
 import { DeterministicAvatar } from "@/lib/avatar";
 
+/**
+ * Fallback wallet icons for connectors without native icons
+ * Based on interface/apps/web/src/components/Web3Provider/constants.ts
+ */
+const WALLET_ICONS: Record<string, string> = {
+  "io.metamask": "/images/wallets/metamask-icon.svg",
+  metaMask: "/images/wallets/metamask-icon.svg",
+  metamask: "/images/wallets/metamask-icon.svg",
+  walletConnect: "/images/wallets/walletconnect-icon.svg",
+  coinbaseWallet: "/images/wallets/coinbase-icon.svg",
+  coinbaseWalletSDK: "/images/wallets/coinbase-icon.svg",
+  phantom: "/images/wallets/phantom-icon.png",
+};
+
+/**
+ * Get wallet icon URL - prefer connector's native icon, fallback to mapping
+ */
+function getWalletIconUrl(
+  connectorIcon?: string,
+  connectorId?: string,
+  connectorName?: string
+): string | null {
+  if (connectorIcon) return connectorIcon;
+  if (connectorId && WALLET_ICONS[connectorId]) return WALLET_ICONS[connectorId];
+  if (connectorName) {
+    const nameLower = connectorName.toLowerCase();
+    if (nameLower.includes("metamask")) return WALLET_ICONS["metamask"];
+    if (nameLower.includes("walletconnect")) return WALLET_ICONS["walletConnect"];
+    if (nameLower.includes("coinbase")) return WALLET_ICONS["coinbaseWallet"];
+    if (nameLower.includes("phantom")) return WALLET_ICONS["phantom"];
+  }
+  return null;
+}
+
 interface AddressDisplayProps {
   isCompact: boolean;
 }
@@ -23,9 +57,16 @@ interface AddressDisplayProps {
 export const AddressDisplay = memo(function AddressDisplay({
   isCompact,
 }: AddressDisplayProps) {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, connector } = useAccount();
   const [isCopied, setIsCopied] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+
+  // Get wallet icon for the badge
+  const walletIconUrl = getWalletIconUrl(
+    connector?.icon,
+    connector?.id,
+    connector?.name
+  );
 
   // ENS resolution (mainnet only)
   const { data: ensName } = useEnsName({
@@ -65,24 +106,52 @@ export const AddressDisplay = memo(function AddressDisplay({
   const displayName = ensName || `${address.slice(0, 6)}...${address.slice(-4)}`;
   const shortAddress = `${address.slice(0, 6)}...${address.slice(-4)}`;
 
+  // Mini wallet icon size - based on Uniswap's StatusIcon pattern (16px default)
+  const miniIconSize = isCompact ? 12 : 16;
+
   return (
     <div className="flex flex-row items-center gap-3">
-      {/* Avatar/Icon - Square with rounded corners */}
-      <div
-        className={cn(
-          "rounded-lg overflow-hidden flex items-center justify-center",
-          "transition-all duration-200 ease-in-out"
-        )}
-        style={{ width: iconSize, height: iconSize }}
-      >
-        {ensAvatar ? (
-          <img
-            src={ensAvatar}
-            alt={displayName}
-            className="w-full h-full object-cover rounded-lg"
-          />
-        ) : (
-          <DeterministicAvatar address={address} size={iconSize} />
+      {/* Avatar/Icon container - relative for badge positioning */}
+      <div className="relative">
+        {/* Avatar - Square with rounded corners */}
+        <div
+          className={cn(
+            "rounded-lg overflow-hidden flex items-center justify-center",
+            "transition-all duration-200 ease-in-out"
+          )}
+          style={{ width: iconSize, height: iconSize }}
+        >
+          {ensAvatar ? (
+            <img
+              src={ensAvatar}
+              alt={displayName}
+              className="w-full h-full object-cover rounded-lg"
+            />
+          ) : (
+            <DeterministicAvatar address={address} size={iconSize} />
+          )}
+        </div>
+
+        {/* Mini wallet icon badge - bottom right, circle */}
+        {walletIconUrl && (
+          <div
+            className="absolute flex items-center justify-center bg-background rounded-full overflow-hidden"
+            style={{
+              width: miniIconSize,
+              height: miniIconSize,
+              bottom: -(miniIconSize / 4),
+              right: -(miniIconSize / 4),
+              outline: "2px solid var(--background)",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={walletIconUrl}
+              alt={connector?.name || "Wallet"}
+              className="w-full h-full object-cover rounded-full"
+              style={{ width: miniIconSize, height: miniIconSize }}
+            />
+          </div>
         )}
       </div>
 

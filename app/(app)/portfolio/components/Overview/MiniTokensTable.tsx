@@ -55,8 +55,8 @@ function TokenRow({ token }: { token: TokenBalance }) {
       className={cn(
         // Layout
         "flex items-center px-4 group cursor-pointer",
-        // Hover: instant transition
-        "hover:bg-surface/50 transition-[background-color] duration-0"
+        // Hover: visible background change like Uniswap
+        "hover:bg-muted/60 transition-colors duration-100"
       )}
       style={{ height: TABLE_ROW_HEIGHT }}
     >

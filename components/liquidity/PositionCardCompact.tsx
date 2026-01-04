@@ -4,12 +4,13 @@ import React, { useState, useMemo } from 'react';
 import Image from "next/image";
 import { formatUnits } from "viem";
 import { TokenStack } from "./TokenStack";
-import { getTokenDefinitions, getPoolById } from '@/lib/pools-config';
-import { isFullRangePosition, getIsTickAtLimit, Bound } from '@/lib/liquidity/hooks/range';
+import { getTokenDefinitions, getPoolById, getPoolBySubgraphId } from '@/lib/pools-config';
+import { isFullRangePosition } from '@/lib/liquidity/hooks/range';
+import { formatTickPriceForRange } from '@/lib/liquidity/utils/calculations/priceConversion';
 import { useNetwork } from '@/lib/network-context';
 import { cn } from "@/lib/utils";
 import { MiniPoolChart } from './MiniPoolChart';
-import { getDecimalsForDenomination, getOptimalBaseToken } from '@/lib/denomination-utils';
+import { getOptimalBaseToken } from '@/lib/denomination-utils';
 import { calculateRealizedApr, formatApr } from '@/lib/apr';
 import { Percent } from '@uniswap/sdk-core';
 import { ArrowUpRight } from 'lucide-react';
@@ -19,7 +20,25 @@ import {
     getPositionStatusLabel,
     getPositionStatusColor,
 } from './LiquidityPositionStatusIndicator';
-import { LiquidityPositionFeeStats } from './FeeStats';
+import { LiquidityPositionFeeStats, LiquidityPositionFeeStatsLoader } from './FeeStats';
+
+/**
+ * PositionCardCompactLoader
+ *
+ * Shimmer loading skeleton for PositionCardCompact.
+ * Mirrors Uniswap's Shine pattern - single bar with shimmer effect.
+ * Height matches actual card (~100px).
+ */
+export function PositionCardCompactLoader({ className }: { className?: string }) {
+    return (
+        <div
+            className={cn(
+                "h-[100px] rounded-lg bg-muted/40 animate-pulse",
+                className
+            )}
+        />
+    );
+}
 
 type ProcessedPosition = {
     positionId: string;
@@ -53,7 +72,8 @@ interface PositionCardCompactProps {
     valueUSD: number;
     onClick: () => void;
     getUsdPriceForSymbol: (symbol?: string) => number;
-    convertTickToPrice: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
+    /** @deprecated No longer used - range prices computed directly from ticks */
+    convertTickToPrice?: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
     poolType?: string;
     poolContext: {
         currentPrice: string | null;
@@ -85,7 +105,6 @@ export function PositionCardCompact({
     valueUSD,
     onClick,
     getUsdPriceForSymbol,
-    convertTickToPrice,
     poolType,
     poolContext,
     fees,
@@ -178,7 +197,10 @@ export function PositionCardCompact({
 
     // Get tickSpacing from pool config for accurate full-range detection
     const tickSpacing = useMemo(() => {
-        const poolConfig = getPoolById(position.poolId, networkMode);
+        let poolConfig = getPoolById(position.poolId, networkMode);
+        if (!poolConfig) {
+            poolConfig = getPoolBySubgraphId(position.poolId, networkMode);
+        }
         return poolConfig?.tickSpacing;
     }, [position.poolId, networkMode]);
 
@@ -188,52 +210,58 @@ export function PositionCardCompact({
     }, [tickSpacing, position.tickLower, position.tickUpper]);
 
     /**
+     * Get token decimals for price calculation.
+     * Mirrors Uniswap's approach of computing prices directly from ticks.
+     */
+    const { token0Decimals, token1Decimals } = useMemo(() => {
+        const t0 = TOKEN_DEFINITIONS?.[position.token0.symbol];
+        const t1 = TOKEN_DEFINITIONS?.[position.token1.symbol];
+        return {
+            token0Decimals: t0?.decimals ?? 18,
+            token1Decimals: t1?.decimals ?? 18,
+        };
+    }, [TOKEN_DEFINITIONS, position.token0.symbol, position.token1.symbol]);
+
+    /**
      * Format price range for display.
      * Mirrors Uniswap's useGetRangeDisplay / formatTickPrice pattern.
      *
-     * Key insight: at-limit detection is based on BOUND DIRECTION, not tick value.
-     * - Bound.LOWER at limit → display '0'
-     * - Bound.UPPER at limit → display '∞'
-     * This ensures full-range positions always show "0 - ∞" regardless of price inversion.
+     * Key insight: prices are computed directly from ticks using 1.0001^tick formula,
+     * NOT relative to current pool price. This ensures range is always displayable.
      */
     const { minPrice, maxPrice } = React.useMemo(() => {
-        const isTickAtLimit = getIsTickAtLimit(tickSpacing, position.tickLower, position.tickUpper);
+        // Check for invalid tick values (both 0 means data not loaded)
+        if (position.tickLower === 0 && position.tickUpper === 0) {
+            return { minPrice: '-', maxPrice: '-' };
+        }
 
-        // Format tick price with at-limit awareness
-        // Mirrors Uniswap's formatTickPrice from useGetRangeDisplay.ts
-        const formatTickPriceForDisplay = (
-            tick: number,
-            direction: Bound
-        ): string => {
-            // At-limit: show semantic limit value based on bound direction
-            if (isTickAtLimit[direction]) {
-                return direction === Bound.LOWER ? '0' : '∞';
-            }
-
-            // Not at limit: calculate actual price
-            return convertTickToPrice(
-                tick,
-                currentPoolTick ?? null,
-                currentPrice ?? null,
-                denominationBase,
-                position.token0.symbol,
-                position.token1.symbol
-            );
-        };
+        // Use tickSpacing if found, otherwise fallback to 10
+        const effectiveTickSpacing = tickSpacing ?? 10;
 
         // When inverted, swap which tick maps to which display slot
-        // The bound direction (LOWER/UPPER) stays semantic to the display position
+        // Lower display slot gets the tick that produces the lower price after inversion
+        const tickForMin = shouldInvert ? position.tickUpper : position.tickLower;
+        const tickForMax = shouldInvert ? position.tickLower : position.tickUpper;
+
         return {
-            minPrice: formatTickPriceForDisplay(
-                shouldInvert ? position.tickUpper : position.tickLower,
-                Bound.LOWER
+            minPrice: formatTickPriceForRange(
+                tickForMin,
+                effectiveTickSpacing,
+                true, // isLowerBound
+                token0Decimals,
+                token1Decimals,
+                shouldInvert
             ),
-            maxPrice: formatTickPriceForDisplay(
-                shouldInvert ? position.tickLower : position.tickUpper,
-                Bound.UPPER
+            maxPrice: formatTickPriceForRange(
+                tickForMax,
+                effectiveTickSpacing,
+                false, // isLowerBound
+                token0Decimals,
+                token1Decimals,
+                shouldInvert
             ),
         };
-    }, [tickSpacing, position.tickLower, position.tickUpper, currentPrice, currentPoolTick, denominationBase, position.token0.symbol, position.token1.symbol, convertTickToPrice, shouldInvert]);
+    }, [tickSpacing, position.tickLower, position.tickUpper, position.positionId, token0Decimals, token1Decimals, shouldInvert]);
 
     /**
      * Derive position status from state.

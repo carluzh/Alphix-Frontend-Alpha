@@ -28,9 +28,9 @@ const { handleRequest } = createYoga({
   fetchAPI: { Response },
   // Context function to pass request info to resolvers
   context: async ({ request }) => {
-    // Get network mode from cookies
+    // Get network mode from cookies (matches NETWORK_COOKIE_NAME from network-mode.ts)
     const cookieStore = await cookies()
-    const networkModeCookie = cookieStore.get('network-mode')
+    const networkModeCookie = cookieStore.get('alphix-network-mode')
     const networkMode = networkModeCookie?.value === 'testnet' ? 'testnet' : 'mainnet'
 
     // Fail-fast: No localhost fallback in production

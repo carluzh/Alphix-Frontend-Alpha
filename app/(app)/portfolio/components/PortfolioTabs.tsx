@@ -3,7 +3,7 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 
-export type PortfolioTabId = "overview" | "tokens" | "activity";
+export type PortfolioTabId = "overview" | "tokens";
 
 interface PortfolioTab {
   id: PortfolioTabId;
@@ -16,33 +16,24 @@ interface PortfolioTabsProps {
   onTabChange: (tab: PortfolioTabId) => void;
   positionCount?: number;
   tokenCount?: number;
-  activityCount?: number;
   className?: string;
 }
 
 const DEFAULT_TABS: PortfolioTab[] = [
   { id: "overview", label: "Overview" },
   { id: "tokens", label: "Tokens" },
-  { id: "activity", label: "Activity" },
 ];
 
 export function PortfolioTabs({
   activeTab,
   onTabChange,
-  positionCount,
   tokenCount,
-  activityCount,
   className,
 }: PortfolioTabsProps) {
   const tabs = DEFAULT_TABS.map((tab) => {
     let count: number | undefined;
-    switch (tab.id) {
-      case "tokens":
-        count = tokenCount;
-        break;
-      case "activity":
-        count = activityCount;
-        break;
+    if (tab.id === "tokens") {
+      count = tokenCount;
     }
     return { ...tab, count };
   });

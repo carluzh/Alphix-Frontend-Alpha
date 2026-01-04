@@ -5,11 +5,11 @@
  * Mirrors Uniswap's LiquidityPositionFeeStats from:
  * - interface/apps/web/src/components/Liquidity/LiquidityPositionFeeStats.tsx (lines 88-177)
  *
- * Layout:
+ * Layout (left to right):
  * - Position value stat
  * - Fees stat
+ * - Range stat (MinMaxRange)
  * - APR stat (APRFeeStat) OR Points stat (PointsFeeStat when campaign active)
- * - Range stat (MinMaxRange, desktop only)
  *
  * IMPORTANT: All calculation logic stays in parent component.
  * This component is purely presentational.
@@ -99,7 +99,8 @@ export function LiquidityPositionFeeStats({
   return (
     <div className={cn(
       // Layout - mirrors Flex row gap="$gap20" justifyContent="space-between"
-      "flex items-center justify-between gap-5 py-1.5 px-4 rounded-b-lg transition-colors",
+      // Larger bottom bar with py-3 (12px vertical padding)
+      "flex items-center justify-between gap-5 py-3 px-4 rounded-b-lg transition-colors",
       // Background - mirrors backgroundColor={cardHovered ? '$surface2Hovered' : '$surface2'}
       cardHovered ? "bg-muted/50" : "bg-muted/30"
     )}>
@@ -134,6 +135,21 @@ export function LiquidityPositionFeeStats({
         )}
       </FeeStat>
 
+      {/* Range - mirrors MinMaxRange */}
+      <MinMaxRange
+        priceOrdering={priceOrdering}
+        tickSpacing={tickSpacing}
+        tickLower={tickLower}
+        tickUpper={tickUpper}
+        pricesInverted={pricesInverted}
+        setPricesInverted={setPricesInverted}
+        poolType={poolType}
+        denominationBase={denominationBase}
+        formattedMinPrice={formattedMinPrice}
+        formattedMaxPrice={formattedMaxPrice}
+        isFullRange={isFullRange}
+      />
+
       {/* APR - Conditional: PointsFeeStat or APRFeeStat */}
       {/* Mirrors Uniswap's: lpIncentiveRewardApr ? <LPIncentiveFeeStat /> : <APRFeeStat /> */}
       {pointsData?.pointsApr ? (
@@ -151,21 +167,6 @@ export function LiquidityPositionFeeStats({
           isLoading={isLoadingApr}
         />
       )}
-
-      {/* Range - Desktop only, mirrors MinMaxRange */}
-      <MinMaxRange
-        priceOrdering={priceOrdering}
-        tickSpacing={tickSpacing}
-        tickLower={tickLower}
-        tickUpper={tickUpper}
-        pricesInverted={pricesInverted}
-        setPricesInverted={setPricesInverted}
-        poolType={poolType}
-        denominationBase={denominationBase}
-        formattedMinPrice={formattedMinPrice}
-        formattedMaxPrice={formattedMaxPrice}
-        isFullRange={isFullRange}
-      />
     </div>
   );
 }

@@ -49,6 +49,8 @@ const BASE_CSP: Record<string, string[]> = {
     // Alphix-specific
     "https://*.satsuma-prod.com", "https://subgraph.satsuma-prod.com",
     "https://*.supabase.co",
+    // AlphixBackend API
+    "https://api.alphix.fi",
     "https://*.ingest.de.sentry.io", "https://*.sentry.io",
     // IPFS
     "https://ipfs.io", "https://gateway.ipfs.io", "https://cloudflare-ipfs.com",

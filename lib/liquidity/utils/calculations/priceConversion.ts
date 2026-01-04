@@ -234,6 +234,108 @@ export function isValidTickRange(tickLower: number, tickUpper: number): boolean 
 }
 
 /**
+ * Convert a tick directly to a price value.
+ * Mirrors Uniswap SDK's tick math: price = 1.0001^tick
+ *
+ * This is the CORRECT approach - prices are computed from ticks alone,
+ * without needing the current pool price as a reference.
+ *
+ * @param tick - The tick to convert
+ * @param token0Decimals - Decimals for token0
+ * @param token1Decimals - Decimals for token1
+ * @param invert - If true, return 1/price (for token0 per token1 instead of token1 per token0)
+ * @returns Price value as number
+ */
+export function tickToPrice(
+  tick: number,
+  token0Decimals: number,
+  token1Decimals: number,
+  invert: boolean = false
+): number {
+  // Uniswap SDK formula: sqrtRatioX96 = sqrt(1.0001^tick) * 2^96
+  // price = (sqrtRatioX96 / 2^96)^2 = 1.0001^tick
+  // Adjusted for decimals: price * 10^(token0Decimals - token1Decimals)
+  const rawPrice = Math.pow(1.0001, tick);
+
+  // Adjust for decimal differences
+  // Raw price is token1/token0 in raw amounts
+  // To get human-readable: multiply by 10^(token0Decimals - token1Decimals)
+  const decimalAdjustment = Math.pow(10, token0Decimals - token1Decimals);
+  const adjustedPrice = rawPrice * decimalAdjustment;
+
+  return invert ? (1 / adjustedPrice) : adjustedPrice;
+}
+
+/**
+ * Format a tick price for display.
+ * Handles full range (at-limit) ticks by returning '0' or '∞'.
+ *
+ * Mirrors Uniswap's formatTickPrice from useGetRangeDisplay.ts
+ *
+ * @param tick - The tick to format
+ * @param tickSpacing - Pool tick spacing
+ * @param isLowerBound - Whether this is the lower bound
+ * @param token0Decimals - Decimals for token0
+ * @param token1Decimals - Decimals for token1
+ * @param invert - If true, invert the price
+ * @param decimalsToShow - Number of decimal places to show
+ * @returns Formatted price string
+ */
+export function formatTickPriceForRange(
+  tick: number,
+  tickSpacing: number,
+  isLowerBound: boolean,
+  token0Decimals: number,
+  token1Decimals: number,
+  invert: boolean = false,
+  decimalsToShow: number = 4
+): string {
+  const [minTick, maxTick] = getTickSpaceLimits(tickSpacing);
+
+  // Check if at limit (full range)
+  const isAtMin = tick === minTick;
+  const isAtMax = tick === maxTick;
+
+  // At-limit handling - mirrors Uniswap's useFormatTickPrice
+  // Lower bound display shows '0', upper bound display shows '∞' at respective limits
+  //
+  // Price behavior at limits:
+  // - Without inversion: MIN_TICK → ~0, MAX_TICK → ~∞
+  // - With inversion: MIN_TICK → ~∞ (1/0), MAX_TICK → ~0 (1/∞)
+  //
+  // So for lower bound display (should show '0'):
+  // - Non-inverted: at MIN_TICK
+  // - Inverted: at MAX_TICK (because inverted MAX_TICK price → 0)
+  //
+  // For upper bound display (should show '∞'):
+  // - Non-inverted: at MAX_TICK
+  // - Inverted: at MIN_TICK (because inverted MIN_TICK price → ∞)
+  if (isLowerBound) {
+    if ((!invert && isAtMin) || (invert && isAtMax)) return '0';
+  } else {
+    if ((!invert && isAtMax) || (invert && isAtMin)) return '∞';
+  }
+
+  // Compute price from tick
+  const price = tickToPrice(tick, token0Decimals, token1Decimals, invert);
+
+  if (!isFinite(price) || isNaN(price)) {
+    return '-';
+  }
+
+  // Format with appropriate precision
+  if (price === 0) return '0';
+  if (price < 0.0001) return '<0.0001';
+  if (price < 1) return price.toFixed(decimalsToShow);
+  if (price < 1000) return price.toFixed(Math.min(decimalsToShow, 2));
+
+  return price.toLocaleString('en-US', {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2
+  });
+}
+
+/**
  * Calculate the percentage range around current price.
  *
  * @param tickLower - Lower tick

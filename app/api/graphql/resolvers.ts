@@ -24,7 +24,7 @@ async function fetchInternal(
 ): Promise<any> {
   const url = `${ctx.baseUrl}${path}`
   const headers = new Headers(options?.headers)
-  headers.set('Cookie', `network-mode=${ctx.networkMode}`)
+  headers.set('Cookie', `alphix-network-mode=${ctx.networkMode}`)
   headers.set('Content-Type', 'application/json')
 
   const response = await fetch(url, {

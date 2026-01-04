@@ -42,6 +42,7 @@ const TOKEN_COLORS = [
  * Adapted from Uniswap's portfolio data fetching pattern
  */
 export function usePortfolioData(
+  networkMode: "mainnet" | "testnet",
   refreshKey: number = 0,
   userPositionsData?: any[],
   pricesData?: any
@@ -79,7 +80,7 @@ export function usePortfolioData(
         const positionsRaw = positionsData || [];
         let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
         try {
-          const pools = getAllPools();
+          const pools = getAllPools(networkMode);
           const allowedIds = new Set(
             (pools || []).map((p: any) => String(p?.subgraphId || "").toLowerCase())
           );
@@ -210,7 +211,7 @@ export function usePortfolioData(
     };
 
     fetchPortfolioData(userPositionsData || [], pricesData || {});
-  }, [isConnected, accountAddress, refreshKey, userPositionsData, pricesData]);
+  }, [isConnected, accountAddress, refreshKey, userPositionsData, pricesData, networkMode]);
 
   return portfolioData;
 }
@@ -232,7 +233,7 @@ export function usePortfolio(
   const { address: accountAddress, isConnected } = useAccount();
 
   // Get aggregated portfolio data
-  const portfolioData = usePortfolioData(refreshKey, userPositionsData, pricesData);
+  const portfolioData = usePortfolioData(networkMode, refreshKey, userPositionsData, pricesData);
 
   // Position and APR states
   const [activePositions, setActivePositions] = useState<any[]>([]);
@@ -255,7 +256,7 @@ export function usePortfolio(
 
     // Filter to configured pools only
     try {
-      const pools = getAllPools();
+      const pools = getAllPools(networkMode);
       const allowedIds = new Set(
         (pools || []).map((p: any) => String(p?.subgraphId || "").toLowerCase())
       );
@@ -280,7 +281,7 @@ export function usePortfolio(
     } else {
       setActivePositions(positions);
     }
-  }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions]);
+  }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions, networkMode]);
 
   // Fetch APR data
   useEffect(() => {

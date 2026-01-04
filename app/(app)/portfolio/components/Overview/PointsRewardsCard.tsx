@@ -1,22 +1,11 @@
 "use client";
 
-/**
- * PointsRewardsCard - Copied from interface/apps/web/src/components/Liquidity/LPIncentives/LpIncentiveRewardsCard.tsx
- * Converted from Tamagui to Tailwind CSS
- */
-
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 interface PointsRewardsCardProps {
   totalPoints?: number;
@@ -29,7 +18,8 @@ export function PointsRewardsCard({
 }: PointsRewardsCardProps) {
   const router = useRouter();
   const isMobile = useIsMobile();
-  const [isHovered, setIsHovered] = useState(false);
+  const [isCardHovered, setIsCardHovered] = useState(false);
+  const [isCtaHovered, setIsCtaHovered] = useState(false);
 
   const formattedPoints = useMemo(() => {
     return totalPoints.toLocaleString("en-US", {
@@ -64,38 +54,31 @@ export function PointsRewardsCard({
 
   return (
     <div
-      className="group cursor-default max-w-[600px]"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      className="group cursor-pointer"
+      onMouseEnter={() => setIsCardHovered(true)}
+      onMouseLeave={() => setIsCardHovered(false)}
     >
-      {/* Main Container - matches Uniswap: height 192px desktop, 142px mobile */}
       <div
         className={cn(
-          // Height
           isMobile ? "h-[142px]" : "h-[192px]",
-          // Padding: $spacing16 mobile, $spacing24 desktop
           isMobile ? "p-4" : "p-6",
-          // Layout
           "flex flex-col justify-between",
-          // Styling - $surface2 bg, $surface3 border, $rounded20
-          "bg-muted/30 border border-sidebar-border/60 rounded-[20px]",
+          "bg-muted/30 border border-sidebar-border/60 rounded-lg",
           "overflow-hidden relative",
-          // Transition + shadow on hover
           "transition-all duration-200 ease-out",
-          isHovered && "shadow-lg"
+          isCardHovered && "bg-muted/40 border-sidebar-border/80"
         )}
       >
-        {/* Background Pattern */}
+        {/* Background Pattern - fades on hover */}
         <div
           className={cn(
             "absolute inset-0",
             "bg-center bg-repeat",
-            "transition-transform duration-200 ease-out",
-            "opacity-20",
-            isHovered && "scale-[1.2]"
+            "transition-opacity duration-200 ease-out",
+            isCardHovered ? "opacity-40" : "opacity-60"
           )}
           style={{
-            backgroundImage: "url(/pattern_wide.svg)",
+            backgroundImage: "url(/pattern.svg)",
             backgroundSize: "auto",
           }}
         />
@@ -130,7 +113,7 @@ export function PointsRewardsCard({
                 <div
                   className={cn(
                     "absolute flex items-center justify-center",
-                    isMobile ? "-bottom-0.5 -right-0.5" : "-bottom-0.5 -right-0.5"
+                    "-bottom-0.5 -right-0.5"
                   )}
                 >
                   {/* Outer pulsing rings */}
@@ -152,55 +135,25 @@ export function PointsRewardsCard({
               </div>
             </div>
 
-            {/* Subtitle: Points earned + Info Tooltip */}
-            <div className={cn("flex flex-row items-center", isMobile ? "gap-1.5" : "gap-1.5")}>
-              <span className={cn("text-muted-foreground", isMobile ? "text-xs" : "text-sm")}>
-                Points earned
-              </span>
-              <TooltipProvider>
-                <Tooltip delayDuration={100}>
-                  <TooltipTrigger asChild>
-                    <button className="inline-flex items-center justify-center">
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="text-muted-foreground/60"
-                      >
-                        <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.1" />
-                        <path
-                          d="M8 7V11"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                        />
-                        <circle cx="8" cy="5" r="0.75" fill="currentColor" />
-                      </svg>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="top"
-                    className="max-w-[240px] bg-popover border border-sidebar-border p-3"
-                  >
-                    <p className="text-sm text-foreground">
-                      Points are earned by providing liquidity and swapping on Alphix Unified Pools.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
+            {/* Subtitle: Points earned */}
+            <span className={cn("text-muted-foreground", isMobile ? "text-xs" : "text-sm")}>
+              Points earned
+            </span>
           </div>
         </div>
 
-        {/* Bottom Section: CTA + Description */}
-        <div className="relative flex flex-col gap-0.5">
-          {/* Find pools link */}
-          <button
-            onClick={() => router.push("/liquidity")}
-            className="flex flex-row items-center gap-1.5 self-start group/link hover:opacity-80 transition-opacity"
-          >
+        {/* Bottom Section: CTA + Description - clickable area */}
+        <div
+          className={cn(
+            "relative flex flex-col gap-0.5 -m-2 p-2 rounded-md cursor-pointer",
+            "transition-all duration-150",
+            isCtaHovered && "bg-muted/40"
+          )}
+          onMouseEnter={() => { setIsCtaHovered(true); setIsCardHovered(false); }}
+          onMouseLeave={() => { setIsCtaHovered(false); setIsCardHovered(true); }}
+          onClick={() => router.push("/liquidity")}
+        >
+          <div className="flex flex-row items-center gap-1.5">
             <span className={cn("text-foreground", isMobile ? "text-xs" : "text-sm")}>
               {totalPoints > 0 ? "Earn more points" : "Start earning points"}
             </span>
@@ -208,14 +161,12 @@ export function PointsRewardsCard({
               className={cn(
                 "transition-transform duration-100",
                 isMobile ? "h-3 w-3" : "h-4 w-4",
-                "group-hover/link:translate-x-1"
+                isCtaHovered && "translate-x-1"
               )}
             />
-          </button>
-
-          {/* Description */}
+          </div>
           <span className={cn("text-muted-foreground", isMobile ? "text-xs" : "text-sm")}>
-            Provide liquidity or swap on Alphix Unified Pools to earn points
+            Provide liquidity in Unified Pools to earn points
           </span>
         </div>
 

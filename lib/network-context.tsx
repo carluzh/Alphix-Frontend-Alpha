@@ -48,17 +48,30 @@ function getEnvDefault(): NetworkMode {
 export function NetworkProvider({ children, initialNetworkMode }: NetworkProviderProps) {
   const [networkMode, setNetworkModeState] = useState<NetworkMode>(() => {
     // Priority: initialNetworkMode prop > localStorage > env var default
-    if (initialNetworkMode) return initialNetworkMode;
-    if (typeof window === 'undefined') return getEnvDefault();
-    try {
-      const stored = localStorage.getItem(NETWORK_STORAGE_KEY);
-      if (stored === 'mainnet' || stored === 'testnet') return stored;
-      return getEnvDefault();
-    } catch {
-      return getEnvDefault();
+    let mode: NetworkMode;
+    if (initialNetworkMode) {
+      mode = initialNetworkMode;
+    } else if (typeof window === 'undefined') {
+      mode = getEnvDefault();
+    } else {
+      try {
+        const stored = localStorage.getItem(NETWORK_STORAGE_KEY);
+        mode = (stored === 'mainnet' || stored === 'testnet') ? stored : getEnvDefault();
+      } catch {
+        mode = getEnvDefault();
+      }
     }
+
+    // Set cookie SYNCHRONOUSLY during initialization to prevent race condition
+    // Apollo hooks fire immediately after mount, before useEffect runs
+    if (typeof window !== 'undefined') {
+      document.cookie = `${NETWORK_COOKIE_NAME}=${mode}; path=/; max-age=31536000; SameSite=Lax`;
+    }
+
+    return mode;
   });
 
+  // Still keep useEffect for localStorage sync and future mode changes
   useEffect(() => {
     document.cookie = `${NETWORK_COOKIE_NAME}=${networkMode}; path=/; max-age=31536000; SameSite=Lax`;
     try {

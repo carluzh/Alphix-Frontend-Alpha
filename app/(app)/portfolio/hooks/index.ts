@@ -9,15 +9,6 @@ export {
   type Readiness,
 } from "./usePortfolioData";
 
-export {
-  usePortfolioChart,
-  formatChartDataForRecharts,
-  getPeriodLabel,
-  getPeriodOptions,
-  ChartPeriod,
-  type ChartDataPoint,
-  type PortfolioChartData,
-} from "./usePortfolioChart";
 
 
 export {
@@ -33,3 +24,16 @@ export { useWalletBalances } from "./useWalletBalances";
 export { useFaucet } from "./useFaucet";
 export { useShouldHeaderBeCompact } from "./useShouldHeaderBeCompact";
 export { usePortfolioPageData } from "./usePortfolioPageData";
+
+// Chart data hooks
+export {
+  usePortfolioChartData,
+  type ChartPeriod,
+  type PortfolioChartPoint,
+} from "./usePortfolioChartData";
+
+export {
+  usePositionsChartData,
+  positionsToInputFormat,
+  type PositionsChartPoint,
+} from "./usePositionsChartData";

@@ -139,7 +139,6 @@ export function PointsCampaignDisplay({
             token1Symbol={tooltipProps.token1Symbol}
             poolApr={tooltipProps.poolApr}
             pointsApr={pointsApr}
-            totalApr={tooltipProps.totalApr}
           />
         }
         size={TooltipSize.Small}

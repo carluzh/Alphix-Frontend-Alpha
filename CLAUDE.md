@@ -8,6 +8,18 @@ Alphix is a decentralized Automated Market Maker (AMM) built on top of Uniswap V
 
 **IMPORTANT**: The `interface/` folder contains publicly accessible Uniswap repositories and should be excluded from modifications unless explicitly required. All Alphix-specific development occurs outside this folder.
 
+## Uniswap Reference First
+
+**CRITICAL**: Before editing any UI component that has a Uniswap equivalent, you MUST first read the corresponding Uniswap implementation from `interface/apps/web/src/`. This ensures visual and behavioral parity with Uniswap's established patterns.
+
+Examples:
+- Portfolio chart → `interface/apps/web/src/pages/Portfolio/Overview/PortfolioChart.tsx`
+- Price chart → `interface/apps/web/src/components/Charts/PriceChart/index.tsx`
+- Chart loading states → `interface/apps/web/src/components/Charts/LoadingState.tsx`
+- Delta display (arrow + percent) → `interface/apps/web/src/components/Tokens/TokenDetails/Delta.tsx`
+
+Always check formatting, styling, and behavioral patterns in the Uniswap reference before implementing.
+
 ## Tech Stack
 
 - **Framework**: Next.js 15.2.4 with React 19

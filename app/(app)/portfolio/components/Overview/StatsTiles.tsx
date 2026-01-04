@@ -4,69 +4,57 @@ import { memo } from "react";
 import { cn } from "@/lib/utils";
 
 interface OverviewStatsTilesProps {
-  swapCount?: number;
-  totalVolumeUSD?: number;
+  dailyPoints?: number;
+  leaderboardPosition?: number | null;
   isLoading?: boolean;
 }
 
 /**
- * ValueWithFadedDecimals - matches Uniswap's implementation
- * Splits currency amounts: whole number + faded decimals
+ * Format points with 4 decimal places
  */
-function ValueWithFadedDecimals({ value }: { value: string }) {
-  const parts = value.split(".");
-  if (parts.length === 1) {
-    return <span>{value}</span>;
-  }
-
-  return (
-    <span>
-      {parts[0]}
-      <span className="text-muted-foreground">.{parts[1]}</span>
-    </span>
-  );
+function formatPoints(value: number): string {
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4,
+  });
 }
 
 /**
- * Format USD value
+ * Format leaderboard position with ordinal suffix
  */
-function formatUSD(value: number): string {
-  if (value === 0) return "$0.00";
-  if (value < 0.01) return "< $0.01";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
+function formatPosition(position: number | null): string {
+  if (position === null || position <= 0) return "—";
+  const suffixes = ["th", "st", "nd", "rd"];
+  const v = position % 100;
+  const suffix = suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
+  return `#${position.toLocaleString()}`;
 }
 
 /**
- * OverviewStatsTiles - matches Uniswap's StatsTiles.tsx exactly
+ * OverviewStatsTiles - Points stats display
  *
  * Layout:
  * - borderWidth={1} borderColor="$surface3" → border border-sidebar-border
  * - borderRadius="$rounded16" → rounded-2xl
  * - Two 50% width cells with border between
- * - padding="$spacing16" → p-4
+ * - Compact padding for reduced height
  *
  * Content:
- * - Left: "Swaps This Week" + count
- * - Right: "Swapped This Week" + volume
+ * - Left: "24h Points" + daily points earned
+ * - Right: "Leaderboard" + position in points campaign
  */
 export const OverviewStatsTiles = memo(function OverviewStatsTiles({
-  swapCount = 0,
-  totalVolumeUSD = 0,
+  dailyPoints = 23.4872,
+  leaderboardPosition = 1247,
   isLoading = false,
 }: OverviewStatsTilesProps) {
-  const hasVolumeData = totalVolumeUSD > 0;
   const EM_DASH = "—";
 
   return (
     <div
       className={cn(
         // Border and radius
-        "border border-sidebar-border rounded-2xl",
+        "border border-sidebar-border rounded-xl",
         // Overflow
         "overflow-hidden",
         // Full width
@@ -74,40 +62,40 @@ export const OverviewStatsTiles = memo(function OverviewStatsTiles({
       )}
     >
       <div className="flex flex-row">
-        {/* Left Cell: Swaps This Week */}
-        <div className="border-r border-sidebar-border p-4 w-1/2">
-          {/* Label: variant="body3" color="$neutral2" */}
-          <div className="text-sm text-muted-foreground">Swaps This Week</div>
-          {/* Value: variant="heading3" color="$neutral1" */}
+        {/* Left Cell: 24h Points */}
+        <div className="border-r border-sidebar-border px-3 py-2.5 w-1/2">
+          {/* Label */}
+          <div className="text-xs text-muted-foreground">24h Points</div>
+          {/* Value */}
           <div
             className={cn(
-              "text-2xl font-normal text-foreground mt-1",
+              "text-base font-medium text-foreground mt-0.5",
               isLoading && "animate-pulse"
             )}
           >
             {isLoading ? (
-              <span className="inline-block bg-muted/60 rounded h-7 w-12" />
+              <span className="inline-block bg-muted/60 rounded h-5 w-16" />
             ) : (
-              swapCount
+              formatPoints(dailyPoints)
             )}
           </div>
         </div>
 
-        {/* Right Cell: Swapped This Week */}
-        <div className="p-4 w-1/2">
-          {/* Label: variant="body3" color="$neutral2" */}
-          <div className="text-sm text-muted-foreground">Swapped This Week</div>
-          {/* Value: variant="heading3" color="$neutral1" with faded decimals */}
+        {/* Right Cell: Leaderboard Position */}
+        <div className="px-3 py-2.5 w-1/2">
+          {/* Label */}
+          <div className="text-xs text-muted-foreground">Leaderboard</div>
+          {/* Value */}
           <div
             className={cn(
-              "text-2xl font-normal text-foreground mt-1",
+              "text-base font-medium text-foreground mt-0.5",
               isLoading && "animate-pulse"
             )}
           >
             {isLoading ? (
-              <span className="inline-block bg-muted/60 rounded h-7 w-20" />
-            ) : hasVolumeData ? (
-              <ValueWithFadedDecimals value={formatUSD(totalVolumeUSD)} />
+              <span className="inline-block bg-muted/60 rounded h-5 w-12" />
+            ) : leaderboardPosition !== null ? (
+              formatPosition(leaderboardPosition)
             ) : (
               EM_DASH
             )}

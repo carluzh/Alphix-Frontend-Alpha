@@ -25,9 +25,9 @@ export const ViewAllButton = memo(function ViewAllButton({
   onPress,
 }: ViewAllButtonProps) {
   const content = (
-    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer rounded-full hover:bg-surface/50">
+    <span className="group inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer rounded-full hover:bg-surface/50">
       {label}
-      <ArrowRight className="h-4 w-4" />
+      <ArrowRight className="h-4 w-4 transition-transform duration-100 group-hover:translate-x-1" />
     </span>
   );
 

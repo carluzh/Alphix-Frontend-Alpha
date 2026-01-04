@@ -65,9 +65,12 @@ function formatPriceForDisplay(
   price: string,
   decimals: number
 ): string {
+  // Preserve special values as-is
+  if (price === '-' || price === '∞' || price === '0') return price;
+
   const v = parseFloat(price);
-  if (!isFinite(v)) return '∞';
-  if (price === '0') return '0';
+  // Only return ∞ for actual infinity, not for unparseable values
+  if (!isFinite(v)) return price;
 
   const threshold = Math.pow(10, -decimals);
   if (v > 0 && v < threshold) return `<${threshold.toFixed(decimals)}`;

@@ -46,10 +46,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
   const raw = inputValidation.data.poolId;
 
-  // Accept either friendly route id or subgraph id
+  // Accept either friendly route id or subgraph id (bytes32 hex)
   const all = getAllPools(networkMode);
   const maybe = all.find(p => String(p.id).toLowerCase() === raw.toLowerCase());
-  const subgraphId = (maybe?.subgraphId || getPoolSubgraphId(raw, networkMode) || raw) as string;
+  let subgraphId = maybe?.subgraphId || getPoolSubgraphId(raw, networkMode);
+
+  // If not found by friendly ID, check if raw is already a valid bytes32 hex
+  if (!subgraphId && /^0x[a-fA-F0-9]{64}$/.test(raw)) {
+    subgraphId = raw;
+  }
+
+  // Validate we have a proper bytes32 hex string
+  if (!subgraphId || !/^0x[a-fA-F0-9]{64}$/.test(subgraphId)) {
+    console.error('[get-pool-state] Pool not found:', raw, 'networkMode:', networkMode, 'available pools:', all.map(p => p.id));
+    return res.status(404).json({
+      message: 'Pool not found',
+      poolId: raw,
+      networkMode,
+      hint: 'Check that the pool exists in the current network configuration'
+    });
+  }
 
   try {
     // No caching - pool state (sqrtPriceX96, tick, liquidity) must always be fresh for accurate quotes

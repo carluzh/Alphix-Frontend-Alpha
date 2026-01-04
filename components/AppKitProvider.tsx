@@ -12,18 +12,19 @@ import { ONE_SECOND_MS, ONE_DAY_MS } from '@/lib/utils/time'
 import { hashKey } from '@/lib/utils/hashKey'
 import { apolloClient } from '@/lib/apollo/client'
 
-if (typeof window !== 'undefined' && projectId) {
-  createAppKit({
-    adapters: [wagmiAdapter],
-    projectId,
-    networks: isMainnet ? [appKitBase, appKitBaseSepolia] : [appKitBaseSepolia, appKitBase],
-    defaultNetwork: isMainnet ? appKitBase : appKitBaseSepolia,
-    metadata: { name: 'Alphix', description: 'Alphix AMM', url: window.location.origin, icons: ['/favicon.ico'] },
-    features: { analytics: true, email: false, socials: [] },
-    themeMode: 'dark',
-    themeVariables: { '--w3m-font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', '--w3m-accent': '#FFFFFF', '--w3m-border-radius-master': '8px' }
-  })
-}
+// Store the AppKit instance for direct access (avoids useAppKit hook SSR issues)
+export const appKit = typeof window !== 'undefined' && projectId
+  ? createAppKit({
+      adapters: [wagmiAdapter],
+      projectId,
+      networks: isMainnet ? [appKitBase, appKitBaseSepolia] : [appKitBaseSepolia, appKitBase],
+      defaultNetwork: isMainnet ? appKitBase : appKitBaseSepolia,
+      metadata: { name: 'Alphix', description: 'Alphix AMM', url: window.location.origin, icons: ['/favicon.ico'] },
+      features: { analytics: true, email: false, socials: [] },
+      themeMode: 'dark',
+      themeVariables: { '--w3m-font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', '--w3m-accent': '#FFFFFF', '--w3m-border-radius-master': '8px' }
+    })
+  : null
 
 // Identical to Uniswap SharedQueryClient.ts
 const queryClient = new QueryClient({
