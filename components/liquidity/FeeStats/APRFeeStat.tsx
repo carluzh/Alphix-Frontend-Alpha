@@ -48,13 +48,13 @@ export function APRFeeStat({
     <FeeStat>
       {/* APR value - mirrors PrimaryText */}
       <span className={cn(
-        "text-xs font-medium font-mono",
+        "text-sm font-medium font-mono",
         isFallback && "text-white/50"
       )}>
         {formattedApr}
       </span>
       {/* Label - mirrors SecondaryText */}
-      <span className="text-[10px] text-muted-foreground">
+      <span className="text-xs text-muted-foreground">
         APR
       </span>
     </FeeStat>

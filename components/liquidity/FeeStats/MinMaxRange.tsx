@@ -1,13 +1,8 @@
 /**
  * MinMaxRange
  *
- * Displays min/max price range with optional price inversion toggle.
- * Mirrors Uniswap's MinMaxRange from:
- * - interface/apps/web/src/components/Liquidity/LiquidityPositionFeeStats.tsx (lines 188-265)
- *
- * Can work with either:
- * 1. Pre-formatted prices (minPrice, maxPrice strings from parent)
- * 2. useGetRangeDisplay hook (when priceOrdering contains SDK Price objects)
+ * Displays min/max price range.
+ * Uses pre-formatted prices from useGetRangeDisplay which uses significant digits.
  */
 
 "use client"
@@ -15,20 +10,8 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 import { FeeStat } from './FeeStat';
-import {
-  useGetRangeDisplay,
-  getRangeDisplay,
-  type PriceOrdering,
-} from '@/lib/liquidity/hooks/range';
-import { getDecimalsForDenomination } from '@/lib/denomination-utils';
-
-// =============================================================================
-// TYPES
-// =============================================================================
 
 interface MinMaxRangeProps {
-  /** Price ordering with bounds and currencies (for useGetRangeDisplay) */
-  priceOrdering?: PriceOrdering;
   /** Pool tick spacing */
   tickSpacing?: number;
   /** Position lower tick */
@@ -43,9 +26,9 @@ interface MinMaxRangeProps {
   poolType?: string;
   /** Denomination base token */
   denominationBase?: string;
-  /** Pre-formatted min price (when not using SDK Price objects) */
+  /** Pre-formatted min price (from useGetRangeDisplay with significant digits) */
   formattedMinPrice?: string;
-  /** Pre-formatted max price (when not using SDK Price objects) */
+  /** Pre-formatted max price (from useGetRangeDisplay with significant digits) */
   formattedMaxPrice?: string;
   /** Whether this is a full range position */
   isFullRange?: boolean;
@@ -53,132 +36,30 @@ interface MinMaxRangeProps {
   className?: string;
 }
 
-// =============================================================================
-// HELPER FUNCTIONS
-// =============================================================================
-
-/**
- * Format price for display with appropriate decimals.
- * Mirrors formatting logic from PositionCardCompact.
- */
-function formatPriceForDisplay(
-  price: string,
-  decimals: number
-): string {
-  // Preserve special values as-is
-  if (price === '-' || price === '∞' || price === '0') return price;
-
-  const v = parseFloat(price);
-  // Only return ∞ for actual infinity, not for unparseable values
-  if (!isFinite(v)) return price;
-
-  const threshold = Math.pow(10, -decimals);
-  if (v > 0 && v < threshold) return `<${threshold.toFixed(decimals)}`;
-
-  const formatted = v.toLocaleString('en-US', {
-    maximumFractionDigits: decimals,
-    minimumFractionDigits: Math.min(2, decimals)
-  });
-
-  if (formatted === '0.00' && v > 0) return `<${threshold.toFixed(decimals)}`;
-
-  return formatted;
-}
-
-// =============================================================================
-// MAIN COMPONENT
-// =============================================================================
-
 /**
  * MinMaxRange component.
- * Displays price range with toggle for price inversion.
+ * Displays price range using pre-formatted prices from useGetRangeDisplay.
  *
- * Mirrors Uniswap's MinMaxRange:
- * - Full range: displays "Full range" text
- * - Bounded: displays "min - max" with token symbols
- * - Toggle icon shown on hover (desktop only)
- *
- * Responsive: Hidden on mobile (lg:flex pattern from current implementation)
- *
- * @example
- * ```tsx
- * // With pre-formatted prices
- * <MinMaxRange
- *   formattedMinPrice="1,234.56"
- *   formattedMaxPrice="5,678.90"
- *   isFullRange={false}
- *   pricesInverted={pricesInverted}
- *   setPricesInverted={setPricesInverted}
- *   poolType="volatile"
- *   denominationBase="USDC"
- * />
- *
- * // With useGetRangeDisplay
- * <MinMaxRange
- *   priceOrdering={priceOrdering}
- *   tickSpacing={tickSpacing}
- *   tickLower={tickLower}
- *   tickUpper={tickUpper}
- *   pricesInverted={pricesInverted}
- *   setPricesInverted={setPricesInverted}
- * />
- * ```
+ * The prices are already formatted using toSignificant() which provides
+ * appropriate precision for all token pairs (including stablecoins).
  */
 export function MinMaxRange({
-  priceOrdering,
-  tickSpacing,
-  tickLower,
-  tickUpper,
-  pricesInverted,
-  setPricesInverted,
-  poolType,
-  denominationBase,
   formattedMinPrice,
   formattedMaxPrice,
   isFullRange: isFullRangeProp,
   className,
 }: MinMaxRangeProps) {
-  // Determine min/max prices and full range status
-  // Use pre-formatted values if provided, otherwise use hook
-  let minPrice: string;
-  let maxPrice: string;
-  let isFullRange: boolean;
-
-  if (formattedMinPrice !== undefined && formattedMaxPrice !== undefined) {
-    // Use pre-formatted values
-    minPrice = formattedMinPrice;
-    maxPrice = formattedMaxPrice;
-    isFullRange = isFullRangeProp ?? false;
-  } else if (priceOrdering) {
-    // Use hook for SDK Price-based formatting
-    const rangeDisplay = getRangeDisplay({
-      priceOrdering,
-      tickSpacing,
-      tickLower,
-      tickUpper,
-      pricesInverted,
-    });
-    minPrice = rangeDisplay.minPrice;
-    maxPrice = rangeDisplay.maxPrice;
-    isFullRange = rangeDisplay.isFullRange ?? false;
-  } else {
-    // Fallback
-    minPrice = '-';
-    maxPrice = '-';
-    isFullRange = false;
-  }
-
-  // Format prices with appropriate decimals
-  const decimals = getDecimalsForDenomination(denominationBase || '', poolType);
-  const displayMinPrice = formatPriceForDisplay(minPrice, decimals);
-  const displayMaxPrice = formatPriceForDisplay(maxPrice, decimals);
+  // Use pre-formatted values directly - they already use significant digits
+  const minPrice = formattedMinPrice ?? '-';
+  const maxPrice = formattedMaxPrice ?? '-';
+  const isFullRange = isFullRangeProp ?? false;
 
   // Full range case - mirrors Uniswap's full range display
   if (isFullRange) {
     return (
       <FeeStat className={cn("hidden lg:flex", className)}>
-        <span className="text-xs font-medium font-mono">Full range</span>
-        <span className="text-[10px] text-muted-foreground">Range</span>
+        <span className="text-sm font-medium font-mono">Full range</span>
+        <span className="text-xs text-muted-foreground">Range</span>
       </FeeStat>
     );
   }
@@ -186,10 +67,10 @@ export function MinMaxRange({
   // Bounded range - mirrors Uniswap's min/max display
   return (
     <FeeStat className={cn("hidden lg:flex", className)}>
-      <span className="text-xs text-foreground truncate font-mono">
-        {displayMinPrice} - {displayMaxPrice}
+      <span className="text-sm text-foreground truncate font-mono">
+        {minPrice} - {maxPrice}
       </span>
-      <span className="text-[10px] text-muted-foreground">Range</span>
+      <span className="text-xs text-muted-foreground">Range</span>
     </FeeStat>
   );
 }

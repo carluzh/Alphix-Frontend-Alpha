@@ -7,5 +7,4 @@
 
 export { useAllPrices } from './useAllPrices'
 export { useUserPositions } from './useUserPositions'
-export { useUncollectedFeesBatch } from './useUncollectedFeesBatch'
 export { usePoolState } from './usePoolState'

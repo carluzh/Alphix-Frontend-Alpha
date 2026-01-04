@@ -58,7 +58,6 @@ export interface TransactionFlowPanelProps {
   currentPoolSqrtPriceX96?: string | null;
   selectedPoolId?: string;
   getUsdPriceForSymbol?: (symbol?: string) => number;
-  convertTickToPrice?: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
   zapQuote?: {
     expectedToken0Amount?: string;
     expectedToken1Amount?: string;
@@ -98,7 +97,6 @@ export function TransactionFlowPanel({
   currentPoolSqrtPriceX96,
   selectedPoolId,
   getUsdPriceForSymbol,
-  convertTickToPrice,
   zapQuote,
   currentSlippage,
 }: TransactionFlowPanelProps) {
@@ -278,7 +276,7 @@ export function TransactionFlowPanel({
       <div className="p-3 border border-dashed rounded-md bg-muted/10">
         <div className="flex items-center justify-between mb-3">
           <p className="text-sm font-medium text-foreground/80">Transaction Steps</p>
-          {calculatedData && (parseFloat(amount0 || "0") > 0 || parseFloat(amount1 || "0") > 0) && getUsdPriceForSymbol && convertTickToPrice && (
+          {calculatedData && (parseFloat(amount0 || "0") > 0 || parseFloat(amount1 || "0") > 0) && getUsdPriceForSymbol && (
             <button
               onClick={() => setShowPreviewModal(true)}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
@@ -347,7 +345,7 @@ export function TransactionFlowPanel({
       )}
 
       {/* Preview Position Modal */}
-      {calculatedData && getUsdPriceForSymbol && convertTickToPrice && (
+      {calculatedData && getUsdPriceForSymbol && (
         <PreviewPositionModal
           isOpen={showPreviewModal}
           onClose={() => setShowPreviewModal(false)}
@@ -366,7 +364,6 @@ export function TransactionFlowPanel({
           currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
           selectedPoolId={selectedPoolId}
           getUsdPriceForSymbol={getUsdPriceForSymbol}
-          convertTickToPrice={convertTickToPrice}
           isZapMode={isZapMode}
           zapInputToken={zapInputToken}
           zapInputAmount={zapInputToken === 'token0' ? amount0 : amount1}

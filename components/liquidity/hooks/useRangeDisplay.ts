@@ -9,8 +9,8 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { getPoolById } from '@/lib/pools-config';
-import { getDecimalsForDenomination } from '@/lib/denomination-utils';
-import { convertTickToPrice, isFullRangePosition } from '@/lib/liquidity';
+import { getDecimalsForDenomination, convertTickToPrice } from '@/lib/denomination-utils';
+import { isFullRangePosition } from '@/lib/liquidity';
 import { type CalculatedLiquidityData } from '@/lib/liquidity/hooks';
 
 export interface UseRangeDisplayParams {
@@ -94,18 +94,19 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
       ? parseFloat(calculatedData.priceAtTickUpper)
       : null;
 
-    // Calculate tick price with fallback using lib/liquidity utility
+    // Calculate tick price with fallback using denomination-utils
     const getTickPrice = (tick: number, apiPrice: number | null): number | null => {
       if (apiPrice !== null) return isInvertedDisplay ? 1 / apiPrice : apiPrice;
       if (isNaN(tick)) return null;
-      // Use lib/liquidity utility for conversion
-      const priceStr = convertTickToPrice({
+      // Use denomination-utils for conversion
+      const priceStr = convertTickToPrice(
         tick,
-        currentPrice,
         currentPoolTick,
-        baseToken: baseTokenForPriceDisplay,
+        currentPrice,
+        baseTokenForPriceDisplay,
         token0Symbol,
-      });
+        token1Symbol
+      );
       return priceStr ? parseFloat(priceStr) : null;
     };
 
@@ -156,15 +157,16 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
     const shouldInvert = baseTokenForPriceDisplay === token0Symbol;
     const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
 
-    // Use lib/liquidity utility for price calculation
+    // Use denomination-utils for price calculation
     const priceAt = (tickVal: number): number => {
-      const priceStr = convertTickToPrice({
-        tick: tickVal,
-        currentPrice,
+      const priceStr = convertTickToPrice(
+        tickVal,
         currentPoolTick,
-        baseToken: baseTokenForPriceDisplay,
+        currentPrice,
+        baseTokenForPriceDisplay,
         token0Symbol,
-      });
+        token1Symbol
+      );
       return priceStr ? parseFloat(priceStr) : NaN;
     };
 

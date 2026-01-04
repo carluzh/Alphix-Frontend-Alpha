@@ -40,11 +40,6 @@ export {
   getPricePositionInRange,
 } from './getPriceDifference';
 
-export {
-  convertPriceToValidTick,
-  convertTickToPrice,
-  getNearestUsableTick,
-  calculateTicksFromPercentage,
-  type PriceToTickParams,
-  type TickToPriceParams,
-} from './priceConversion';
+export { calculateTicksFromPercentage } from './calculateTicksFromPercentage';
+
+// priceConversion.ts DELETED - use Uniswap SDK's tickToPrice instead

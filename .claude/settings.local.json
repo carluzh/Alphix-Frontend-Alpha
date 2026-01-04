@@ -135,7 +135,14 @@
       "Bash(node scripts/test-uniswap-api.mjs:*)",
       "Bash(head:*)",
       "Bash(node scripts/test-uniswap-api-connect.mjs:*)",
-      "Bash(node scripts/test-uniswap-graphql.mjs:*)"
+      "Bash(node scripts/test-uniswap-graphql.mjs:*)",
+      "Bash(node -e:*)",
+      "Bash(powershell -Command \"New-Item -ItemType Directory -Force -Path ''lib\\\\uniswap\\\\liquidity\\\\utils''\")",
+      "Bash(powershell -Command \"New-Item -ItemType Directory -Force -Path ''lib\\\\uniswap\\\\liquidity\\\\hooks''\")",
+      "Bash(powershell -Command \"New-Item -ItemType Directory -Force -Path ''lib\\\\uniswap\\\\liquidity\\\\Create''\")",
+      "Bash(npm ls:*)",
+      "Bash(npm info:*)",
+      "Bash(move \"app\\\\\\(app\\)\\\\portfolio\" \"app\\\\\\(app\\)\\\\overview\")"
     ],
     "deny": [],
     "ask": []

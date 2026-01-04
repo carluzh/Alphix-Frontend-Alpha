@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { PositionCardCompact } from "./PositionCardCompact";
 import { getTokenDefinitions, TokenSymbol, getToken, getPoolById } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
+import { parseSubgraphPosition, type SubgraphPosition } from "@/lib/uniswap/liquidity";
 import { formatUnits } from "viem";
 import { formatTokenDisplayAmount } from "@/lib/utils";
 import Image from "next/image";
@@ -43,7 +44,6 @@ interface PreviewPositionModalProps {
   currentPoolSqrtPriceX96?: string | null;
   selectedPoolId?: string;
   getUsdPriceForSymbol: (symbol?: string) => number;
-  convertTickToPrice: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
   isZapMode?: boolean;
   zapInputToken?: 'token0' | 'token1';
   zapInputAmount?: string;
@@ -72,7 +72,6 @@ export function PreviewPositionModal({
   currentPoolSqrtPriceX96,
   selectedPoolId,
   getUsdPriceForSymbol,
-  convertTickToPrice,
   isZapMode = false,
   zapInputToken = 'token0',
   zapInputAmount,
@@ -306,8 +305,12 @@ export function PreviewPositionModal({
       : formatAmount(amount1ToUse, token1Def?.decimals || 18)
     : "0";
 
-  // Create a preview position object that matches the PositionCardCompact format
-  const previewPosition = {
+  // Create a preview position object and convert to PositionInfo
+  const isInRange = currentPoolTick !== null &&
+    currentPoolTick >= parseInt(tickLower) &&
+    currentPoolTick <= parseInt(tickUpper);
+
+  const subgraphPos: SubgraphPosition = {
     positionId: "preview",
     owner: "0x0000000000000000000000000000000000000000",
     poolId: `${token0Symbol}/${token1Symbol}`,
@@ -315,26 +318,29 @@ export function PreviewPositionModal({
       address: token0Def?.address || "",
       symbol: token0Symbol,
       amount: formattedAmount0,
-      usdValue: parseFloat(formattedAmount0) * getUsdPriceForSymbol(token0Symbol),
     },
     token1: {
       address: token1Def?.address || "",
       symbol: token1Symbol,
       amount: formattedAmount1,
-      usdValue: parseFloat(formattedAmount1) * getUsdPriceForSymbol(token1Symbol),
     },
     tickLower: parseInt(tickLower),
     tickUpper: parseInt(tickUpper),
-    isInRange: currentPoolTick !== null &&
-      currentPoolTick >= parseInt(tickLower) &&
-      currentPoolTick <= parseInt(tickUpper),
-    ageSeconds: 0,
-    blockTimestamp: Date.now() / 1000,
-    lastTimestamp: Date.now() / 1000,
+    liquidity: "0",
+    isInRange,
+    blockTimestamp: Math.floor(Date.now() / 1000),
+    lastTimestamp: Math.floor(Date.now() / 1000),
   };
 
+  const previewPositionInfo = parseSubgraphPosition(subgraphPos, {
+    chainId: chainId ?? 8453,
+    token0Decimals: token0Def?.decimals ?? 18,
+    token1Decimals: token1Def?.decimals ?? 18,
+  });
+
   // Calculate total value USD
-  const valueUSD = (previewPosition.token0.usdValue || 0) + (previewPosition.token1.usdValue || 0);
+  const valueUSD = parseFloat(formattedAmount0) * getUsdPriceForSymbol(token0Symbol) +
+    parseFloat(formattedAmount1) * getUsdPriceForSymbol(token1Symbol);
 
   // Get the correct input token symbol for zap mode
   const inputTokenSymbol = zapInputToken === 'token0' ? token0Symbol : token1Symbol;
@@ -446,24 +452,24 @@ export function PreviewPositionModal({
                 )}
 
                 {/* Position Preview Card - Now below swap */}
-                <PositionCardCompact
-                  position={previewPosition}
-                  valueUSD={valueUSD}
-                  onClick={() => {}}
-                  getUsdPriceForSymbol={getUsdPriceForSymbol}
-                  convertTickToPrice={convertTickToPrice}
-                  poolType={poolType}
-                  poolContext={{
-                    currentPrice,
-                    currentPoolTick,
-                    poolAPR: calculatedAPR ? parseFloat(calculatedAPR.toFixed(2)) : null,
-                    isLoadingPrices: false,
-                    isLoadingPoolStates: false,
-                  }}
-                  fees={{ raw0: "0", raw1: "0" }}
-                  showMenuButton={false}
-                  disableHover={true}
-                />
+                {previewPositionInfo && (
+                  <PositionCardCompact
+                    position={previewPositionInfo}
+                    valueUSD={valueUSD}
+                    onClick={() => {}}
+                    getUsdPriceForSymbol={getUsdPriceForSymbol}
+                    poolType={poolType}
+                    poolContext={{
+                      currentPrice,
+                      currentPoolTick,
+                      poolAPR: calculatedAPR ? parseFloat(calculatedAPR.toFixed(2)) : null,
+                      isLoadingPrices: false,
+                      isLoadingPoolStates: false,
+                    }}
+                    showMenuButton={false}
+                    disableHover={true}
+                  />
+                )}
               </div>
 
               {/* Footer Button */}

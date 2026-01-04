@@ -533,15 +533,3 @@ export function calculateUnclaimedFeesV4(
     };
 }
 
-export function calculateLifetimeFeesV4(
-    liquidity: bigint,
-    feeGrowthInside0Current: bigint,
-    feeGrowthInside1Current: bigint,
-) {
-    const Q128 = 2n ** 128n;
-    return {
-        token0LifetimeFees: (feeGrowthInside0Current * liquidity) / Q128,
-        token1LifetimeFees: (feeGrowthInside1Current * liquidity) / Q128,
-    };
-}
-

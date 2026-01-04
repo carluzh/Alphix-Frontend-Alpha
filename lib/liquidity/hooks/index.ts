@@ -68,16 +68,10 @@ export {
   type CheckZapApprovalsResponse,
 } from './approval'
 
-// Range hooks
+// Range utilities (minimal - most deleted, use SDK directly)
 export {
-  type PriceOrdering,
   Bound,
-  type RangeDisplayResult,
-  useIsTickAtLimit,
-  useGetRangeDisplay,
   getIsTickAtLimit,
-  getRangeDisplay,
-  formatRangeString,
   isFullRangePosition,
 } from './range'
 

@@ -11,34 +11,23 @@ import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { cn } from '@/lib/utils';
 import { formatUSD } from '@/lib/format';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { type PositionInfo } from '@/lib/uniswap/liquidity';
 
-interface ProcessedPosition {
-  positionId: string;
-  owner: string;
-  poolId: string;
-  token0: {
-    address: string;
-    symbol: string;
-    amount: string;
-    usdValue?: number;
-  };
-  token1: {
-    address: string;
-    symbol: string;
-    amount: string;
-    usdValue?: number;
-  };
-  tickLower: number;
-  tickUpper: number;
-  isInRange: boolean;
-  ageSeconds: number;
-  blockTimestamp: number;
+/**
+ * Extract token data from PositionInfo SDK objects
+ */
+function getTokenDataFromPosition(position: PositionInfo) {
+  const currency0 = position.currency0Amount.currency;
+  const currency1 = position.currency1Amount.currency;
+  const token0Symbol = currency0.symbol ?? 'TOKEN0';
+  const token1Symbol = currency1.symbol ?? 'TOKEN1';
+  return { token0Symbol, token1Symbol };
 }
 
 interface ClaimFeeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  position: ProcessedPosition;
+  position: PositionInfo;
   /** Fee amount for token 0 (display formatted) */
   feeAmount0: number;
   /** Fee amount for token 1 (display formatted) */
@@ -75,6 +64,10 @@ export function ClaimFeeModal({
   const [showSuccess, setShowSuccess] = useState(false);
   const isMobile = useIsMobile();
 
+  // Extract token data from PositionInfo
+  const { token0Symbol, token1Symbol } = useMemo(() => getTokenDataFromPosition(position), [position]);
+  const positionId = position.tokenId;
+
   // Use the existing claimFees hook
   const {
     claimFees,
@@ -85,14 +78,14 @@ export function ClaimFeeModal({
   } = useDecreaseLiquidity({
     onFeesCollected: (info) => {
       setShowSuccess(true);
-      onFeesCollected?.(position.positionId);
+      if (positionId) onFeesCollected?.(positionId);
       onRefreshPosition?.();
     },
   });
 
   // Get token logos
-  const token0Logo = getToken(position.token0.symbol)?.icon || '/placeholder-logo.svg';
-  const token1Logo = getToken(position.token1.symbol)?.icon || '/placeholder-logo.svg';
+  const token0Logo = getToken(token0Symbol)?.icon || '/placeholder-logo.svg';
+  const token1Logo = getToken(token1Symbol)?.icon || '/placeholder-logo.svg';
 
   // Calculate total fees
   const totalFeesUSD = fee0USD + fee1USD;
@@ -110,12 +103,13 @@ export function ClaimFeeModal({
 
   // Handle collect button click
   const handleCollect = useCallback(async () => {
+    if (!positionId) return;
     try {
-      await claimFees(position.positionId);
+      await claimFees(positionId);
     } catch (e) {
       console.error('[ClaimFeeModal] claimFees failed:', e);
     }
-  }, [claimFees, position.positionId]);
+  }, [claimFees, positionId]);
 
   // Handle modal close
   const handleClose = useCallback(() => {
@@ -260,7 +254,7 @@ export function ClaimFeeModal({
                     <div className="relative w-8 h-8 rounded-full overflow-hidden border-2 border-background z-10">
                       <Image
                         src={token0Logo}
-                        alt={position.token0.symbol}
+                        alt={token0Symbol}
                         width={32}
                         height={32}
                       />
@@ -268,7 +262,7 @@ export function ClaimFeeModal({
                     <div className="relative w-8 h-8 rounded-full overflow-hidden border-2 border-background">
                       <Image
                         src={token1Logo}
-                        alt={position.token1.symbol}
+                        alt={token1Symbol}
                         width={32}
                         height={32}
                       />
@@ -276,10 +270,10 @@ export function ClaimFeeModal({
                   </div>
                   <div>
                     <h3 className="text-sm font-medium">
-                      {position.token0.symbol} / {position.token1.symbol}
+                      {token0Symbol} / {token1Symbol}
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      Position #{position.positionId.slice(-6)}
+                      Position #{positionId?.slice(-6) ?? ''}
                     </p>
                   </div>
                 </div>
@@ -296,12 +290,12 @@ export function ClaimFeeModal({
                       <div className="relative w-6 h-6 rounded-full overflow-hidden">
                         <Image
                           src={token0Logo}
-                          alt={position.token0.symbol}
+                          alt={token0Symbol}
                           width={24}
                           height={24}
                         />
                       </div>
-                      <span className="text-sm font-medium">{position.token0.symbol}</span>
+                      <span className="text-sm font-medium">{token0Symbol}</span>
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-medium">{displayFee0}</div>
@@ -317,12 +311,12 @@ export function ClaimFeeModal({
                       <div className="relative w-6 h-6 rounded-full overflow-hidden">
                         <Image
                           src={token1Logo}
-                          alt={position.token1.symbol}
+                          alt={token1Symbol}
                           width={24}
                           height={24}
                         />
                       </div>
-                      <span className="text-sm font-medium">{position.token1.symbol}</span>
+                      <span className="text-sm font-medium">{token1Symbol}</span>
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-medium">{displayFee1}</div>

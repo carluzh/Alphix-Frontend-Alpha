@@ -9,7 +9,7 @@
  */
 
 import { Dispatch, SetStateAction } from 'react';
-import type { PriceOrdering } from '@/lib/liquidity/hooks/range';
+// PriceOrdering DELETED - use pre-formatted prices instead
 import type { PositionPointsData } from '@/types';
 
 // =============================================================================
@@ -19,13 +19,10 @@ import type { PositionPointsData } from '@/types';
 
 /**
  * Props for MinMaxRange component.
- * Mirrors Uniswap's LiquidityPositionMinMaxRangeProps exactly.
- *
- * @see interface/apps/web/src/components/Liquidity/LiquidityPositionFeeStats.tsx (lines 179-186)
+ * Simplified - uses pre-formatted prices instead of SDK Price objects.
+ * TODO: Replace with Uniswap SDK Position when full SDK integration is done.
  */
 export interface LiquidityPositionMinMaxRangeProps {
-  /** Price ordering with lower/upper bounds and base/quote currencies (optional - use pre-formatted prices instead) */
-  priceOrdering?: PriceOrdering;
   /** Pool tick spacing for at-limit detection */
   tickSpacing?: number;
   /** Position lower tick */

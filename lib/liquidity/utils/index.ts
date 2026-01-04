@@ -4,7 +4,7 @@
  * Pure functions and calculations for liquidity operations.
  */
 
-// Calculation utilities
+// Calculation utilities (priceConversion.ts DELETED - use Uniswap SDK)
 export {
   getDependentAmountFromV4Position,
   getDependentAmount,
@@ -33,12 +33,6 @@ export {
   comparePrices,
   isPriceWithinRange,
   getPricePositionInRange,
-  convertPriceToValidTick,
-  convertTickToPrice,
-  getNearestUsableTick,
-  calculateTicksFromPercentage,
-  type PriceToTickParams,
-  type TickToPriceParams,
 } from './calculations'
 
 // Validation utilities

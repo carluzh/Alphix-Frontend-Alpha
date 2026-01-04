@@ -1,20 +1,8 @@
 /**
- * Range Hooks
+ * Range Utilities
  *
- * Hooks for price range selection and display.
+ * Minimal SDK-based functions for tick limit checking.
+ * TODO: Remove when full Uniswap SDK integration is complete.
  */
 
-export {
-  // Types
-  type PriceOrdering,
-  Bound,
-  type RangeDisplayResult,
-  // Hooks
-  useIsTickAtLimit,
-  useGetRangeDisplay,
-  // Utilities
-  getIsTickAtLimit,
-  getRangeDisplay,
-  formatRangeString,
-  isFullRangePosition,
-} from './useGetRangeDisplay';
+export { Bound, getIsTickAtLimit, isFullRangePosition } from './useGetRangeDisplay';

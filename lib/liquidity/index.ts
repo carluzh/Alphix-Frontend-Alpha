@@ -51,16 +51,11 @@ export {
   type LegacyApprovalResponse,
 } from './hooks/approval';
 
-// Range hooks
+// Range hooks - Minimal SDK-based utilities
+// TODO: Replace with direct Uniswap SDK imports when full SDK integration is done
 export {
-  type PriceOrdering,
   Bound,
-  type RangeDisplayResult,
-  useIsTickAtLimit,
-  useGetRangeDisplay,
   getIsTickAtLimit,
-  getRangeDisplay,
-  formatRangeString,
   isFullRangePosition,
 } from './hooks/range';
 
@@ -103,13 +98,7 @@ export {
   comparePrices,
   isPriceWithinRange,
   getPricePositionInRange,
-  // Price conversion utilities
-  convertPriceToValidTick,
-  convertTickToPrice,
-  getNearestUsableTick,
-  calculateTicksFromPercentage,
-  type PriceToTickParams,
-  type TickToPriceParams,
+  // Price conversion utilities - DELETED, use Uniswap SDK's tickToPrice instead
 } from './utils/calculations';
 
 // Validation utilities (fee tiers, error handling)

@@ -17,7 +17,37 @@ import { Token } from '@uniswap/sdk-core';
 import { Pool as V4Pool } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { convertTickToPrice, convertPriceToValidTick, calculateTicksFromPercentage, isFullRangePosition } from '@/lib/liquidity';
+import { convertTickToPrice } from '@/lib/denomination-utils';
+import { isFullRangePosition } from '@/lib/liquidity';
+import { calculateTicksFromPercentage } from '@/lib/liquidity/utils/calculations';
+
+// Inline convertPriceToValidTick - TODO: Replace with Uniswap SDK when integration done
+function convertPriceToValidTick(params: {
+  priceString: string;
+  isMaxPrice: boolean;
+  baseToken: string;
+  token0Symbol: string;
+  tickSpacing: number;
+  minTick: number;
+  maxTick: number;
+  currentPrice: string;
+  currentPoolTick: number;
+}): number | null {
+  const { priceString, isMaxPrice, baseToken, token0Symbol, tickSpacing, minTick, maxTick, currentPrice, currentPoolTick } = params;
+  const price = parseFloat(priceString);
+  if (isNaN(price) || price <= 0) return null;
+  const currentPriceNum = parseFloat(currentPrice);
+  if (isNaN(currentPriceNum) || currentPriceNum <= 0) return null;
+  const shouldInvert = baseToken === token0Symbol;
+  const priceInToken1PerToken0 = shouldInvert ? 1 / price : price;
+  const priceRatio = priceInToken1PerToken0 / currentPriceNum;
+  const tickDelta = Math.round(Math.log(priceRatio) / Math.log(1.0001));
+  let rawTick = currentPoolTick + tickDelta;
+  rawTick = isMaxPrice
+    ? Math.ceil(rawTick / tickSpacing) * tickSpacing
+    : Math.floor(rawTick / tickSpacing) * tickSpacing;
+  return Math.max(minTick, Math.min(maxTick, rawTick));
+}
 
 // Consolidated constants for range presets
 const PRESET_PERCENTAGES: Record<string, number> = {
@@ -228,17 +258,18 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
     return price.toFixed(poolPriceDecimals);
   }, [currentPrice, shouldInvert, poolPriceDecimals]);
 
-  // Use lib/liquidity utility for tick -> price conversion
+  // Use denomination-utils for tick -> price conversion
   const calculatePriceFromTick = (tick: number): string => {
     if (!currentPrice || currentPoolTick === null || isNaN(tick)) return "0";
 
-    const result = convertTickToPrice({
+    const result = convertTickToPrice(
       tick,
-      currentPrice,
       currentPoolTick,
-      baseToken: denominationBase,
+      currentPrice,
+      denominationBase,
       token0Symbol,
-    });
+      token1Symbol
+    );
 
     if (!result) return "0";
 

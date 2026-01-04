@@ -10,6 +10,5 @@
 export {
   useAllPrices,
   useUserPositions,
-  useUncollectedFeesBatch,
   usePoolState,
 } from '@/lib/apollo/hooks'

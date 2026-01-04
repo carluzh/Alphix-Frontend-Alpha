@@ -15,7 +15,8 @@ import Image from "next/image";
 import { PositionChartV2 } from "./PositionChartV2";
 import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { calculateRealizedApr, formatApr } from "@/lib/apr";
-import { Percent } from '@uniswap/sdk-core';
+import { Percent, Token } from '@uniswap/sdk-core';
+import { PositionStatus } from '@uniswap/client-data-api/dist/data/v1/poolTypes_pb';
 import { AddLiquidityFormPanel } from "./AddLiquidityFormPanel";
 import { RemoveLiquidityFormPanel } from "./RemoveLiquidityFormPanel";
 import { TransactionFlowPanel } from "./TransactionFlowPanel";
@@ -35,6 +36,7 @@ import { toast } from "sonner";
 import { motion, useAnimation } from "framer-motion";
 import { getTokenSymbolByAddress } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { type PositionInfo } from "@/lib/uniswap/liquidity";
 
 // Define modal view types
 type ModalView = 'default' | 'add-liquidity' | 'remove-liquidity';
@@ -49,43 +51,45 @@ function StatusIndicatorCircle({ className }: { className?: string }) {
   );
 }
 
-type ProcessedPosition = {
-  positionId: string;
-  owner: string;
-  poolId: string;
-  token0: {
-    address: string;
-    symbol: string;
-    amount: string;
-    usdValue?: number;
+/**
+ * Helper to extract token data from PositionInfo
+ * Mirrors Uniswap's approach in parseFromRest.ts
+ */
+function getTokenDataFromPosition(position: PositionInfo) {
+  const currency0 = position.currency0Amount.currency;
+  const currency1 = position.currency1Amount.currency;
+
+  const token0Symbol = currency0.symbol ?? 'TOKEN0';
+  const token1Symbol = currency1.symbol ?? 'TOKEN1';
+  const token0Decimals = currency0.decimals;
+  const token1Decimals = currency1.decimals;
+  const token0Address = currency0.isNative ? '0x0000000000000000000000000000000000000000' : (currency0 as Token).address;
+  const token1Address = currency1.isNative ? '0x0000000000000000000000000000000000000000' : (currency1 as Token).address;
+  const token0Amount = position.currency0Amount.toExact();
+  const token1Amount = position.currency1Amount.toExact();
+
+  return {
+    token0Symbol,
+    token1Symbol,
+    token0Decimals,
+    token1Decimals,
+    token0Address,
+    token1Address,
+    token0Amount,
+    token1Amount,
   };
-  token1: {
-    address: string;
-    symbol: string;
-    amount: string;
-    usdValue?: number;
-  };
-  tickLower: number;
-  tickUpper: number;
-  isInRange: boolean;
-  ageSeconds: number;
-  blockTimestamp: number;
-  liquidityRaw?: string;
-};
+}
 
 interface PositionDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  position: ProcessedPosition;
+  position: PositionInfo;
   valueUSD: number;
-  prefetchedRaw0?: string | null;
-  prefetchedRaw1?: string | null;
   formatTokenDisplayAmount: (amount: string) => string;
   getUsdPriceForSymbol: (symbol?: string) => number;
   onRefreshPosition: () => void;
   currentPrice?: string | null;
   currentPoolTick?: number | null;
-  convertTickToPrice?: (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) => string;
   apr?: number | null;
   isLoadingAPR?: boolean;
   feeTier?: number | null;
@@ -108,6 +112,9 @@ interface PositionDetailsModalProps {
   onAfterLiquidityAdded?: (tvlDelta: number, info: { txHash: `0x${string}`; blockNumber: bigint }) => void;
   onAfterLiquidityRemoved?: (tvlDelta: number, info: { txHash: `0x${string}`; blockNumber: bigint }) => void;
   onFeesCollected?: (positionId: string) => void;
+  /** Position timestamps for APR calculation */
+  blockTimestamp?: number;
+  lastTimestamp?: number;
 }
 
 // Helper to extract average color from token icon (fallback to hardcoded colors)
@@ -132,8 +139,6 @@ export function PositionDetailsModal({
   onClose,
   position,
   valueUSD,
-  prefetchedRaw0,
-  prefetchedRaw1,
   formatTokenDisplayAmount,
   getUsdPriceForSymbol,
   onRefreshPosition,
@@ -160,8 +165,42 @@ export function PositionDetailsModal({
   onAfterLiquidityRemoved,
   onFeesCollected,
   apr,
-  convertTickToPrice,
+  blockTimestamp: propBlockTimestamp,
+  lastTimestamp: propLastTimestamp,
 }: PositionDetailsModalProps) {
+  // Extract token data from PositionInfo using helper
+  const {
+    token0Symbol,
+    token1Symbol,
+    token0Decimals,
+    token1Decimals,
+    token0Address,
+    token1Address,
+    token0Amount,
+    token1Amount,
+  } = useMemo(() => getTokenDataFromPosition(position), [position]);
+
+  // Extract position ID and status from PositionInfo
+  const positionId = position.tokenId;
+  const isInRange = position.status === PositionStatus.IN_RANGE;
+  const tickLower = position.tickLower!;
+  const tickUpper = position.tickUpper!;
+  const poolId = position.poolId;
+  const liquidity = position.liquidity;
+
+  // Extract fees from PositionInfo (SDK CurrencyAmount objects)
+  const { prefetchedRaw0, prefetchedRaw1 } = useMemo(() => {
+    const raw0 = position.token0UncollectedFees ?? '0';
+    const raw1 = position.token1UncollectedFees ?? '0';
+    return { prefetchedRaw0: raw0, prefetchedRaw1: raw1 };
+  }, [position.token0UncollectedFees, position.token1UncollectedFees]);
+
+  // TokenStack-compatible position object
+  const tokenStackPosition = useMemo(
+    () => ({ token0: { symbol: token0Symbol }, token1: { symbol: token1Symbol } }),
+    [token0Symbol, token1Symbol]
+  );
+
   const [mounted, setMounted] = useState(false);
   const [chartKey, setChartKey] = useState(0);
   const [currentView, setCurrentView] = useState<ModalView>('default');
@@ -199,18 +238,18 @@ export function PositionDetailsModal({
   // Get user balances for tokens
   const { data: token0Balance } = useBalance({
     address: accountAddress,
-    token: tokenDefinitions[position?.token0?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+    token: tokenDefinitions[token0Symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
-      : tokenDefinitions[position?.token0?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+      : tokenDefinitions[token0Symbol as TokenSymbol]?.address as `0x${string}` | undefined,
     chainId: chainId,
     query: { enabled: !!accountAddress && !!chainId && !!position },
   });
 
   const { data: token1Balance } = useBalance({
     address: accountAddress,
-    token: tokenDefinitions[position?.token1?.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
+    token: tokenDefinitions[token1Symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
-      : tokenDefinitions[position?.token1?.symbol as TokenSymbol]?.address as `0x${string}` | undefined,
+      : tokenDefinitions[token1Symbol as TokenSymbol]?.address as `0x${string}` | undefined,
     chainId: chainId,
     query: { enabled: !!accountAddress && !!chainId && !!position },
   });
@@ -223,12 +262,12 @@ export function PositionDetailsModal({
     isLoading: isCheckingIncreaseApprovals,
     refetch: refetchIncreaseApprovals,
   } = useCheckIncreaseApprovals(
-    accountAddress && chainId && position?.positionId
+    accountAddress && chainId && positionId
       ? {
           userAddress: accountAddress,
-          tokenId: BigInt(position.positionId),
-          token0Symbol: position.token0.symbol as TokenSymbol,
-          token1Symbol: position.token1.symbol as TokenSymbol,
+          tokenId: BigInt(positionId),
+          token0Symbol: token0Symbol as TokenSymbol,
+          token1Symbol: token1Symbol as TokenSymbol,
           amount0: increaseAmount0,
           amount1: increaseAmount1,
           fee0: prefetchedRaw0 || undefined,
@@ -237,7 +276,7 @@ export function PositionDetailsModal({
         }
       : undefined,
     {
-      enabled: Boolean(accountAddress && chainId && position?.positionId && (parseFloat(increaseAmount0 || '0') > 0 || parseFloat(increaseAmount1 || '0') > 0)),
+      enabled: Boolean(accountAddress && chainId && positionId && (parseFloat(increaseAmount0 || '0') > 0 || parseFloat(increaseAmount1 || '0') > 0)),
       staleTime: 5000,
     }
   );
@@ -288,7 +327,7 @@ export function PositionDetailsModal({
       }
     },
     onFeesCollected: () => {
-      onFeesCollected?.(position.positionId);
+      if (positionId) onFeesCollected?.(positionId);
       onRefreshPosition?.();
     },
   });
@@ -299,8 +338,8 @@ export function PositionDetailsModal({
 
     const needsApproval: TokenSymbol[] = [];
     const tokens = [
-      { symbol: position.token0.symbol as TokenSymbol, amount: increaseAmount0 },
-      { symbol: position.token1.symbol as TokenSymbol, amount: increaseAmount1 }
+      { symbol: token0Symbol as TokenSymbol, amount: increaseAmount0 },
+      { symbol: token1Symbol as TokenSymbol, amount: increaseAmount1 }
     ];
 
     for (const token of tokens) {
@@ -342,7 +381,7 @@ export function PositionDetailsModal({
     let approvalAmount: bigint = BigInt("115792089237316195423570985008687907853269984665640564039457584007913129639935");
 
     if (!useInfinite) {
-      const exactAmount = tokenSymbol === position.token0.symbol ? increaseAmount0 : increaseAmount1;
+      const exactAmount = tokenSymbol === token0Symbol ? increaseAmount0 : increaseAmount1;
       if (exactAmount) {
         try {
           approvalAmount = viemParseUnits(exactAmount, tokenConfig.decimals) + 1n; // +1 wei buffer
@@ -363,12 +402,12 @@ export function PositionDetailsModal({
       icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
       description: useInfinite ? `Approved infinite ${tokenSymbol} for liquidity` : `Approved exact ${tokenSymbol} for liquidity`,
     });
-  }, [approveERC20Async, tokenDefinitions, position.token0.symbol, increaseAmount0, increaseAmount1]);
+  }, [approveERC20Async, tokenDefinitions, token0Symbol, increaseAmount0, increaseAmount1]);
 
   const hasUncollectedFees = useCallback(() => {
-    if (!position || position.isInRange) return false;
-    const fee0 = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
-    const fee1 = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
+    if (!position || isInRange) return false;
+    const fee0 = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
+    const fee1 = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
     return fee0 > 0 || fee1 > 0;
   }, [position, prefetchedRaw0, prefetchedRaw1]);
 
@@ -381,20 +420,20 @@ export function PositionDetailsModal({
     let finalAmount0 = increaseAmount0 || '0';
     let finalAmount1 = increaseAmount1 || '0';
 
-    if (!position.isInRange && currentPoolTick !== null && currentPoolTick !== undefined) {
-      if (currentPoolTick >= position.tickUpper) finalAmount0 = '0';
-      else if (currentPoolTick <= position.tickLower) finalAmount1 = '0';
+    if (!isInRange && currentPoolTick !== null && currentPoolTick !== undefined) {
+      if (currentPoolTick >= tickUpper) finalAmount0 = '0';
+      else if (currentPoolTick <= tickLower) finalAmount1 = '0';
     }
 
     const data: IncreasePositionData = {
-      tokenId: position.positionId,
-      token0Symbol: position.token0.symbol as TokenSymbol,
-      token1Symbol: position.token1.symbol as TokenSymbol,
+      tokenId: positionId || '0',
+      token0Symbol: token0Symbol as TokenSymbol,
+      token1Symbol: token1Symbol as TokenSymbol,
       additionalAmount0: finalAmount0,
       additionalAmount1: finalAmount1,
-      poolId: position.poolId,
-      tickLower: position.tickLower,
-      tickUpper: position.tickUpper,
+      poolId: poolId,
+      tickLower: tickLower,
+      tickUpper: tickUpper,
       feesForIncrease: { amount0: prefetchedRaw0 || '0', amount1: prefetchedRaw1 || '0' },
     };
 
@@ -416,7 +455,7 @@ export function PositionDetailsModal({
     // Balance check is handled by button disabled state, no need for toast
 
     // For out-of-range positions, ensure at least one amount is greater than 0
-    if (!position.isInRange) {
+    if (!isInRange) {
       const amount0Num = parseFloat(withdrawAmount0 || "0");
       const amount1Num = parseFloat(withdrawAmount1 || "0");
       if (amount0Num <= 0 && amount1Num <= 0) {
@@ -445,8 +484,8 @@ export function PositionDetailsModal({
 
 
     // Map position token addresses to correct token symbols
-    const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
-    const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
+    const token0Symbol = getTokenSymbolByAddress(token0Address, networkMode);
+    const token1Symbol = getTokenSymbolByAddress(token1Address, networkMode);
 
     if (!token0Symbol || !token1Symbol) {
       toast.error("Configuration Error", {
@@ -462,8 +501,8 @@ export function PositionDetailsModal({
 
     const amt0 = parseFloat(withdrawAmount0 || '0');
     const amt1 = parseFloat(withdrawAmount1 || '0');
-    const max0Eff = parseFloat(position.token0.amount || '0');
-    const max1Eff = parseFloat(position.token1.amount || '0');
+    const max0Eff = parseFloat(token0Amount || '0');
+    const max1Eff = parseFloat(token1Amount || '0');
     const pct0 = max0Eff > 0 ? amt0 / max0Eff : 0;
     const pct1 = max1Eff > 0 ? amt1 / max1Eff : 0;
     const effectivePct = Math.max(pct0, pct1) * 100;
@@ -475,21 +514,21 @@ export function PositionDetailsModal({
     };
 
     const decreaseData: DecreasePositionData = {
-      tokenId: position.positionId,
+      tokenId: positionId || '0',
       token0Symbol: token0Symbol,
       token1Symbol: token1Symbol,
       decreaseAmount0: formatAmount(withdrawAmount0),
       decreaseAmount1: formatAmount(withdrawAmount1),
       isFullBurn: isExactly100,
-      poolId: position.poolId,
-      tickLower: position.tickLower,
-      tickUpper: position.tickUpper,
+      poolId: poolId,
+      tickLower: tickLower,
+      tickUpper: tickUpper,
       enteredSide: withdrawActiveInputSide === 'amount0' ? 'token0' : withdrawActiveInputSide === 'amount1' ? 'token1' : undefined,
     };
 
     toast("Confirm Withdraw", { icon: React.createElement(Info, { className: "h-4 w-4" }) });
 
-    if (position.isInRange) {
+    if (isInRange) {
       const pctRounded = isExactly100 ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
       decreaseLiquidity(decreaseData, pctRounded);
     } else {
@@ -509,12 +548,12 @@ export function PositionDetailsModal({
   const isWithdrawBurn = useMemo(() => {
     const amt0 = parseFloat(withdrawAmount0 || '0');
     const amt1 = parseFloat(withdrawAmount1 || '0');
-    const max0 = parseFloat(position.token0.amount || '0');
-    const max1 = parseFloat(position.token1.amount || '0');
+    const max0 = parseFloat(token0Amount || '0');
+    const max1 = parseFloat(token1Amount || '0');
     const pct0 = max0 > 0 ? amt0 / max0 : 0;
     const pct1 = max1 > 0 ? amt1 / max1 : 0;
     return (max0 > 0 ? Math.abs(pct0 - 1.0) < 0.0001 : true) && (max1 > 0 ? Math.abs(pct1 - 1.0) < 0.0001 : true);
-  }, [withdrawAmount0, withdrawAmount1, position.token0.amount, position.token1.amount]);
+  }, [withdrawAmount0, withdrawAmount1, token0Amount, token1Amount]);
 
   useEffect(() => {
     setMounted(true);
@@ -567,7 +606,7 @@ export function PositionDetailsModal({
       setPreviewRemoveAmount1(0);
       setShowInterimConfirmation(false);
     }
-  }, [isOpen, position.positionId]);
+  }, [isOpen, positionId]);
 
   // Handlers for switching views
   const handleAddLiquidityClick = () => {
@@ -611,8 +650,8 @@ export function PositionDetailsModal({
     if (onAfterLiquidityAdded && lastIncreaseTxInfoRef.current) {
       const amt0 = parseFloat(increaseAmount0 || '0');
       const amt1 = parseFloat(increaseAmount1 || '0');
-      const price0 = getUsdPriceForSymbol(position.token0.symbol);
-      const price1 = getUsdPriceForSymbol(position.token1.symbol);
+      const price0 = getUsdPriceForSymbol(token0Symbol);
+      const price1 = getUsdPriceForSymbol(token1Symbol);
       const tvlDelta = (amt0 * price0) + (amt1 * price1);
 
       if (tvlDelta > 0) {
@@ -636,15 +675,15 @@ export function PositionDetailsModal({
 
     // Trigger position refresh with backoff
     onRefreshPosition();
-  }, [onRefreshPosition, accountAddress, selectedPoolId, position.positionId, resetIncrease, onAfterLiquidityAdded, increaseAmount0, increaseAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
+  }, [onRefreshPosition, accountAddress, selectedPoolId, positionId, resetIncrease, onAfterLiquidityAdded, increaseAmount0, increaseAmount1, token0Symbol, token1Symbol, getUsdPriceForSymbol]);
 
   const handleRemoveLiquiditySuccess = useCallback(async () => {
     // Calculate TVL delta (negative) and notify parent for optimistic updates
     if (onAfterLiquidityRemoved && lastDecreaseTxInfoRef.current) {
       const amt0 = parseFloat(withdrawAmount0 || '0');
       const amt1 = parseFloat(withdrawAmount1 || '0');
-      const price0 = getUsdPriceForSymbol(position.token0.symbol);
-      const price1 = getUsdPriceForSymbol(position.token1.symbol);
+      const price0 = getUsdPriceForSymbol(token0Symbol);
+      const price1 = getUsdPriceForSymbol(token1Symbol);
       const tvlDelta = -Math.abs((amt0 * price0) + (amt1 * price1)); // Negative for removal
 
       if (tvlDelta < 0) {
@@ -674,7 +713,7 @@ export function PositionDetailsModal({
         onClose();
       }, 1500);
     }
-  }, [onRefreshPosition, accountAddress, selectedPoolId, position.positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, position.token0.symbol, position.token1.symbol, getUsdPriceForSymbol]);
+  }, [onRefreshPosition, accountAddress, selectedPoolId, positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, token0Symbol, token1Symbol, getUsdPriceForSymbol]);
 
   // Handlers for preview updates
   const handleAddAmountsChange = useCallback((amount0: number, amount1: number) => {
@@ -697,14 +736,14 @@ export function PositionDetailsModal({
       const raw0 = prefetchedRaw0 || '0';
       const raw1 = prefetchedRaw1 || '0';
 
-      const d0 = tokenDefinitions?.[position.token0.symbol as string]?.decimals ?? 18;
-      const d1 = tokenDefinitions?.[position.token1.symbol as string]?.decimals ?? 18;
+      const d0 = tokenDefinitions?.[token0Symbol as string]?.decimals ?? 18;
+      const d1 = tokenDefinitions?.[token1Symbol as string]?.decimals ?? 18;
 
       const fee0 = parseFloat(formatUnits(BigInt(raw0), d0));
       const fee1 = parseFloat(formatUnits(BigInt(raw1), d1));
 
-      const price0 = getUsdPriceForSymbol(position.token0.symbol);
-      const price1 = getUsdPriceForSymbol(position.token1.symbol);
+      const price0 = getUsdPriceForSymbol(token0Symbol);
+      const price1 = getUsdPriceForSymbol(token1Symbol);
 
       const usdFees = (fee0 * price0) + (fee1 * price1);
       const hasZero = BigInt(raw0) <= 0n && BigInt(raw1) <= 0n;
@@ -721,11 +760,11 @@ export function PositionDetailsModal({
   }, [prefetchedRaw0, prefetchedRaw1, position, getUsdPriceForSymbol]);
 
   // Calculate individual token USD values
-  const token0USD = parseFloat(position.token0.amount) * getUsdPriceForSymbol(position.token0.symbol);
-  const token1USD = parseFloat(position.token1.amount) * getUsdPriceForSymbol(position.token1.symbol);
+  const token0USD = parseFloat(token0Amount) * getUsdPriceForSymbol(token0Symbol);
+  const token1USD = parseFloat(token1Amount) * getUsdPriceForSymbol(token1Symbol);
 
-  const fee0USD = feeAmount0 * getUsdPriceForSymbol(position.token0.symbol);
-  const fee1USD = feeAmount1 * getUsdPriceForSymbol(position.token1.symbol);
+  const fee0USD = feeAmount0 * getUsdPriceForSymbol(token0Symbol);
+  const fee1USD = feeAmount1 * getUsdPriceForSymbol(token1Symbol);
 
   const { computedFormattedAPR, computedIsAPRFallback, computedIsLoadingAPR } = useMemo(() => {
     if (prefetchedFormattedAPY !== undefined) {
@@ -738,12 +777,13 @@ export function PositionDetailsModal({
     if (valueUSD <= 0) {
       return { computedFormattedAPR: '–', computedIsAPRFallback: false, computedIsLoadingAPR: true };
     }
-    if (!position.isInRange) {
+    if (!isInRange) {
       return { computedFormattedAPR: '0%', computedIsAPRFallback: false, computedIsLoadingAPR: false };
     }
 
     const nowTimestamp = Math.floor(Date.now() / 1000);
-    const durationDays = (nowTimestamp - position.blockTimestamp) / 86400;
+    const positionTimestamp = propLastTimestamp || propBlockTimestamp || nowTimestamp;
+    const durationDays = (nowTimestamp - positionTimestamp) / 86400;
 
     const fallbackApr = apr !== null && apr !== undefined && isFinite(apr)
       ? new Percent(Math.round(apr * 100), 10000)
@@ -755,14 +795,14 @@ export function PositionDetailsModal({
       computedIsAPRFallback: result.isFallback,
       computedIsLoadingAPR: false,
     };
-  }, [prefetchedFormattedAPY, prefetchedIsAPYFallback, prefetchedIsLoadingAPY, feesUSD, valueUSD, position.blockTimestamp, position.isInRange, apr]);
+  }, [prefetchedFormattedAPY, prefetchedIsAPYFallback, prefetchedIsLoadingAPY, feesUSD, valueUSD, propBlockTimestamp, propLastTimestamp, isInRange, apr]);
 
   // Calculate denomination if not provided by parent
   const calculatedDenominationBase = useMemo(() => {
     if (denominationBase) return denominationBase;
     const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
-    return getOptimalBaseToken(position.token0.symbol, position.token1.symbol, priceNum);
-  }, [denominationBase, currentPrice, position.token0.symbol, position.token1.symbol]);
+    return getOptimalBaseToken(token0Symbol, token1Symbol, priceNum);
+  }, [denominationBase, currentPrice, token0Symbol, token1Symbol]);
 
   const { calculatedMinPrice, calculatedMaxPrice, calculatedCurrentPrice } = useMemo(() => {
     if (initialMinPrice && initialMaxPrice && initialCurrentPrice !== undefined) {
@@ -773,58 +813,24 @@ export function PositionDetailsModal({
       };
     }
 
-    const shouldInvert = calculatedDenominationBase === position.token0.symbol;
+    const shouldInvert = calculatedDenominationBase === token0Symbol;
 
-    // Use convertTickToPrice if provided (handles decimals properly)
-    if (convertTickToPrice) {
-      const lowerPriceStr = convertTickToPrice(
-        position.tickLower,
-        currentPoolTick ?? null,
-        currentPrice ?? null,
-        calculatedDenominationBase,
-        position.token0.symbol,
-        position.token1.symbol
-      );
-      const upperPriceStr = convertTickToPrice(
-        position.tickUpper,
-        currentPoolTick ?? null,
-        currentPrice ?? null,
-        calculatedDenominationBase,
-        position.token0.symbol,
-        position.token1.symbol
-      );
-
-      let displayedCurrentPrice: string | null = null;
-      if (currentPrice) {
-        const priceNum = parseFloat(currentPrice);
-        if (isFinite(priceNum)) {
-          displayedCurrentPrice = (shouldInvert ? (1 / priceNum) : priceNum).toString();
-        }
-      }
-
-      return {
-        calculatedMinPrice: shouldInvert ? upperPriceStr : lowerPriceStr,
-        calculatedMaxPrice: shouldInvert ? lowerPriceStr : upperPriceStr,
-        calculatedCurrentPrice: displayedCurrentPrice
-      };
-    }
-
-    // Fallback: raw calculation (may not handle decimals correctly)
+    // Calculate prices from ticks (SDK-aligned approach)
     let minPoolPrice: number;
     let maxPoolPrice: number;
 
     if (currentPrice && currentPoolTick !== null && currentPoolTick !== undefined) {
       const currentPriceNum = parseFloat(currentPrice);
       if (isFinite(currentPriceNum)) {
-        minPoolPrice = currentPriceNum * Math.pow(1.0001, position.tickLower - currentPoolTick);
-        maxPoolPrice = currentPriceNum * Math.pow(1.0001, position.tickUpper - currentPoolTick);
+        minPoolPrice = currentPriceNum * Math.pow(1.0001, tickLower - currentPoolTick);
+        maxPoolPrice = currentPriceNum * Math.pow(1.0001, tickUpper - currentPoolTick);
       } else {
-        minPoolPrice = Math.pow(1.0001, position.tickLower);
-        maxPoolPrice = Math.pow(1.0001, position.tickUpper);
+        minPoolPrice = Math.pow(1.0001, tickLower);
+        maxPoolPrice = Math.pow(1.0001, tickUpper);
       }
     } else {
-      minPoolPrice = Math.pow(1.0001, position.tickLower);
-      maxPoolPrice = Math.pow(1.0001, position.tickUpper);
+      minPoolPrice = Math.pow(1.0001, tickLower);
+      maxPoolPrice = Math.pow(1.0001, tickUpper);
     }
 
     const minDisplay = shouldInvert ? (1 / maxPoolPrice) : minPoolPrice;
@@ -843,7 +849,7 @@ export function PositionDetailsModal({
       calculatedMaxPrice: isFinite(maxDisplay) ? maxDisplay.toString() : '∞',
       calculatedCurrentPrice: displayedCurrentPrice
     };
-  }, [initialMinPrice, initialMaxPrice, initialCurrentPrice, calculatedDenominationBase, position, currentPrice, currentPoolTick, convertTickToPrice]);
+  }, [initialMinPrice, initialMaxPrice, initialCurrentPrice, calculatedDenominationBase, token0Symbol, tickLower, tickUpper, currentPrice, currentPoolTick]);
 
   // Use calculated or inherited values
   const minPriceActual = calculatedMinPrice;
@@ -851,10 +857,10 @@ export function PositionDetailsModal({
   const currentPriceActual = calculatedCurrentPrice;
 
   // Check if full range (uses centralized detection mirroring Uniswap's useIsTickAtLimit)
-  const isFullRange = isFullRangePosition(defaultTickSpacing, position.tickLower, position.tickUpper);
+  const isFullRange = isFullRangePosition(defaultTickSpacing, tickLower, tickUpper);
 
-  const statusText = isFullRange ? 'Full Range' : position.isInRange ? 'In Range' : 'Out of Range';
-  const statusColor = isFullRange ? 'text-green-500' : position.isInRange ? 'text-green-500' : 'text-red-500';
+  const statusText = isFullRange ? 'Full Range' : isInRange ? 'In Range' : 'Out of Range';
+  const statusColor = isFullRange ? 'text-green-500' : isInRange ? 'text-green-500' : 'text-red-500';
 
   // Get token logos
   const getTokenLogo = (symbol: string) => {
@@ -863,14 +869,14 @@ export function PositionDetailsModal({
   };
 
   // Get token colors for bars
-  const token0Color = getTokenColor(position.token0.symbol);
-  const token1Color = getTokenColor(position.token1.symbol);
+  const token0Color = getTokenColor(token0Symbol);
+  const token1Color = getTokenColor(token1Symbol);
 
   // Calculate percentage bars for position (with preview adjustments)
   const positionBars = useMemo(() => {
     // Calculate preview-adjusted amounts
-    const price0 = getUsdPriceForSymbol(position.token0.symbol);
-    const price1 = getUsdPriceForSymbol(position.token1.symbol);
+    const price0 = getUsdPriceForSymbol(token0Symbol);
+    const price1 = getUsdPriceForSymbol(token1Symbol);
 
     const previewAdjustment0 = (previewAddAmount0 - previewRemoveAmount0) * price0;
     const previewAdjustment1 = (previewAddAmount1 - previewRemoveAmount1) * price1;
@@ -901,8 +907,8 @@ export function PositionDetailsModal({
   const isAddingLiquidity = previewAddAmount0 > 0 || previewAddAmount1 > 0;
   const isRemovingLiquidity = previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0;
 
-  const hasZeroToken0 = parseFloat(position.token0.amount) === 0;
-  const hasZeroToken1 = parseFloat(position.token1.amount) === 0;
+  const hasZeroToken0 = parseFloat(token0Amount) === 0;
+  const hasZeroToken1 = parseFloat(token1Amount) === 0;
 
   const displayFeesUSD = feesUSD;
   const displayFee0USD = fee0USD;
@@ -998,10 +1004,10 @@ export function PositionDetailsModal({
               >
                 {/* Row 1 (mobile): token images + pair + status */}
                 <div className="flex items-center gap-3 min-w-0 w-full">
-                  <TokenStack position={position as any} />
+                  <TokenStack position={tokenStackPosition} />
                   <div className="flex flex-col gap-1 flex-1 min-w-0">
                     <h3 className="text-base font-semibold truncate">
-                      {position.token0.symbol} / {position.token1.symbol}
+                      {token0Symbol} / {token1Symbol}
                     </h3>
                     <div className="flex items-center gap-2 flex-wrap">
                       {feeTierDisplay && (
@@ -1066,14 +1072,14 @@ export function PositionDetailsModal({
                 <div style={{ height: '220px' }} className="relative">
                   {selectedPoolId ? (
                     <PositionChartV2
-                      token0={position.token0.symbol}
-                      token1={position.token1.symbol}
+                      token0={token0Symbol}
+                      token1={token1Symbol}
                       denominationBase={calculatedDenominationBase}
                       currentPrice={currentPriceActual ?? undefined}
                       currentPoolTick={currentPoolTick ?? undefined}
                       minPrice={minPriceActual}
                       maxPrice={maxPriceActual}
-                      isInRange={position.isInRange}
+                      isInRange={isInRange}
                       isFullRange={isFullRange}
                       selectedPoolId={selectedPoolId}
                       chartKey={chartKey}
@@ -1137,16 +1143,16 @@ export function PositionDetailsModal({
                       }).format(
                         (previewAddAmount0 > 0 || previewAddAmount1 > 0)
                           ? (() => {
-                              const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
-                              const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
+                              const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
+                              const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
                               return (Number.isFinite(valueUSD) ? valueUSD : 0) +
-                                ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol)) +
-                                ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
+                                ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(token0Symbol)) +
+                                ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(token1Symbol));
                             })()
                           : (previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0)
                           ? (Number.isFinite(valueUSD) ? valueUSD : 0) -
-                            (previewRemoveAmount0 * getUsdPriceForSymbol(position.token0.symbol)) -
-                            (previewRemoveAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                            (previewRemoveAmount0 * getUsdPriceForSymbol(token0Symbol)) -
+                            (previewRemoveAmount1 * getUsdPriceForSymbol(token1Symbol))
                           : (Number.isFinite(valueUSD) ? valueUSD : 0)
                       )}
                     </div>
@@ -1176,8 +1182,8 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-1.5">
                           <div className="relative w-4 h-4 rounded-full overflow-hidden">
                             <Image
-                              src={getTokenLogo(position.token0.symbol)}
-                              alt={position.token0.symbol}
+                              src={getTokenLogo(token0Symbol)}
+                              alt={token0Symbol}
                               width={16}
                               height={16}
                             />
@@ -1189,8 +1195,8 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-1.5">
                           <div className="relative w-4 h-4 rounded-full overflow-hidden">
                             <Image
-                              src={getTokenLogo(position.token1.symbol)}
-                              alt={position.token1.symbol}
+                              src={getTokenLogo(token1Symbol)}
+                              alt={token1Symbol}
                               width={16}
                               height={16}
                             />
@@ -1210,8 +1216,8 @@ export function PositionDetailsModal({
                       <div className="flex items-center gap-3">
                         <div className="relative w-6 h-6 rounded-full overflow-hidden">
                           <Image
-                            src={getTokenLogo(position.token0.symbol)}
-                            alt={position.token0.symbol}
+                            src={getTokenLogo(token0Symbol)}
+                            alt={token0Symbol}
                             width={24}
                             height={24}
                           />
@@ -1225,11 +1231,11 @@ export function PositionDetailsModal({
                           }).format(
                             previewAddAmount0 > 0
                               ? (() => {
-                                  const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
-                                  return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol));
+                                  const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
+                                  return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(token0Symbol));
                                 })()
                               : previewRemoveAmount0 > 0
-                              ? token0USD - (previewRemoveAmount0 * getUsdPriceForSymbol(position.token0.symbol))
+                              ? token0USD - (previewRemoveAmount0 * getUsdPriceForSymbol(token0Symbol))
                               : token0USD
                           )}
                         </span>
@@ -1237,28 +1243,28 @@ export function PositionDetailsModal({
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         {previewAddAmount0 > 0 ? (
                           <>
-                            <span>{formatTokenDisplayAmount(position.token0.amount)}</span>
+                            <span>{formatTokenDisplayAmount(token0Amount)}</span>
                             <span className="text-green-500">+</span>
                             <span className="text-green-500 font-medium">
                               {(() => {
-                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
+                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
                                 const total = previewAddAmount0 + fee0Amount;
                                 return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
                               })()}
                             </span>
-                            <span>{position.token0.symbol}</span>
+                            <span>{token0Symbol}</span>
                           </>
                         ) : previewRemoveAmount0 > 0 ? (
                           <>
-                            <span>{formatTokenDisplayAmount(position.token0.amount)}</span>
+                            <span>{formatTokenDisplayAmount(token0Amount)}</span>
                             <span className="text-red-500">-</span>
                             <span className="text-red-500 font-medium">
                               {previewRemoveAmount0 > 0 && previewRemoveAmount0 < 0.0001 ? '< 0.0001' : previewRemoveAmount0.toFixed(4)}
                             </span>
-                            <span>{position.token0.symbol}</span>
+                            <span>{token0Symbol}</span>
                           </>
                         ) : (
-                          <span>{formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}</span>
+                          <span>{formatTokenDisplayAmount(token0Amount)} {token0Symbol}</span>
                         )}
                       </div>
                     </div>
@@ -1268,8 +1274,8 @@ export function PositionDetailsModal({
                       <div className="flex items-center gap-3">
                         <div className="relative w-6 h-6 rounded-full overflow-hidden">
                           <Image
-                            src={getTokenLogo(position.token1.symbol)}
-                            alt={position.token1.symbol}
+                            src={getTokenLogo(token1Symbol)}
+                            alt={token1Symbol}
                             width={24}
                             height={24}
                           />
@@ -1283,11 +1289,11 @@ export function PositionDetailsModal({
                           }).format(
                             previewAddAmount1 > 0
                               ? (() => {
-                                  const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
-                                  return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
+                                  const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
+                                  return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(token1Symbol));
                                 })()
                               : previewRemoveAmount1 > 0
-                              ? token1USD - (previewRemoveAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                              ? token1USD - (previewRemoveAmount1 * getUsdPriceForSymbol(token1Symbol))
                               : token1USD
                           )}
                         </span>
@@ -1295,28 +1301,28 @@ export function PositionDetailsModal({
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         {previewAddAmount1 > 0 ? (
                           <>
-                            <span>{formatTokenDisplayAmount(position.token1.amount)}</span>
+                            <span>{formatTokenDisplayAmount(token1Amount)}</span>
                             <span className="text-green-500">+</span>
                             <span className="text-green-500 font-medium">
                               {(() => {
-                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
+                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
                                 const total = previewAddAmount1 + fee1Amount;
                                 return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
                               })()}
                             </span>
-                            <span>{position.token1.symbol}</span>
+                            <span>{token1Symbol}</span>
                           </>
                         ) : previewRemoveAmount1 > 0 ? (
                           <>
-                            <span>{formatTokenDisplayAmount(position.token1.amount)}</span>
+                            <span>{formatTokenDisplayAmount(token1Amount)}</span>
                             <span className="text-red-500">-</span>
                             <span className="text-red-500 font-medium">
                               {previewRemoveAmount1 > 0 && previewRemoveAmount1 < 0.0001 ? '< 0.0001' : previewRemoveAmount1.toFixed(4)}
                             </span>
-                            <span>{position.token1.symbol}</span>
+                            <span>{token1Symbol}</span>
                           </>
                         ) : (
-                          <span>{formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}</span>
+                          <span>{formatTokenDisplayAmount(token1Amount)} {token1Symbol}</span>
                         )}
                       </div>
                     </div>
@@ -1403,8 +1409,8 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-1.5">
                           <div className="relative w-4 h-4 rounded-full overflow-hidden">
                             <Image
-                              src={getTokenLogo(position.token0.symbol)}
-                              alt={position.token0.symbol}
+                              src={getTokenLogo(token0Symbol)}
+                              alt={token0Symbol}
                               width={16}
                               height={16}
                             />
@@ -1416,8 +1422,8 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-1.5">
                           <div className="relative w-4 h-4 rounded-full overflow-hidden">
                             <Image
-                              src={getTokenLogo(position.token1.symbol)}
-                              alt={position.token1.symbol}
+                              src={getTokenLogo(token1Symbol)}
+                              alt={token1Symbol}
                               width={16}
                               height={16}
                             />
@@ -1438,8 +1444,8 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-3">
                           <div className="relative w-6 h-6 rounded-full overflow-hidden">
                             <Image
-                              src={getTokenLogo(position.token0.symbol)}
-                              alt={position.token0.symbol}
+                              src={getTokenLogo(token0Symbol)}
+                              alt={token0Symbol}
                               width={24}
                               height={24}
                             />
@@ -1454,7 +1460,7 @@ export function PositionDetailsModal({
                           </span>
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {displayFeeAmount0} {position.token0.symbol}
+                          {displayFeeAmount0} {token0Symbol}
                         </div>
                       </div>
 
@@ -1463,8 +1469,8 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-3">
                           <div className="relative w-6 h-6 rounded-full overflow-hidden">
                             <Image
-                              src={getTokenLogo(position.token1.symbol)}
-                              alt={position.token1.symbol}
+                              src={getTokenLogo(token1Symbol)}
+                              alt={token1Symbol}
                               width={24}
                               height={24}
                             />
@@ -1479,7 +1485,7 @@ export function PositionDetailsModal({
                           </span>
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {displayFeeAmount1} {position.token1.symbol}
+                          {displayFeeAmount1} {token1Symbol}
                         </div>
                       </div>
                     </div>
@@ -1511,16 +1517,16 @@ export function PositionDetailsModal({
                         }).format(
                           (previewAddAmount0 > 0 || previewAddAmount1 > 0)
                             ? (() => {
-                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
-                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
+                                const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
+                                const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
                                 return (Number.isFinite(valueUSD) ? valueUSD : 0) +
-                                  ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol)) +
-                                  ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
+                                  ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(token0Symbol)) +
+                                  ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(token1Symbol));
                               })()
                             : (previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0)
                             ? (Number.isFinite(valueUSD) ? valueUSD : 0) -
-                              (previewRemoveAmount0 * getUsdPriceForSymbol(position.token0.symbol)) -
-                              (previewRemoveAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                              (previewRemoveAmount0 * getUsdPriceForSymbol(token0Symbol)) -
+                              (previewRemoveAmount1 * getUsdPriceForSymbol(token1Symbol))
                             : (Number.isFinite(valueUSD) ? valueUSD : 0)
                         )}
                       </div>
@@ -1550,8 +1556,8 @@ export function PositionDetailsModal({
                           <div className="flex items-center gap-1.5">
                             <div className="relative w-4 h-4 rounded-full overflow-hidden">
                               <Image
-                                src={getTokenLogo(position.token0.symbol)}
-                                alt={position.token0.symbol}
+                                src={getTokenLogo(token0Symbol)}
+                                alt={token0Symbol}
                                 width={16}
                                 height={16}
                               />
@@ -1563,8 +1569,8 @@ export function PositionDetailsModal({
                           <div className="flex items-center gap-1.5">
                             <div className="relative w-4 h-4 rounded-full overflow-hidden">
                               <Image
-                                src={getTokenLogo(position.token1.symbol)}
-                                alt={position.token1.symbol}
+                                src={getTokenLogo(token1Symbol)}
+                                alt={token1Symbol}
                                 width={16}
                                 height={16}
                               />
@@ -1584,8 +1590,8 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-3">
                           <div className="relative w-6 h-6 rounded-full overflow-hidden">
                             <Image
-                              src={getTokenLogo(position.token0.symbol)}
-                              alt={position.token0.symbol}
+                              src={getTokenLogo(token0Symbol)}
+                              alt={token0Symbol}
                               width={24}
                               height={24}
                             />
@@ -1599,11 +1605,11 @@ export function PositionDetailsModal({
                             }).format(
                               previewAddAmount0 > 0
                                 ? (() => {
-                                    const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
-                                    return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(position.token0.symbol));
+                                    const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
+                                    return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(token0Symbol));
                                   })()
                                 : previewRemoveAmount0 > 0
-                                ? token0USD - (previewRemoveAmount0 * getUsdPriceForSymbol(position.token0.symbol))
+                                ? token0USD - (previewRemoveAmount0 * getUsdPriceForSymbol(token0Symbol))
                                 : token0USD
                             )}
                           </span>
@@ -1611,28 +1617,28 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                           {previewAddAmount0 > 0 ? (
                             <>
-                              <span>{formatTokenDisplayAmount(position.token0.amount)}</span>
+                              <span>{formatTokenDisplayAmount(token0Amount)}</span>
                               <span className="text-green-500">+</span>
                               <span className="text-green-500 font-medium">
                                 {(() => {
-                                  const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
+                                  const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
                                   const total = previewAddAmount0 + fee0Amount;
                                   return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
                                 })()}
                               </span>
-                              <span>{position.token0.symbol}</span>
+                              <span>{token0Symbol}</span>
                             </>
                           ) : previewRemoveAmount0 > 0 ? (
                             <>
-                              <span>{formatTokenDisplayAmount(position.token0.amount)}</span>
+                              <span>{formatTokenDisplayAmount(token0Amount)}</span>
                               <span className="text-red-500">-</span>
                               <span className="text-red-500 font-medium">
                                 {previewRemoveAmount0 > 0 && previewRemoveAmount0 < 0.0001 ? '< 0.0001' : previewRemoveAmount0.toFixed(4)}
                               </span>
-                              <span>{position.token0.symbol}</span>
+                              <span>{token0Symbol}</span>
                             </>
                           ) : (
-                            <span>{formatTokenDisplayAmount(position.token0.amount)} {position.token0.symbol}</span>
+                            <span>{formatTokenDisplayAmount(token0Amount)} {token0Symbol}</span>
                           )}
                         </div>
                       </div>
@@ -1642,8 +1648,8 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-3">
                           <div className="relative w-6 h-6 rounded-full overflow-hidden">
                             <Image
-                              src={getTokenLogo(position.token1.symbol)}
-                              alt={position.token1.symbol}
+                              src={getTokenLogo(token1Symbol)}
+                              alt={token1Symbol}
                               width={24}
                               height={24}
                             />
@@ -1657,11 +1663,11 @@ export function PositionDetailsModal({
                             }).format(
                               previewAddAmount1 > 0
                                 ? (() => {
-                                    const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
-                                    return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(position.token1.symbol));
+                                    const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
+                                    return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(token1Symbol));
                                   })()
                                 : previewRemoveAmount1 > 0
-                                ? token1USD - (previewRemoveAmount1 * getUsdPriceForSymbol(position.token1.symbol))
+                                ? token1USD - (previewRemoveAmount1 * getUsdPriceForSymbol(token1Symbol))
                                 : token1USD
                             )}
                           </span>
@@ -1669,28 +1675,28 @@ export function PositionDetailsModal({
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                           {previewAddAmount1 > 0 ? (
                             <>
-                              <span>{formatTokenDisplayAmount(position.token1.amount)}</span>
+                              <span>{formatTokenDisplayAmount(token1Amount)}</span>
                               <span className="text-green-500">+</span>
                               <span className="text-green-500 font-medium">
                                 {(() => {
-                                  const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
+                                  const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
                                   const total = previewAddAmount1 + fee1Amount;
                                   return total > 0 && total < 0.0001 ? '< 0.0001' : total.toFixed(4);
                                 })()}
                               </span>
-                              <span>{position.token1.symbol}</span>
+                              <span>{token1Symbol}</span>
                             </>
                           ) : previewRemoveAmount1 > 0 ? (
                             <>
-                              <span>{formatTokenDisplayAmount(position.token1.amount)}</span>
+                              <span>{formatTokenDisplayAmount(token1Amount)}</span>
                               <span className="text-red-500">-</span>
                               <span className="text-red-500 font-medium">
                                 {previewRemoveAmount1 > 0 && previewRemoveAmount1 < 0.0001 ? '< 0.0001' : previewRemoveAmount1.toFixed(4)}
                               </span>
-                              <span>{position.token1.symbol}</span>
+                              <span>{token1Symbol}</span>
                             </>
                           ) : (
-                            <span>{formatTokenDisplayAmount(position.token1.amount)} {position.token1.symbol}</span>
+                            <span>{formatTokenDisplayAmount(token1Amount)} {token1Symbol}</span>
                           )}
                         </div>
                       </div>
@@ -1777,8 +1783,8 @@ export function PositionDetailsModal({
                           <div className="flex items-center gap-1.5">
                             <div className="relative w-4 h-4 rounded-full overflow-hidden">
                               <Image
-                                src={getTokenLogo(position.token0.symbol)}
-                                alt={position.token0.symbol}
+                                src={getTokenLogo(token0Symbol)}
+                                alt={token0Symbol}
                                 width={16}
                                 height={16}
                               />
@@ -1790,8 +1796,8 @@ export function PositionDetailsModal({
                           <div className="flex items-center gap-1.5">
                             <div className="relative w-4 h-4 rounded-full overflow-hidden">
                               <Image
-                                src={getTokenLogo(position.token1.symbol)}
-                                alt={position.token1.symbol}
+                                src={getTokenLogo(token1Symbol)}
+                                alt={token1Symbol}
                                 width={16}
                                 height={16}
                               />
@@ -1812,8 +1818,8 @@ export function PositionDetailsModal({
                           <div className="flex items-center gap-3">
                             <div className="relative w-6 h-6 rounded-full overflow-hidden">
                               <Image
-                                src={getTokenLogo(position.token0.symbol)}
-                                alt={position.token0.symbol}
+                                src={getTokenLogo(token0Symbol)}
+                                alt={token0Symbol}
                                 width={24}
                                 height={24}
                               />
@@ -1828,7 +1834,7 @@ export function PositionDetailsModal({
                             </span>
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {displayFeeAmount0} {position.token0.symbol}
+                            {displayFeeAmount0} {token0Symbol}
                           </div>
                         </div>
 
@@ -1837,8 +1843,8 @@ export function PositionDetailsModal({
                           <div className="flex items-center gap-3">
                             <div className="relative w-6 h-6 rounded-full overflow-hidden">
                               <Image
-                                src={getTokenLogo(position.token1.symbol)}
-                                alt={position.token1.symbol}
+                                src={getTokenLogo(token1Symbol)}
+                                alt={token1Symbol}
                                 width={24}
                                 height={24}
                               />
@@ -1853,7 +1859,7 @@ export function PositionDetailsModal({
                             </span>
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {displayFeeAmount1} {position.token1.symbol}
+                            {displayFeeAmount1} {token1Symbol}
                           </div>
                         </div>
                       </div>
@@ -1982,20 +1988,20 @@ export function PositionDetailsModal({
                               isDecreasingLiquidity ||
                               (!withdrawAmount0 && !withdrawAmount1) ||
                               (parseFloat(withdrawAmount0 || '0') <= 0 && parseFloat(withdrawAmount1 || '0') <= 0) ||
-                              (parseFloat(withdrawAmount0 || "0") > parseFloat(position?.token0?.amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
-                              (parseFloat(withdrawAmount1 || "0") > parseFloat(position?.token1?.amount || "0") && parseFloat(withdrawAmount1 || "0") > 0)
+                              (parseFloat(withdrawAmount0 || "0") > parseFloat(token0Amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
+                              (parseFloat(withdrawAmount1 || "0") > parseFloat(token1Amount || "0") && parseFloat(withdrawAmount1 || "0") > 0)
                             }
                             className={cn(
                               "w-full mt-4",
                               (parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ||
-                              (parseFloat(withdrawAmount0 || "0") > parseFloat(position?.token0?.amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
-                              (parseFloat(withdrawAmount1 || "0") > parseFloat(position?.token1?.amount || "0") && parseFloat(withdrawAmount1 || "0") > 0) ?
+                              (parseFloat(withdrawAmount0 || "0") > parseFloat(token0Amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
+                              (parseFloat(withdrawAmount1 || "0") > parseFloat(token1Amount || "0") && parseFloat(withdrawAmount1 || "0") > 0) ?
                                 "relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75" :
                                 "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
                             )}
                             style={(parseFloat(withdrawAmount0 || "0") <= 0 && parseFloat(withdrawAmount1 || "0") <= 0) ||
-                              (parseFloat(withdrawAmount0 || "0") > parseFloat(position?.token0?.amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
-                              (parseFloat(withdrawAmount1 || "0") > parseFloat(position?.token1?.amount || "0") && parseFloat(withdrawAmount1 || "0") > 0) ?
+                              (parseFloat(withdrawAmount0 || "0") > parseFloat(token0Amount || "0") && parseFloat(withdrawAmount0 || "0") > 0) ||
+                              (parseFloat(withdrawAmount1 || "0") > parseFloat(token1Amount || "0") && parseFloat(withdrawAmount1 || "0") > 0) ?
                               { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } :
                               undefined
                             }
@@ -2035,25 +2041,25 @@ export function PositionDetailsModal({
                                   <div className="text-xl font-medium">
                                     {(() => {
                                       const baseAmount = previewAddAmount0 || previewRemoveAmount0 || 0;
-                                      const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
+                                      const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
                                       const displayAmount = baseAmount + fee0Amount;
                                       return formatTokenDisplayAmount(displayAmount.toString());
                                     })()}
                                   </div>
-                                  <span className="text-sm text-muted-foreground">{position.token0.symbol}</span>
+                                  <span className="text-sm text-muted-foreground">{token0Symbol}</span>
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   {(() => {
                                     const baseAmount = previewAddAmount0 || previewRemoveAmount0 || 0;
-                                    const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
+                                    const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
                                     const displayAmount = baseAmount + fee0Amount;
-                                    return formatUSD(displayAmount * getUsdPriceForSymbol(position.token0.symbol));
+                                    return formatUSD(displayAmount * getUsdPriceForSymbol(token0Symbol));
                                   })()}
                                 </div>
                               </div>
                               <Image
-                                src={getTokenLogo(position.token0.symbol)}
-                                alt={position.token0.symbol}
+                                src={getTokenLogo(token0Symbol)}
+                                alt={token0Symbol}
                                 width={40}
                                 height={40}
                                 className="rounded-full"
@@ -2067,25 +2073,25 @@ export function PositionDetailsModal({
                                   <div className="text-xl font-medium">
                                     {(() => {
                                       const baseAmount = previewAddAmount1 || previewRemoveAmount1 || 0;
-                                      const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
+                                      const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
                                       const displayAmount = baseAmount + fee1Amount;
                                       return formatTokenDisplayAmount(displayAmount.toString());
                                     })()}
                                   </div>
-                                  <span className="text-sm text-muted-foreground">{position.token1.symbol}</span>
+                                  <span className="text-sm text-muted-foreground">{token1Symbol}</span>
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   {(() => {
                                     const baseAmount = previewAddAmount1 || previewRemoveAmount1 || 0;
-                                    const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
+                                    const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
                                     const displayAmount = baseAmount + fee1Amount;
-                                    return formatUSD(displayAmount * getUsdPriceForSymbol(position.token1.symbol));
+                                    return formatUSD(displayAmount * getUsdPriceForSymbol(token1Symbol));
                                   })()}
                                 </div>
                               </div>
                               <Image
-                                src={getTokenLogo(position.token1.symbol)}
-                                alt={position.token1.symbol}
+                                src={getTokenLogo(token1Symbol)}
+                                alt={token1Symbol}
                                 width={40}
                                 height={40}
                                 className="rounded-full"
@@ -2096,8 +2102,8 @@ export function PositionDetailsModal({
 
                         {/* Includes uncollected fees section - Only show for Add/Remove when fees exist */}
                         {(currentView === 'add-liquidity' || currentView === 'remove-liquidity') && (() => {
-                          const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[position.token0.symbol as string]?.decimals || 18));
-                          const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[position.token1.symbol as string]?.decimals || 18));
+                          const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
+                          const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
 
                           if (fee0Amount <= 0 && fee1Amount <= 0) return null;
 
@@ -2107,30 +2113,30 @@ export function PositionDetailsModal({
 
                               <div className="flex justify-between items-center">
                                 <div className="flex items-center gap-2">
-                                  <Image src={getTokenLogo(position.token0.symbol)} alt={position.token0.symbol} width={16} height={16} className="rounded-full" />
-                                  <span className="text-xs text-muted-foreground">{position.token0.symbol} Fees</span>
+                                  <Image src={getTokenLogo(token0Symbol)} alt={token0Symbol} width={16} height={16} className="rounded-full" />
+                                  <span className="text-xs text-muted-foreground">{token0Symbol} Fees</span>
                                 </div>
                                 <div className="text-right">
                                   <div className="text-xs font-medium">
                                     {fee0Amount === 0 ? '0' : fee0Amount > 0 && fee0Amount < 0.0001 ? '< 0.0001' : fee0Amount.toFixed(6).replace(/\.?0+$/, '')}
                                   </div>
                                   <div className="text-xs text-muted-foreground">
-                                    {formatUSD(fee0Amount * getUsdPriceForSymbol(position.token0.symbol))}
+                                    {formatUSD(fee0Amount * getUsdPriceForSymbol(token0Symbol))}
                                   </div>
                                 </div>
                               </div>
 
                               <div className="flex justify-between items-center">
                                 <div className="flex items-center gap-2">
-                                  <Image src={getTokenLogo(position.token1.symbol)} alt={position.token1.symbol} width={16} height={16} className="rounded-full" />
-                                  <span className="text-xs text-muted-foreground">{position.token1.symbol} Fees</span>
+                                  <Image src={getTokenLogo(token1Symbol)} alt={token1Symbol} width={16} height={16} className="rounded-full" />
+                                  <span className="text-xs text-muted-foreground">{token1Symbol} Fees</span>
                                 </div>
                                 <div className="text-right">
                                   <div className="text-xs font-medium">
                                     {fee1Amount === 0 ? '0' : fee1Amount > 0 && fee1Amount < 0.0001 ? '< 0.0001' : fee1Amount.toFixed(6).replace(/\.?0+$/, '')}
                                   </div>
                                   <div className="text-xs text-muted-foreground">
-                                    {formatUSD(fee1Amount * getUsdPriceForSymbol(position.token1.symbol))}
+                                    {formatUSD(fee1Amount * getUsdPriceForSymbol(token1Symbol))}
                                   </div>
                                 </div>
                               </div>
@@ -2144,8 +2150,8 @@ export function PositionDetailsModal({
                             isActive={showTransactionOverview}
                             approvalData={increaseApprovalData}
                             isCheckingApprovals={isCheckingIncreaseApprovals}
-                            token0Symbol={position.token0.symbol as TokenSymbol}
-                            token1Symbol={position.token1.symbol as TokenSymbol}
+                            token0Symbol={token0Symbol as TokenSymbol}
+                            token1Symbol={token1Symbol as TokenSymbol}
                             isDepositSuccess={isIncreaseSuccess}
                             onApproveToken={handleIncreaseApproveV2}
                             onExecute={handleIncreaseDeposit}
@@ -2167,12 +2173,12 @@ export function PositionDetailsModal({
                               <span>Current Price:</span>
                               <span className="text-xs text-muted-foreground">
                                 {(() => {
-                                  const price0 = getUsdPriceForSymbol(position.token0.symbol);
-                                  const price1 = getUsdPriceForSymbol(position.token1.symbol);
+                                  const price0 = getUsdPriceForSymbol(token0Symbol);
+                                  const price1 = getUsdPriceForSymbol(token1Symbol);
                                   if (price0 === 0 || price1 === 0) return "N/A";
                                   const ratio = price0 / price1;
                                   const decimals = ratio < 0.1 ? 3 : 2;
-                                  return `1 ${position.token0.symbol} = ${ratio.toFixed(decimals)} ${position.token1.symbol}`;
+                                  return `1 ${token0Symbol} = ${ratio.toFixed(decimals)} ${token1Symbol}`;
                                 })()}
                               </span>
                             </div>

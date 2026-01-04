@@ -22,7 +22,7 @@ import { Bar, BarChart, Line, LineChart, CartesianGrid, XAxis, YAxis, Responsive
 import { getPoolById, getToken } from "@/lib/pools-config";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { cn } from "@/lib/utils";
-import { usePoolState, useAllPrices, useUncollectedFeesBatch } from "@/components/data/hooks";
+import { usePoolState, useAllPrices } from "@/components/data/hooks";
 import { SafeStorage } from "@/lib/safe-storage";
 import { RetryUtility } from "@/lib/retry-utility";
 import {
@@ -64,6 +64,7 @@ import { PositionCardCompact } from '@/components/liquidity/PositionCardCompact'
 import { PositionSkeleton } from '@/components/liquidity/PositionSkeleton';
 import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
 import { getOptimalBaseToken } from '@/lib/denomination-utils';
+import { parseSubgraphPosition, type SubgraphPosition, type PositionInfo } from '@/lib/uniswap/liquidity';
 
 // Lazy load heavy modals with retry logic (identical to Uniswap modalRegistry.tsx pattern)
 // @see interface/apps/web/src/components/TopLevelModals/modalRegistry.tsx
@@ -270,6 +271,42 @@ export default function PoolDetailPage() {
   const { networkMode } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
+  // Convert ProcessedPosition to PositionInfo for PositionCardCompact
+  const getPositionInfo = useCallback((position: ProcessedPosition, feeData?: { amount0?: string; amount1?: string }): PositionInfo | undefined => {
+    const subgraphPos: SubgraphPosition = {
+      positionId: position.positionId,
+      owner: position.owner || "",
+      poolId: position.poolId,
+      token0: {
+        address: position.token0?.address || "",
+        symbol: position.token0?.symbol || "",
+        amount: position.token0?.amount || "0",
+      },
+      token1: {
+        address: position.token1?.address || "",
+        symbol: position.token1?.symbol || "",
+        amount: position.token1?.amount || "0",
+      },
+      tickLower: position.tickLower ?? 0,
+      tickUpper: position.tickUpper ?? 0,
+      liquidity: position.liquidityRaw || "0",
+      isInRange: position.isInRange ?? true,
+      token0UncollectedFees: feeData?.amount0,
+      token1UncollectedFees: feeData?.amount1,
+      blockTimestamp: position.blockTimestamp,
+      lastTimestamp: position.lastTimestamp,
+    };
+
+    const token0Decimals = tokenDefinitions?.[position.token0?.symbol as TokenSymbol]?.decimals ?? 18;
+    const token1Decimals = tokenDefinitions?.[position.token1?.symbol as TokenSymbol]?.decimals ?? 18;
+
+    return parseSubgraphPosition(subgraphPos, {
+      chainId: chainId ?? 8453,
+      token0Decimals,
+      token1Decimals,
+    });
+  }, [chainId, tokenDefinitions]);
+
   // Create a wrapper for convertTickToPrice that binds tokenDefinitions
   const boundConvertTickToPrice = useMemo(() =>
     (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string) =>
@@ -413,22 +450,6 @@ export default function PoolDetailPage() {
   const [addLiquidityFormOpen, setAddLiquidityFormOpen] = useState(false);
 
 
-  // Collect all position IDs that need fee data (table positions + modal positions)
-  const allPositionIds = React.useMemo(() => {
-    const ids = new Set<string>();
-    // Add positions from the table
-    userPositions.forEach(pos => ids.add(pos.positionId));
-    // Add modal positions (may be duplicates but Set handles that)
-    if (positionToBurn?.positionId) ids.add(positionToBurn.positionId);
-    if (positionToModify?.positionId) ids.add(positionToModify.positionId);
-
-    const result = Array.from(ids).filter(Boolean);
-    return result;
-  }, [userPositions, positionToBurn?.positionId, positionToModify?.positionId]);
-
-  // Batch fetch all uncollected fees (replaces 3 individual calls)
-  const { data: batchFeesData } = useUncollectedFeesBatch(allPositionIds, 60_000);
-  
   // State for optimistically cleared fees
   const [optimisticallyClearedFees, setOptimisticallyClearedFees] = useState<Set<string>>(new Set());
 
@@ -441,7 +462,6 @@ export default function PoolDetailPage() {
    * Priority:
    * 1. Optimistically cleared fees (user just collected)
    * 2. Position's built-in fees (token0UncollectedFees/token1UncollectedFees)
-   * 3. Fallback to batchFeesData (backward compat, will be removed)
    */
   const getFeesForPosition = React.useCallback((positionId: string, position?: ProcessedPosition) => {
     if (!positionId) return null;
@@ -456,7 +476,7 @@ export default function PoolDetailPage() {
       };
     }
 
-    // Use position's built-in fees first (Uniswap-style)
+    // Use position's built-in fees (Uniswap-style)
     if (position?.token0UncollectedFees !== undefined && position?.token1UncollectedFees !== undefined) {
       return {
         positionId,
@@ -465,10 +485,8 @@ export default function PoolDetailPage() {
       };
     }
 
-    // Fallback to batchFeesData (backward compat during transition)
-    if (!batchFeesData) return null;
-    return batchFeesData.find(fee => fee.positionId === positionId) || null;
-  }, [batchFeesData, optimisticallyClearedFees]);
+    return null;
+  }, [optimisticallyClearedFees]);
 
   // Modal input states
   const [decreaseAmount0, setDecreaseAmount0] = useState<string>("");
@@ -490,6 +508,13 @@ export default function PoolDetailPage() {
   // State for position details modal
   const [selectedPositionForDetails, setSelectedPositionForDetails] = useState<ProcessedPosition | null>(null);
   const [isPositionDetailsModalOpen, setIsPositionDetailsModalOpen] = useState(false);
+
+  // Convert selectedPositionForDetails to PositionInfo for PositionDetailsModal
+  const selectedPositionInfo = useMemo(() => {
+    if (!selectedPositionForDetails) return null;
+    const feeData = getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails as any);
+    return getPositionInfo(selectedPositionForDetails, feeData ?? undefined);
+  }, [selectedPositionForDetails, getPositionInfo]);
 
   const refreshThrottleRef = useRef(0);
 
@@ -2387,13 +2412,16 @@ export default function PoolDetailPage() {
                         unclaimedRaw1: feeData?.amount1,
                       };
 
+                      // Convert to PositionInfo for PositionCardCompact
+                      const positionInfo = getPositionInfo(position, feeData ?? undefined);
+                      if (!positionInfo) return null;
+
                     return (
                       <PositionCardCompact
                         key={position.positionId}
-                        position={positionWithFees as any}
+                        position={positionInfo}
                         valueUSD={calculatePositionUsd(position)}
                         getUsdPriceForSymbol={getUsdPriceForSymbol}
-                        convertTickToPrice={boundConvertTickToPrice}
                         poolType={getPoolById(poolId)?.type}
                         onClick={() => {
                           setUserPositions(prev => prev.map(p =>
@@ -2411,12 +2439,10 @@ export default function PoolDetailPage() {
                           isLoadingPrices,
                           isLoadingPoolStates: !currentPoolData
                         }}
-                        fees={{
-                          // Use feeData which now prioritizes position's built-in fees
-                          raw0: feeData?.amount0 ?? null,
-                          raw1: feeData?.amount1 ?? null
-                        }}
                         denominationBaseOverride={effectiveDenominationBase}
+                        blockTimestamp={position.blockTimestamp}
+                        lastTimestamp={position.lastTimestamp}
+                        isOptimisticallyUpdating={position.isOptimisticallyUpdating}
                       />
                     );
                     });
@@ -2845,7 +2871,7 @@ export default function PoolDetailPage() {
       </AnimatePresence>
 
       {/* Position Details Modal */}
-      {selectedPositionForDetails && (
+      {selectedPositionForDetails && selectedPositionInfo && (
         <Suspense fallback={null}>
           <PositionDetailsModal
             isOpen={isPositionDetailsModalOpen}
@@ -2854,10 +2880,8 @@ export default function PoolDetailPage() {
               setSelectedPositionForDetails(null);
               setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
             }}
-            position={selectedPositionForDetails}
+            position={selectedPositionInfo}
             valueUSD={calculatePositionUsd(selectedPositionForDetails)}
-            prefetchedRaw0={getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails as any)?.amount0}
-            prefetchedRaw1={getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails as any)?.amount1}
             formatTokenDisplayAmount={formatTokenDisplayAmount}
             getUsdPriceForSymbol={getUsdPriceForSymbol}
             onRefreshPosition={async () => {
@@ -2889,9 +2913,10 @@ export default function PoolDetailPage() {
             }}
             currentPrice={currentPrice}
             currentPoolTick={currentPoolTick}
-            convertTickToPrice={boundConvertTickToPrice}
             selectedPoolId={selectedPositionForDetails.poolId}
             chainId={chainId}
+            blockTimestamp={selectedPositionForDetails.blockTimestamp}
+            lastTimestamp={selectedPositionForDetails.lastTimestamp}
           />
         </Suspense>
       )}

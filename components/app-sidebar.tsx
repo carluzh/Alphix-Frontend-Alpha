@@ -6,16 +6,14 @@ import Image from "next/image"
 import Link from "next/link"
 import {
   HelpCircleIcon,
-  LayersIcon,
-  ChartPieIcon,
   CoinsIcon,
-  BookTextIcon,
-  SettingsIcon,
 } from "lucide-react"
+import { IconHouse6Fill, IconStorage, IconChart, IconArrowsBoldOppositeDirection, IconSavedItems } from "nucleo-micro-bold-essential"
 import { NavMain } from "./nav-main"
 import { AccountStatus } from "./AccountStatus"
 import { ConnectWalletButton } from "./ConnectWalletButton"
 import { CustomLockIcon } from "./CustomLockIcon"
+import { PointsIcon } from "./PointsIcon"
 import {
   Sidebar,
   SidebarContent,
@@ -40,14 +38,29 @@ import { useNetwork } from "@/lib/network-context"
 // Base navigation items (always shown)
 const baseNavItems = [
   {
-    title: "Liquidity",
-    url: "/liquidity",
-    icon: LayersIcon,
+    title: "Overview",
+    url: "/overview",
+    icon: IconHouse6Fill,
   },
   {
-    title: "Portfolio",
-    url: "/portfolio",
-    icon: ChartPieIcon,
+    title: "Liquidity",
+    url: "/liquidity",
+    icon: IconStorage,
+  },
+  {
+    title: "Swap",
+    url: "/swap",
+    icon: IconArrowsBoldOppositeDirection,
+  },
+  {
+    title: "Points",
+    url: "/points",
+    icon: PointsIcon,
+  },
+  {
+    title: "Analytics",
+    url: "/analytics",
+    icon: IconChart,
   },
 ];
 
@@ -59,13 +72,6 @@ const testnetNavItems = [
     isFaucet: true,
   },
 ];
-
-// Always shown at the end
-const settingsNavItem = {
-  title: "Settings",
-  url: "/settings",
-  icon: SettingsIcon,
-};
 
 const data = {
   user: {
@@ -101,9 +107,9 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
   // Build navigation items based on network mode
   const navMain = useMemo(() => {
     if (isTestnet) {
-      return [...baseNavItems, ...testnetNavItems, settingsNavItem];
+      return [...baseNavItems, ...testnetNavItems];
     }
-    return [...baseNavItems, settingsNavItem];
+    return [...baseNavItems];
   }, [isTestnet]);
 
   const handleLockedClick = (itemName: string) => {
@@ -234,7 +240,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                     className="w-full rounded-lg px-1.5 py-1 transition-colors hover:bg-[#1f1f1f] hover:text-white text-muted-foreground"
                   >
                     <a href="https://alphix.gitbook.io/docs/" target="_blank" rel="noopener noreferrer" className="flex items-center">
-                      <BookTextIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                      <IconSavedItems className="h-3.5 w-3.5 flex-shrink-0" />
                       <span className="flex-1 truncate ml-2 text-xs font-normal">Documentation</span>
                     </a>
                   </SidebarMenuButton>

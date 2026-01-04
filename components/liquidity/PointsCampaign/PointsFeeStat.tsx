@@ -1,7 +1,7 @@
 /**
  * PointsFeeStat
  *
- * Displays total APR with points icon for positions earning points.
+ * Displays total APR with visual emphasis for positions earning points.
  * Shows breakdown tooltip on hover with Pool APR and Points APR.
  *
  * @example
@@ -19,12 +19,10 @@
 "use client"
 
 import React from 'react';
-import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { PointsTooltip, TooltipSize } from './PointsTooltip';
 import { PointsFeeStatTooltip } from './PointsFeeStatTooltip';
 import { formatPercent, PLACEHOLDER_TEXT } from './formatters';
-import { POINTS_CAMPAIGN_ICON } from './constants';
 
 interface PointsFeeStatProps {
   /** Pool APR from trading fees */
@@ -43,11 +41,11 @@ interface PointsFeeStatProps {
 
 /**
  * Points fee stat component.
- * Displays total APR with points icon and hover tooltip for breakdown.
+ * Displays total APR with visual emphasis and hover tooltip for breakdown.
  *
  * Design:
- * - Shows total APR value with Alphix icon on the right
- * - Icon indicates this APR includes points bonus
+ * - Shows total APR value in primary color with subtle background
+ * - Green color indicates boosted APR from points campaign
  * - Hover shows breakdown: Pool APR + Points APR
  */
 export function PointsFeeStat({
@@ -64,23 +62,12 @@ export function PointsFeeStat({
   // Content to display (wrapped in tooltip)
   const content = (
     <div className={cn("flex flex-col gap-0.5 flex-1 min-w-0", className)}>
-      {/* APR row with icon */}
-      <div className="flex items-center gap-1.5">
-        {/* Total APR value */}
-        <span className="text-xs font-medium font-mono text-primary">
-          {formattedTotalApr}
-        </span>
-        {/* Points icon indicating bonus APR */}
-        <Image
-          src={POINTS_CAMPAIGN_ICON}
-          alt="Points bonus"
-          width={12}
-          height={12}
-          className="rounded-full"
-        />
-      </div>
+      {/* APR value with dotted underline to indicate hover for more info */}
+      <span className="text-sm font-medium font-mono underline decoration-dotted decoration-muted-foreground/50 underline-offset-2">
+        {formattedTotalApr}
+      </span>
       {/* Label */}
-      <span className="text-[10px] text-muted-foreground">
+      <span className="text-xs text-muted-foreground">
         APR
       </span>
     </div>

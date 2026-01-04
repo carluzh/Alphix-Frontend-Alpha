@@ -4,33 +4,16 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import { getToken as getTokenConfig } from "@/lib/pools-config";
 
-// This type might need to be moved to a shared types file later.
-type ProcessedPosition = {
-  positionId: string;
-  owner: string;
-  poolId: string;
-  token0: {
-    address: string;
-    symbol: string;
-    amount: string;
-    usdValue?: number;
-  };
-  token1: {
-    address: string;
-    symbol: string;
-    amount: string;
-    usdValue?: number;
-  };
-  tickLower: number;
-  tickUpper: number;
-  isInRange: boolean;
-  ageSeconds: number;
-  blockTimestamp: number;
-};
-
+/**
+ * Minimal position type for TokenStack - only needs token symbols
+ */
+interface TokenStackPosition {
+  token0: { symbol: string };
+  token1: { symbol: string };
+}
 
 interface TokenStackProps {
-  position: ProcessedPosition;
+  position: TokenStackPosition;
 }
 
 export function TokenStack({ position }: TokenStackProps) {

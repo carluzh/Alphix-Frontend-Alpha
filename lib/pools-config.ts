@@ -248,14 +248,6 @@ export function getPoolSubgraphId(poolId: string, networkModeOverride?: NetworkM
   return pool?.subgraphId || null;
 }
 
-// Get pool by subgraph ID (bytes32 hash format)
-export function getPoolBySubgraphId(subgraphId: string, networkModeOverride?: NetworkMode): PoolConfig | null {
-  const normalizedId = subgraphId.toLowerCase();
-  return getPoolsConfig(networkModeOverride).pools.find(
-    pool => pool.subgraphId.toLowerCase() === normalizedId
-  ) || null;
-}
-
 // Get contract addresses
 export function getContracts(networkModeOverride?: NetworkMode): ContractsConfig {
   return getPoolsConfig(networkModeOverride).contracts;

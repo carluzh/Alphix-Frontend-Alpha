@@ -1298,7 +1298,6 @@ export function AddLiquidityForm({
                   currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
                   selectedPoolId={selectedPoolId}
                   getUsdPriceForSymbol={getUSDPriceForSymbol}
-                  convertTickToPrice={convertTickToPrice}
                 />
               )}
 
@@ -1348,7 +1347,6 @@ export function AddLiquidityForm({
                   currentPoolSqrtPriceX96={currentPoolSqrtPriceX96}
                   selectedPoolId={selectedPoolId}
                   getUsdPriceForSymbol={getUSDPriceForSymbol}
-                  convertTickToPrice={convertTickToPrice}
                   zapQuote={zapQuote}
                   currentSlippage={currentSlippage}
                 />

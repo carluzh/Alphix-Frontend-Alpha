@@ -25,7 +25,6 @@ export {
 export {
   useAllPrices,
   useUserPositions,
-  useUncollectedFeesBatch,
   usePoolState,
 } from './hooks'
 

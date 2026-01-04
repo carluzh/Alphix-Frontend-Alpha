@@ -3,11 +3,13 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
 import { Button } from '@/components/ui/button'
-import { LogOutIcon, MoreVerticalIcon, CopyIcon, CheckIcon, XIcon, HomeIcon } from "lucide-react"
+import { MoreVerticalIcon, XIcon, HomeIcon } from "lucide-react"
+import { IconClone2, IconCheck, IconPowerOff } from "nucleo-micro-bold-essential"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { Input } from "@/components/ui/input"
 import { motion, AnimatePresence } from "framer-motion"
 import { DeterministicAvatar } from "@/lib/avatar"
+import { cn } from "@/lib/utils"
 
 // Account Status component
 export function AccountStatus() {
@@ -124,13 +126,29 @@ export function AccountStatus() {
                      e.preventDefault();
                      e.stopPropagation();
                    }}
-                   className="ml-auto h-6 w-6 p-0"
+                   className="ml-auto flex items-center justify-center relative"
+                   style={{ width: '24px', height: '24px' }}
                  >
-                   {copied ? (
-                     <CheckIcon className="h-4 w-4 text-green-500" />
-                   ) : (
-                     <CopyIcon className="h-4 w-4 text-muted-foreground" />
-                   )}
+                  <IconClone2
+                    width={20}
+                    height={20}
+                    className={cn(
+                      "absolute text-muted-foreground transition-all duration-200",
+                      copied
+                        ? "opacity-0 translate-y-1"
+                        : "opacity-100 translate-y-0"
+                    )}
+                  />
+                  <IconCheck
+                    width={24}
+                    height={24}
+                    className={cn(
+                      "absolute text-green-500 transition-all duration-200",
+                      copied
+                        ? "opacity-100 translate-y-0"
+                        : "opacity-0 -translate-y-1"
+                    )}
+                  />
                  </Button>
                ) : (
                  <MoreVerticalIcon className="ml-auto size-4" />
@@ -154,8 +172,8 @@ export function AccountStatus() {
                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                  >
                    <div className="flex items-center w-full">
-                     <LogOutIcon className="h-4 w-4 text-white/75 ml-1" />
-                     <span className="mr-3" style={{ marginLeft: '0.75rem' }}>Disconnect</span>
+                     <IconPowerOff width={16} height={16} className="text-white/75" />
+                     <span className="ml-3">Disconnect</span>
                    </div>
                  </Button>
                </div>

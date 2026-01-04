@@ -14,9 +14,8 @@
 "use client"
 
 import React from 'react';
-import Image from 'next/image';
 import { cn } from '@/lib/utils';
-import { POINTS_CAMPAIGN_ICON } from './constants';
+import { PointsIcon } from '@/components/PointsIcon';
 
 interface PointsRewardBadgeProps {
   /** Formatted points APR string (e.g., "+12.5%") */
@@ -58,12 +57,10 @@ export function PointsRewardBadge({
         {formattedPointsApr}
       </span>
       {/* Points icon - mirrors CurrencyLogo size={12} */}
-      <Image
-        src={POINTS_CAMPAIGN_ICON}
-        alt="Points"
+      <PointsIcon
+        className="text-primary"
         width={10}
         height={10}
-        className="rounded-full"
       />
     </div>
   );

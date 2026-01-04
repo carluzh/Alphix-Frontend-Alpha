@@ -80,7 +80,6 @@ export function LiquidityPositionFeeStats({
   isLoadingApr,
 
   // Range props
-  priceOrdering,
   tickSpacing,
   tickLower,
   tickUpper,
@@ -99,8 +98,8 @@ export function LiquidityPositionFeeStats({
   return (
     <div className={cn(
       // Layout - mirrors Flex row gap="$gap20" justifyContent="space-between"
-      // Larger bottom bar with py-3 (12px vertical padding)
-      "flex items-center justify-between gap-5 py-3 px-4 rounded-b-lg transition-colors",
+      // Increased padding for larger stat bar
+      "flex items-center justify-between gap-5 py-4 px-4 rounded-b-lg transition-colors",
       // Background - mirrors backgroundColor={cardHovered ? '$surface2Hovered' : '$surface2'}
       cardHovered ? "bg-muted/50" : "bg-muted/30"
     )}>
@@ -110,10 +109,10 @@ export function LiquidityPositionFeeStats({
           <FeeStatLoader />
         ) : (
           <>
-            <span className="text-xs font-medium font-mono">
+            <span className="text-sm font-medium font-mono">
               {formattedUsdValue || '-'}
             </span>
-            <span className="text-[10px] text-muted-foreground">Position</span>
+            <span className="text-xs text-muted-foreground">Position</span>
           </>
         )}
       </FeeStat>
@@ -125,19 +124,18 @@ export function LiquidityPositionFeeStats({
         ) : (
           <>
             <span className={cn(
-              "text-xs font-medium font-mono",
+              "text-sm font-medium font-mono",
               formattedUsdFees === '$0.00' && "text-white/50"
             )}>
               {formattedUsdFees || '-'}
             </span>
-            <span className="text-[10px] text-muted-foreground">Fees</span>
+            <span className="text-xs text-muted-foreground">Fees</span>
           </>
         )}
       </FeeStat>
 
-      {/* Range - mirrors MinMaxRange */}
+      {/* Range - uses pre-formatted prices */}
       <MinMaxRange
-        priceOrdering={priceOrdering}
         tickSpacing={tickSpacing}
         tickLower={tickLower}
         tickUpper={tickUpper}
