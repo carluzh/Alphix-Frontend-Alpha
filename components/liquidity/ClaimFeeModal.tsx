@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import Image from 'next/image';
-import { X, BadgeCheck, OctagonX, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
+import { IconXmark } from 'nucleo-micro-bold-essential';
 import { Button } from '@/components/ui/button';
 import { getToken } from '@/lib/pools-config';
 import { useDecreaseLiquidity } from '@/lib/liquidity/hooks';
@@ -36,8 +37,6 @@ interface ClaimFeeModalProps {
   fee0USD: number;
   /** USD value of fee 1 */
   fee1USD: number;
-  /** Get USD price for a token symbol */
-  getUsdPriceForSymbol: (symbol?: string) => number;
   /** Callback when fees are successfully collected */
   onFeesCollected?: (positionId: string) => void;
   /** Optional callback to refresh position data */
@@ -56,7 +55,6 @@ export function ClaimFeeModal({
   feeAmount1,
   fee0USD,
   fee1USD,
-  getUsdPriceForSymbol,
   onFeesCollected,
   onRefreshPosition,
 }: ClaimFeeModalProps) {
@@ -216,7 +214,7 @@ export function ClaimFeeModal({
               /* Success View */
               <div className="flex flex-col items-center gap-4 py-4">
                 <div className="flex items-center justify-center w-12 h-12 rounded-full bg-green-500/20">
-                  <BadgeCheck className="h-6 w-6 text-green-500" />
+                  <IconBadgeCheck2 className="h-6 w-6 text-green-500" />
                 </div>
                 <div className="text-center">
                   <h3 className="text-lg font-medium mb-1">Fees Collected!</h3>

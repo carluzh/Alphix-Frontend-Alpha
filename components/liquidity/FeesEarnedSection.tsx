@@ -2,7 +2,8 @@
 
 import React, { useMemo } from 'react';
 import Image from 'next/image';
-import { Minus, CornerRightUp } from 'lucide-react';
+import { CornerRightUp, Minus } from 'lucide-react';
+import { IconMinus } from 'nucleo-micro-bold-essential';
 import { getToken } from '@/lib/pools-config';
 import { cn } from '@/lib/utils';
 import { FeeAmountRow } from './TokenAmountRow';
@@ -110,7 +111,7 @@ export function FeesEarnedSection({
           {hasUncollectedFees ? (
             <>
               <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
-                <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                <IconMinus className="h-3.5 w-3.5" />
               </div>
               <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
                 Fees collected first
@@ -134,7 +135,7 @@ export function FeesEarnedSection({
       return (
         <div className="absolute top-5 right-5 group">
           <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
-            <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+            <IconMinus className="h-3.5 w-3.5" strokeWidth={2.5} />
           </div>
           <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
             Fees are withdrawn

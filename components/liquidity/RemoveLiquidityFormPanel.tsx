@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { PlusIcon, BadgeCheck, RefreshCw as RefreshCwIcon } from "lucide-react";
+import { IconPlus, IconBadgeCheck2, IconRefreshClockwise } from "nucleo-micro-bold-essential";
 import { Button } from "@/components/ui/button";
 import { useAccount } from "wagmi";
 import { getTokenDefinitions, TokenSymbol } from "@/lib/pools-config";
@@ -311,7 +311,7 @@ export function RemoveLiquidityFormPanel({
     return (
       <div className="flex flex-col items-center justify-center space-y-6">
         <div className="flex items-center justify-center w-16 h-16 rounded-full bg-green-500/10">
-          <BadgeCheck className="w-8 h-8 text-green-500" />
+          <IconBadgeCheck2 className="w-8 h-8 text-green-500" />
         </div>
         <div className="text-center space-y-2">
           <h3 className="text-lg font-semibold">Liquidity Removed!</h3>
@@ -368,7 +368,7 @@ export function RemoveLiquidityFormPanel({
               <span>Withdrawal Transaction</span>
               <span>
                 {isDecreasingLiquidity ? (
-                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                  <IconRefreshClockwise className="h-4 w-4 animate-spin" />
                 ) : (
                   <span className={`text-xs font-mono ${isDecreaseSuccess ? 'text-green-500' : 'text-muted-foreground'}`}>
                     {isDecreaseSuccess ? '1/1' : '0/1'}
@@ -488,7 +488,7 @@ export function RemoveLiquidityFormPanel({
 
           <div className="flex justify-center items-center">
             <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-              <PlusIcon className="h-4 w-4 text-muted-foreground" />
+              <IconPlus className="h-4 w-4 text-muted-foreground" />
             </div>
           </div>
 

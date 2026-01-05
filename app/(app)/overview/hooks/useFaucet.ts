@@ -5,7 +5,7 @@ import { parseAbi } from "viem";
 import { useWriteContract, useWaitForTransactionReceipt, useReadContract } from "wagmi";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { toast } from "sonner";
-import { BadgeCheck } from "lucide-react";
+import { IconBadgeCheck2 } from "nucleo-micro-bold-essential";
 import { FAUCET_CONTRACT_ADDRESS, faucetContractAbi } from "@/pages/api/misc/faucet";
 import React from "react";
 
@@ -44,7 +44,7 @@ export function useFaucet({ userAddress, userIsConnected, currentChainId }: UseF
       setFaucetLastClaimTs(now);
       setIsFaucetBusy(false);
       toast.success('Faucet Claimed', {
-        icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-sidebar-primary" }),
+        icon: React.createElement(IconBadgeCheck2, { className: "h-4 w-4 text-sidebar-primary" }),
         className: 'faucet-claimed'
       });
       setTimeout(() => {

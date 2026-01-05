@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import Link from "next/link"
-import { ArrowRight, X } from "lucide-react"
+import { IconXmark, IconArrowRight } from "nucleo-micro-bold-essential"
 import { useAccount } from "wagmi"
 import { ANNOUNCEMENTS, isAnnouncementActive, type Announcement } from "@/lib/announcements"
 import Image from "next/image"
@@ -183,7 +183,7 @@ export function AnnouncementCard() {
             closeAll()
           }}
         >
-          <X className="h-4 w-4" />
+          <IconXmark className="h-4 w-4" />
         </button>
       </div>
 
@@ -207,7 +207,7 @@ export function AnnouncementCard() {
         {announcement.href && announcement.ctaLabel && (
           <div className={cn("hidden sm:flex items-center justify-center rounded-3xl w-fit bg-black/25", ui.ctaWrap)}>
             <span className={cn(ui.ctaText, "text-foreground")}>{announcement.ctaLabel}</span>
-            <ArrowRight className={cn(ui.ctaIcon, "text-foreground")} />
+            <IconArrowRight className={cn(ui.ctaIcon, "text-foreground")} />
           </div>
         )}
       </div>

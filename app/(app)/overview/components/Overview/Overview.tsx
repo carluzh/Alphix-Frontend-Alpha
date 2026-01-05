@@ -282,7 +282,6 @@ export const Overview = memo(function Overview({
                       position={position}
                       valueUSD={getPositionValueUSD(position)}
                       onClick={() => handleOpenModal(index)}
-                      getUsdPriceForSymbol={getUsdPriceForSymbol}
                       poolContext={defaultPoolContext}
                       showMenuButton={false}
                       pointsData={MOCK_POINTS_DATA}

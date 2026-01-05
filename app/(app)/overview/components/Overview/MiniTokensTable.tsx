@@ -2,9 +2,11 @@
 
 import { memo } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { getToken } from "@/lib/pools-config";
 import { TableSectionHeader } from "../shared/TableSectionHeader";
+import { ChevronRight } from "lucide-react";
 
 // Constants matching Uniswap PORTFOLIO_TABLE_ROW_HEIGHT
 const TABLE_ROW_HEIGHT = 67;
@@ -63,18 +65,20 @@ function HeaderRow() {
 
 /**
  * TokenRow - matches Uniswap's v2 DataRow styling
- * hoverStyle: backgroundColor with transition 0ms
- * No arrow, no navigation
+ * Clickable: navigates to /liquidity?token=SYMBOL
+ * hoverStyle: backgroundColor with transition 0ms, shows arrow on hover
  */
-function TokenRow({ token }: { token: TokenBalance }) {
+function TokenRow({ token, onClick }: { token: TokenBalance; onClick?: () => void }) {
   const tokenConfig = getToken(token.symbol);
   const iconUrl = (tokenConfig as any)?.icon;
 
   return (
     <div
+      onClick={onClick}
       className={cn(
-        "flex items-center px-4",
-        "hover:bg-muted/40 rounded-xl"
+        "flex items-center px-4 group",
+        "hover:bg-muted/40 rounded-xl",
+        onClick && "cursor-pointer"
       )}
       style={{
         height: TABLE_ROW_HEIGHT,
@@ -110,8 +114,13 @@ function TokenRow({ token }: { token: TokenBalance }) {
       </div>
 
       {/* Value - Right */}
-      <div className="text-right flex-shrink-0">
-        <div className="text-sm text-foreground">{formatUSD(token.usdValue)}</div>
+      <div className="flex items-center flex-shrink-0">
+        <div className="text-right">
+          <div className="text-sm text-foreground">{formatUSD(token.usdValue)}</div>
+        </div>
+        {onClick && (
+          <ChevronRight className="h-4 w-0 group-hover:w-4 ml-0 group-hover:ml-2 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all overflow-hidden" />
+        )}
       </div>
     </div>
   );
@@ -154,7 +163,7 @@ function LoadingSkeleton({ rows = 3 }: { rows?: number }) {
  * Structure (separate containers like Uniswap v2):
  * - TableSectionHeader with title and subtitle
  * - HeaderRow (rounded, surface2 bg)
- * - Token rows (instant hover, rounded)
+ * - Token rows (instant hover, rounded, clickable to filter liquidity)
  * - No ViewAllButton
  */
 export const MiniTokensTable = memo(function MiniTokensTable({
@@ -162,8 +171,13 @@ export const MiniTokensTable = memo(function MiniTokensTable({
   maxRows = 8,
   isLoading,
 }: MiniTokensTableProps) {
+  const router = useRouter();
   const displayTokens = tokens.slice(0, maxRows);
   const totalTokens = tokens.length;
+
+  const handleTokenClick = (symbol: string) => {
+    router.push(`/liquidity?token=${encodeURIComponent(symbol)}`);
+  };
 
   if (isLoading) {
     return (
@@ -188,7 +202,11 @@ export const MiniTokensTable = memo(function MiniTokensTable({
           <div className="flex flex-col">
             <HeaderRow />
             {displayTokens.map((token) => (
-              <TokenRow key={token.symbol} token={token} />
+              <TokenRow
+                key={token.symbol}
+                token={token}
+                onClick={() => handleTokenClick(token.symbol)}
+              />
             ))}
           </div>
         ) : (

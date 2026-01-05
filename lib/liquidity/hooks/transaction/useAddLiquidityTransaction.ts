@@ -8,7 +8,7 @@ import * as Sentry from '@sentry/nextjs';
 import { useCallback, useState, useRef } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignTypedData, useBalance, usePublicClient, useSendTransaction } from 'wagmi';
 import { toast } from 'sonner';
-import { BadgeCheck, OctagonX, InfoIcon } from 'lucide-react';
+import { IconBadgeCheck2, IconCircleXmarkFilled, IconCircleInfo } from 'nucleo-micro-bold-essential';
 import React from 'react';
 import { TokenSymbol, NATIVE_TOKEN_ADDRESS, getToken } from '@/lib/pools-config';
 import { getExplorerTxUrl } from '@/lib/wagmiConfig';
@@ -239,7 +239,7 @@ export function useAddLiquidityTransaction({
 
       const isInfinite = approvalAmount === maxUint256;
       toast.success(`${tokenSymbol} Approved`, {
-        icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+        icon: React.createElement(IconBadgeCheck2, { className: 'h-4 w-4 text-green-500' }),
         description: isInfinite
           ? `Approved infinite ${tokenSymbol} for liquidity`
           : `Approved ${exactAmount} ${tokenSymbol} for this transaction`,
@@ -271,7 +271,7 @@ export function useAddLiquidityTransaction({
         let swapPermitSignature: string | undefined = undefined;
         if (zapApprovalData.swapPermitData) {
           toast('Sign Swap Permit in Wallet', {
-            icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
+            icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
           });
 
           const { token, amount, nonce, expiration, sigDeadline, spender } = zapApprovalData.swapPermitData;
@@ -420,7 +420,7 @@ export function useAddLiquidityTransaction({
         }
 
         toast.success('Swap Complete', {
-          icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+          icon: React.createElement(IconBadgeCheck2, { className: 'h-4 w-4 text-green-500' }),
           description: 'Tokens swapped successfully',
         });
 
@@ -536,7 +536,7 @@ export function useAddLiquidityTransaction({
           }
 
           toast('Sign LP Permit in Wallet', {
-            icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
+            icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
           });
 
           // Extract domain and types from permitBatchData (API doesn't return signatureDetails)
@@ -618,7 +618,7 @@ export function useAddLiquidityTransaction({
 
           // Execute LP deposit - send raw transaction (Uniswap pattern)
           toast('Confirm LP Deposit in Wallet', {
-            icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
+            icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
           });
 
           await sendTransactionAsync({
@@ -631,7 +631,7 @@ export function useAddLiquidityTransaction({
         } else if (mintResult.transaction && mintResult.transaction.data) {
           // No permit needed, execute directly - send raw transaction (Uniswap pattern)
           toast('Confirm LP Deposit in Wallet', {
-            icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
+            icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
           });
 
           await sendTransactionAsync({
@@ -740,7 +740,7 @@ export function useAddLiquidityTransaction({
 
           // Sign the permit data from API (single source of truth)
           toast('Sign Permit in Wallet', {
-            icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
+            icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
           });
 
           const valuesToSign = permitBatchData.values || permitBatchData;
@@ -752,7 +752,7 @@ export function useAddLiquidityTransaction({
           });
 
           toast.success('Permit Signed', {
-            icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+            icon: React.createElement(IconBadgeCheck2, { className: 'h-4 w-4 text-green-500' }),
           });
 
           response = await fetch(endpoint, {
@@ -804,7 +804,7 @@ export function useAddLiquidityTransaction({
 
         if (isUserRejection) {
           toast.error('Transaction Rejected', {
-            icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
+            icon: React.createElement(IconCircleXmarkFilled, { className: 'h-4 w-4 text-red-500' }),
             description: 'The request was rejected in your wallet.',
           });
         } else {
@@ -819,7 +819,7 @@ export function useAddLiquidityTransaction({
             isZapMode,
           });
           toast.error('Transaction Failed', {
-            icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
+            icon: React.createElement(IconCircleXmarkFilled, { className: 'h-4 w-4 text-red-500' }),
             description: error.message || 'Unknown error',
           });
         }
@@ -840,7 +840,7 @@ export function useAddLiquidityTransaction({
       processedFailedHashRef.current = depositTxHash;
 
       toast.error('Transaction Failed', {
-        icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
+        icon: React.createElement(IconCircleXmarkFilled, { className: 'h-4 w-4 text-red-500' }),
         description: `Transaction was submitted but reverted on-chain.`,
         action: {
           label: 'View on Explorer',
@@ -858,7 +858,7 @@ export function useAddLiquidityTransaction({
       processedDepositHashRef.current = depositTxHash;
 
       toast.success('Position Created', {
-        icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+        icon: React.createElement(IconBadgeCheck2, { className: 'h-4 w-4 text-green-500' }),
         description: `Liquidity added to ${token0Symbol}/${token1Symbol} pool successfully`,
         action: { label: 'View Transaction', onClick: () => window.open(getExplorerTxUrl(depositTxHash), '_blank') },
       });
@@ -904,7 +904,7 @@ export function useAddLiquidityTransaction({
         }
 
         if (calculatedData?.amount0 && calculatedData?.amount1) {
-          const { getTokenPrice } = await import('@/lib/price-service');
+          const { getTokenPrice } = await import('@/lib/quote-prices');
           const { formatUnits } = await import('viem');
           const { getToken } = await import('@/lib/pools-config');
           const token0Config = getToken(token0Symbol);
@@ -917,7 +917,7 @@ export function useAddLiquidityTransaction({
 
         // Calculate volume delta for zap transactions (swap contributes to volume)
         if (isZapMode && calculatedData?.optimalSwapAmount && calculatedData?.swapDirection?.from) {
-          const { getTokenPrice } = await import('@/lib/price-service');
+          const { getTokenPrice } = await import('@/lib/quote-prices');
           const { formatUnits } = await import('viem');
           const { getToken } = await import('@/lib/pools-config');
 

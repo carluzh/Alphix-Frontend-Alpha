@@ -5,7 +5,7 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress, getNetworkModeFromRequest } from '@/lib/pools-config';
-import { batchGetTokenPrices, calculateTotalUSD } from '@/lib/price-service';
+import { batchQuotePrices, calculateTotalUSD } from '@/lib/quote-prices';
 import { formatUnits, parseAbi } from 'viem';
 import { getUniswapV4SubgraphUrl, isDaiPool, isMainnetSubgraphMode } from '@/lib/subgraph-url-helper';
 import { createNetworkClient } from '@/lib/viemClient';
@@ -159,7 +159,7 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   // RUN EVERYTHING IN PARALLEL (Promise.allSettled pattern identical to Uniswap getPool.ts)
   console.time('[PERF] All data fetches (parallel)');
   const [pricesResult, feesResult, combinedQueryResult, daiQueryResult] = await Promise.allSettled([
-    batchGetTokenPrices(Array.from(tokenSymbols)),
+    batchQuotePrices(Array.from(tokenSymbols), 8453, networkMode),
     (async () => {
       const feeCalls = targetPoolIds.map(poolId => ({ address: stateViewAddress as `0x${string}`, abi: parseAbi(STATE_VIEW_ABI), functionName: 'getSlot0', args: [poolId as `0x${string}`] }));
       return client.multicall({ contracts: feeCalls, allowFailure: true });

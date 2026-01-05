@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAccount } from "wagmi";
 import { getAllPools } from "@/lib/pools-config";
-import { batchGetTokenPrices } from "@/lib/price-service";
+import { batchQuotePrices } from "@/lib/quote-prices";
 
 export interface TokenBalance {
   symbol: string;
@@ -104,24 +104,16 @@ export function useOverviewData(
           });
         }
 
-        // 3. Resolve prices for all tokens
+        // 3. Resolve prices for all tokens via on-chain quotes
         const tokenSymbols = Array.from(tokenBalanceMap.keys());
         const priceMap = new Map<string, number>();
         try {
-          const batch = await batchGetTokenPrices(tokenSymbols);
+          const batch = await batchQuotePrices(tokenSymbols);
           tokenSymbols.forEach((symbol) => {
             const px = batch[symbol];
-            if (typeof px === "number") priceMap.set(symbol, px);
+            if (typeof px === "number" && px > 0) priceMap.set(symbol, px);
           });
-        } catch {
-          // Fallback to hook-provided prices
-          const prices = priceData || {};
-          tokenSymbols.forEach((symbol) => {
-            const mapped = String(symbol).toUpperCase();
-            const px = prices[mapped];
-            if (typeof px === "number") priceMap.set(symbol, px);
-          });
-        }
+        } catch {}
 
         // 4. Create token balances with USD values and colors
         const tokenBalances: TokenBalance[] = Array.from(tokenBalanceMap.entries())

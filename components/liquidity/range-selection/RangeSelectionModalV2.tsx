@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { TokenSymbol, getToken, getChainId } from "@/lib/pools-config";
 import { InteractiveRangeChart } from "../InteractiveRangeChart";
-import { PlusIcon, MinusIcon, ArrowLeftRight, CircleHelp, ChartBarBig, SquarePen } from "lucide-react";
+import { ArrowLeftRight, CircleHelp } from "lucide-react";
+import { IconPlus, IconMinus, IconChartBarAxisX, IconPen2 } from "nucleo-micro-bold-essential";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { calculatePositionApr, formatApr, type PoolMetrics } from "@/lib/apr";
@@ -673,7 +674,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       }`}
                       style={{ padding: '4px 8px' }}
                     >
-                      <ChartBarBig className="h-3.5 w-3.5" />
+                      <IconChartBarAxisX className="h-3.5 w-3.5" />
                     </button>
                     <button
                       onClick={() => setMobileViewMode('inputs')}
@@ -684,7 +685,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                       }`}
                       style={{ padding: '4px 8px' }}
                     >
-                      <SquarePen className="h-3.5 w-3.5" />
+                      <IconPen2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 )}
@@ -771,7 +772,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(64, 64, 64, 0.4)'}
                         disabled={parseInt(localTickLower) <= sdkMinTick}
                       >
-                        <MinusIcon className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+                        <IconMinus className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
                       </button>
                       <button
                         onClick={() => adjustTick(true, true)}
@@ -781,7 +782,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(64, 64, 64, 0.4)'}
                         disabled={parseInt(localTickLower) >= parseInt(localTickUpper) - defaultTickSpacing}
                       >
-                        <PlusIcon className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+                        <IconPlus className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
                       </button>
                     </div>
                   </div>
@@ -853,7 +854,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(64, 64, 64, 0.4)'}
                         disabled={parseInt(localTickUpper) <= parseInt(localTickLower) + defaultTickSpacing}
                       >
-                        <MinusIcon className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+                        <IconMinus className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
                       </button>
                       <button
                         onClick={() => adjustTick(false, true)}
@@ -863,7 +864,7 @@ export function RangeSelectionModalV2(props: RangeSelectionModalV2Props) {
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(64, 64, 64, 0.4)'}
                         disabled={parseInt(localTickUpper) >= sdkMaxTick}
                       >
-                        <PlusIcon className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+                        <IconPlus className={isMobile ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
                       </button>
                     </div>
                   </div>

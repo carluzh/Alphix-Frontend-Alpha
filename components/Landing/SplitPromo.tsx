@@ -1,6 +1,6 @@
 'use client'
 
-import { Check } from 'lucide-react'
+import { IconCheck } from 'nucleo-micro-bold-essential'
 import Image from 'next/image'
 import React from 'react'
 import { useInView } from '@/hooks/useInView'
@@ -64,7 +64,7 @@ export const SplitPromo: React.FC<SplitPromoProps> = ({
                 key={index}
                 className="flex flex-row items-center gap-x-2"
               >
-                <Check className="h-4 w-4 text-green-500 shrink-0" />
+                <IconCheck className="h-4 w-4 text-green-500 shrink-0" />
                 <p className="leading-relaxed text-pretty text-foreground">{bullet}</p>
               </li>
             ))}

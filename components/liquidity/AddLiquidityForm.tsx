@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, BadgeCheck, Maximize, CircleHelp } from "lucide-react";
+import { Maximize, CircleHelp } from "lucide-react";
+import { IconPlus, IconBadgeCheck2 } from "nucleo-micro-bold-essential";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1208,7 +1209,7 @@ export function AddLiquidityForm({
               <div className="flex justify-center relative my-0" style={{ height: '20px' }}>
                 <div className={cn("plus-loading-wrapper", isCalculating && "loading")}>
                   <div className="plus-loading-inner">
-                    <Plus className="h-4 w-4" />
+                    <IconPlus className="h-4 w-4" />
                   </div>
                 </div>
               </div>

@@ -11,7 +11,7 @@ import { parseSubgraphPosition, type SubgraphPosition } from "@/lib/uniswap/liqu
 import { formatUnits } from "viem";
 import { formatTokenDisplayAmount } from "@/lib/utils";
 import Image from "next/image";
-import { MoveRight } from "lucide-react";
+import { IconArrowRight } from "nucleo-micro-bold-essential";
 import { useAccount } from "wagmi";
 import { Token } from '@uniswap/sdk-core';
 import { Pool as V4PoolSDK } from "@uniswap/v4-sdk";
@@ -422,7 +422,7 @@ export function PreviewPositionModal({
 
                       {/* Arrow - aligned with amount segment boxes */}
                       <div className="flex-shrink-0 flex items-end pb-4">
-                        <MoveRight className="w-5 h-5" style={{ color: 'rgba(163, 163, 163, 1)' }} />
+                        <IconArrowRight className="w-5 h-5" style={{ color: 'rgba(163, 163, 163, 1)' }} />
                       </div>
 
                       {/* Position Amounts - 2/3 width */}
@@ -457,7 +457,6 @@ export function PreviewPositionModal({
                     position={previewPositionInfo}
                     valueUSD={valueUSD}
                     onClick={() => {}}
-                    getUsdPriceForSymbol={getUsdPriceForSymbol}
                     poolType={poolType}
                     poolContext={{
                       currentPrice,

@@ -5,7 +5,6 @@ export const revalidate = 0;
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAllPools } from "@/lib/pools-config";
-import { batchGetTokenPrices } from "@/lib/price-service";
 import { getAlphixSubgraphUrl, getDaiSubgraphUrl, isMainnetSubgraphMode } from "@/lib/subgraph-url-helper";
 
 /**
@@ -176,14 +175,6 @@ async function fetchActivityFromSubgraph(
     // Get pool configs for token mapping
     const pools = getAllPools();
     const poolMap = new Map(pools.map((p: any) => [p.subgraphId?.toLowerCase(), p]));
-
-    // Get prices for USD conversion
-    const allSymbols = new Set<string>();
-    pools.forEach((p: any) => {
-      if (p.token0) allSymbols.add(p.token0);
-      if (p.token1) allSymbols.add(p.token1);
-    });
-    const prices = await batchGetTokenPrices(Array.from(allSymbols));
 
     // Convert positions to activity items
     const activities: ActivityItem[] = [];

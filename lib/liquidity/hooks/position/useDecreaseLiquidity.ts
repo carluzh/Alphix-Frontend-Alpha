@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/nextjs';
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import React from 'react';
-import { OctagonX, BadgeCheck } from 'lucide-react';
+import { IconBadgeCheck2, IconCircleXmarkFilled } from 'nucleo-micro-bold-essential';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { toast } from 'sonner';
 import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
@@ -93,7 +93,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   const decreaseLiquidity = useCallback(async (positionData: DecreasePositionData, decreasePercentage: number, opts?: DecreaseOptions) => {
     if (!accountAddress || !chainId) {
       toast.error("Wallet Not Connected", { 
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), 
         description: "Please connect your wallet and try again.",
         action: {
           label: "Open Ticket",
@@ -104,7 +104,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
       toast.error("Configuration Error", { 
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), 
         description: "Position Manager address not set.",
         action: {
           label: "Open Ticket",
@@ -350,7 +350,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               }
 
               toast.error(`${actionName.charAt(0).toUpperCase() + actionName.slice(1)} Failed`, {
-                icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
                 description: errorMessage,
                 action: {
                   label: "Copy Error",
@@ -638,7 +638,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           }
 
           toast.error(`${actionName.charAt(0).toUpperCase() + actionName.slice(1)} Failed`, {
-            icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+            icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
             description: errorMessage,
             action: {
               label: "Copy Error",
@@ -669,7 +669,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       }
 
       toast.error("Preparation Error", {
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
         description: errorMessage,
         action: {
           label: "Copy Error",
@@ -695,7 +695,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       }
 
       toast.error("Transaction Failed", {
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
         description: message,
         action: {
           label: "Copy Error",
@@ -722,7 +722,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       // Show success toast based on action type
       if (lastWasCollectOnly.current) {
         toast.success("Fees Collected", {
-          icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          icon: React.createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
           description: "Fees collected successfully",
           action: hash ? {
             label: "View Transaction",
@@ -731,7 +731,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         });
       } else if (lastIsFullBurn.current) {
         toast.success("Position Closed", {
-          icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          icon: React.createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
           description: "Position burned and liquidity withdrawn successfully",
           action: hash ? {
             label: "View Transaction",
@@ -740,7 +740,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         });
       } else {
         toast.success("Liquidity Withdrawn", {
-          icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          icon: React.createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
           description: "Liquidity removed from position successfully",
           action: hash ? {
             label: "View Transaction",
@@ -792,7 +792,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
        const message = decreaseConfirmError instanceof BaseError ? decreaseConfirmError.shortMessage : decreaseConfirmError.message;
       toast.error("Transaction Failed", { 
         id: hash,
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
         description: message,
         action: {
           label: "Copy Error",
@@ -809,7 +809,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     claimFees: useCallback(async (tokenIdLike: string | number) => {
       if (!accountAddress || !chainId) {
         toast.error("Wallet Not Connected", { 
-          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+          icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), 
           description: "Please connect your wallet and try again.",
           action: {
             label: "Open Ticket",
@@ -820,7 +820,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       }
       if (!V4_POSITION_MANAGER_ADDRESS) {
         toast.error("Configuration Error", { 
-          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+          icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), 
           description: "Position Manager address not set.",
           action: {
             label: "Open Ticket",
@@ -899,7 +899,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             }
 
             toast.error('Collect Failed', {
-              icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+              icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
               description: errorMessage,
               action: {
                 label: "Copy Error",
@@ -911,7 +911,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } as any);
       } catch (e: any) {
         toast.error('Preparation Error', { 
-          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), 
+          icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), 
           description: e?.message || 'Could not prepare claim-fees transaction.',
           action: {
             label: "Copy Error",

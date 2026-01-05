@@ -1,95 +1,22 @@
 /**
  * Hook to get USD price of tokens
- * Unified client hook - calls centralized /api/prices endpoint
- * Continuous polling for real-time AMM price updates
+ * Uses on-chain V4 Quoter via batchQuotePrices
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { TokenSymbol } from '@/lib/pools-config';
+import { getQuotePrice } from '@/lib/quote-prices';
 import useIsWindowVisible from '@/hooks/useIsWindowVisible';
 
-const POLL_INTERVAL_MS = 60 * 1000; // Poll every 60 seconds for price updates
-const CACHE_DURATION_MS = 10 * 1000; // Client cache for 10 seconds (very short)
-
-interface AllPricesResponse {
-  success: boolean;
-  data?: {
-    BTC: { usd: number };
-    USDC: { usd: number };
-    ETH: { usd: number };
-    USDT: { usd: number };
-    DAI: { usd: number };
-    aBTC: { usd: number };
-    aUSDC: { usd: number };
-    aETH: { usd: number };
-    aUSDT: { usd: number };
-    aDAI: { usd: number };
-    lastUpdated: number;
-  };
-  isStale?: boolean;
-}
+const POLL_INTERVAL_MS = 30 * 1000; // Poll every 30 seconds
+const CACHE_DURATION_MS = 10 * 1000; // Client cache for 10 seconds
 
 interface PriceCache {
-  prices: AllPricesResponse['data'];
+  price: number;
   timestamp: number;
 }
 
-// Single cache for all prices (fetched together)
-let allPricesCache: PriceCache | null = null;
-let ongoingFetch: Promise<AllPricesResponse> | null = null;
-
-/**
- * Fetch all prices from centralized API (deduplicates requests)
- */
-async function fetchAllPrices(): Promise<AllPricesResponse> {
-  // If there's an ongoing fetch, wait for it
-  if (ongoingFetch) {
-    return ongoingFetch;
-  }
-
-  ongoingFetch = (async () => {
-    try {
-      const response = await fetch('/api/prices', {
-        method: 'GET',
-        cache: 'no-store',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch prices');
-      }
-
-      const data: AllPricesResponse = await response.json();
-
-      // Update cache
-      if (data.success && data.data) {
-        allPricesCache = {
-          prices: data.data,
-          timestamp: Date.now(),
-        };
-      }
-
-      return data;
-    } finally {
-      ongoingFetch = null;
-    }
-  })();
-
-  return ongoingFetch;
-}
-
-// Price keys are the token symbols (excluding lastUpdated which is a number)
-type PriceKey = Exclude<keyof NonNullable<AllPricesResponse['data']>, 'lastUpdated'>;
-
-/**
- * Map token symbol to price key in response
- */
-function getPriceKey(symbol: TokenSymbol): PriceKey {
-  // Handle both base and "a" prefixed symbols
-  if (symbol.startsWith('a')) {
-    return symbol as PriceKey;
-  }
-  return `a${symbol}` as PriceKey;
-}
+const priceCache = new Map<string, PriceCache>();
 
 export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
   price: number | null;
@@ -97,33 +24,22 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
 } {
   const [price, setPrice] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-
-  // skip price fetching if the window is not focused
   const isWindowVisible = useIsWindowVisible();
 
   const fetchPrice = useCallback(async (symbol: TokenSymbol) => {
     // Check cache first
-    if (allPricesCache && Date.now() - allPricesCache.timestamp < CACHE_DURATION_MS) {
-      const priceKey = getPriceKey(symbol);
-      const priceData = allPricesCache.prices?.[priceKey];
-      if (priceData && 'usd' in priceData) {
-        setPrice(priceData.usd);
-        return;
-      }
+    const cached = priceCache.get(symbol);
+    if (cached && Date.now() - cached.timestamp < CACHE_DURATION_MS) {
+      setPrice(cached.price);
+      return;
     }
 
     setIsLoading(true);
     try {
-      const response = await fetchAllPrices();
-
-      if (response.success && response.data) {
-        const priceKey = getPriceKey(symbol);
-        const priceData = response.data[priceKey];
-        if (priceData && 'usd' in priceData) {
-          setPrice(priceData.usd);
-        } else {
-          setPrice(null);
-        }
+      const quotedPrice = await getQuotePrice(symbol);
+      if (quotedPrice > 0) {
+        priceCache.set(symbol, { price: quotedPrice, timestamp: Date.now() });
+        setPrice(quotedPrice);
       } else {
         setPrice(null);
       }
@@ -142,18 +58,10 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
       return;
     }
 
-    // Skip if token is aUSDC itself
-    if (tokenSymbol === 'aUSDC') {
-      setPrice(1);
-      setIsLoading(false);
-      return;
-    }
-
     // Fetch immediately on mount
     fetchPrice(tokenSymbol);
 
-    // Set up polling for real-time price updates (AMM prices change with every trade)
-    // Only poll when window is visible (Uniswap pattern from useBlockNumber.tsx)
+    // Only poll when window is visible
     if (!isWindowVisible) {
       return;
     }
@@ -162,10 +70,8 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
       fetchPrice(tokenSymbol);
     }, POLL_INTERVAL_MS);
 
-    // Cleanup interval on unmount
     return () => clearInterval(intervalId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenSymbol, isWindowVisible]); // Re-run when visibility changes
+  }, [tokenSymbol, isWindowVisible, fetchPrice]);
 
   return { price, isLoading };
 }
@@ -188,4 +94,3 @@ export function useTokenUSDValue(
     isLoading,
   };
 }
-

@@ -3,7 +3,7 @@
 import React from "react";
 import Image from "next/image";
 import { toast } from "sonner";
-import { OctagonX } from "lucide-react";
+import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential";
 import { baseSepolia } from "@/lib/wagmiConfig";
 import { getToken } from "@/lib/pools-config";
 import { formatNumber } from "@/lib/format";
@@ -79,7 +79,7 @@ export const FaucetButton = ({
 
   const handleClick = async () => {
     if (!canClaim) {
-      toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+      toast.error('Can only claim once per day', { icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" /> });
       return;
     }
     try {
@@ -93,9 +93,9 @@ export const FaucetButton = ({
       if (!res.ok) {
         const msg = (data?.errorDetails || data?.message || '').toLowerCase();
         if (msg.includes('once per day')) {
-          toast.error('Can only claim once per day', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+          toast.error('Can only claim once per day', { icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" /> });
         } else {
-          toast.error(data?.errorDetails || data?.message || 'API Error', { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+          toast.error(data?.errorDetails || data?.message || 'API Error', { icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" /> });
         }
         setIsFaucetBusy(false);
         return;
@@ -116,7 +116,7 @@ export const FaucetButton = ({
         }
       });
     } catch (e: any) {
-      toast.error(`Error during faucet action: ${e?.message || 'Unknown error'}`, { icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+      toast.error(`Error during faucet action: ${e?.message || 'Unknown error'}`, { icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" /> });
       setIsFaucetBusy(false);
     }
   };

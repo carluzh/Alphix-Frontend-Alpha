@@ -8,7 +8,8 @@ import { TokenSymbol, getTokenDefinitions } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
 import { useTransactionFlow, generateStepperSteps } from '@/hooks/useTransactionFlow';
 import { toast } from 'sonner';
-import { OctagonX, AlertTriangle, Maximize } from 'lucide-react';
+import { Maximize } from 'lucide-react';
+import { IconCircleXmarkFilled, IconTriangleWarningFilled } from 'nucleo-micro-bold-essential';
 import { PreviewPositionModal } from './PreviewPositionModal';
 
 export interface TransactionFlowPanelProps {
@@ -228,7 +229,7 @@ export function TransactionFlowPanel({
         console.error(`Step ${nextStep} failed:`, error);
         actions.setError(error.message);
         toast.error('Transaction Failed', {
-          icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
+          icon: React.createElement(IconCircleXmarkFilled, { className: 'h-4 w-4 text-red-500' }),
           description: error.message,
         });
       }
@@ -304,7 +305,7 @@ export function TransactionFlowPanel({
             ? "bg-red-500/10 text-red-500 border border-red-500/20"
             : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
         )}>
-          <AlertTriangle className="h-3 w-3 shrink-0" />
+          <IconTriangleWarningFilled className="h-3 w-3 shrink-0" />
           <span className="font-medium">{priceImpactWarning.message}</span>
         </div>
       )}

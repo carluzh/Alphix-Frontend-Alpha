@@ -2,10 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight } from "lucide-react";
+import { IconChevronRight } from "nucleo-micro-bold-essential";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { PointsIcon } from "@/components/PointsIcon";
+import { PointsIcon } from "@/components/PointsIcons";
 
 interface PointsRewardsCardProps {
   totalPoints?: number;
@@ -134,7 +134,7 @@ export function PointsRewardsCard({
             <span className={cn("text-foreground", isMobile ? "text-xs" : "text-sm")}>
               {totalPoints > 0 ? "Earn more points" : "Start earning points"}
             </span>
-            <ArrowRight
+            <IconChevronRight
               className={cn(
                 "transition-transform duration-100",
                 isMobile ? "h-3 w-3" : "h-4 w-4",
@@ -155,23 +155,12 @@ export function PointsRewardsCard({
 // Animated Points Icons component - similar to AnimatedEmblems
 function AnimatedPointsIcons({ isMobile }: { isMobile: boolean }) {
   const animationDuration = '300ms'
-  const delays = ['50ms', '100ms']
-  const sizes = isMobile ? [40, 65] : [50, 75]
+  const size = isMobile ? 65 : 75
 
   return (
     <>
       <style>
         {`
-          @keyframes pointsIconEnterTopLeft {
-            from {
-              opacity: 0;
-              transform: scale(0.7) rotate(30deg);
-            }
-            to {
-              opacity: 0.15;
-              transform: scale(1) rotate(-8deg);
-            }
-          }
           @keyframes pointsIconEnterBottomRight {
             from {
               opacity: 0;
@@ -185,30 +174,7 @@ function AnimatedPointsIcons({ isMobile }: { isMobile: boolean }) {
         `}
       </style>
 
-      {/* First icon - top left (moved higher, slightly tilted) */}
-      <div className={cn(
-        "absolute z-[1]",
-        isMobile ? "-top-2 left-2" : "-top-2 left-4"
-      )}>
-        <div
-          style={{
-            animationName: 'pointsIconEnterTopLeft',
-            animationDuration: animationDuration,
-            animationDelay: delays[0],
-            animationTimingFunction: 'ease-out',
-            animationFillMode: 'forwards',
-            opacity: 0,
-          }}
-        >
-          <PointsIcon
-            className="text-white"
-            width={sizes[0]}
-            height={sizes[0]}
-          />
-        </div>
-      </div>
-
-      {/* Second icon - bottom right (lower, bigger, inverted tilt) */}
+      {/* Single icon - bottom right */}
       <div className={cn(
         "absolute z-[1]",
         isMobile ? "bottom-0 right-2" : "bottom-0 right-4"
@@ -217,7 +183,7 @@ function AnimatedPointsIcons({ isMobile }: { isMobile: boolean }) {
           style={{
             animationName: 'pointsIconEnterBottomRight',
             animationDuration: animationDuration,
-            animationDelay: delays[1],
+            animationDelay: '50ms',
             animationTimingFunction: 'ease-out',
             animationFillMode: 'forwards',
             opacity: 0,
@@ -225,8 +191,8 @@ function AnimatedPointsIcons({ isMobile }: { isMobile: boolean }) {
         >
           <PointsIcon
             className="text-white"
-            width={sizes[1]}
-            height={sizes[1]}
+            width={size}
+            height={size}
           />
         </div>
       </div>

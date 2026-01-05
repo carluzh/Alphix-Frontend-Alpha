@@ -3,7 +3,8 @@
 import { Suspense } from "react";
 import { createLazy } from "@/lib/lazyWithRetry";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { PlusIcon, RefreshCwIcon, Check, BadgeCheck, OctagonX, ChevronLeft, X } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
+import { IconPlus, IconCheck, IconXmark, IconRefreshClockwise, IconCircleXmarkFilled } from "nucleo-micro-bold-essential";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -323,7 +324,7 @@ export default function PoolDetailPage() {
   useEffect(() => {
     if (isCollectConfirmed && collectHash && lastCollectPositionId) {
       toast.success("Fees Collected", {
-        icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+        icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" />,
         action: {
           label: "View Transaction",
           onClick: () => window.open(getExplorerTxUrl(collectHash), '_blank')
@@ -805,7 +806,7 @@ export default function PoolDetailPage() {
         console.error('Failed to fetch chart data:', error);
         const errorMessage = error?.message || String(error);
         toast.error('Chart Data Failed', {
-          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
           description: errorMessage,
           action: {
             label: "Copy Error",
@@ -1068,7 +1069,7 @@ export default function PoolDetailPage() {
     onLiquidityDecreased: onLiquidityDecreasedCallback,
     onFeesCollected: (info) => {
       toast.success("Fees Collected", {
-        icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+        icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" />,
         description: 'Fees successfully collected',
         action: info?.txHash ? {
           label: "View Transaction",
@@ -1250,7 +1251,7 @@ export default function PoolDetailPage() {
         console.error("Error calculating decrease amount:", error);
         const errorMessage = error.message || "Could not calculate corresponding amount.";
         toast.error("Calculation Error", { 
-          icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />, 
           description: errorMessage,
           action: {
             label: "Copy Error",
@@ -1293,7 +1294,7 @@ export default function PoolDetailPage() {
   const handleConfirmDecrease = () => {
     if (!positionToModify || (!decreaseAmount0 && !decreaseAmount1)) {
       toast.error("Invalid Amount", { 
-        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />, 
         description: "Please enter an amount to remove.",
         duration: 4000
       });
@@ -1306,7 +1307,7 @@ export default function PoolDetailPage() {
       const amount1Num = parseFloat(decreaseAmount1 || "0");
       if (amount0Num <= 0 && amount1Num <= 0) {
         toast.error("Invalid Amount", { 
-          icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />, 
           description: "Please enter an amount to remove.",
           duration: 4000
         });
@@ -1330,7 +1331,7 @@ export default function PoolDetailPage() {
     
     if (!token0Symbol || !token1Symbol) {
       toast.error("Configuration Error", { 
-        icon: <OctagonX className="h-4 w-4 text-red-500" />, 
+        icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />, 
         description: "Token configuration is invalid.",
         action: {
           label: "Open Ticket",
@@ -1694,21 +1695,21 @@ export default function PoolDetailPage() {
                             className={`flex items-center justify-between cursor-pointer rounded-md text-xs ${activeChart === 'volumeTvlRatio' ? 'bg-muted text-foreground' : ''}`}
                           >
                             <span>Dynamic Fee</span>
-                            {activeChart === 'volumeTvlRatio' && <Check className="h-3.5 w-3.5" />}
+                            {activeChart === 'volumeTvlRatio' && <IconCheck className="h-3.5 w-3.5" />}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => setActiveChart('volume')}
                             className={`flex items-center justify-between cursor-pointer rounded-md text-xs ${activeChart === 'volume' ? 'bg-muted text-foreground' : ''}`}
                           >
                             <span>Volume</span>
-                            {activeChart === 'volume' && <Check className="h-3.5 w-3.5" />}
+                            {activeChart === 'volume' && <IconCheck className="h-3.5 w-3.5" />}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => setActiveChart('tvl')}
                             className={`flex items-center justify-between cursor-pointer rounded-md text-xs ${activeChart === 'tvl' ? 'bg-muted text-foreground' : ''}`}
                           >
                             <span>TVL</span>
-                            {activeChart === 'tvl' && <Check className="h-3.5 w-3.5" />}
+                            {activeChart === 'tvl' && <IconCheck className="h-3.5 w-3.5" />}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -2386,7 +2387,7 @@ export default function PoolDetailPage() {
                   className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 min-[1400px]:hidden"
                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                 >
-                  <PlusIcon className="h-4 w-4 relative z-0" />
+                  <IconPlus className="h-4 w-4 relative z-0" />
                   <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
                 </a>
               )}
@@ -2421,7 +2422,6 @@ export default function PoolDetailPage() {
                         key={position.positionId}
                         position={positionInfo}
                         valueUSD={calculatePositionUsd(position)}
-                        getUsdPriceForSymbol={getUsdPriceForSymbol}
                         poolType={getPoolById(poolId)?.type}
                         onClick={() => {
                           setUserPositions(prev => prev.map(p =>
@@ -2461,7 +2461,7 @@ export default function PoolDetailPage() {
                     className="flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30"
                     style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                   >
-                    <PlusIcon className="h-4 w-4 relative z-0" />
+                    <IconPlus className="h-4 w-4 relative z-0" />
                     <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
                   </a>
                 ) : (
@@ -2551,7 +2551,7 @@ export default function PoolDetailPage() {
                 className="absolute top-3 right-3 z-10 p-1.5 rounded-full bg-muted/50 hover:bg-muted transition-colors"
                 aria-label="Close"
               >
-                <X className="h-4 w-4 text-muted-foreground" />
+                <IconXmark className="h-4 w-4 text-muted-foreground" />
               </button>
               {/* Drag handle */}
               <div
@@ -2718,7 +2718,7 @@ export default function PoolDetailPage() {
             >
               {isDecreasingLiquidity ? (
                 <>
-                  <RefreshCwIcon className="mr-2 h-4 w-4 animate-spin" />
+                  <IconRefreshClockwise className="mr-2 h-4 w-4 animate-spin" />
                   {isFullBurn ? "Burning..." : "Withdrawing..."}
                 </>
               ) : (

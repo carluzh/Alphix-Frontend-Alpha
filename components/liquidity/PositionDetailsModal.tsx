@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, BadgeCheck, OctagonX, Info, CornerRightUp, Minus } from "lucide-react";
+import { ChevronLeft, CornerRightUp } from "lucide-react";
+import { IconBadgeCheck2, IconMinus, IconCircleXmarkFilled, IconCircleInfo } from "nucleo-micro-bold-essential";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TokenStack } from "./TokenStack";
@@ -37,6 +38,7 @@ import { motion, useAnimation } from "framer-motion";
 import { getTokenSymbolByAddress } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { type PositionInfo } from "@/lib/uniswap/liquidity";
+import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 
 // Define modal view types
 type ModalView = 'default' | 'add-liquidity' | 'remove-liquidity';
@@ -86,7 +88,8 @@ interface PositionDetailsModalProps {
   position: PositionInfo;
   valueUSD: number;
   formatTokenDisplayAmount: (amount: string) => string;
-  getUsdPriceForSymbol: (symbol?: string) => number;
+  /** @deprecated Use internal useUSDCPriceRaw hook instead */
+  getUsdPriceForSymbol?: (symbol?: string) => number;
   onRefreshPosition: () => void;
   currentPrice?: string | null;
   currentPoolTick?: number | null;
@@ -179,6 +182,27 @@ export function PositionDetailsModal({
     token0Amount,
     token1Amount,
   } = useMemo(() => getTokenDataFromPosition(position), [position]);
+
+  // Get USD prices for tokens using Uniswap routing (fixes bug where tokens not in priceMap returned $0)
+  const { price: token0PriceFromHook } = useUSDCPriceRaw(position.currency0Amount.currency);
+  const { price: token1PriceFromHook } = useUSDCPriceRaw(position.currency1Amount.currency);
+
+  // Internal pricing function that uses hook-based prices, falling back to prop if provided
+  const getPrice = useCallback((symbol?: string): number => {
+    if (!symbol) return 0;
+    // First try hook-based pricing
+    if (symbol === token0Symbol && token0PriceFromHook !== undefined) {
+      return token0PriceFromHook;
+    }
+    if (symbol === token1Symbol && token1PriceFromHook !== undefined) {
+      return token1PriceFromHook;
+    }
+    // Fallback to legacy prop if provided
+    if (getUsdPriceForSymbol) {
+      return getUsdPriceForSymbol(symbol);
+    }
+    return 0;
+  }, [token0Symbol, token1Symbol, token0PriceFromHook, token1PriceFromHook, getUsdPriceForSymbol]);
 
   // Extract position ID and status from PositionInfo
   const positionId = position.tokenId;
@@ -374,7 +398,7 @@ export function PositionDetailsModal({
     if (!tokenConfig) throw new Error(`Token ${tokenSymbol} not found`);
 
     toast('Confirm in Wallet', {
-      icon: React.createElement(Info, { className: 'h-4 w-4' })
+      icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' })
     });
 
     const useInfinite = isInfiniteApprovalEnabled();
@@ -399,7 +423,7 @@ export function PositionDetailsModal({
     });
 
     toast.success(`${tokenSymbol} Approved`, {
-      icon: React.createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+      icon: React.createElement(IconBadgeCheck2, { className: 'h-4 w-4 text-green-500' }),
       description: useInfinite ? `Approved infinite ${tokenSymbol} for liquidity` : `Approved exact ${tokenSymbol} for liquidity`,
     });
   }, [approveERC20Async, tokenDefinitions, token0Symbol, increaseAmount0, increaseAmount1]);
@@ -445,7 +469,7 @@ export function PositionDetailsModal({
   const handleConfirmWithdraw = useCallback(() => {
     if (!position || (!withdrawAmount0 && !withdrawAmount1)) {
       toast.error("Invalid Amount", {
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
         description: "Please enter an amount to withdraw.",
         duration: 4000
       });
@@ -460,7 +484,7 @@ export function PositionDetailsModal({
       const amount1Num = parseFloat(withdrawAmount1 || "0");
       if (amount0Num <= 0 && amount1Num <= 0) {
         toast.error("Invalid Amount", {
-          icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+          icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
           description: "Please enter an amount to withdraw.",
           duration: 4000
         });
@@ -489,7 +513,7 @@ export function PositionDetailsModal({
 
     if (!token0Symbol || !token1Symbol) {
       toast.error("Configuration Error", {
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
         description: "Token configuration is invalid.",
         action: {
           label: "Open Ticket",
@@ -526,7 +550,7 @@ export function PositionDetailsModal({
       enteredSide: withdrawActiveInputSide === 'amount0' ? 'token0' : withdrawActiveInputSide === 'amount1' ? 'token1' : undefined,
     };
 
-    toast("Confirm Withdraw", { icon: React.createElement(Info, { className: "h-4 w-4" }) });
+    toast("Confirm Withdraw", { icon: React.createElement(IconCircleInfo, { className: "h-4 w-4" }) });
 
     if (isInRange) {
       const pctRounded = isExactly100 ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
@@ -650,8 +674,8 @@ export function PositionDetailsModal({
     if (onAfterLiquidityAdded && lastIncreaseTxInfoRef.current) {
       const amt0 = parseFloat(increaseAmount0 || '0');
       const amt1 = parseFloat(increaseAmount1 || '0');
-      const price0 = getUsdPriceForSymbol(token0Symbol);
-      const price1 = getUsdPriceForSymbol(token1Symbol);
+      const price0 = getPrice(token0Symbol);
+      const price1 = getPrice(token1Symbol);
       const tvlDelta = (amt0 * price0) + (amt1 * price1);
 
       if (tvlDelta > 0) {
@@ -675,15 +699,15 @@ export function PositionDetailsModal({
 
     // Trigger position refresh with backoff
     onRefreshPosition();
-  }, [onRefreshPosition, accountAddress, selectedPoolId, positionId, resetIncrease, onAfterLiquidityAdded, increaseAmount0, increaseAmount1, token0Symbol, token1Symbol, getUsdPriceForSymbol]);
+  }, [onRefreshPosition, accountAddress, selectedPoolId, positionId, resetIncrease, onAfterLiquidityAdded, increaseAmount0, increaseAmount1, token0Symbol, token1Symbol, getPrice]);
 
   const handleRemoveLiquiditySuccess = useCallback(async () => {
     // Calculate TVL delta (negative) and notify parent for optimistic updates
     if (onAfterLiquidityRemoved && lastDecreaseTxInfoRef.current) {
       const amt0 = parseFloat(withdrawAmount0 || '0');
       const amt1 = parseFloat(withdrawAmount1 || '0');
-      const price0 = getUsdPriceForSymbol(token0Symbol);
-      const price1 = getUsdPriceForSymbol(token1Symbol);
+      const price0 = getPrice(token0Symbol);
+      const price1 = getPrice(token1Symbol);
       const tvlDelta = -Math.abs((amt0 * price0) + (amt1 * price1)); // Negative for removal
 
       if (tvlDelta < 0) {
@@ -713,7 +737,7 @@ export function PositionDetailsModal({
         onClose();
       }, 1500);
     }
-  }, [onRefreshPosition, accountAddress, selectedPoolId, positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, token0Symbol, token1Symbol, getUsdPriceForSymbol]);
+  }, [onRefreshPosition, accountAddress, selectedPoolId, positionId, resetDecrease, isWithdrawBurn, onClose, onAfterLiquidityRemoved, withdrawAmount0, withdrawAmount1, token0Symbol, token1Symbol, getPrice]);
 
   // Handlers for preview updates
   const handleAddAmountsChange = useCallback((amount0: number, amount1: number) => {
@@ -742,8 +766,8 @@ export function PositionDetailsModal({
       const fee0 = parseFloat(formatUnits(BigInt(raw0), d0));
       const fee1 = parseFloat(formatUnits(BigInt(raw1), d1));
 
-      const price0 = getUsdPriceForSymbol(token0Symbol);
-      const price1 = getUsdPriceForSymbol(token1Symbol);
+      const price0 = getPrice(token0Symbol);
+      const price1 = getPrice(token1Symbol);
 
       const usdFees = (fee0 * price0) + (fee1 * price1);
       const hasZero = BigInt(raw0) <= 0n && BigInt(raw1) <= 0n;
@@ -757,14 +781,14 @@ export function PositionDetailsModal({
     } catch {
       return { feeAmount0: 0, feeAmount1: 0, feesUSD: 0, hasZeroFees: true };
     }
-  }, [prefetchedRaw0, prefetchedRaw1, position, getUsdPriceForSymbol]);
+  }, [prefetchedRaw0, prefetchedRaw1, position, getPrice]);
 
   // Calculate individual token USD values
-  const token0USD = parseFloat(token0Amount) * getUsdPriceForSymbol(token0Symbol);
-  const token1USD = parseFloat(token1Amount) * getUsdPriceForSymbol(token1Symbol);
+  const token0USD = parseFloat(token0Amount) * getPrice(token0Symbol);
+  const token1USD = parseFloat(token1Amount) * getPrice(token1Symbol);
 
-  const fee0USD = feeAmount0 * getUsdPriceForSymbol(token0Symbol);
-  const fee1USD = feeAmount1 * getUsdPriceForSymbol(token1Symbol);
+  const fee0USD = feeAmount0 * getPrice(token0Symbol);
+  const fee1USD = feeAmount1 * getPrice(token1Symbol);
 
   const { computedFormattedAPR, computedIsAPRFallback, computedIsLoadingAPR } = useMemo(() => {
     if (prefetchedFormattedAPY !== undefined) {
@@ -875,8 +899,8 @@ export function PositionDetailsModal({
   // Calculate percentage bars for position (with preview adjustments)
   const positionBars = useMemo(() => {
     // Calculate preview-adjusted amounts
-    const price0 = getUsdPriceForSymbol(token0Symbol);
-    const price1 = getUsdPriceForSymbol(token1Symbol);
+    const price0 = getPrice(token0Symbol);
+    const price1 = getPrice(token1Symbol);
 
     const previewAdjustment0 = (previewAddAmount0 - previewRemoveAmount0) * price0;
     const previewAdjustment1 = (previewAddAmount1 - previewRemoveAmount1) * price1;
@@ -891,7 +915,7 @@ export function PositionDetailsModal({
     const token1Percent = (adjustedToken1USD / total) * 100;
 
     return { token0Percent, token1Percent };
-  }, [token0USD, token1USD, previewAddAmount0, previewAddAmount1, previewRemoveAmount0, previewRemoveAmount1, position, getUsdPriceForSymbol]);
+  }, [token0USD, token1USD, previewAddAmount0, previewAddAmount1, previewRemoveAmount0, previewRemoveAmount1, position, getPrice]);
 
   // Calculate percentage bars for fees
   const feesBars = useMemo(() => {
@@ -1146,13 +1170,13 @@ export function PositionDetailsModal({
                               const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
                               const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
                               return (Number.isFinite(valueUSD) ? valueUSD : 0) +
-                                ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(token0Symbol)) +
-                                ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(token1Symbol));
+                                ((previewAddAmount0 + fee0Amount) * getPrice(token0Symbol)) +
+                                ((previewAddAmount1 + fee1Amount) * getPrice(token1Symbol));
                             })()
                           : (previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0)
                           ? (Number.isFinite(valueUSD) ? valueUSD : 0) -
-                            (previewRemoveAmount0 * getUsdPriceForSymbol(token0Symbol)) -
-                            (previewRemoveAmount1 * getUsdPriceForSymbol(token1Symbol))
+                            (previewRemoveAmount0 * getPrice(token0Symbol)) -
+                            (previewRemoveAmount1 * getPrice(token1Symbol))
                           : (Number.isFinite(valueUSD) ? valueUSD : 0)
                       )}
                     </div>
@@ -1232,10 +1256,10 @@ export function PositionDetailsModal({
                             previewAddAmount0 > 0
                               ? (() => {
                                   const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
-                                  return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(token0Symbol));
+                                  return token0USD + ((previewAddAmount0 + fee0Amount) * getPrice(token0Symbol));
                                 })()
                               : previewRemoveAmount0 > 0
-                              ? token0USD - (previewRemoveAmount0 * getUsdPriceForSymbol(token0Symbol))
+                              ? token0USD - (previewRemoveAmount0 * getPrice(token0Symbol))
                               : token0USD
                           )}
                         </span>
@@ -1290,10 +1314,10 @@ export function PositionDetailsModal({
                             previewAddAmount1 > 0
                               ? (() => {
                                   const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
-                                  return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(token1Symbol));
+                                  return token1USD + ((previewAddAmount1 + fee1Amount) * getPrice(token1Symbol));
                                 })()
                               : previewRemoveAmount1 > 0
-                              ? token1USD - (previewRemoveAmount1 * getUsdPriceForSymbol(token1Symbol))
+                              ? token1USD - (previewRemoveAmount1 * getPrice(token1Symbol))
                               : token1USD
                           )}
                         </span>
@@ -1339,7 +1363,7 @@ export function PositionDetailsModal({
                       {hasUncollectedFees() ? (
                         <>
                           <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
-                            <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                            <IconMinus className="h-3.5 w-3.5" />
                           </div>
                           <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
                             Fees collected first
@@ -1360,7 +1384,7 @@ export function PositionDetailsModal({
                   {isRemovingLiquidity && !hasZeroFees && (
                     <div className="absolute top-5 right-5 group">
                       <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
-                        <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                        <IconMinus className="h-3.5 w-3.5" strokeWidth={2.5} />
                       </div>
                       <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
                         Fees are withdrawn
@@ -1520,13 +1544,13 @@ export function PositionDetailsModal({
                                 const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
                                 const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
                                 return (Number.isFinite(valueUSD) ? valueUSD : 0) +
-                                  ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(token0Symbol)) +
-                                  ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(token1Symbol));
+                                  ((previewAddAmount0 + fee0Amount) * getPrice(token0Symbol)) +
+                                  ((previewAddAmount1 + fee1Amount) * getPrice(token1Symbol));
                               })()
                             : (previewRemoveAmount0 > 0 || previewRemoveAmount1 > 0)
                             ? (Number.isFinite(valueUSD) ? valueUSD : 0) -
-                              (previewRemoveAmount0 * getUsdPriceForSymbol(token0Symbol)) -
-                              (previewRemoveAmount1 * getUsdPriceForSymbol(token1Symbol))
+                              (previewRemoveAmount0 * getPrice(token0Symbol)) -
+                              (previewRemoveAmount1 * getPrice(token1Symbol))
                             : (Number.isFinite(valueUSD) ? valueUSD : 0)
                         )}
                       </div>
@@ -1606,10 +1630,10 @@ export function PositionDetailsModal({
                               previewAddAmount0 > 0
                                 ? (() => {
                                     const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
-                                    return token0USD + ((previewAddAmount0 + fee0Amount) * getUsdPriceForSymbol(token0Symbol));
+                                    return token0USD + ((previewAddAmount0 + fee0Amount) * getPrice(token0Symbol));
                                   })()
                                 : previewRemoveAmount0 > 0
-                                ? token0USD - (previewRemoveAmount0 * getUsdPriceForSymbol(token0Symbol))
+                                ? token0USD - (previewRemoveAmount0 * getPrice(token0Symbol))
                                 : token0USD
                             )}
                           </span>
@@ -1664,10 +1688,10 @@ export function PositionDetailsModal({
                               previewAddAmount1 > 0
                                 ? (() => {
                                     const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
-                                    return token1USD + ((previewAddAmount1 + fee1Amount) * getUsdPriceForSymbol(token1Symbol));
+                                    return token1USD + ((previewAddAmount1 + fee1Amount) * getPrice(token1Symbol));
                                   })()
                                 : previewRemoveAmount1 > 0
-                                ? token1USD - (previewRemoveAmount1 * getUsdPriceForSymbol(token1Symbol))
+                                ? token1USD - (previewRemoveAmount1 * getPrice(token1Symbol))
                                 : token1USD
                             )}
                           </span>
@@ -1713,7 +1737,7 @@ export function PositionDetailsModal({
                         {hasUncollectedFees() ? (
                           <>
                             <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
-                              <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                              <IconMinus className="h-3.5 w-3.5" />
                             </div>
                             <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
                               Fees collected first
@@ -1734,7 +1758,7 @@ export function PositionDetailsModal({
                     {isRemovingLiquidity && !hasZeroFees && (
                       <div className="absolute top-5 right-5 group">
                         <div className="flex items-center justify-center w-6 h-6 rounded bg-red-500/20 text-red-500">
-                          <Minus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                          <IconMinus className="h-3.5 w-3.5" strokeWidth={2.5} />
                         </div>
                         <div className="absolute bottom-full right-0 mb-2 opacity-0 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-100 w-max px-2 py-1 text-xs bg-container border border-sidebar-border rounded shadow-lg z-10 pointer-events-none">
                           Fees are withdrawn
@@ -1916,7 +1940,7 @@ export function PositionDetailsModal({
 
                               if (amount0Num <= 0 && amount1Num <= 0) {
                                 toast.error('Missing Amount', {
-                                  icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                                  icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
                                   description: 'Please enter at least one amount to add.'
                                 });
                                 return;
@@ -1925,7 +1949,7 @@ export function PositionDetailsModal({
                               // Check for uncollected fees on OOR positions
                               if (hasUncollectedFees()) {
                                 toast.error('Collect Fees', {
-                                  icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+                                  icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
                                   description: 'Please collect your fees before adding liquidity.'
                                 });
                                 return;
@@ -2053,7 +2077,7 @@ export function PositionDetailsModal({
                                     const baseAmount = previewAddAmount0 || previewRemoveAmount0 || 0;
                                     const fee0Amount = parseFloat(formatUnits(BigInt(prefetchedRaw0 || '0'), tokenDefinitions[token0Symbol as string]?.decimals || 18));
                                     const displayAmount = baseAmount + fee0Amount;
-                                    return formatUSD(displayAmount * getUsdPriceForSymbol(token0Symbol));
+                                    return formatUSD(displayAmount * getPrice(token0Symbol));
                                   })()}
                                 </div>
                               </div>
@@ -2085,7 +2109,7 @@ export function PositionDetailsModal({
                                     const baseAmount = previewAddAmount1 || previewRemoveAmount1 || 0;
                                     const fee1Amount = parseFloat(formatUnits(BigInt(prefetchedRaw1 || '0'), tokenDefinitions[token1Symbol as string]?.decimals || 18));
                                     const displayAmount = baseAmount + fee1Amount;
-                                    return formatUSD(displayAmount * getUsdPriceForSymbol(token1Symbol));
+                                    return formatUSD(displayAmount * getPrice(token1Symbol));
                                   })()}
                                 </div>
                               </div>
@@ -2121,7 +2145,7 @@ export function PositionDetailsModal({
                                     {fee0Amount === 0 ? '0' : fee0Amount > 0 && fee0Amount < 0.0001 ? '< 0.0001' : fee0Amount.toFixed(6).replace(/\.?0+$/, '')}
                                   </div>
                                   <div className="text-xs text-muted-foreground">
-                                    {formatUSD(fee0Amount * getUsdPriceForSymbol(token0Symbol))}
+                                    {formatUSD(fee0Amount * getPrice(token0Symbol))}
                                   </div>
                                 </div>
                               </div>
@@ -2136,7 +2160,7 @@ export function PositionDetailsModal({
                                     {fee1Amount === 0 ? '0' : fee1Amount > 0 && fee1Amount < 0.0001 ? '< 0.0001' : fee1Amount.toFixed(6).replace(/\.?0+$/, '')}
                                   </div>
                                   <div className="text-xs text-muted-foreground">
-                                    {formatUSD(fee1Amount * getUsdPriceForSymbol(token1Symbol))}
+                                    {formatUSD(fee1Amount * getPrice(token1Symbol))}
                                   </div>
                                 </div>
                               </div>
@@ -2173,8 +2197,8 @@ export function PositionDetailsModal({
                               <span>Current Price:</span>
                               <span className="text-xs text-muted-foreground">
                                 {(() => {
-                                  const price0 = getUsdPriceForSymbol(token0Symbol);
-                                  const price1 = getUsdPriceForSymbol(token1Symbol);
+                                  const price0 = getPrice(token0Symbol);
+                                  const price1 = getPrice(token1Symbol);
                                   if (price0 === 0 || price1 === 0) return "N/A";
                                   const ratio = price0 / price1;
                                   const decimals = ratio < 0.1 ? 3 : 2;
@@ -2264,7 +2288,6 @@ export function PositionDetailsModal({
     feeAmount1={feeAmount1}
     fee0USD={fee0USD}
     fee1USD={fee1USD}
-    getUsdPriceForSymbol={getUsdPriceForSymbol}
     onFeesCollected={onFeesCollected}
     onRefreshPosition={onRefreshPosition}
   />

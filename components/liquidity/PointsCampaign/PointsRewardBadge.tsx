@@ -15,7 +15,7 @@
 
 import React from 'react';
 import { cn } from '@/lib/utils';
-import { PointsIcon } from '@/components/PointsIcon';
+import { PointsIcon } from '@/components/PointsIcons';
 
 interface PointsRewardBadgeProps {
   /** Formatted points APR string (e.g., "+12.5%") */

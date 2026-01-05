@@ -11,7 +11,7 @@ import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
 import { invalidateAfterTx } from '@/lib/invalidation';
-import { OctagonX, InfoIcon, BadgeCheck } from 'lucide-react';
+import { IconBadgeCheck2, IconCircleXmarkFilled, IconCircleInfo } from 'nucleo-micro-bold-essential';
 import JSBI from 'jsbi';
 import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
 
@@ -97,11 +97,11 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
   const increaseLiquidity = useCallback(async (positionData: IncreasePositionData, opts?: IncreaseOptions) => {
     if (!accountAddress || !chainId) {
-      toast.error("Wallet Not Connected", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
+      toast.error("Wallet Not Connected", { icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
+      toast.error("Configuration Error", { icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
       return;
     }
     
@@ -195,7 +195,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         amount0RawUser = 0n;
       }
       if (amount0RawUser === 0n && amount1RawUser === 0n) {
-        toast.error('Invalid Amount', { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: 'Please enter a valid amount to add.' });
+        toast.error('Invalid Amount', { icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), description: 'Please enter a valid amount to add.' });
         setIsIncreasing(false);
         return;
       }
@@ -315,7 +315,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
             if (prepared?.message?.details && prepared.message.details.length > 0) {
               // Inform user about batch signature request
               toast("Sign in Wallet", {
-                icon: React.createElement(InfoIcon, { className: "h-4 w-4" })
+                icon: React.createElement(IconCircleInfo, { className: "h-4 w-4" })
               });
 
               const signature = await signTypedDataAsync({
@@ -351,7 +351,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
               }
 
               toast.success("Batch Signature Complete", {
-                icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+                icon: React.createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
                 description: `Batch permit signed successfully for ${durationFormatted}`
               });
 
@@ -421,9 +421,9 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       }
 
       if ((error as any)?.__zero || msg.includes('ZERO_LIQUIDITY')) {
-        toast.error("Try a larger Amount", { icon: React.createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }), action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
+        toast.error("Try a larger Amount", { icon: React.createElement(IconCircleXmarkFilled, { className: 'h-4 w-4 text-red-500' }), action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
       } else {
-        toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: msg || "Could not prepare the transaction.", action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(msg || '') } });
+        toast.error("Increase Failed", { icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), description: msg || "Could not prepare the transaction.", action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(msg || '') } });
       }
       setIsIncreasing(false);
     }
@@ -443,7 +443,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         });
       }
 
-      toast.error("Increase Failed", { icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }), description: message, action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(message || '') } });
+      toast.error("Increase Failed", { icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), description: message, action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(message || '') } });
       setIsIncreasing(false);
     }
   }, [increaseSendError]);
@@ -490,7 +490,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           const amt1 = parseFloat(increaseAmountsRef.current?.amount1 || '0');
           let tvlDelta = 0;
           if (amt0 || amt1) {
-            const { getTokenPrice } = await import('@/lib/price-service');
+            const { getTokenPrice } = await import('@/lib/quote-prices');
             const [p0, p1] = await Promise.all([getTokenPrice(posData.token0Symbol), getTokenPrice(posData.token1Symbol)]);
             tvlDelta = (p0 ? amt0 * p0 : 0) + (p1 ? amt1 * p1 : 0);
           }
@@ -527,7 +527,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       const message = increaseConfirmError instanceof BaseError ? increaseConfirmError.shortMessage : increaseConfirmError.message;
       toast.error("Increase Failed", { 
         id: hash,
-        icon: React.createElement(OctagonX, { className: "h-4 w-4 text-red-500" }),
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
         description: message,
         action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(message || '') }
       });

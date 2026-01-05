@@ -1,7 +1,8 @@
 "use client";
 
 import React from "react";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, Search } from "lucide-react";
+import { ChevronUpIcon, ChevronDownIcon, Search } from "lucide-react";
+import { IconChevronExpandY } from "nucleo-micro-bold-essential";
 import { cn } from "@/lib/utils";
 
 interface TokenBalance {
@@ -153,7 +154,7 @@ export function TokensTab({
   const renderSortIcon = () => {
     if (sortDir === "asc") return <ChevronUpIcon className="h-4 w-4" />;
     if (sortDir === "desc") return <ChevronDownIcon className="h-4 w-4" />;
-    return <ChevronsUpDownIcon className="h-4 w-4" />;
+    return <IconChevronExpandY className="h-4 w-4" />;
   };
 
   return (

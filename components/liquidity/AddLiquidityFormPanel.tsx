@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { PlusIcon, BadgeCheck, OctagonX, Info as InfoIcon, RefreshCw as RefreshCwIcon } from "lucide-react";
+import { IconPlus, IconBadgeCheck2, IconRefreshClockwise, IconCircleXmarkFilled, IconCircleInfo } from "nucleo-micro-bold-essential";
 import { Button } from "@/components/ui/button";
 import Image from "next/image";
 import { useAccount, useBalance, useSignTypedData } from "wagmi";
@@ -261,7 +261,7 @@ export function AddLiquidityFormPanel({
         setIncreasePreparedTxData({ needsApproval: false });
       }
     } catch (error: any) {
-      toast.error("Preparation Error", { description: error.message || "Failed to prepare transaction", icon: <OctagonX className="h-4 w-4 text-red-500" /> });
+      toast.error("Preparation Error", { description: error.message || "Failed to prepare transaction", icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" /> });
     } finally {
       setIncreaseIsWorking(false);
     }
@@ -277,7 +277,7 @@ export function AddLiquidityFormPanel({
       if (!tokenAddress) throw new Error('Missing token address for approval');
 
       toast("Confirm in Wallet", {
-        icon: <InfoIcon className="h-4 w-4" />
+        icon: <IconCircleInfo className="h-4 w-4" />
       });
 
       const { writeContract } = await import('@wagmi/core');
@@ -292,7 +292,7 @@ export function AddLiquidityFormPanel({
       });
 
       toast.success(`${increasePreparedTxData.approvalTokenSymbol} Approved`, {
-        icon: <BadgeCheck className="h-4 w-4 text-green-500" />
+        icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" />
       });
 
       setIncreaseCompletedERC20ApprovalsCount(prev => prev + 1);
@@ -319,7 +319,7 @@ export function AddLiquidityFormPanel({
     } catch (error: any) {
       const errorMessage = error?.shortMessage || error?.message || "Failed to approve token.";
       toast.error("Approval Error", {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
         description: errorMessage,
         action: {
           label: "Copy Error",
@@ -355,7 +355,7 @@ export function AddLiquidityFormPanel({
       }
 
       toast("Sign in Wallet", {
-        icon: <InfoIcon className="h-4 w-4" />
+        icon: <IconCircleInfo className="h-4 w-4" />
       });
 
       const signature = await signTypedDataAsync({
@@ -370,7 +370,7 @@ export function AddLiquidityFormPanel({
       setSignedBatchPermit(payload);
 
       toast.success("Batch Signature Complete", {
-        icon: <BadgeCheck className="h-4 w-4 text-green-500" />,
+        icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" />,
       });
 
       setIncreaseBatchPermitSigned(true);
@@ -378,7 +378,7 @@ export function AddLiquidityFormPanel({
     } catch (error: any) {
       const description = (error?.message || '').includes('User rejected') ? 'Permit signature was rejected.' : (error?.message || 'Failed to sign permit');
       toast.error('Permit Error', {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
         description
       });
     } finally {
@@ -430,7 +430,7 @@ export function AddLiquidityFormPanel({
                 </div>
               </div>
             </div>
-            <PlusIcon className="h-4 w-4 text-muted-foreground" />
+            <IconPlus className="h-4 w-4 text-muted-foreground" />
             <div className="flex items-center gap-3">
               <div className="text-right">
                 <div className="font-medium">
@@ -447,7 +447,7 @@ export function AddLiquidityFormPanel({
         </div>
         <div className="my-6 text-center">
           <div className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
-            <BadgeCheck className="h-6 w-6 text-green-500" />
+            <IconBadgeCheck2 className="h-6 w-6 text-green-500" />
           </div>
           <h3 className="text-lg font-medium">Liquidity Added!</h3>
           {(externalTxHash || increaseTxHash) && (
@@ -488,7 +488,7 @@ export function AddLiquidityFormPanel({
               <span>Token Approvals</span>
               <span>
                 {(increaseStep === 'approve' && increaseIsWorking) ? (
-                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                  <IconRefreshClockwise className="h-4 w-4 animate-spin" />
                 ) : (
                   <span className={`text-xs font-mono ${increaseInvolvedTokensCount > 0 && (increaseAlreadyApprovedCount + increaseCompletedERC20ApprovalsCount) === increaseInvolvedTokensCount ? 'text-green-500' : 'text-muted-foreground'}`}>
                     {`${increaseAlreadyApprovedCount + increaseCompletedERC20ApprovalsCount}/${increaseInvolvedTokensCount}`}
@@ -502,7 +502,7 @@ export function AddLiquidityFormPanel({
               <span>Permit Signature</span>
               <span>
                 {(increaseStep === 'permit' && increaseIsWorking) ? (
-                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                  <IconRefreshClockwise className="h-4 w-4 animate-spin" />
                 ) : (
                   <span className={`text-xs font-mono ${increaseBatchPermitSigned ? 'text-green-500' : 'text-muted-foreground'}`}>
                     {increaseBatchPermitSigned ? '1/1' : '0/1'}
@@ -516,7 +516,7 @@ export function AddLiquidityFormPanel({
               <span>Deposit Transaction</span>
               <span>
                 {(increaseStep === 'deposit' && isIncreasingLiquidity) ? (
-                  <RefreshCwIcon className="h-4 w-4 animate-spin" />
+                  <IconRefreshClockwise className="h-4 w-4 animate-spin" />
                 ) : (
                   <span className={`text-xs font-mono ${isIncreaseSuccess ? 'text-green-500' : 'text-muted-foreground'}`}>
                     {isIncreaseSuccess ? '1/1' : '0/1'}
@@ -588,7 +588,7 @@ export function AddLiquidityFormPanel({
       {!addProductiveSide && (
         <div className="flex justify-center items-center">
           <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-            <PlusIcon className="h-4 w-4 text-muted-foreground" />
+            <IconPlus className="h-4 w-4 text-muted-foreground" />
           </div>
         </div>
       )}

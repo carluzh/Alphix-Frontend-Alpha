@@ -10,7 +10,8 @@
  */
 
 import React, { useMemo } from "react";
-import { BadgeCheck, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { IconBadgeCheck2 } from "nucleo-micro-bold-essential";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -163,7 +164,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
         {/* Success Header */}
         <div className="text-center py-4">
           <div className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
-            <BadgeCheck className="h-6 w-6 text-green-500" />
+            <IconBadgeCheck2 className="h-6 w-6 text-green-500" />
           </div>
           <h3 className="text-lg font-medium">Liquidity Added!</h3>
           {txHash && (

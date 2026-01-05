@@ -3,7 +3,7 @@
 import React, { useCallback } from "react";
 import { motion, useAnimation } from "framer-motion";
 import Image from "next/image";
-import { PlusIcon } from "lucide-react";
+import { IconPlus } from "nucleo-micro-bold-essential";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -136,7 +136,7 @@ export function DecreaseLiquidityForm() {
 
             <div className="flex justify-center items-center my-2">
               <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-                <PlusIcon className="h-4 w-4 text-muted-foreground" />
+                <IconPlus className="h-4 w-4 text-muted-foreground" />
               </div>
             </div>
 

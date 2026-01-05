@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect } from "react";
-import { BadgeCheck, ExternalLink as ExternalLinkIcon, ChevronLeftIcon } from "lucide-react";
+import { ExternalLink as ExternalLinkIcon, ChevronLeftIcon } from "lucide-react";
+import { IconBadgeCheck2 } from "nucleo-micro-bold-essential";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
@@ -52,7 +53,7 @@ export function DecreaseLiquidityReview({ onClose, onSuccess }: DecreaseLiquidit
       <div className="space-y-4">
         <div className="text-center py-4">
           <div className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
-            <BadgeCheck className="h-6 w-6 text-green-500" />
+            <IconBadgeCheck2 className="h-6 w-6 text-green-500" />
           </div>
           <h3 className="text-lg font-medium">Liquidity Withdrawn!</h3>
           {txHash && (

@@ -3,7 +3,8 @@
 import { memo, useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { ArrowLeftRight, Send, MoreHorizontal } from "lucide-react";
+import { ArrowLeftRight, MoreHorizontal } from "lucide-react";
+import { IconPaperPlane2 } from "nucleo-micro-bold-essential";
 
 // Constants matching Uniswap exactly
 const ACTION_TILE_GAP = 12;
@@ -135,7 +136,7 @@ export const OverviewActionTiles = memo(function OverviewActionTiles() {
         <div className="flex-1">
           <ActionTile
             href="/overview"
-            icon={<Send className="h-6 w-6" />}
+            icon={<IconPaperPlane2 className="h-6 w-6" />}
             label="Send"
             isSingleRow={true}
           />

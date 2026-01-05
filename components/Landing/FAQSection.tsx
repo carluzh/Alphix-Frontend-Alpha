@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Minus } from 'lucide-react'
+import { IconPlus, IconMinus } from 'nucleo-micro-bold-essential'
 
 const FAQItem = ({
   question,
@@ -30,9 +30,9 @@ const FAQItem = ({
         </div>
         <div className="shrink-0">
           {isOpen ? (
-            <Minus className="h-4 w-4 text-muted-foreground" />
+            <IconMinus className="h-4 w-4 text-muted-foreground" />
           ) : (
-            <Plus className="h-4 w-4 text-muted-foreground" />
+            <IconPlus className="h-4 w-4 text-muted-foreground" />
           )}
         </div>
       </button>

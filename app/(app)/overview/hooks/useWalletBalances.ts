@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { parseAbi, type Abi } from "viem";
 import { formatUnits as viemFormatUnits } from "viem";
 import { getAllTokens, NATIVE_TOKEN_ADDRESS, type NetworkMode } from "@/lib/pools-config";
-import { batchGetTokenPrices } from "@/lib/price-service";
+import { batchQuotePrices } from "@/lib/quote-prices";
 import type { PublicClient } from "viem";
 
 interface TokenBalance {
@@ -71,21 +71,12 @@ export function useWalletBalances({
 
         const symbols = Object.keys(balances);
         const priceMap = new Map<string, number>();
-        let priceData: any = {};
         try {
-          const prices = await batchGetTokenPrices(symbols);
-          priceData = prices;
+          const prices = await batchQuotePrices(symbols, 8453, networkMode);
           symbols.forEach((symbol) => {
-            if (prices[symbol]) priceMap.set(symbol, prices[symbol]);
+            if (prices[symbol] > 0) priceMap.set(symbol, prices[symbol]);
           });
-        } catch (error) {
-          console.warn('Failed to fetch prices from quote API:', error);
-        }
-        symbols.forEach((symbol) => {
-          const px = priceData[symbol];
-          if (px) priceMap.set(symbol, px);
-          else if (symbol.includes('USDC') || symbol.includes('USDT')) priceMap.set(symbol, 1.0);
-        });
+        } catch {}
 
         const entries = symbols
           .map((symbol) => ({
@@ -94,7 +85,8 @@ export function useWalletBalances({
             usdValue: (balances[symbol] || 0) * (priceMap.get(symbol) || 0),
             color: '',
           }))
-          .filter((x) => x.usdValue > 0.01)
+          // Keep tokens with balance > 0, even if price fetch failed (usdValue = 0)
+          .filter((x) => x.balance > 0.000001)
           .sort((a, b) => b.usdValue - a.usdValue);
 
         const colors = ['hsl(0 0% 30%)', 'hsl(0 0% 40%)', 'hsl(0 0% 60%)', 'hsl(0 0% 80%)', 'hsl(0 0% 95%)'];

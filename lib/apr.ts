@@ -5,7 +5,7 @@
 import { Percent } from '@uniswap/sdk-core'
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk'
 import JSBI from 'jsbi'
-import { batchGetTokenPrices } from './price-service'
+import { batchQuotePrices } from './quote-prices'
 
 export interface PoolMetrics {
   totalFeesToken0: number
@@ -20,7 +20,7 @@ async function resolveTokenPrices(
   pool: V4Pool, token0Symbol: string, token1Symbol: string
 ): Promise<{ token0: number; token1: number } | null> {
   try {
-    const prices = await batchGetTokenPrices([token0Symbol, token1Symbol])
+    const prices = await batchQuotePrices([token0Symbol, token1Symbol])
     let p0 = prices[token0Symbol] || 0, p1 = prices[token1Symbol] || 0
     if (p0 === 0 && p1 === 0) return null
     if (p0 === 0 && p1 > 0) p0 = p1 * parseFloat(pool.token0Price.toSignificant(18))

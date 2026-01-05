@@ -2,46 +2,31 @@
 
 import { formatUSD as formatUSDShared } from "@/lib/format";
 import { useState, useEffect, useMemo, useCallback } from "react";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, Cell, HeaderCell, ClickableHeaderRow, HeaderArrow, HeaderSortText } from "@/components/table-v2";
 import Image from "next/image";
 
 import * as React from "react";
-import { 
-  ColumnDef,
-  flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  SortingState,
-  useReactTable,
-  RowData,
-} from "@tanstack/react-table";
+import { ColumnDef, RowData } from "@tanstack/react-table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
-import {
-    useAccount,
-} from "wagmi";
-import { toast } from "sonner";
+import { useAccount } from "wagmi";
+import { toast as sonnerToast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId } from "@/lib/pools-config";
 import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps } from "@/lib/client-cache";
 import { Pool } from "@/types";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { ChevronUpIcon, ChevronDownIcon, ChevronsUpDownIcon, PlusIcon, BadgeCheck, OctagonX } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential";
+import { IconBadgeCheck2 } from "nucleo-micro-bold-essential";
 import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useIncreaseLiquidity, type IncreasePositionData, useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
-import { toast as sonnerToast } from "sonner";
 import { prefetchService } from "@/lib/prefetch-service";
+import { batchQuotePrices } from "@/lib/quote-prices";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TickMath } from '@uniswap/v3-sdk';
+import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
+import { PointsTooltip, TooltipSize } from "@/components/liquidity/PointsCampaign/PointsTooltip";
 
 const DEFAULT_TICK_SPACING = 60;
 
@@ -99,9 +84,7 @@ const formatAPR = (aprValue: number) => {
 
 export default function LiquidityPage() {
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
-  const [sorting, setSorting] = React.useState<SortingState>([]);
   const { networkMode } = useNetwork();
-  const [optimisticPoolId, setOptimisticPoolId] = useState<string | null>(null);
   const warnedAllZeroBatchRef = React.useRef(false);
 
   const initialPools = useMemo(() => generatePoolsFromConfig(), [networkMode]);
@@ -115,9 +98,54 @@ export default function LiquidityPage() {
   const { address: accountAddress, isConnected, chainId } = useAccount();
   const [selectedPoolId, setSelectedPoolId] = useState<string>("");
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
   const [priceMap, setPriceMap] = useState<Record<string, number>>({});
   const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
+
+  // Token search state - sync with URL param
+  const initialTokenSearch = searchParams?.get('token') || '';
+  const [tokenSearch, setTokenSearch] = useState(initialTokenSearch);
+
+  // Update URL when token search changes
+  const handleTokenSearchChange = useCallback((value: string) => {
+    setTokenSearch(value);
+    const params = new URLSearchParams(searchParams?.toString() || '');
+    if (value) {
+      params.set('token', value);
+    } else {
+      params.delete('token');
+    }
+    const newUrl = params.toString() ? `?${params.toString()}` : '/liquidity';
+    router.replace(newUrl, { scroll: false });
+  }, [router, searchParams]);
+
+  // Sorting state
+  type SortField = 'tvl' | 'volume24h' | 'fees24h' | 'apr';
+  const [sortMethod, setSortMethod] = useState<SortField>('tvl');
+  const [sortAscending, setSortAscending] = useState(false);
+
+  const handleSort = useCallback((field: SortField) => {
+    if (sortMethod === field) {
+      setSortAscending(prev => !prev);
+    } else {
+      setSortMethod(field);
+      setSortAscending(false);
+    }
+  }, [sortMethod]);
+
+  // Sortable header component
+  const SortableHeader = ({ field, label, justify = 'flex-end' }: { field: SortField; label: string; justify?: 'flex-start' | 'flex-end' }) => {
+    const isActive = sortMethod === field;
+    return (
+      <HeaderCell justifyContent={justify}>
+        <ClickableHeaderRow className="group gap-1 w-full" style={{ justifyContent: justify }} onClick={() => handleSort(field)}>
+          <HeaderSortText active={isActive}>{label}</HeaderSortText>
+          {isActive && <HeaderArrow orderDirection={sortAscending ? 'asc' : 'desc'} />}
+        </ClickableHeaderRow>
+      </HeaderCell>
+    );
+  };
 
   const navigateToPool = useCallback((poolId: string) => {
     router.push(`/liquidity/${poolId}`);
@@ -171,16 +199,16 @@ export default function LiquidityPage() {
         const msg = (error instanceof Error ? error.message : String(error)) || '';
         if (!warnedAllZeroBatchRef.current && msg.includes('All-zero pool stats')) {
           warnedAllZeroBatchRef.current = true;
-          toast.error("Pool data temporarily unavailable", {
+          sonnerToast.error("Pool data temporarily unavailable", {
             description: "Refresh in a moment — we kept the last good values.",
-            icon: <OctagonX className="h-4 w-4 text-red-500" />,
+            icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
           });
           return;
         }
 
-        toast.error("Could not load pool data", {
+        sonnerToast.error("Could not load pool data", {
           description: "Failed to fetch data from the server.",
-          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
           action: {
             label: "Open Ticket",
             onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
@@ -288,18 +316,18 @@ export default function LiquidityPage() {
 
   const { increaseLiquidity } = useIncreaseLiquidity({
     onLiquidityIncreased: () => {
-      sonnerToast.success("Liquidity Increased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+      sonnerToast.success("Liquidity Increased", { icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" /> });
       // Consider a targeted position refresh here
     },
   });
 
   const { decreaseLiquidity, claimFees } = useDecreaseLiquidity({
     onLiquidityDecreased: () => {
-      sonnerToast.success("Liquidity Decreased", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+      sonnerToast.success("Liquidity Decreased", { icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" /> });
       // Consider a targeted position refresh here
     },
     onFeesCollected: () => {
-      sonnerToast.success("Fees Collected", { icon: <BadgeCheck className="h-4 w-4 text-green-500" /> });
+      sonnerToast.success("Fees Collected", { icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" /> });
       // Consider a targeted position refresh here
     },
   });
@@ -325,17 +353,9 @@ export default function LiquidityPage() {
   useEffect(() => {
     const fetchPrices = async () => {
       try {
-        const response = await fetch('/api/prices/get-token-prices');
-        if (response.ok) {
-          const data = await response.json();
-          const prices: Record<string, number> = {};
-          if (data.ETH) prices['ETH'] = data.ETH;
-          if (data.aETH) prices['aETH'] = data.aETH;
-          if (data.BTC) prices['BTC'] = data.BTC;
-          if (data.aBTC) prices['aBTC'] = data.aBTC;
-          prices['USDC'] = prices['aUSDC'] = prices['USDT'] = prices['aUSDT'] = 1.0;
-          setPriceMap(prices);
-        }
+        const symbols = ['ETH', 'aETH', 'BTC', 'aBTC', 'USDC', 'aUSDC', 'USDT', 'aUSDT'];
+        const prices = await batchQuotePrices(symbols);
+        setPriceMap(prices);
       } catch (error) {
         console.error("Failed to fetch token prices for liquidity page:", error);
       }
@@ -352,8 +372,43 @@ export default function LiquidityPage() {
   }, [poolsData, userPositions]);
 
   const filteredPools = useMemo(() => {
-    return poolsWithPositionCounts;
-  }, [poolsWithPositionCounts]);
+    // Add link property for row navigation in table-v2
+    let poolsWithLinks = poolsWithPositionCounts.map(pool => ({
+      ...pool,
+      link: `/liquidity/${pool.id}`,
+    }));
+
+    // Apply token search filter
+    if (tokenSearch.trim()) {
+      const searchLower = tokenSearch.toLowerCase().trim();
+      poolsWithLinks = poolsWithLinks.filter(pool => {
+        // Match against token symbols in the pool pair
+        const token0 = pool.tokens[0]?.symbol?.toLowerCase() || '';
+        const token1 = pool.tokens[1]?.symbol?.toLowerCase() || '';
+        return token0.includes(searchLower) || token1.includes(searchLower);
+      });
+    }
+
+    // Apply sorting
+    const getSortValue = (pool: any): number => {
+      switch (sortMethod) {
+        case 'tvl': return pool.tvlUSD || 0;
+        case 'volume24h': return pool.volume24hUSD || 0;
+        case 'fees24h': return pool.fees24hUSD || 0;
+        case 'apr': {
+          const aprStr = pool.apr || '0';
+          return parseFloat(aprStr.replace(/[~%]/g, '')) || 0;
+        }
+        default: return 0;
+      }
+    };
+
+    return [...poolsWithLinks].sort((a, b) => {
+      const aVal = getSortValue(a);
+      const bVal = getSortValue(b);
+      return sortAscending ? aVal - bVal : bVal - aVal;
+    });
+  }, [poolsWithPositionCounts, sortMethod, sortAscending, tokenSearch]);
 
   const [mobileSortBy, setMobileSortBy] = useState<"apr" | "tvl" | "volume">("tvl");
 
@@ -378,32 +433,37 @@ export default function LiquidityPage() {
     return [...filteredPools].sort((a: any, b: any) => getMetric(b) - getMetric(a));
   }, [filteredPools, isMobile, mobileSortBy]);
 
-  const handleAddLiquidity = useCallback((e: React.MouseEvent, poolId: string) => {
-    e.stopPropagation();
-    router.push(`/liquidity/${poolId}`);
-  }, [router]);
-
-  const columns: ColumnDef<Pool>[] = useMemo(() => [
+  const columns: ColumnDef<Pool & { link: string }>[] = useMemo(() => [
     {
+      id: "pair",
       accessorKey: "pair",
-      header: "Pool",
-      size: 240,
+      header: () => (
+        <HeaderCell justifyContent="flex-start">
+          <span className="text-muted-foreground text-sm">Pool</span>
+        </HeaderCell>
+      ),
+      size: 280,
       cell: ({ row }) => {
-        const pool = row.original;
+        const pool = row?.original;
+        if (!pool) {
+          return (
+            <Cell loading justifyContent="flex-start" />
+          );
+        }
         return (
-          <div className="flex items-center gap-2">
-            <div className="relative w-14 h-7">
-              <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-main z-10">
-                <Image
-                  src={pool.tokens[0].icon}
-                  alt={pool.tokens[0].symbol}
-                  width={28}
-                  height={28}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="absolute top-0 left-4 w-7 h-7">
-                <div className="absolute inset-0 rounded-full overflow-hidden bg-main z-30">
+          <Cell justifyContent="flex-start">
+            <div className="flex items-center gap-3">
+              <div className="relative w-14 h-7 flex-shrink-0">
+                <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background border border-sidebar-border z-10">
+                  <Image
+                    src={pool.tokens[0].icon}
+                    alt={pool.tokens[0].symbol}
+                    width={28}
+                    height={28}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="absolute top-0 left-5 w-7 h-7 rounded-full overflow-hidden bg-background border border-sidebar-border z-20">
                   <Image
                     src={pool.tokens[1].icon}
                     alt={pool.tokens[1].symbol}
@@ -412,134 +472,127 @@ export default function LiquidityPage() {
                     className="w-full h-full object-cover"
                   />
                 </div>
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-main z-20"></div>
               </div>
-            </div>
-            <div className="flex flex-col">
-              <span className="font-medium mb-1">{pool.pair}</span>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-medium text-sm truncate">{pool.pair}</span>
                 {pool.type && (
-                  <span
-                    className="px-1.5 py-0.5 text-xs font-normal rounded-md border border-sidebar-border bg-button text-muted-foreground"
-                    style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                  >
+                  <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">
                     {pool.type}
                   </span>
                 )}
-                {pool.positionsCount !== undefined && pool.positionsCount > 0 && (
-                  <div className="text-xs text-muted-foreground">
-                    {pool.positionsCount} {pool.positionsCount === 1 ? 'position' : 'positions'}
-                  </div>
-                )}
               </div>
             </div>
-          </div>
+          </Cell>
         );
       },
     },
     {
-      accessorKey: "volume24h",
-      header: ({ column }) => <SortableHeader column={column} label="Volume (24h)" />,
+      id: "tvl",
+      accessorKey: "tvlUSD",
+      header: () => <SortableHeader field="tvl" label="TVL" />,
       size: 140,
-      sortingFn: (rowA, rowB) => (rowA.original.volume24hUSD || 0) - (rowB.original.volume24hUSD || 0),
-      sortDescFirst: true,
-      cell: ({ row }) => (
-        <div className="flex items-center justify-start">
-          {typeof row.original.volume24hUSD === 'number' ? formatUSD(row.original.volume24hUSD) : (
-            <div className="inline-block h-4 w-16 bg-muted/60 rounded animate-pulse" />
-          )}
-        </div>
-      ),
-      meta: { hidePriority: 3 },
-    },
-    {
-      accessorKey: "fees24h",
-      header: ({ column }) => <SortableHeader column={column} label="Fees (24h)" />,
-      size: 120,
-      sortingFn: (rowA, rowB) => (rowA.original.fees24hUSD || 0) - (rowB.original.fees24hUSD || 0),
-      sortDescFirst: true,
-      cell: ({ row }) => (
-        <div className="flex items-center justify-start">
-          {typeof row.original.fees24hUSD === 'number' ? formatUSD(row.original.fees24hUSD) : (
-            <div className="inline-block h-4 w-12 bg-muted/60 rounded animate-pulse" />
-          )}
-        </div>
-      ),
-      meta: { hidePriority: 1 },
-    },
-    {
-      accessorKey: "liquidity",
-      header: ({ column }) => <SortableHeader column={column} label="Liquidity" />,
-      size: 140,
-      sortingFn: (rowA, rowB) => (rowA.original.tvlUSD || 0) - (rowB.original.tvlUSD || 0),
-      sortDescFirst: true,
-      cell: ({ row }) => (
-        <div className="flex items-center justify-start">
-          {typeof row.original.tvlUSD === 'number' ? formatUSD(row.original.tvlUSD) : (
-            <div className="inline-block h-4 w-20 bg-muted/60 rounded animate-pulse" />
-          )}
-        </div>
-      ),
-      meta: { hidePriority: 2 },
-    },
-    {
-      accessorKey: "apr",
-      header: ({ column }) => <SortableHeader column={column} label="Yield (7d)" justify="end" />,
-      size: 200,
-      sortingFn: (rowA, rowB) => {
-        const a = rowA.original.apr ? parseFloat(rowA.original.apr.replace(/[~%]/g, '')) : 0;
-        const b = rowB.original.apr ? parseFloat(rowB.original.apr.replace(/[~%]/g, '')) : 0;
-        return a - b;
-      },
-      sortDescFirst: true,
       cell: ({ row }) => {
-        const isAprCalculated = row.original.apr !== undefined && row.original.apr !== "Loading..." && row.original.apr !== "N/A";
-        const aprValue = isAprCalculated ? parseFloat(row.original.apr.replace(/[~%]/g, '')) : 0;
+        const isLoading = !row?.original || typeof row.original.tvlUSD !== 'number';
+        return (
+          <Cell loading={isLoading} justifyContent="flex-end">
+            <span className="text-sm font-mono">{formatUSD(row?.original?.tvlUSD || 0)}</span>
+          </Cell>
+        );
+      },
+    },
+    {
+      id: "volume24h",
+      accessorKey: "volume24hUSD",
+      header: () => <SortableHeader field="volume24h" label="Volume (24h)" />,
+      size: 150,
+      cell: ({ row }) => {
+        const isLoading = !row?.original || typeof row.original.volume24hUSD !== 'number';
+        return (
+          <Cell loading={isLoading} justifyContent="flex-end">
+            <span className="text-sm font-mono">{formatUSD(row?.original?.volume24hUSD || 0)}</span>
+          </Cell>
+        );
+      },
+    },
+    {
+      id: "fees24h",
+      accessorKey: "fees24hUSD",
+      header: () => <SortableHeader field="fees24h" label="Fees (24h)" />,
+      size: 130,
+      cell: ({ row }) => {
+        const isLoading = !row?.original || typeof row.original.fees24hUSD !== 'number';
+        return (
+          <Cell loading={isLoading} justifyContent="flex-end">
+            <span className="text-sm font-mono">{formatUSD(row?.original?.fees24hUSD || 0)}</span>
+          </Cell>
+        );
+      },
+    },
+    {
+      id: "apr",
+      accessorKey: "apr",
+      header: () => <SortableHeader field="apr" label="APR" />,
+      size: 120,
+      cell: ({ row }) => {
+        const pool = row?.original;
+        if (!pool) {
+          return (
+            <Cell loading justifyContent="flex-end" />
+          );
+        }
+        const isAprCalculated = pool.apr !== undefined && pool.apr !== "Loading..." && pool.apr !== "N/A";
+        const aprValue = isAprCalculated ? parseFloat(pool.apr.replace(/[~%K]/g, '')) : 0;
         const formattedAPR = isAprCalculated ? formatAPR(aprValue) : undefined;
         const isZeroApr = aprValue === 0;
+        const tokens = pool.tokens || [];
+        const token0Icon = tokens[0]?.icon;
+        const token1Icon = tokens[1]?.icon;
 
         return (
-          <div className="relative flex items-center justify-end w-full h-full">
+          <Cell justifyContent="flex-end">
             {isAprCalculated ? (
-              <div className={`flex items-center justify-center h-6 px-2.5 rounded-md text-[12px] font-semibold overflow-hidden transition-opacity duration-200 group-hover:opacity-0 ${isZeroApr ? 'bg-muted/40 text-muted-foreground' : 'bg-green-500/20 text-green-500'}`}>
-                {formattedAPR}
-              </div>
+              <PointsTooltip
+                content={
+                  <div className="flex flex-col py-1 min-w-[180px]">
+                    {/* Pool APR Row - with token images */}
+                    <div className="flex items-center justify-between px-2.5 py-1.5 gap-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center -space-x-1">
+                          {token0Icon ? (
+                            <Image src={token0Icon} alt="" width={14} height={14} className="rounded-full ring-1 ring-popover" />
+                          ) : (
+                            <div className="w-3.5 h-3.5 rounded-full bg-muted ring-1 ring-popover" />
+                          )}
+                          {token1Icon ? (
+                            <Image src={token1Icon} alt="" width={14} height={14} className="rounded-full ring-1 ring-popover" />
+                          ) : (
+                            <div className="w-3.5 h-3.5 rounded-full bg-muted ring-1 ring-popover" />
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground">Pool APR</span>
+                      </div>
+                      <span className="text-xs text-foreground font-mono">{formattedAPR}</span>
+                    </div>
+                    {/* Points APR Row - placeholder for future points campaigns */}
+                    {/* When points campaign is active, this would show the points APR */}
+                  </div>
+                }
+                size={TooltipSize.Small}
+                padding={0}
+                placement="top"
+              >
+                <div className={`inline-flex items-center justify-center h-7 px-3 rounded text-sm font-semibold font-mono ${isZeroApr ? 'bg-muted/40 text-muted-foreground' : 'bg-green-500/15 text-green-500'}`}>
+                  {formattedAPR}
+                </div>
+              </PointsTooltip>
             ) : (
-              <div className="inline-block h-4 w-16 bg-muted/60 rounded animate-pulse"></div>
+              <div className="h-4 w-14 bg-muted/60 rounded animate-pulse" />
             )}
-
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                handleAddLiquidity(e, row.original.id);
-              }}
-              className="absolute right-0 top-1/2 -translate-y-1/2 flex h-10 cursor-pointer items-center justify-end gap-2 rounded-md border border-sidebar-border bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:brightness-110 hover:border-white/30"
-              style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-            >
-              <PlusIcon className="h-4 w-4 relative z-0" />
-              <span className="relative z-0 whitespace-nowrap">Add Liquidity</span>
-            </button>
-          </div>
+          </Cell>
         );
       },
-      meta: {
-        hidePriority: 4,
-      },
     },
-  ], [handleAddLiquidity]);
-
-  const table = useReactTable({
-    data: filteredPools,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-    onSortingChange: setSorting,
-    getSortedRowModel: getSortedRowModel(),
-    enableSorting: true,
-    state: {
-      sorting,
-    },
-  });
+  ], [sortMethod, sortAscending]);
 
   const poolAggregates = React.useMemo(() => {
     let totalTVL = 0;
@@ -559,185 +612,81 @@ export default function LiquidityPage() {
     return { totalTVL, totalVol24h, totalFees24h, isLoading };
   }, [poolsData]);
 
-  const handleSortCycle = (columnId: string) => {
-    const col = table.getColumn(columnId as any);
-    if (!col) return;
-    const state = col.getIsSorted();
-    if (!state) col.toggleSorting(false);
-    else if (state === 'asc') col.toggleSorting(true);
-    else setSorting([]);
-  };
-
-  const SortIcon = ({ state }: { state: false | 'asc' | 'desc' }) => {
-    const baseClass = "ml-1 h-4 w-4 text-muted-foreground group-hover:text-white transition-colors";
-    if (state === 'asc') return <ChevronUpIcon className={baseClass} />;
-    if (state === 'desc') return <ChevronDownIcon className={baseClass} />;
-    return <ChevronsUpDownIcon className={baseClass} />;
-  };
-
-  const SortableHeader = ({ column, label, justify = 'start' }: { column: any; label: string; justify?: 'start' | 'end' }) => (
-    <div
-      className={`flex items-center justify-${justify} gap-1 cursor-pointer group text-muted-foreground hover:text-white transition-colors`}
-      onClick={() => {
-        const state = column.getIsSorted();
-        if (!state) column.toggleSorting(false);
-        else if (state === 'asc') column.toggleSorting(true);
-        else setSorting([]);
-      }}
-    >
-      {label}
-      <SortIcon state={column.getIsSorted()} />
-    </div>
-  );
-
   return (
-      <div className="flex flex-1 flex-col">
-        <div className="flex flex-1 flex-col p-3 sm:p-6 overflow-x-hidden">
-            <div className="mb-2">
-              <div className="flex items-stretch gap-4">
-                <div className="flex flex-col flex-1 min-w-0">
-                  <h2 className="text-xl font-semibold">Liquidity Pools</h2>
-                  <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
-                  <div className="mt-4">
-                    <div className="w-full max-w-[860px] 2xl:max-w-[920px] rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2 md:p-4">
-                      <div className="grid w-full grid-cols-2 sm:grid-cols-3 gap-1.5 md:gap-3">
-                        <div className="min-w-0 rounded-lg bg-muted/30 border border-sidebar-border/60 col-span-2 sm:col-span-1">
-                          <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
-                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">TVL</h2>
-                          </div>
-                          <div className="px-3 md:px-4 py-1">
-                            <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
-                              {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="min-w-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
-                          <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
-                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">VOLUME (24H)</h2>
-                          </div>
-                          <div className="px-3 md:px-4 py-1">
-                            <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
-                              {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="min-w-0 rounded-lg bg-muted/30 border border-sidebar-border/60">
-                          <div className="px-3 md:px-4 h-7 md:h-9 flex items-center">
-                            <h2 className="text-[10px] md:text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap">FEES (24H)</h2>
-                          </div>
-                          <div className="px-3 md:px-4 py-1">
-                            <div className="h-6 md:h-7 flex items-center text-base md:text-lg font-medium">
-                              {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 md:h-6 md:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+    <div className="flex flex-col gap-4 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto">
+      {/* Header Section */}
+      <div className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-xl font-semibold">Unified Pools</h2>
+          <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
+        </div>
+
+        {/* Stats Cards + Search Bar - aligned at bottom */}
+        <div className="flex items-end justify-between gap-4">
+          {/* Stats Cards */}
+          <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4">
+            <div className="flex gap-4">
+              <div className="w-[160px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
+                <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">TVL</h2>
+                <div className="text-lg font-medium translate-y-0.5">
+                  {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
+                </div>
+              </div>
+              <div className="w-[160px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
+                <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">VOLUME (24H)</h2>
+                <div className="text-lg font-medium translate-y-0.5">
+                  {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
+                </div>
+              </div>
+              <div className="w-[160px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
+                <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">FEES (24H)</h2>
+                <div className="text-lg font-medium translate-y-0.5">
+                  {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
                 </div>
               </div>
             </div>
-
-            {isMobile ? (
-              <div className="mt-4">
-                <div className="w-full max-w-[860px] 2xl:max-w-[920px] space-y-2">
-                  {mobilePools.length >= 3 ? (
-                    <div className="flex items-center justify-end">
-                      <Select value={mobileSortBy} onValueChange={(v) => setMobileSortBy(v as any)}>
-                        <SelectTrigger className="h-9 w-[128px] bg-muted/30 border-sidebar-border/60">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="apr">APR</SelectItem>
-                          <SelectItem value="tvl">TVL</SelectItem>
-                          <SelectItem value="volume">Volume</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="mt-3">
-                  <MobileLiquidityList pools={mobilePools} />
-                </div>
-              </div>
-            ) : (
-              <div className="w-full overflow-x-auto isolate">
-                <Table className="w-full bg-muted/30 border border-sidebar-border/60 rounded-lg overflow-hidden">
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      {table.getVisibleLeafColumns().map((col, index, arr) => (
-                        <TableHead
-                          key={`cat-${col.id}`}
-                          className={`px-2 relative text-xs text-muted-foreground ${col.id === 'fees24h' ? 'hidden min-[1400px]:table-cell' : ''} ${index === 0 ? 'pl-6' : ''} ${index === arr.length - 1 ? 'pr-6' : ''}`}
-                        >
-                          {col.id === 'pair' ? (
-                            <span className="text-muted-foreground">Pool</span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleSortCycle(col.id)}
-                              className={`flex w-full items-center ${col.id === 'apr' ? 'justify-end text-right' : 'justify-start text-left'} cursor-pointer select-none group text-muted-foreground hover:text-white transition-colors`}
-                            >
-                              <span>
-                                {col.id === 'volume24h' && 'Volume (24h)'}
-                                {col.id === 'fees24h' && 'Fees (24h)'}
-                                {col.id === 'liquidity' && 'Liquidity'}
-                                {col.id === 'apr' && 'Yield (7d)'}
-                              </span>
-                              <SortIcon state={table.getColumn(col.id as any)?.getIsSorted?.() || false} />
-                            </button>
-                          )}
-                        </TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {table.getRowModel().rows?.length ? (
-                      table.getRowModel().rows.map((row) => {
-                        const pool = row.original;
-                        const isExpanded = false;
-
-                        return (
-                            <React.Fragment key={row.id}>
-                              <Link
-                                href={`/liquidity/${pool.id}`}
-                                className="contents"
-                                prefetch
-                                onClick={() => setOptimisticPoolId(pool.id)}
-                              >
-                                <TableRow className={`group cursor-pointer transition-colors hover:bg-muted/30 ${optimisticPoolId === pool.id ? 'bg-muted/40' : ''}`}>
-                                  {row.getVisibleCells().map((cell, index) => (
-                                    <TableCell 
-                                      key={cell.id}
-                                      className={`relative py-4 px-2 ${cell.column.id === 'fees24h' ? 'hidden min-[1400px]:table-cell' : ''} ${index === 0 ? 'pl-6' : ''} ${index === row.getVisibleCells().length - 1 ? 'pr-6' : ''}`}
-                                    >
-                                      {flexRender(
-                                        cell.column.columnDef.cell,
-                                        cell.getContext()
-                                      )}
-                                    </TableCell>
-                                  ))}
-                                </TableRow>
-                              </Link>
-                            </React.Fragment>
-                        );
-                      })
-                    ) : (
-                      <TableRow>
-                        <TableCell
-                          colSpan={columns.length}
-                          className="h-24 text-center"
-                        >
-                          No pools available.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
           </div>
+
+          {/* Search bar - aligned to bottom */}
+          {!isMobile && (
+            <TokenSearchBar
+              value={tokenSearch}
+              onValueChange={handleTokenSearchChange}
+              placeholder="Search tokens..."
+            />
+          )}
+        </div>
       </div>
-    );
-  } 
+
+      {/* Table Section */}
+      {isMobile ? (
+        <div className="flex flex-col gap-3">
+          {mobilePools.length >= 3 && (
+            <div className="flex items-center justify-end">
+              <Select value={mobileSortBy} onValueChange={(v) => setMobileSortBy(v as any)}>
+                <SelectTrigger className="h-9 w-[128px] bg-muted/30 border-sidebar-border/60">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="apr">APR</SelectItem>
+                  <SelectItem value="tvl">TVL</SelectItem>
+                  <SelectItem value="volume">Volume</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <MobileLiquidityList pools={mobilePools} />
+        </div>
+      ) : (
+        <Table
+          columns={columns}
+          data={filteredPools}
+          loading={poolAggregates.isLoading}
+          maxWidth={1200}
+          defaultPinnedColumns={['pair']}
+          loadingRowsCount={6}
+        />
+      )}
+    </div>
+  );
+} 

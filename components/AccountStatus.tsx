@@ -3,8 +3,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
 import { Button } from '@/components/ui/button'
-import { MoreVerticalIcon, XIcon, HomeIcon } from "lucide-react"
-import { IconClone2, IconCheck, IconPowerOff } from "nucleo-micro-bold-essential"
+import { MoreVerticalIcon, XIcon } from "lucide-react"
+import { IconClone2, IconCheck, IconPowerOff, IconHouse3 } from "nucleo-micro-bold-essential"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { Input } from "@/components/ui/input"
 import { motion, AnimatePresence } from "framer-motion"

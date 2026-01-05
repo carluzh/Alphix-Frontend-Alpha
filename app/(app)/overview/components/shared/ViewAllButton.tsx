@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { IconChevronRight } from "nucleo-micro-bold-essential";
 
 interface ViewAllButtonProps {
   label: string;
@@ -27,7 +27,7 @@ export const ViewAllButton = memo(function ViewAllButton({
   const content = (
     <span className="group inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer rounded-full hover:bg-surface/50">
       {label}
-      <ArrowRight className="h-4 w-4 transition-transform duration-100 group-hover:translate-x-1" />
+      <IconChevronRight className="h-4 w-4 transition-transform duration-100 group-hover:translate-x-1" />
     </span>
   );
 

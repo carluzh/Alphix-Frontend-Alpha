@@ -2,7 +2,7 @@
 
 import { useTheme } from "next-themes"
 import { Toaster as Sonner } from "sonner"
-import { BadgeCheck, OctagonX, Info, AlertCircle } from "lucide-react"
+import { IconBadgeCheck2, IconCircleXmarkFilled, IconCircleInfo, IconCircleWarning } from "nucleo-micro-bold-essential"
 
 type ToasterProps = React.ComponentProps<typeof Sonner>
 
@@ -197,10 +197,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
         closeButton
         dir="auto"
         icons={{
-          success: <BadgeCheck className="h-5 w-5 text-green-500" />,
-          error: <OctagonX className="h-5 w-5 text-red-500" />,
-          info: <Info className="h-5 w-5 text-white" />,
-          warning: <AlertCircle className="h-5 w-5 text-yellow-500" />
+          success: <IconBadgeCheck2 className="h-5 w-5 text-green-500" />,
+          error: <IconCircleXmarkFilled className="h-5 w-5 text-red-500" />,
+          info: <IconCircleInfo className="h-5 w-5 text-white" />,
+          warning: <IconCircleWarning className="h-5 w-5 text-yellow-500" />
         }}
         {...props}
       />

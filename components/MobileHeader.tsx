@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Menu } from "lucide-react";
+import { IconMenu } from "nucleo-micro-bold-essential";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ReactSVG } from "react-svg";
@@ -31,7 +31,7 @@ export function MobileHeader() {
           onClick={toggleSidebar}
           aria-label="Toggle sidebar"
         >
-          <Menu className="h-6 w-6" />
+          <IconMenu className="h-6 w-6" />
         </Button>
       </div>
 

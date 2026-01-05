@@ -36,7 +36,6 @@ interface PositionsSectionProps {
   viewMode: 'folder' | 'list';
   readiness: { core: boolean; prices: boolean; apr: boolean };
   isLoadingPoolStates: boolean;
-  getUsdPriceForSymbol: (symbol: string | undefined) => number;
   onPositionClick: (position: any) => void;
   onVisitPool: (position: any) => void;
 }
@@ -57,7 +56,6 @@ export function PositionsSection({
   viewMode,
   readiness,
   isLoadingPoolStates,
-  getUsdPriceForSymbol,
   onPositionClick,
   onVisitPool,
 }: PositionsSectionProps) {
@@ -280,7 +278,6 @@ export function PositionsSection({
                       position={positionInfo}
                       valueUSD={valueUSD}
                       onClick={() => onPositionClick(position)}
-                      getUsdPriceForSymbol={getUsdPriceForSymbol}
                       poolType={poolCfgForCard?.type}
                       poolContext={{
                         currentPrice: null,

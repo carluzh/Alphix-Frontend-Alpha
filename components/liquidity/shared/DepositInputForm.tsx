@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { PlusIcon } from "lucide-react";
+import { IconPlus } from "nucleo-micro-bold-essential";
 import { TokenInputCard, TokenInputStyles } from "../TokenInputCard";
 import type { AnimationControls } from "framer-motion";
 
@@ -97,7 +97,7 @@ export function DepositInputForm({
       {showBothInputs && !hidePlusIcon && (
         <div className="flex justify-center items-center">
           <div className="flex items-center justify-center h-8 w-8 rounded-full bg-muted/20">
-            <PlusIcon className="h-4 w-4 text-muted-foreground" />
+            <IconPlus className="h-4 w-4 text-muted-foreground" />
           </div>
         </div>
       )}

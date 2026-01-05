@@ -9,7 +9,7 @@
 
 import { memo, useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, X } from "lucide-react";
+import { IconXmark, IconArrowLeft } from "nucleo-micro-bold-essential";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -291,7 +291,7 @@ function SettingsPanel({
             onClick={onClose}
             className="p-1 hover:opacity-60 transition-opacity"
           >
-            <ArrowLeft className="h-5 w-5 text-foreground" />
+            <IconArrowLeft className="h-5 w-5 text-foreground" />
           </button>
           <span className="text-base font-medium text-foreground">
             Settings
@@ -301,7 +301,7 @@ function SettingsPanel({
           onClick={onClose}
           className="p-1 hover:opacity-60 transition-opacity"
         >
-          <X className="h-5 w-5 text-muted-foreground" />
+          <IconXmark className="h-5 w-5 text-muted-foreground" />
         </button>
       </div>
 

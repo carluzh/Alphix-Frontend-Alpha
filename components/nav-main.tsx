@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useTransition } from "react"
-import { PlusCircleIcon, type LucideIcon, CoinsIcon, Trash2Icon, OctagonX } from "lucide-react"
+import { type LucideIcon, Trash2Icon } from "lucide-react"
+import { IconPlus, IconCoins } from "nucleo-micro-bold-essential"
 import { CustomLockIcon } from "./CustomLockIcon"
 import { usePathname, useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -20,10 +21,10 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
-interface NavMainItem {
+export interface NavMainItem {
   title: string
   url?: string
-  icon?: LucideIcon
+  icon?: LucideIcon | React.ComponentType<any>
   disabled?: boolean
   isFaucet?: boolean
 }
@@ -49,7 +50,7 @@ export function NavMain({
 
   useEffect(() => {
     items.forEach((item) => {
-      if (item.url) router.prefetch(item.url)
+      if (item.url && !item.disabled) router.prefetch(item.url)
     })
   }, [items, router])
 
@@ -244,13 +245,13 @@ export function NavMain({
       const lower2 = String(finalErrorMessage).toLowerCase();
       if (lower2.includes('once per day')) {
         toast.error('Daily Limit Reached', { 
-          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
           description: 'You can only claim once per day.',
           duration: 4000
         });
       } else {
         toast.error('Claim Failed', { 
-          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
           description: finalErrorMessage,
           action: {
             label: "Copy Error",
@@ -283,7 +284,7 @@ export function NavMain({
     }
     if (!isConnected) {
       toast.error("Wallet Not Connected", {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
         description: "Please connect your wallet first.",
         duration: 4000
       });
@@ -291,7 +292,7 @@ export function NavMain({
     }
     if (currentChainId !== targetChainId) {
       toast.error("Wrong Network", {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
         description: `Please switch to the ${baseSepolia.name} network.`,
         duration: 4000
       });
@@ -299,7 +300,7 @@ export function NavMain({
     }
     if (!userAddress) {
       toast.error("Address Error", {
-        icon: <OctagonX className="h-4 w-4 text-red-500" />,
+        icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
         description: "Could not retrieve wallet address.",
         action: {
           label: "Open Ticket",
@@ -322,13 +323,13 @@ export function NavMain({
       const lower = String(toastMessage).toLowerCase();
       if (lower.includes('once per day')) {
         toast.error('Daily Limit Reached', { 
-          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
           description: 'You can only claim once per day.',
           duration: 4000
         });
       } else {
         toast.error('API Error', { 
-          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
           description: toastMessage,
           action: {
             label: "Copy Error",
@@ -352,14 +353,14 @@ export function NavMain({
       const msg = String(error?.message || '').toLowerCase();
       if (msg.includes('once per day')) {
         toast.error('Daily Limit Reached', { 
-          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
           description: 'You can only claim once per day.',
           duration: 4000
         });
       } else {
         const errorMessage = error.message || 'Faucet action failed';
         toast.error('Faucet Error', { 
-          icon: <OctagonX className="h-4 w-4 text-red-500" />,
+          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
           description: errorMessage,
           action: {
             label: "Copy Error",
@@ -506,7 +507,7 @@ export function NavMain({
                       isActive ? "text-white" : ""
                     )} />
                   ) : (
-                    <PlusCircleIcon className={cn(
+                    <IconPlus className={cn(
                       "h-4 w-4 flex-shrink-0",
                       isActive ? "text-white" : ""
                     )} />

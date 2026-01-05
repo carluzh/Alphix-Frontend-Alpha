@@ -7,7 +7,7 @@ import { getPoolSubgraphId, getAllPools, type NetworkMode } from '@/lib/pools-co
 import { getUniswapV4SubgraphUrl, isDaiPool, getDaiSubgraphUrl } from '@/lib/subgraph-url-helper';
 import { setCachedData, getCachedDataWithStale } from '@/lib/redis';
 import { poolKeys } from '@/lib/redis-keys';
-import { batchGetTokenPrices } from '@/lib/price-service';
+import { batchQuotePrices } from '@/lib/quote-prices';
 
 interface ChartDataPoint {
   date: string;
@@ -55,7 +55,7 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
     const sym1 = poolCfg?.currency1?.symbol || 'USDC';
 
     // Get token prices for USD conversion
-    const prices = await batchGetTokenPrices([sym0, sym1]);
+    const prices = await batchQuotePrices([sym0, sym1]);
     const p0 = prices[sym0] || 1;
     const p1 = prices[sym1] || 1;
 

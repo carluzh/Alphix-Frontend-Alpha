@@ -1,7 +1,8 @@
 "use client";
 
 import React from "react";
-import { RefreshCw as RefreshCwIcon, Check, Circle } from "lucide-react";
+import { Check } from "lucide-react";
+import { IconRefreshClockwise, IconShapeCircle } from "nucleo-micro-bold-essential";
 import { cn } from "@/lib/utils";
 
 export type TransactionStepStatus = "pending" | "in_progress" | "completed" | "error";
@@ -22,9 +23,9 @@ export interface TransactionProgressProps {
 
 function StepStatusIcon({ status }: { status: TransactionStepStatus }) {
   if (status === "completed") return <Check className="h-4 w-4 text-green-500" />;
-  if (status === "in_progress") return <RefreshCwIcon className="h-4 w-4 animate-spin text-primary" />;
-  if (status === "error") return <Circle className="h-4 w-4 text-red-500 fill-red-500" />;
-  return <Circle className="h-4 w-4 text-muted-foreground" />;
+  if (status === "in_progress") return <IconRefreshClockwise className="h-4 w-4 animate-spin text-primary" />;
+  if (status === "error") return <IconShapeCircle className="h-4 w-4 text-red-500 fill-red-500" />;
+  return <IconShapeCircle className="h-4 w-4 text-muted-foreground" />;
 }
 
 function StepCount({ current, total, status }: { current: number; total: number; status: TransactionStepStatus }) {
@@ -72,7 +73,7 @@ export function TransactionProgressBar({ currentStep, totalSteps, isProcessing }
   const progress = (currentStep / totalSteps) * 100;
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs text-muted-foreground"><span>Step {currentStep} of {totalSteps}</span>{isProcessing && <RefreshCwIcon className="h-3 w-3 animate-spin" />}</div>
+      <div className="flex items-center justify-between text-xs text-muted-foreground"><span>Step {currentStep} of {totalSteps}</span>{isProcessing && <IconRefreshClockwise className="h-3 w-3 animate-spin" />}</div>
       <div className="h-1.5 w-full rounded-full bg-muted/40 overflow-hidden"><div className={cn("h-full rounded-full bg-primary transition-all duration-300", isProcessing && "animate-pulse")} style={{ width: `${progress}%` }} /></div>
     </div>
   );

@@ -3,7 +3,8 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { Plus, Send, MoreHorizontal } from "lucide-react";
+import { MoreHorizontal } from "lucide-react";
+import { IconPlus, IconPaperPlane2 } from "nucleo-micro-bold-essential";
 
 // ============================================================================
 // CONSTANTS (Matching Uniswap exactly)
@@ -133,7 +134,7 @@ export function ActionGrid({ className, layout = "2x2" }: ActionGridProps) {
         >
           <ActionTile
             href="/liquidity"
-            icon={<Plus className="h-6 w-6" />}
+            icon={<IconPlus className="h-6 w-6" />}
             label="Add Liquidity"
             singleRow={isSingleRow}
           />
@@ -149,7 +150,7 @@ export function ActionGrid({ className, layout = "2x2" }: ActionGridProps) {
         >
           <ActionTile
             href="/overview"
-            icon={<Send className="h-6 w-6" />}
+            icon={<IconPaperPlane2 className="h-6 w-6" />}
             label="Send"
             singleRow={isSingleRow}
           />

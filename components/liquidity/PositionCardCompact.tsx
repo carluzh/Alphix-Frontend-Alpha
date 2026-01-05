@@ -21,6 +21,7 @@ import {
     getPositionStatusColor,
 } from './LiquidityPositionStatusIndicator';
 import { LiquidityPositionFeeStats } from './FeeStats';
+import { useUSDCValue } from '@/lib/uniswap/hooks/useUSDCPrice';
 
 /**
  * PositionCardCompactLoader - Shimmer skeleton for position cards
@@ -37,8 +38,6 @@ interface PositionCardCompactProps {
     /** Pre-calculated USD value of the position */
     valueUSD: number;
     onClick: () => void;
-    /** Callback to get USD price for a token symbol */
-    getUsdPriceForSymbol: (symbol?: string) => number;
     poolType?: string;
     poolContext: {
         currentPrice: string | null;
@@ -64,7 +63,6 @@ export function PositionCardCompact({
     position,
     valueUSD,
     onClick,
-    getUsdPriceForSymbol,
     poolType,
     poolContext,
     showMenuButton = false,
@@ -93,7 +91,12 @@ export function PositionCardCompact({
 
     const { currentPrice, poolAPR, isLoadingPrices, isLoadingPoolStates } = poolContext;
 
-    // Calculate fees USD from SDK CurrencyAmount objects
+    // Get USD values for fees using Uniswap's routing-based pricing
+    // This fixes the bug where tokens not in priceMap returned $0
+    const fee0USD = useUSDCValue(position.fee0Amount);
+    const fee1USD = useUSDCValue(position.fee1Amount);
+
+    // Calculate fees USD from Uniswap routing prices
     const { feesUSD, hasZeroFees } = useMemo(() => {
         const fee0Amount = position.fee0Amount;
         const fee1Amount = position.fee1Amount;
@@ -105,15 +108,17 @@ export function PositionCardCompact({
         try {
             const fee0 = parseFloat(fee0Amount.toExact());
             const fee1 = parseFloat(fee1Amount.toExact());
-            const price0 = getUsdPriceForSymbol(token0Symbol);
-            const price1 = getUsdPriceForSymbol(token1Symbol);
-            const usdFees = (fee0 * price0) + (fee1 * price1);
+
+            // Use USD values from useUSDCValue hook (routing-based pricing)
+            const fee0UsdValue = fee0USD ? parseFloat(fee0USD.toExact()) : 0;
+            const fee1UsdValue = fee1USD ? parseFloat(fee1USD.toExact()) : 0;
+            const usdFees = fee0UsdValue + fee1UsdValue;
 
             return { feesUSD: usdFees, hasZeroFees: fee0 <= 0 && fee1 <= 0 };
         } catch {
             return { feesUSD: 0, hasZeroFees: true };
         }
-    }, [position.fee0Amount, position.fee1Amount, getUsdPriceForSymbol, token0Symbol, token1Symbol]);
+    }, [position.fee0Amount, position.fee1Amount, fee0USD, fee1USD]);
 
     // Determine denomination base token
     const denominationBase = useMemo(() => {

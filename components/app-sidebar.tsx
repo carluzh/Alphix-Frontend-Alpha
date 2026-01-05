@@ -6,14 +6,13 @@ import Image from "next/image"
 import Link from "next/link"
 import {
   HelpCircleIcon,
-  CoinsIcon,
 } from "lucide-react"
-import { IconHouse6Fill, IconStorage, IconChart, IconArrowsBoldOppositeDirection, IconSavedItems } from "nucleo-micro-bold-essential"
-import { NavMain } from "./nav-main"
+import { IconHouse6Fill, IconStorage, IconChart, IconArrowsBoldOppositeDirection, IconSavedItems, IconCoins } from "nucleo-micro-bold-essential"
+import { NavMain, type NavMainItem } from "./nav-main"
 import { AccountStatus } from "./AccountStatus"
 import { ConnectWalletButton } from "./ConnectWalletButton"
 import { CustomLockIcon } from "./CustomLockIcon"
-import { PointsIcon } from "./PointsIcon"
+import { PointsIcon } from "./PointsIcons"
 import {
   Sidebar,
   SidebarContent,
@@ -36,7 +35,7 @@ import { getLatestVersion } from "@/lib/version-log"
 import { useNetwork } from "@/lib/network-context"
 
 // Base navigation items (always shown)
-const baseNavItems = [
+const baseNavItems: NavMainItem[] = [
   {
     title: "Overview",
     url: "/overview",
@@ -61,14 +60,15 @@ const baseNavItems = [
     title: "Analytics",
     url: "/analytics",
     icon: IconChart,
+    disabled: true,
   },
 ];
 
 // Testnet-only navigation items
-const testnetNavItems = [
+const testnetNavItems: NavMainItem[] = [
   {
     title: "Faucet",
-    icon: CoinsIcon,
+    icon: IconCoins,
     isFaucet: true,
   },
 ];

@@ -2,7 +2,8 @@
 
 import { cn } from '@/lib/utils'
 import { useInView } from '@/hooks/useInView'
-import { Check, ArrowUpRight, ChevronUp, ChevronDown } from 'lucide-react'
+import { ArrowUpRight, ChevronUp, ChevronDown } from 'lucide-react'
+import { IconCheck } from 'nucleo-micro-bold-essential'
 import Link from 'next/link'
 import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from 'recharts'
@@ -444,7 +445,7 @@ export const DynamicFeeSection = () => {
               key={index}
               className="flex flex-row items-center gap-x-2"
             >
-              <Check className="h-4 w-4 text-green-500 shrink-0" />
+              <IconCheck className="h-4 w-4 text-green-500 shrink-0" />
               <p className="leading-relaxed text-pretty text-foreground">
                 {bullet}
               </p>

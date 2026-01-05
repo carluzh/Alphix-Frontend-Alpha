@@ -7,7 +7,8 @@
 
 import { toast } from 'sonner';
 import { createElement } from 'react';
-import { InfoIcon, OctagonX, BadgeCheck, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { IconBadgeCheck2, IconCircleInfo, IconCircleXmarkFilled } from 'nucleo-micro-bold-essential';
 
 // =============================================================================
 // TYPES
@@ -43,7 +44,7 @@ export type LiquidityAction =
  */
 export function showInfoToast(title: string, options?: ToastOptions): void {
   toast(title, {
-    icon: createElement(InfoIcon, { className: 'h-4 w-4' }),
+    icon: createElement(IconCircleInfo, { className: 'h-4 w-4' }),
     description: options?.description,
     action: options?.action,
     duration: options?.duration,
@@ -55,7 +56,7 @@ export function showInfoToast(title: string, options?: ToastOptions): void {
  */
 export function showErrorToast(title: string, options?: ToastOptions): void {
   toast.error(title, {
-    icon: createElement(OctagonX, { className: 'h-4 w-4 text-red-500' }),
+    icon: createElement(IconCircleXmarkFilled, { className: 'h-4 w-4 text-red-500' }),
     description: options?.description,
     action: options?.action,
     duration: options?.duration ?? 5000,
@@ -67,7 +68,7 @@ export function showErrorToast(title: string, options?: ToastOptions): void {
  */
 export function showSuccessToast(title: string, options?: ToastOptions): void {
   toast.success(title, {
-    icon: createElement(BadgeCheck, { className: 'h-4 w-4 text-green-500' }),
+    icon: createElement(IconBadgeCheck2, { className: 'h-4 w-4 text-green-500' }),
     description: options?.description,
     action: options?.action,
     duration: options?.duration ?? 4000,
