@@ -4,6 +4,9 @@ import { formatUSD as formatUSDShared } from "@/lib/format";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Table, Cell, HeaderCell, ClickableHeaderRow, HeaderArrow, HeaderSortText } from "@/components/table-v2";
 import Image from "next/image";
+import Link from "next/link";
+import { Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 import * as React from "react";
 import { ColumnDef, RowData } from "@tanstack/react-table";
@@ -26,7 +29,7 @@ import { batchQuotePrices } from "@/lib/quote-prices";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TickMath } from '@uniswap/v3-sdk';
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
-import { PointsTooltip, TooltipSize } from "@/components/liquidity/PointsCampaign/PointsTooltip";
+import { APRBadge } from "@/components/liquidity/APRBadge";
 
 const DEFAULT_TICK_SPACING = 60;
 
@@ -536,58 +539,20 @@ export default function LiquidityPage() {
       cell: ({ row }) => {
         const pool = row?.original;
         if (!pool) {
-          return (
-            <Cell loading justifyContent="flex-end" />
-          );
+          return <Cell loading justifyContent="flex-end" />;
         }
         const isAprCalculated = pool.apr !== undefined && pool.apr !== "Loading..." && pool.apr !== "N/A";
-        const aprValue = isAprCalculated ? parseFloat(pool.apr.replace(/[~%K]/g, '')) : 0;
-        const formattedAPR = isAprCalculated ? formatAPR(aprValue) : undefined;
-        const isZeroApr = aprValue === 0;
+        const aprValue = isAprCalculated ? parseFloat(pool.apr.replace(/[~%K]/g, '')) : undefined;
         const tokens = pool.tokens || [];
-        const token0Icon = tokens[0]?.icon;
-        const token1Icon = tokens[1]?.icon;
 
         return (
           <Cell justifyContent="flex-end">
-            {isAprCalculated ? (
-              <PointsTooltip
-                content={
-                  <div className="flex flex-col py-1 min-w-[180px]">
-                    {/* Pool APR Row - with token images */}
-                    <div className="flex items-center justify-between px-2.5 py-1.5 gap-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center -space-x-1">
-                          {token0Icon ? (
-                            <Image src={token0Icon} alt="" width={14} height={14} className="rounded-full ring-1 ring-popover" />
-                          ) : (
-                            <div className="w-3.5 h-3.5 rounded-full bg-muted ring-1 ring-popover" />
-                          )}
-                          {token1Icon ? (
-                            <Image src={token1Icon} alt="" width={14} height={14} className="rounded-full ring-1 ring-popover" />
-                          ) : (
-                            <div className="w-3.5 h-3.5 rounded-full bg-muted ring-1 ring-popover" />
-                          )}
-                        </div>
-                        <span className="text-xs text-muted-foreground">Pool APR</span>
-                      </div>
-                      <span className="text-xs text-foreground font-mono">{formattedAPR}</span>
-                    </div>
-                    {/* Points APR Row - placeholder for future points campaigns */}
-                    {/* When points campaign is active, this would show the points APR */}
-                  </div>
-                }
-                size={TooltipSize.Small}
-                padding={0}
-                placement="top"
-              >
-                <div className={`inline-flex items-center justify-center h-7 px-3 rounded text-sm font-semibold font-mono ${isZeroApr ? 'bg-muted/40 text-muted-foreground' : 'bg-green-500/15 text-green-500'}`}>
-                  {formattedAPR}
-                </div>
-              </PointsTooltip>
-            ) : (
-              <div className="h-4 w-14 bg-muted/60 rounded animate-pulse" />
-            )}
+            <APRBadge
+              breakdown={{ poolApr: aprValue }}
+              token0Symbol={tokens[0]?.symbol}
+              token1Symbol={tokens[1]?.symbol}
+              isLoading={!isAprCalculated}
+            />
           </Cell>
         );
       },
@@ -616,9 +581,11 @@ export default function LiquidityPage() {
     <div className="flex flex-col gap-4 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto">
       {/* Header Section */}
       <div className="flex flex-col gap-4">
-        <div>
-          <h2 className="text-xl font-semibold">Unified Pools</h2>
-          <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">Unified Pools</h2>
+            <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
+          </div>
         </div>
 
         {/* Stats Cards + Search Bar - aligned at bottom */}
@@ -647,13 +614,24 @@ export default function LiquidityPage() {
             </div>
           </div>
 
-          {/* Search bar - aligned to bottom */}
+          {/* Search bar + New Position button - aligned to bottom */}
           {!isMobile && (
-            <TokenSearchBar
-              value={tokenSearch}
-              onValueChange={handleTokenSearchChange}
-              placeholder="Search tokens..."
-            />
+            <div className="flex items-center gap-3">
+              <TokenSearchBar
+                value={tokenSearch}
+                onValueChange={handleTokenSearchChange}
+                placeholder="Search tokens..."
+              />
+              <Button
+                asChild
+                className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
+              >
+                <Link href="/liquidity/add?from=pools">
+                  <Plus className="h-4 w-4" strokeWidth={2.5} />
+                  New position
+                </Link>
+              </Button>
+            </div>
           )}
         </div>
       </div>

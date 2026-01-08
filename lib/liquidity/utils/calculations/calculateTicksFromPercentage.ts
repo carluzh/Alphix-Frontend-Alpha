@@ -3,7 +3,11 @@
  *
  * Calculates tick bounds for a price range based on percentage deviation from current pool tick.
  * Used for preset range buttons (e.g., Full Range, Wide, Narrow).
+ *
+ * Uses Uniswap SDK's nearestUsableTick for proper tick alignment.
  */
+
+import { nearestUsableTick } from '@uniswap/v3-sdk';
 
 /**
  * Calculates tick lower and upper bounds based on percentage range around current pool tick.
@@ -33,9 +37,11 @@ export function calculateTicksFromPercentage(
   const rawLower = currentPoolTick + lowerTickDelta;
   const rawUpper = currentPoolTick + upperTickDelta;
 
-  // Align to tick spacing (floor for lower, ceil for upper to ensure range is at least as wide as requested)
-  const lower = Math.floor(rawLower / tickSpacing) * tickSpacing;
-  const upper = Math.ceil(rawUpper / tickSpacing) * tickSpacing;
+  // Align to tick spacing using Uniswap SDK's nearestUsableTick
+  // For lower bound: floor to ensure range starts at or below requested price
+  // For upper bound: ceil to ensure range ends at or above requested price
+  const lower = nearestUsableTick(Math.floor(rawLower), tickSpacing);
+  const upper = nearestUsableTick(Math.ceil(rawUpper), tickSpacing);
 
   return [lower, upper];
 }

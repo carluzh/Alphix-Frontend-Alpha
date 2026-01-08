@@ -780,6 +780,11 @@ input[type=number] {
   opacity: 1;
 }
 
+/* Always-visible variant for APR cards and other persistent gradient borders */
+.input-gradient-hover.input-gradient-always-visible::before {
+  opacity: 1;
+}
+
 /* Plus icon loading animation */
 @keyframes plusGlare {
   from { background-position: 0% 0%; }
@@ -835,5 +840,15 @@ input[type=number] {
   align-items: center;
   justify-content: center;
   z-index: 1;
+}
+
+/* Animated gradient flow for LP strategy cards */
+@keyframes gradient-flow {
+  from { background-position: 0% 0%; }
+  to { background-position: 300% 0%; }
+}
+
+.animate-gradient-flow {
+  animation: gradient-flow 8s linear infinite;
 }
 

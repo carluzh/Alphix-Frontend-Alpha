@@ -2,7 +2,10 @@
 
 import { memo, useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { PointsRewardsCard } from "./PointsRewardsCard";
 import { OverviewStatsTiles } from "./StatsTiles";
 import { PortfolioChart } from "../Charts/PortfolioChart";
@@ -257,7 +260,7 @@ export const Overview = memo(function Overview({
         <div className="flex-1 min-w-0 flex flex-col max-w-[720px]">
           <div className="flex flex-col gap-3">
             <TableSectionHeader
-              title="Pools"
+              title="Your Positions"
               subtitle={
                 isLoading
                   ? "Loading positions..."
@@ -266,6 +269,17 @@ export const Overview = memo(function Overview({
                     : "No open positions"
               }
               loading={isLoading}
+              action={
+                <Button
+                  asChild
+                  className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
+                >
+                  <Link href="/liquidity/add?from=overview">
+                    <Plus className="h-4 w-4" strokeWidth={2.5} />
+                    New position
+                  </Link>
+                </Button>
+              }
             >
               {isLoading ? (
                 // Shimmer loading state - mirrors Uniswap's LiquidityPositionCardLoader

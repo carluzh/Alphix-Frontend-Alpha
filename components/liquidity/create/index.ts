@@ -30,6 +30,5 @@ export {
   type CreateLiquidityTxContextProviderProps,
 } from './CreateLiquidityTxContext';
 
-// Re-export the existing AddLiquidityForm component
-// (This component already exists and handles the UI for creating positions)
-export { AddLiquidityForm as CreateLiquidityForm } from '../AddLiquidityForm';
+// The UI for creating positions is now handled by the wizard:
+// import { AddLiquidityWizard } from '@/components/liquidity/wizard';

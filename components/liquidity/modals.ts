@@ -10,13 +10,14 @@
  */
 
 // Create Liquidity (New Positions)
+// Note: UI for creating positions is handled by the wizard:
+// import { AddLiquidityWizard } from '@/components/liquidity/wizard';
 export {
   CreateLiquidityContextProvider,
   useCreateLiquidityContext,
   CreateLiquidityTxContextProvider,
   useCreateLiquidityTxContext,
   CreateLiquidityStep,
-  CreateLiquidityForm,
   DEFAULT_RANGE_STATE,
   DEFAULT_DEPOSIT_STATE,
   DEFAULT_ZAP_STATE,

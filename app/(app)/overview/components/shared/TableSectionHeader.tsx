@@ -7,6 +7,7 @@ interface TableSectionHeaderProps {
   title: string;
   subtitle: string;
   loading?: boolean;
+  action?: React.ReactNode;
 }
 
 /**
@@ -22,22 +23,26 @@ export const TableSectionHeader = memo(function TableSectionHeader({
   title,
   subtitle,
   loading,
+  action,
   children,
 }: PropsWithChildren<TableSectionHeaderProps>) {
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        {/* Title: subheading1 = text-base font-semibold */}
-        <h3 className="text-base font-semibold text-foreground">{title}</h3>
-        {/* Subtitle: body3 = text-sm, neutral2 = muted-foreground */}
-        <span
-          className={cn(
-            "text-sm text-muted-foreground",
-            loading && "animate-pulse"
-          )}
-        >
-          {subtitle}
-        </span>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          {/* Title: subheading1 = text-base font-semibold */}
+          <h3 className="text-base font-semibold text-foreground">{title}</h3>
+          {/* Subtitle: body3 = text-sm, neutral2 = muted-foreground */}
+          <span
+            className={cn(
+              "text-sm text-muted-foreground",
+              loading && "animate-pulse"
+            )}
+          >
+            {subtitle}
+          </span>
+        </div>
+        {action}
       </div>
       {children}
     </div>
