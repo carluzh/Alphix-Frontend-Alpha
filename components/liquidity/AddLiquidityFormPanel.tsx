@@ -203,39 +203,51 @@ export function AddLiquidityFormPanel({
 
     setIncreaseIsWorking(true);
     try {
-      // Check what ERC20 approvals are needed
-      const needsApproval: TokenSymbol[] = [];
+      // Check what ERC20 approvals are needed (batched into single multicall)
+      const { readContracts } = await import('@wagmi/core');
+      const { erc20Abi, parseUnits } = await import('viem');
+      const { config } = await import('@/lib/wagmiConfig');
+
       const tokens = [
         { symbol: position.token0.symbol as TokenSymbol, amount: increaseAmount0 },
         { symbol: position.token1.symbol as TokenSymbol, amount: increaseAmount1 }
       ];
 
-      for (const token of tokens) {
-        if (!token.amount || parseFloat(token.amount) <= 0) continue;
-
+      // Filter to tokens that need checking
+      const tokensToCheck = tokens.filter(token => {
+        if (!token.amount || parseFloat(token.amount) <= 0) return false;
         const tokenDef = tokenDefinitions[token.symbol];
-        if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
+        return tokenDef && tokenDef.address !== "0x0000000000000000000000000000000000000000";
+      });
+
+      let needsApproval: TokenSymbol[] = [];
+
+      if (tokensToCheck.length > 0) {
+        // Build contracts array for batched read
+        const contracts = tokensToCheck.map(token => ({
+          address: tokenDefinitions[token.symbol].address as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'allowance' as const,
+          args: [accountAddress, PERMIT2_ADDRESS] as const,
+        }));
 
         try {
-          // Check ERC20 allowance to Permit2
-          const { readContract } = await import('@wagmi/core');
-          const { erc20Abi } = await import('viem');
-          const { config } = await import('@/lib/wagmiConfig');
+          // Batch all allowance checks into single multicall
+          const results = await readContracts(config, { contracts });
 
-          const allowance = await readContract(config, {
-            address: tokenDef.address as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'allowance',
-            args: [accountAddress, PERMIT2_ADDRESS]
+          tokensToCheck.forEach((token, index) => {
+            const result = results[index];
+            if (result.status === 'success') {
+              const allowance = result.result as bigint;
+              const requiredAmount = parseUnits(token.amount!, tokenDefinitions[token.symbol].decimals);
+              if (allowance < requiredAmount) {
+                needsApproval.push(token.symbol);
+              }
+            }
           });
-
-          const { parseUnits } = await import('viem');
-          const requiredAmount = parseUnits(token.amount, tokenDef.decimals);
-          if (allowance < requiredAmount) {
-            needsApproval.push(token.symbol);
-          }
         } catch (error) {
-          // Skip token if allowance check fails
+          // If batch fails, conservatively assume all need approval
+          needsApproval = tokensToCheck.map(t => t.symbol);
         }
       }
 

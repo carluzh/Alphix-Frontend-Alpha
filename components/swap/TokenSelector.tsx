@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 import { useAccount } from 'wagmi';
 import { batchQuotePrices } from '@/lib/quote-prices';
 import { useNetwork } from '@/lib/network-context';
-import { readContract, getBalance } from '@wagmi/core';
+import { readContracts, getBalance } from '@wagmi/core';
 import { erc20Abi, formatUnits } from 'viem';
 import { config } from '@/lib/wagmiConfig';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -247,58 +247,67 @@ export function TokenSelector({
     setTokenBalances(initialBalances);
 
     const fetchBalances = async () => {
-      const balancePromises = tokens.map(async (token) => {
-        try {
-          let balance = '0';
-
-          if (token.address === "0x0000000000000000000000000000000000000000") {
-            const ethBalance = await getBalance(config, {
-              address: accountAddress,
-              chainId: targetChainId,
-            });
-            balance = formatUnits(ethBalance.value, 18);
-          } else {
-            const result = await readContract(config, {
-              address: token.address,
-              abi: erc20Abi,
-              functionName: 'balanceOf',
-              args: [accountAddress],
-              chainId: targetChainId,
-            });
-
-            balance = formatUnits(result, token.decimals);
-          }
-
-          const usdPrice = tokenPrices[token.symbol] || 0;
-          const numericBalance = parseFloat(balance);
-          const usdValue = numericBalance * usdPrice;
-
-          return {
-            address: token.address,
-            data: {
-              balance: getFormattedDisplayBalance(numericBalance),
-              usdValue,
-              isLoading: false
-            }
-          };
-        } catch (error) {
-          return {
-            address: token.address,
-            data: {
-              balance: "Error",
-              usdValue: 0,
-              isLoading: false
-            }
-          };
-        }
-      });
-
-      const results = await Promise.all(balancePromises);
       const newBalances: Record<string, TokenBalanceData> = {};
 
-      results.forEach(result => {
-        newBalances[result.address] = result.data;
-      });
+      // Separate native token from ERC20 tokens
+      const nativeToken = tokens.find(t => t.address === "0x0000000000000000000000000000000000000000");
+      const erc20Tokens = tokens.filter(t => t.address !== "0x0000000000000000000000000000000000000000");
+
+      // Fetch native balance if needed
+      if (nativeToken) {
+        try {
+          const ethBalance = await getBalance(config, {
+            address: accountAddress,
+            chainId: targetChainId,
+          });
+          const balance = formatUnits(ethBalance.value, 18);
+          const usdPrice = tokenPrices[nativeToken.symbol] || 0;
+          const numericBalance = parseFloat(balance);
+          newBalances[nativeToken.address] = {
+            balance: getFormattedDisplayBalance(numericBalance),
+            usdValue: numericBalance * usdPrice,
+            isLoading: false
+          };
+        } catch {
+          newBalances[nativeToken.address] = { balance: "Error", usdValue: 0, isLoading: false };
+        }
+      }
+
+      // Batch all ERC20 balance reads into single multicall
+      if (erc20Tokens.length > 0) {
+        const contracts = erc20Tokens.map(token => ({
+          address: token.address,
+          abi: erc20Abi,
+          functionName: 'balanceOf' as const,
+          args: [accountAddress] as const,
+          chainId: targetChainId,
+        }));
+
+        try {
+          const results = await readContracts(config, { contracts });
+
+          erc20Tokens.forEach((token, index) => {
+            const result = results[index];
+            if (result.status === 'success') {
+              const balance = formatUnits(result.result as bigint, token.decimals);
+              const usdPrice = tokenPrices[token.symbol] || 0;
+              const numericBalance = parseFloat(balance);
+              newBalances[token.address] = {
+                balance: getFormattedDisplayBalance(numericBalance),
+                usdValue: numericBalance * usdPrice,
+                isLoading: false
+              };
+            } else {
+              newBalances[token.address] = { balance: "Error", usdValue: 0, isLoading: false };
+            }
+          });
+        } catch {
+          // If batch fails, mark all as error
+          erc20Tokens.forEach(token => {
+            newBalances[token.address] = { balance: "Error", usdValue: 0, isLoading: false };
+          });
+        }
+      }
 
       setTokenBalances(newBalances);
     };

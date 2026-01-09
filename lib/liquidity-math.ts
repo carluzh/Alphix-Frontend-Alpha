@@ -138,20 +138,27 @@ export async function calculateLiquidityParameters(
   const stateViewAbiViem = parseAbi(STATE_VIEW_ABI);
   const stateViewAddress = getStateViewAddress(networkMode);
 
-  const [slot0, liquidity] = await Promise.all([
-    publicClient.readContract({
-      address: stateViewAddress,
-      abi: stateViewAbiViem,
-      functionName: 'getSlot0',
-      args: [poolId as Hex]
-    }) as Promise<readonly [bigint, number, number, number]>,
-    publicClient.readContract({
-      address: stateViewAddress,
-      abi: stateViewAbiViem,
-      functionName: 'getLiquidity',
-      args: [poolId as Hex]
-    }) as Promise<bigint>
-  ]);
+  // Batch both pool state reads into single multicall (more efficient than Promise.all)
+  const [slot0Result, liquidityResult] = await publicClient.multicall({
+    contracts: [
+      {
+        address: stateViewAddress,
+        abi: stateViewAbiViem,
+        functionName: 'getSlot0',
+        args: [poolId as Hex],
+      },
+      {
+        address: stateViewAddress,
+        abi: stateViewAbiViem,
+        functionName: 'getLiquidity',
+        args: [poolId as Hex],
+      },
+    ],
+    allowFailure: false,
+  });
+
+  const slot0 = slot0Result as readonly [bigint, number, number, number];
+  const liquidity = liquidityResult as bigint;
 
   const currentSqrtPriceX96_JSBI = JSBI.BigInt(slot0[0].toString());
   const currentTickFromSlot0 = Number(slot0[1]);

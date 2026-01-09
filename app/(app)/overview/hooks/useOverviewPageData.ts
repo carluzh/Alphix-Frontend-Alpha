@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useAccount, usePublicClient } from "wagmi";
+import { useAccount } from "wagmi";
 import { useUserPositions, useAllPrices } from "@/components/data/hooks";
 import { getTokenDefinitions } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
@@ -27,7 +27,6 @@ export function useOverviewPageData() {
   );
   const [positionsRefresh, setPositionsRefresh] = useState(0);
   const { address: accountAddress, isConnected } = useAccount();
-  const publicClient = usePublicClient();
 
   // User positions data
   const {
@@ -53,11 +52,10 @@ export function useOverviewPageData() {
     isLoadingUserPositions
   );
 
-  // Wallet balances
+  // Wallet balances (uses wagmi hooks with batched multicall)
   const { walletBalances, isLoadingWalletBalances } = useWalletBalances({
     isConnected,
     accountAddress,
-    publicClient,
     networkMode,
     tokenDefinitions,
     setPositionsRefresh,

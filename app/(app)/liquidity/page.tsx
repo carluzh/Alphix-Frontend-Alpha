@@ -15,7 +15,7 @@ import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import { useAccount } from "wagmi";
 import { toast as sonnerToast } from "sonner";
-import { getEnabledPools, getToken, getPoolSubgraphId } from "@/lib/pools-config";
+import { getEnabledPools, getToken, getPoolSubgraphId, getAllTokenSymbols } from "@/lib/pools-config";
 import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps } from "@/lib/client-cache";
 import { Pool } from "@/types";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -356,15 +356,16 @@ export default function LiquidityPage() {
   useEffect(() => {
     const fetchPrices = async () => {
       try {
-        const symbols = ['ETH', 'aETH', 'BTC', 'aBTC', 'USDC', 'aUSDC', 'USDT', 'aUSDT'];
-        const prices = await batchQuotePrices(symbols);
+        // Use config-derived token list for current network
+        const symbols = getAllTokenSymbols(networkMode);
+        const prices = await batchQuotePrices(symbols, chainId, networkMode);
         setPriceMap(prices);
       } catch (error) {
         console.error("Failed to fetch token prices for liquidity page:", error);
       }
     };
     fetchPrices();
-  }, []);
+  }, [networkMode, chainId]);
 
   const poolsWithPositionCounts = useMemo(() => {
     return poolsData.map(pool => {

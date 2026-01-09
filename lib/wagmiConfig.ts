@@ -1,8 +1,8 @@
 // Adapted from example/frontend/config/index.tsx
-import { http, createStorage, cookieStorage } from 'wagmi'
+import { http, createStorage, cookieStorage, fallback } from 'wagmi'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { mainnet, arbitrum, sepolia, polygon } from 'wagmi/chains' // Import chains from wagmi
-import { defineChain } from 'viem'
+import { defineChain, createClient, type Chain } from 'viem'
 import { getStoredNetworkMode, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from './network-mode'
 // Removed AppKit imports
 
@@ -53,7 +53,7 @@ const isMainnet = networkMode === 'mainnet';
 const rpcUrls = customRpcUrl ? [customRpcUrl] : (isMainnet ? mainnetRpcUrls : testnetRpcUrls);
 const chainId = isE2EMode ? 1337 : (isMainnet ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID);
 
-// Determine RPC URLs for each chain - only use custom URL if it matches the chain
+// Alchemy first, public RPCs as fallback
 const testnetRpcUrlsFinal = isE2EMode
   ? [customRpcUrl!]
   : (isCustomUrlTestnet ? [customRpcUrl!, ...testnetRpcUrls] : testnetRpcUrls);
@@ -116,13 +116,43 @@ export const networks = isMainnet
   ? [baseMainnet, baseSepolia, mainnet]
   : [baseSepolia, baseMainnet, mainnet];
 
+/**
+ * Get ordered RPC URLs for a chain (custom URL first if matching, then public fallbacks)
+ * This is used by the client() function to create fallback transports
+ */
+function getOrderedRpcUrls(chain: Chain): string[] {
+  if (chain.id === MAINNET_CHAIN_ID) {
+    return mainnetRpcUrlsFinal;
+  }
+  if (chain.id === TESTNET_CHAIN_ID || chain.id === 1337) {
+    return testnetRpcUrlsFinal;
+  }
+  // For other chains (like Ethereum mainnet for ENS), use default RPC
+  return chain.rpcUrls.default.http as string[];
+}
+
 // Create the Wagmi adapter instance.
 // The adapter internally creates a wagmi config.
+// We pass a custom client() function to enable multicall batching (like Uniswap).
+// @see interface/apps/web/src/components/Web3Provider/wagmiConfig.ts
 export const wagmiAdapter = new WagmiAdapter({
   networks, // Both networks available
   projectId: projectId || '',
   storage: createStorage({ storage: cookieStorage }),
   ssr: true,
+  // Custom client configuration with multicall batching enabled
+  // This batches multiple RPC calls into single multicall requests
+  client({ chain }) {
+    const urls = getOrderedRpcUrls(chain);
+    return createClient({
+      chain,
+      batch: { multicall: true },
+      pollingInterval: 12_000, // 12 seconds (same as Uniswap)
+      transport: fallback(
+        urls.map((url) => http(url, { timeout: 10_000 }))
+      ),
+    });
+  },
 })
 
 export const config = wagmiAdapter.wagmiConfig

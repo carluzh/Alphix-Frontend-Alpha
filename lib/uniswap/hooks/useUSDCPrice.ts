@@ -5,6 +5,7 @@ import { Currency, CurrencyAmount, Price } from '@uniswap/sdk-core'
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getStablecoin, PollingInterval, type PollingIntervalValue } from '../config'
+import { MAINNET_CHAIN_ID } from '@/lib/network-mode'
 
 const STABLECOIN_SYMBOLS = new Set(['usdc', 'usdt', 'dai'])
 
@@ -14,15 +15,20 @@ function isStablecoin(symbol?: string): boolean {
 }
 
 async function fetchQuotePrice(symbol: string, chainId: number): Promise<number | null> {
+  const networkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet'
+  // Use USDC for mainnet, aUSDC for testnet (matching quote-prices.ts)
+  const quoteToken = networkMode === 'mainnet' ? 'USDC' : 'aUSDC'
+
   const response = await fetch('/api/swap/get-quote', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       fromTokenSymbol: symbol,
-      toTokenSymbol: 'USDC',
+      toTokenSymbol: quoteToken,
       amountDecimalsStr: '1',
       swapType: 'ExactIn',
       chainId,
+      network: networkMode,
     }),
   })
 

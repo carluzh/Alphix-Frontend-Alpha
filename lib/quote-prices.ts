@@ -2,6 +2,7 @@
 // Uses on-chain V4 Quoter for real prices from pool liquidity
 
 import type { NetworkMode } from './pools-config'
+import { MAINNET_CHAIN_ID } from './network-mode'
 
 const STABLECOINS = new Set(['USDC', 'USDT', 'DAI', 'AUSDC', 'AUSDT', 'ADAI', 'aUSDC', 'aUSDT'])
 
@@ -24,8 +25,14 @@ export async function getQuotePrice(
   if (!symbol || typeof symbol !== 'string' || symbol.trim() === '') return 0
   if (isStablecoin(symbol)) return 1
 
+  // Derive networkMode from chainId if not explicitly provided
+  const resolvedNetworkMode: NetworkMode = networkMode ?? (chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet')
+
   // Use USDC for mainnet, aUSDC for testnet
-  const quoteToken = networkMode === 'mainnet' ? 'USDC' : 'aUSDC'
+  const quoteToken = resolvedNetworkMode === 'mainnet' ? 'USDC' : 'aUSDC'
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 5000)
 
   try {
     const baseUrl = getBaseUrl()
@@ -38,10 +45,12 @@ export async function getQuotePrice(
         amountDecimalsStr: '1',
         swapType: 'ExactIn',
         chainId,
-        network: networkMode,
+        network: resolvedNetworkMode,
       }),
+      signal: controller.signal,
     })
 
+    clearTimeout(timeoutId)
     if (!response.ok) return 0
     const data = await response.json()
     if (!data.success) return 0

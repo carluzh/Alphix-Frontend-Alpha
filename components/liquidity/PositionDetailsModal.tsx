@@ -26,7 +26,7 @@ import { PositionValueSection } from "./PositionValueSection";
 import { FeesEarnedSection } from "./FeesEarnedSection";
 import { useAccount, useSignTypedData, useWriteContract, useWaitForTransactionReceipt, useBalance } from "wagmi";
 import { useChainMismatch } from "@/hooks/useChainMismatch";
-import { readContract } from '@wagmi/core';
+import { readContracts } from '@wagmi/core';
 import { config } from '@/lib/wagmiConfig';
 import { useIncreaseLiquidity, type IncreasePositionData, providePreSignedIncreaseBatchPermit, useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
 import { preparePermit2BatchForNewPosition } from '@/lib/liquidity-utils';
@@ -356,40 +356,54 @@ export function PositionDetailsModal({
     },
   });
 
-  // Check what ERC20 approvals are needed
+  // Check what ERC20 approvals are needed (batched into single multicall)
   const checkIncreaseApprovals = useCallback(async (): Promise<TokenSymbol[]> => {
     if (!accountAddress || !chainId) return [];
 
-    const needsApproval: TokenSymbol[] = [];
+    const PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as const;
     const tokens = [
       { symbol: token0Symbol as TokenSymbol, amount: increaseAmount0 },
       { symbol: token1Symbol as TokenSymbol, amount: increaseAmount1 }
     ];
 
-    for (const token of tokens) {
-      if (!token.amount || parseFloat(token.amount) <= 0) continue;
-
+    // Filter to tokens that need checking
+    const tokensToCheck = tokens.filter(token => {
+      if (!token.amount || parseFloat(token.amount) <= 0) return false;
       const tokenDef = tokenDefinitions[token.symbol];
-      if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
+      return tokenDef && tokenDef.address !== "0x0000000000000000000000000000000000000000";
+    });
 
-      try {
-        const allowance = await readContract(config, {
-          address: tokenDef.address as `0x${string}`,
-          abi: erc20Abi,
-          functionName: 'allowance',
-          args: [accountAddress, "0x000000000022D473030F116dDEE9F6B43aC78BA3"]
-        });
+    if (tokensToCheck.length === 0) return [];
 
-        const requiredAmount = viemParseUnits(token.amount, tokenDef.decimals);
-        if (allowance < requiredAmount) {
-          needsApproval.push(token.symbol);
+    // Build contracts array for batched read
+    const contracts = tokensToCheck.map(token => ({
+      address: tokenDefinitions[token.symbol].address as `0x${string}`,
+      abi: erc20Abi,
+      functionName: 'allowance' as const,
+      args: [accountAddress, PERMIT2_ADDRESS] as const,
+    }));
+
+    try {
+      // Batch all allowance checks into single multicall
+      const results = await readContracts(config, { contracts });
+
+      const needsApproval: TokenSymbol[] = [];
+      tokensToCheck.forEach((token, index) => {
+        const result = results[index];
+        if (result.status === 'success') {
+          const allowance = result.result as bigint;
+          const requiredAmount = viemParseUnits(token.amount!, tokenDefinitions[token.symbol].decimals);
+          if (allowance < requiredAmount) {
+            needsApproval.push(token.symbol);
+          }
         }
-      } catch (error) {
-        // Skip token if allowance check fails
-      }
-    }
+      });
 
-    return needsApproval;
+      return needsApproval;
+    } catch (error) {
+      // If batch fails, return empty (conservative - will check again)
+      return [];
+    }
   }, [accountAddress, chainId, position, increaseAmount0, increaseAmount1]);
 
   // Handle ERC20 approval to Permit2 (matching AddLiquidityForm)

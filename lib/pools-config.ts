@@ -114,6 +114,15 @@ export function getAllTokens(networkModeOverride?: NetworkMode): Record<string, 
   return getPoolsConfig(networkModeOverride).tokens;
 }
 
+/**
+ * Get all token symbols for a network.
+ * This is the canonical source - derived from pool config files.
+ * Use this instead of hardcoding token lists.
+ */
+export function getAllTokenSymbols(networkModeOverride?: NetworkMode): string[] {
+  return Object.keys(getAllTokens(networkModeOverride));
+}
+
 export function getToken(symbol: string, networkModeOverride?: NetworkMode): TokenConfig | null {
   const config = getPoolsConfig(networkModeOverride);
   return config.tokens[symbol as keyof typeof config.tokens] || null;

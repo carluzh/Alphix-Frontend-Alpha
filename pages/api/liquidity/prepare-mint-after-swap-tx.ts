@@ -246,80 +246,57 @@ export default async function handler(
                 nonce: string;
             }> = [];
 
-            // Check token0 Permit2 allowance
-            if (!token0IsNative) {
-                const [amount, expiration, nonce] = await publicClient.readContract({
-                    address: PERMIT2_ADDRESS,
-                    abi: [{
-                        name: 'allowance',
-                        type: 'function',
-                        stateMutability: 'view',
-                        inputs: [
-                            { name: 'owner', type: 'address' },
-                            { name: 'token', type: 'address' },
-                            { name: 'spender', type: 'address' }
-                        ],
-                        outputs: [
-                            { name: 'amount', type: 'uint160' },
-                            { name: 'expiration', type: 'uint48' },
-                            { name: 'nonce', type: 'uint48' }
-                        ]
-                    }],
-                    functionName: 'allowance',
-                    args: [
-                        getAddress(userAddress),
-                        getAddress(token0Config.address),
-                        POSITION_MANAGER_ADDRESS
+            // Build list of non-native tokens to check
+            const tokensToCheck = [
+                { config: token0Config, parsedAmount: parsedToken0Amount, isNative: token0IsNative },
+                { config: token1Config, parsedAmount: parsedToken1Amount, isNative: token1IsNative }
+            ].filter(t => !t.isNative);
+
+            if (tokensToCheck.length > 0) {
+                const permit2AllowanceAbi = [{
+                    name: 'allowance',
+                    type: 'function',
+                    stateMutability: 'view',
+                    inputs: [
+                        { name: 'owner', type: 'address' },
+                        { name: 'token', type: 'address' },
+                        { name: 'spender', type: 'address' }
+                    ],
+                    outputs: [
+                        { name: 'amount', type: 'uint160' },
+                        { name: 'expiration', type: 'uint48' },
+                        { name: 'nonce', type: 'uint48' }
                     ]
-                }) as readonly [bigint, number, number];
+                }] as const;
 
-                const needsPermit = amount < parsedToken0Amount || expiration <= now;
-                if (needsPermit) {
-                    permitDetails.push({
-                        token: getAddress(token0Config.address),
-                        amount: (parsedToken0Amount + 1n).toString(), // Add buffer like regular flow
-                        expiration: permitExpiration.toString(),
-                        nonce: nonce.toString()
-                    });
-                }
-            }
+                // Batch all Permit2 allowance checks into single multicall
+                const permit2Results = await publicClient.multicall({
+                    contracts: tokensToCheck.map(t => ({
+                        address: PERMIT2_ADDRESS as `0x${string}`,
+                        abi: permit2AllowanceAbi,
+                        functionName: 'allowance' as const,
+                        args: [
+                            getAddress(userAddress),
+                            getAddress(t.config.address),
+                            POSITION_MANAGER_ADDRESS
+                        ] as const
+                    })),
+                    allowFailure: false,
+                });
 
-            // Check token1 Permit2 allowance
-            if (!token1IsNative) {
-                const [amount, expiration, nonce] = await publicClient.readContract({
-                    address: PERMIT2_ADDRESS,
-                    abi: [{
-                        name: 'allowance',
-                        type: 'function',
-                        stateMutability: 'view',
-                        inputs: [
-                            { name: 'owner', type: 'address' },
-                            { name: 'token', type: 'address' },
-                            { name: 'spender', type: 'address' }
-                        ],
-                        outputs: [
-                            { name: 'amount', type: 'uint160' },
-                            { name: 'expiration', type: 'uint48' },
-                            { name: 'nonce', type: 'uint48' }
-                        ]
-                    }],
-                    functionName: 'allowance',
-                    args: [
-                        getAddress(userAddress),
-                        getAddress(token1Config.address),
-                        POSITION_MANAGER_ADDRESS
-                    ]
-                }) as readonly [bigint, number, number];
-
-                const needsPermit = amount < parsedToken1Amount || expiration <= now;
-                if (needsPermit) {
-                    permitDetails.push({
-                        token: getAddress(token1Config.address),
-                        amount: (parsedToken1Amount + 1n).toString(), // Add buffer like regular flow
-                        expiration: permitExpiration.toString(),
-                        nonce: nonce.toString()
-                    });
-                }
+                // Process results
+                tokensToCheck.forEach((t, i) => {
+                    const [amount, expiration, nonce] = permit2Results[i] as readonly [bigint, number, number];
+                    const needsPermit = amount < t.parsedAmount || expiration <= now;
+                    if (needsPermit) {
+                        permitDetails.push({
+                            token: getAddress(t.config.address),
+                            amount: (t.parsedAmount + 1n).toString(), // Add buffer like regular flow
+                            expiration: permitExpiration.toString(),
+                            nonce: nonce.toString()
+                        });
+                    }
+                });
             }
 
             // If any token needs permit, request PermitBatch signature
@@ -356,25 +333,32 @@ export default async function handler(
         // ========== STEP 3: Fetch pool state and create position ==========
         // Create pool ID from pool key
         const poolId = poolConfig.subgraphId as `0x${string}`;
+        const stateViewAbi = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
 
-        // Get slot0 (price and tick)
-        const slot0Result = await publicClient.readContract({
-            address: STATE_VIEW_ADDRESS,
-            abi: parseAbi(STATE_VIEW_HUMAN_READABLE_ABI),
-            functionName: 'getSlot0',
-            args: [poolId]
-        }) as readonly [bigint, number, number, number];
+        // Batch pool state reads into single multicall
+        const [slot0Result, liquidityResult] = await publicClient.multicall({
+            contracts: [
+                {
+                    address: STATE_VIEW_ADDRESS,
+                    abi: stateViewAbi,
+                    functionName: 'getSlot0',
+                    args: [poolId]
+                },
+                {
+                    address: STATE_VIEW_ADDRESS,
+                    abi: stateViewAbi,
+                    functionName: 'getLiquidity',
+                    args: [poolId]
+                }
+            ],
+            allowFailure: false,
+        });
 
-        // Get liquidity
-        const poolLiquidity = await publicClient.readContract({
-            address: STATE_VIEW_ADDRESS,
-            abi: parseAbi(STATE_VIEW_HUMAN_READABLE_ABI),
-            functionName: 'getLiquidity',
-            args: [poolId]
-        }) as bigint;
+        const slot0 = slot0Result as readonly [bigint, number, number, number];
+        const poolLiquidity = liquidityResult as bigint;
 
-        const sqrtPriceX96 = slot0Result[0];
-        const currentTick = Number(slot0Result[1]);
+        const sqrtPriceX96 = slot0[0];
+        const currentTick = Number(slot0[1]);
 
         // Create SDK token instances
         const sdkToken0 = new Token(

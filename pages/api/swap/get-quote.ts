@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, parseUnits, type Address } from 'viem';
 import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
+import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '../../../lib/network-mode';
 
 // Helper function to safely parse amounts and prevent scientific notation errors
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -43,6 +44,29 @@ import { V4QuoterAbi, EMPTY_BYTES } from '../../../lib/swap-constants';
 import { getRpcUrlForNetwork } from '../../../lib/viemClient';
 import { ethers } from 'ethers';
 import { findBestRoute, SwapRoute, routeToString } from '../../../lib/routing-engine';
+
+/**
+ * Create an ethers provider with explicit network to avoid "could not detect network" errors.
+ * Ethers v5 normally auto-detects the network, which can fail if RPC is slow or unavailable.
+ */
+function createProvider(networkMode?: NetworkMode): ethers.providers.JsonRpcProvider {
+  const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
+  const chainId = networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
+  const networkName = networkMode === 'mainnet' ? 'base' : 'base-sepolia';
+
+  // Pass network explicitly to skip auto-detection
+  // Use connectionInfo object with timeout to prevent indefinite hangs on contract reverts
+  return new ethers.providers.JsonRpcProvider(
+    {
+      url: rpcUrl,
+      timeout: 10000, // 10 seconds max
+    },
+    {
+      chainId,
+      name: networkName,
+    }
+  );
+}
 
 interface GetQuoteRequest extends NextApiRequest {
   body: {
@@ -142,8 +166,7 @@ async function getMidPrice(
     const poolId = poolConfig.pool.subgraphId;
 
     // Get current tick from state view - use network-aware RPC
-    const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const provider = createProvider(networkMode);
     const stateView = new ethers.Contract(getStateViewAddress(networkMode), STATE_VIEW_ABI as any, provider);
     
     const slot0 = await stateView.callStatic.getSlot0(poolId);
@@ -235,7 +258,7 @@ async function getV4QuoteExactInputSingle(
   });
 
   try {
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const provider = createProvider(networkMode);
     const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
     const stateView = new ethers.Contract(stateViewAddress, STATE_VIEW_ABI as any, provider);
 
@@ -303,7 +326,7 @@ async function getV4QuoteExactOutputSingle(
   });
 
   try {
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const provider = createProvider(networkMode);
     const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
     const stateView = new ethers.Contract(stateViewAddress, STATE_VIEW_ABI as any, provider);
 
@@ -399,7 +422,7 @@ async function getV4QuoteExactInputMultiHop(
   });
 
   try {
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    const provider = createProvider(networkMode);
 
     // Preflight: verify each hop pool exists via StateView
     const stateView = new ethers.Contract(getStateViewAddress(networkMode), STATE_VIEW_ABI as any, provider);
@@ -438,8 +461,9 @@ async function getV4QuoteExactOutputMultiHop(
   networkMode?: NetworkMode
 ): Promise<{ amountIn: bigint; gasEstimate: bigint }> {
   try {
-    const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    // Note: provider is created but not used directly - each hop calls getV4QuoteExactOutputSingle
+    // which creates its own provider. Keeping for consistency but this could be removed.
+    const _provider = createProvider(networkMode);
 
     // Stepwise chain ExactOut over each hop (reliable across ABI quirks)
     let requiredOut = amountOutSmallestUnits; // smallest units of final token

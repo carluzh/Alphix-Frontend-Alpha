@@ -83,23 +83,31 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
         // Create network-specific public client
         const publicClient = createNetworkClient(networkMode);
 
-        // Check ERC20 approval to Permit2 first
-        const tokenAllowance = await publicClient.readContract({
-            address: fromTokenAddress as Address,
-            abi: Erc20AbiDefinition,
-            functionName: 'allowance',
-            args: [userAddress as Address, PERMIT2_ADDRESS],
-        }) as bigint;
+        // Batch both allowance checks into single multicall
+        // This is more efficient than two separate RPC calls
+        const [erc20AllowanceResult, permit2AllowanceResult] = await publicClient.multicall({
+            contracts: [
+                {
+                    address: fromTokenAddress as Address,
+                    abi: Erc20AbiDefinition,
+                    functionName: 'allowance',
+                    args: [userAddress as Address, PERMIT2_ADDRESS],
+                },
+                {
+                    address: PERMIT2_ADDRESS,
+                    abi: iallowance_transfer_abi,
+                    functionName: 'allowance',
+                    args: [userAddress as Address, fromTokenAddress as Address, UNIVERSAL_ROUTER_ADDRESS],
+                },
+            ],
+            allowFailure: false,
+        });
 
+        const tokenAllowance = erc20AllowanceResult as bigint;
         const requiredAmount = BigInt(amountIn);
         const isApproved = tokenAllowance >= requiredAmount;
 
-        const [currentAmount, currentExpiration, nonce] = await publicClient.readContract({
-            address: PERMIT2_ADDRESS,
-            abi: iallowance_transfer_abi,
-            functionName: 'allowance',
-            args: [userAddress as Address, fromTokenAddress as Address, UNIVERSAL_ROUTER_ADDRESS],
-        }) as [bigint, number, number];
+        const [currentAmount, currentExpiration, nonce] = permit2AllowanceResult as [bigint, number, number];
 
         // Add block time buffer to ensure signature is valid when transaction is submitted
         // Using L2 block time since we're on Base

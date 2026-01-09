@@ -202,12 +202,26 @@ export async function getPositionDetails(tokenId: bigint, chainId: number): Prom
     const pmAddress = getPositionManagerAddress(networkMode) as Address;
     const pmAbi: Abi = position_manager_abi as unknown as Abi;
 
-    const [poolKey, infoValue] = (await publicClient.readContract({
-        address: pmAddress,
-        abi: pmAbi,
-        functionName: 'getPoolAndPositionInfo',
-        args: [tokenId],
-    })) as readonly [
+    // Batch position reads into single multicall
+    const [poolAndPositionResult, liquidityResult] = await publicClient.multicall({
+        contracts: [
+            {
+                address: pmAddress,
+                abi: pmAbi,
+                functionName: 'getPoolAndPositionInfo',
+                args: [tokenId],
+            },
+            {
+                address: pmAddress,
+                abi: pmAbi,
+                functionName: 'getPositionLiquidity',
+                args: [tokenId],
+            }
+        ],
+        allowFailure: false,
+    });
+
+    const [poolKey, infoValue] = poolAndPositionResult as readonly [
         {
             currency0: Address;
             currency1: Address;
@@ -217,13 +231,7 @@ export async function getPositionDetails(tokenId: bigint, chainId: number): Prom
         },
         bigint
     ];
-
-    const liquidity = (await publicClient.readContract({
-        address: pmAddress,
-        abi: pmAbi,
-        functionName: 'getPositionLiquidity',
-        args: [tokenId],
-    })) as bigint;
+    const liquidity = liquidityResult as bigint;
 
     const decoded = decodePositionInfo(infoValue);
 
@@ -249,20 +257,27 @@ export async function getPoolState(poolId: Hex, chainId: number): Promise<PoolSt
     // Parse human-readable ABI into viem Abi
     const stateAbi: Abi = parseAbi(STATE_VIEW_ABI as unknown as readonly string[]);
 
-    const [slot0, poolLiquidity] = await Promise.all([
-        publicClient.readContract({
-            address: stateViewAddr,
-            abi: stateAbi,
-            functionName: 'getSlot0',
-            args: [poolId],
-        }) as Promise<readonly [bigint, number, number, number]>,
-        publicClient.readContract({
-            address: stateViewAddr,
-            abi: stateAbi,
-            functionName: 'getLiquidity',
-            args: [poolId],
-        }) as Promise<bigint>,
-    ]);
+    // Batch pool state reads into single multicall
+    const [slot0Result, liquidityResult] = await publicClient.multicall({
+        contracts: [
+            {
+                address: stateViewAddr,
+                abi: stateAbi,
+                functionName: 'getSlot0',
+                args: [poolId],
+            },
+            {
+                address: stateViewAddr,
+                abi: stateAbi,
+                functionName: 'getLiquidity',
+                args: [poolId],
+            }
+        ],
+        allowFailure: false,
+    });
+
+    const slot0 = slot0Result as readonly [bigint, number, number, number];
+    const poolLiquidity = liquidityResult as bigint;
 
     return {
         sqrtPriceX96: slot0[0],
@@ -403,34 +418,44 @@ export async function preparePermit2BatchForPosition(
     const amounts = [amount0 || 0n, amount1 || 0n];
     const now = Math.floor(Date.now() / 1000);
 
+    // Filter to tokens with non-zero amounts
+    const tokensToCheck = tokens
+        .map((t, i) => ({ token: t, amount: amounts[i], index: i }))
+        .filter(item => item.amount > 0n);
+
     const detailEntries: Permit2Details[] = [];
-    for (let i = 0; i < tokens.length; i++) {
-        const t = tokens[i];
-        const requiredAmount = amounts[i];
-        if (requiredAmount === 0n) continue;
 
+    if (tokensToCheck.length > 0) {
         try {
-            const [currentAmount, currentExpiration, nonce] = (await publicClient.readContract({
-                address: PERMIT2_ADDRESS,
-                abi: Permit2Abi_allowance,
-                functionName: 'allowance',
-                args: [getAddress(userAddress), getAddress(t), getAddress(pm)],
-            })) as readonly [bigint, bigint, bigint];
+            // Batch all Permit2 allowance checks into single multicall
+            const results = await publicClient.multicall({
+                contracts: tokensToCheck.map(item => ({
+                    address: PERMIT2_ADDRESS,
+                    abi: Permit2Abi_allowance,
+                    functionName: 'allowance',
+                    args: [getAddress(userAddress), getAddress(item.token), getAddress(pm)],
+                })),
+                allowFailure: false,
+            });
 
-            if (currentAmount >= requiredAmount && currentExpiration > now) continue;
-
-            const permitAmount = requiredAmount + 1n;
             const MAX_UINT160 = BigInt("1461501637330902918203684832716283019655932542975");
 
-            if (permitAmount > MAX_UINT160) {
-                throw new Error(`Permit amount ${permitAmount} exceeds uint160 max. Required: ${requiredAmount}`);
-            }
+            tokensToCheck.forEach((item, i) => {
+                const [currentAmount, currentExpiration, nonce] = results[i] as readonly [bigint, bigint, bigint];
 
-            detailEntries.push({
-                token: getAddress(t),
-                amount: permitAmount.toString(),
-                expiration: (now + PERMIT_EXPIRATION_DURATION_SECONDS).toString(),
-                nonce: nonce.toString(),
+                if (currentAmount >= item.amount && currentExpiration > now) return;
+
+                const permitAmount = item.amount + 1n;
+                if (permitAmount > MAX_UINT160) {
+                    throw new Error(`Permit amount ${permitAmount} exceeds uint160 max. Required: ${item.amount}`);
+                }
+
+                detailEntries.push({
+                    token: getAddress(item.token),
+                    amount: permitAmount.toString(),
+                    expiration: (now + PERMIT_EXPIRATION_DURATION_SECONDS).toString(),
+                    nonce: nonce.toString(),
+                });
             });
         } catch {}
     }
@@ -466,38 +491,49 @@ export async function preparePermit2BatchForNewPosition(
         throw new Error(`Token definitions not found for ${token0Symbol} or ${token1Symbol}`);
     }
 
+    const ZERO_ADDRESS = getAddress('0x0000000000000000000000000000000000000000');
     const tokens: Address[] = [getAddress(token0Def.address), getAddress(token1Def.address)];
     const amounts = [amount0 || 0n, amount1 || 0n];
     const now = Math.floor(Date.now() / 1000);
 
+    // Filter to non-native tokens with non-zero amounts
+    const tokensToCheck = tokens
+        .map((t, i) => ({ token: t, amount: amounts[i], index: i }))
+        .filter(item => item.token !== ZERO_ADDRESS && item.amount > 0n);
+
     const detailEntries: Permit2Details[] = [];
-    for (let i = 0; i < tokens.length; i++) {
-        const t = tokens[i];
-        const requiredAmount = amounts[i];
-        if (t === getAddress('0x0000000000000000000000000000000000000000') || requiredAmount === 0n) continue;
 
+    if (tokensToCheck.length > 0) {
         try {
-            const [currentAmount, currentExpiration, nonce] = (await publicClient.readContract({
-                address: PERMIT2_ADDRESS,
-                abi: Permit2Abi_allowance,
-                functionName: 'allowance',
-                args: [getAddress(userAddress), getAddress(t), getAddress(pm)],
-            })) as readonly [bigint, bigint, bigint];
+            // Batch all Permit2 allowance checks into single multicall
+            const results = await publicClient.multicall({
+                contracts: tokensToCheck.map(item => ({
+                    address: PERMIT2_ADDRESS,
+                    abi: Permit2Abi_allowance,
+                    functionName: 'allowance',
+                    args: [getAddress(userAddress), getAddress(item.token), getAddress(pm)],
+                })),
+                allowFailure: false,
+            });
 
-            if (currentAmount >= requiredAmount && currentExpiration > now) continue;
-
-            const permitAmount = requiredAmount + 1n;
             const MAX_UINT160 = BigInt("1461501637330902918203684832716283019655932542975");
 
-            if (permitAmount > MAX_UINT160) {
-                throw new Error(`Permit amount ${permitAmount} exceeds uint160 max. Required: ${requiredAmount}`);
-            }
+            tokensToCheck.forEach((item, i) => {
+                const [currentAmount, currentExpiration, nonce] = results[i] as readonly [bigint, bigint, bigint];
 
-            detailEntries.push({
-                token: getAddress(t),
-                amount: permitAmount.toString(),
-                expiration: (now + PERMIT_EXPIRATION_DURATION_SECONDS).toString(),
-                nonce: nonce.toString(),
+                if (currentAmount >= item.amount && currentExpiration > now) return;
+
+                const permitAmount = item.amount + 1n;
+                if (permitAmount > MAX_UINT160) {
+                    throw new Error(`Permit amount ${permitAmount} exceeds uint160 max. Required: ${item.amount}`);
+                }
+
+                detailEntries.push({
+                    token: getAddress(item.token),
+                    amount: permitAmount.toString(),
+                    expiration: (now + PERMIT_EXPIRATION_DURATION_SECONDS).toString(),
+                    nonce: nonce.toString(),
+                });
             });
         } catch {}
     }

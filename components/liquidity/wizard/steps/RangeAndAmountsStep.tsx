@@ -9,7 +9,7 @@
  * - Always shows deposit amounts section
  */
 
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { ArrowDownUp, Info, AlertTriangle, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -28,10 +28,13 @@ import { useNetwork } from '@/lib/network-context';
 import { getDecimalsForDenomination } from '@/lib/denomination-utils';
 import { usePercentageInput } from '@/hooks/usePercentageInput';
 import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
+import { useRangeHopCallbacks } from '@/hooks/useRangeHopCallbacks';
 import { TokenInputCard, TokenInputStyles } from '@/components/liquidity/TokenInputCard';
 import { formatCalculatedAmount } from '@/components/liquidity/liquidity-form-utils';
 import { calculateTicksFromPercentage } from '@/lib/liquidity/utils/calculations';
 import { nearestUsableTick } from '@uniswap/v3-sdk';
+import { D3LiquidityRangeChart, LiquidityRangeActionButtons, type D3LiquidityRangeChartHandle } from '@/components/liquidity/d3-chart';
+import { HistoryDuration } from '@/lib/chart/types';
 
 // Price Strategy configurations (aligned with Uniswap's DefaultPriceStrategies)
 interface PriceStrategyConfig {
@@ -320,6 +323,9 @@ export function RangeAndAmountsStep() {
     inputError,
   } = useCreatePositionTxContext();
 
+  // Chart ref for imperative actions (Uniswap pattern)
+  const chartRef = useRef<D3LiquidityRangeChartHandle>(null);
+
   // Local state
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
@@ -328,6 +334,7 @@ export function RangeAndAmountsStep() {
   const [amount1, setAmount1] = useState(state.amount1 || '');
   const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
   const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
+  const [chartDuration, setChartDuration] = useState<HistoryDuration>(HistoryDuration.MONTH);
 
   // Use isCalculating from TxContext
   const isCalculating = txIsCalculating;
@@ -570,37 +577,104 @@ export function RangeAndAmountsStep() {
     setRangePreset('custom');
   }, [setRangePreset]);
 
-  // Increment/decrement handlers
-  const step = isStablePool ? 0.001 : 0.01;
+  // Tick-based increment/decrement (Uniswap pattern)
+  // @see interface/apps/web/src/state/mint/v3/hooks.tsx useRangeHopCallbacks
+  const tickSpacing = poolConfig?.tickSpacing || 10;
 
+  // isSorted determines if we need to swap increment/decrement for inverted display
+  // When not sorted (inverted), left input controls upper tick, right input controls lower tick
+  const isSorted = !priceInverted;
+
+  // Get the 4 tick navigation functions from hook
+  const {
+    getDecrementLower,
+    getIncrementLower,
+    getDecrementUpper,
+    getIncrementUpper,
+  } = useRangeHopCallbacks({
+    tickLower: state.tickLower,
+    tickUpper: state.tickUpper,
+    tickSpacing,
+    poolCurrentTick: currentTick ?? undefined,
+  });
+
+  // Left input (min price) handlers - swap based on isSorted (Uniswap RangeSelector pattern)
   const incrementMinPrice = useCallback(() => {
-    const current = parseFloat(minPrice) || 0;
-    setMinPrice((current + step).toFixed(4));
-    setRangePreset('custom');
-  }, [minPrice, step, setRangePreset]);
+    const newPrice = isSorted ? getIncrementLower() : getDecrementUpper();
+    if (newPrice) {
+      setMinPrice(newPrice);
+      setRangePreset('custom');
+      // Update tick in context
+      const newTick = isSorted
+        ? (state.tickLower ?? 0) + tickSpacing
+        : (state.tickUpper ?? 0) - tickSpacing;
+      if (isSorted) {
+        setRange(newTick, state.tickUpper);
+      } else {
+        setRange(state.tickLower, newTick);
+      }
+    }
+  }, [isSorted, getIncrementLower, getDecrementUpper, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange]);
 
   const decrementMinPrice = useCallback(() => {
-    const current = parseFloat(minPrice) || 0;
-    setMinPrice(Math.max(0, current - step).toFixed(4));
-    setRangePreset('custom');
-  }, [minPrice, step, setRangePreset]);
+    const newPrice = isSorted ? getDecrementLower() : getIncrementUpper();
+    if (newPrice) {
+      setMinPrice(newPrice);
+      setRangePreset('custom');
+      // Update tick in context
+      const newTick = isSorted
+        ? (state.tickLower ?? 0) - tickSpacing
+        : (state.tickUpper ?? 0) + tickSpacing;
+      if (isSorted) {
+        setRange(newTick, state.tickUpper);
+      } else {
+        setRange(state.tickLower, newTick);
+      }
+    }
+  }, [isSorted, getDecrementLower, getIncrementUpper, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange]);
 
+  // Right input (max price) handlers - swap based on isSorted
   const incrementMaxPrice = useCallback(() => {
     if (maxPrice === '∞') return;
-    const current = parseFloat(maxPrice) || 0;
-    setMaxPrice((current + step).toFixed(4));
-    setRangePreset('custom');
-  }, [maxPrice, step, setRangePreset]);
+    const newPrice = isSorted ? getIncrementUpper() : getDecrementLower();
+    if (newPrice) {
+      setMaxPrice(newPrice);
+      setRangePreset('custom');
+      // Update tick in context
+      const newTick = isSorted
+        ? (state.tickUpper ?? 0) + tickSpacing
+        : (state.tickLower ?? 0) - tickSpacing;
+      if (isSorted) {
+        setRange(state.tickLower, newTick);
+      } else {
+        setRange(newTick, state.tickUpper);
+      }
+    }
+  }, [maxPrice, isSorted, getIncrementUpper, getDecrementLower, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange]);
 
   const decrementMaxPrice = useCallback(() => {
     if (maxPrice === '∞') {
-      setMaxPrice('1000000');
+      // Convert from infinity to a finite high price
+      const highPrice = parseFloat(currentPriceRaw) * 10;
+      setMaxPrice(formatPriceForDisplay(priceInverted ? 1 / highPrice : highPrice, priceInverted));
+      setRangePreset('custom');
       return;
     }
-    const current = parseFloat(maxPrice) || 0;
-    setMaxPrice(Math.max(0, current - step).toFixed(4));
-    setRangePreset('custom');
-  }, [maxPrice, step, setRangePreset]);
+    const newPrice = isSorted ? getDecrementUpper() : getIncrementLower();
+    if (newPrice) {
+      setMaxPrice(newPrice);
+      setRangePreset('custom');
+      // Update tick in context
+      const newTick = isSorted
+        ? (state.tickUpper ?? 0) - tickSpacing
+        : (state.tickLower ?? 0) + tickSpacing;
+      if (isSorted) {
+        setRange(state.tickLower, newTick);
+      } else {
+        setRange(newTick, state.tickUpper);
+      }
+    }
+  }, [maxPrice, isSorted, getDecrementUpper, getIncrementLower, currentPriceRaw, formatPriceForDisplay, priceInverted, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange]);
 
   // Handle amount changes - sync to context for real calculation via TxContext
   const handleAmount0Change = useCallback((value: string) => {
@@ -721,24 +795,53 @@ export function RangeAndAmountsStep() {
         {/* Range controls (only for concentrated mode) */}
         {!isRehypoMode && (
           <>
-            {/* Price Strategies (Uniswap-aligned) */}
-            <div className="flex flex-col gap-4">
-              <span className="text-sm font-medium text-muted-foreground">
-                Price strategies
-              </span>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {PRICE_STRATEGIES.map(strategy => (
-                  <PriceStrategyButton
-                    key={strategy.id}
-                    strategy={strategy}
-                    selected={selectedPreset === strategy.id}
-                    onSelect={() => handleSelectStrategy(strategy.id)}
-                  />
-                ))}
-              </div>
+            {/* D3 Interactive Range Chart - always show container, chart handles loading */}
+            <div className="border border-sidebar-border rounded-xl overflow-hidden">
+              <D3LiquidityRangeChart
+                ref={chartRef}
+                poolId={state.poolId ?? undefined}
+                token0Symbol={poolConfig?.currency0.symbol}
+                token1Symbol={poolConfig?.currency1.symbol}
+                tickSpacing={poolConfig?.tickSpacing || 10}
+                currentPrice={parseFloat(currentPriceRaw) || 1}
+                currentTick={currentTick ?? undefined}
+                minPrice={minPrice !== '' && minPrice !== '0' ? parseFloat(minPrice) : undefined}
+                maxPrice={maxPrice !== '' && maxPrice !== '∞' ? parseFloat(maxPrice) : undefined}
+                isFullRange={selectedPreset === 'full'}
+                duration={chartDuration}
+                onRangeChange={(newMinPrice, newMaxPrice) => {
+                  // Update display prices
+                  setMinPrice(formatPriceForDisplay(newMinPrice, priceInverted));
+                  setMaxPrice(formatPriceForDisplay(newMaxPrice, priceInverted));
+                  setRangePreset('custom');
+
+                  // Convert prices to ticks and update context
+                  // price = 1.0001^tick => tick = log(price) / log(1.0001)
+                  const tickFromPrice = (price: number) => Math.round(Math.log(price) / Math.log(1.0001));
+                  const tickLower = tickFromPrice(newMinPrice);
+                  const tickUpper = tickFromPrice(newMaxPrice);
+
+                  // Align to tick spacing
+                  const tickSpacingVal = poolConfig?.tickSpacing || 10;
+                  const alignedTickLower = Math.round(tickLower / tickSpacingVal) * tickSpacingVal;
+                  const alignedTickUpper = Math.round(tickUpper / tickSpacingVal) * tickSpacingVal;
+
+                  setRange(alignedTickLower, alignedTickUpper);
+                }}
+              />
+              {/* Action buttons below chart: Time period selector, zoom controls, reset */}
+              <LiquidityRangeActionButtons
+                selectedDuration={chartDuration}
+                onDurationChange={setChartDuration}
+                onZoomIn={() => chartRef.current?.zoomIn()}
+                onZoomOut={() => chartRef.current?.zoomOut()}
+                onCenterRange={() => chartRef.current?.centerRange()}
+                onReset={() => chartRef.current?.reset()}
+                isFullRange={selectedPreset === 'full'}
+              />
             </div>
 
-            {/* Min/Max Price Inputs (Uniswap RangeAmountInput style with StatsTiles outline) */}
+            {/* Min/Max Price Inputs (below chart - Uniswap RangeAmountInput style) */}
             <div className="border border-sidebar-border rounded-xl overflow-hidden">
               <div className="flex flex-row">
                 <RangeInput
@@ -773,6 +876,23 @@ export function RangeAndAmountsStep() {
                 <span className="text-sm text-red-500">Min price must be less than max price</span>
               </div>
             )}
+
+            {/* Price Strategies (below inputs - Uniswap-aligned) */}
+            <div className="flex flex-col gap-4">
+              <span className="text-sm font-medium text-muted-foreground">
+                Price strategies
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {PRICE_STRATEGIES.map(strategy => (
+                  <PriceStrategyButton
+                    key={strategy.id}
+                    strategy={strategy}
+                    selected={selectedPreset === strategy.id}
+                    onSelect={() => handleSelectStrategy(strategy.id)}
+                  />
+                ))}
+              </div>
+            </div>
           </>
         )}
 

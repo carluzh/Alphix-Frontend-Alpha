@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount, useBalance, useSignTypedData } from "wagmi";
-import { readContract, writeContract } from "@wagmi/core";
+import { readContracts, writeContract } from "@wagmi/core";
 import { erc20Abi, parseUnits } from "viem";
 import { config } from "@/lib/wagmiConfig";
 import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
@@ -98,18 +98,46 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     setIsWorking(true); setError(null);
     try {
       const { TOKEN0: amount0, TOKEN1: amount1 } = derivedIncreaseLiquidityInfo.formattedAmounts || {};
-      const needsApproval: TokenApprovalInfo[] = [];
       const tokens = [{ symbol: position.token0.symbol as TokenSymbol, amount: amount0 }, { symbol: position.token1.symbol as TokenSymbol, amount: amount1 }];
-      for (const token of tokens) {
-        if (!token.amount || parseFloat(token.amount) <= 0) continue;
+
+      // Filter to tokens that need checking
+      const tokensToCheck = tokens.filter(token => {
+        if (!token.amount || parseFloat(token.amount) <= 0) return false;
         const tokenDef = tokenDefinitions[token.symbol];
-        if (!tokenDef || tokenDef.address === "0x0000000000000000000000000000000000000000") continue;
+        return tokenDef && tokenDef.address !== "0x0000000000000000000000000000000000000000";
+      });
+
+      let needsApproval: TokenApprovalInfo[] = [];
+
+      if (tokensToCheck.length > 0) {
+        // Build contracts array for batched read
+        const contracts = tokensToCheck.map(token => ({
+          address: tokenDefinitions[token.symbol].address as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'allowance' as const,
+          args: [accountAddress, PERMIT2_ADDRESS] as const,
+        }));
+
         try {
-          const allowance = await readContract(config, { address: tokenDef.address as `0x${string}`, abi: erc20Abi, functionName: "allowance", args: [accountAddress, PERMIT2_ADDRESS] });
-          const requiredAmount = parseUnits(token.amount, tokenDef.decimals);
-          if (allowance < requiredAmount) needsApproval.push({ symbol: token.symbol, address: tokenDef.address as `0x${string}`, needsApproval: true });
-        } catch {}
+          // Batch all allowance checks into single multicall
+          const results = await readContracts(config, { contracts });
+
+          tokensToCheck.forEach((token, index) => {
+            const result = results[index];
+            if (result.status === 'success') {
+              const allowance = result.result as bigint;
+              const requiredAmount = parseUnits(token.amount!, tokenDefinitions[token.symbol].decimals);
+              if (allowance < requiredAmount) {
+                needsApproval.push({ symbol: token.symbol, address: tokenDefinitions[token.symbol].address as `0x${string}`, needsApproval: true });
+              }
+            }
+          });
+        } catch {
+          // If batch fails, conservatively assume all need approval
+          needsApproval = tokensToCheck.map(t => ({ symbol: t.symbol, address: tokenDefinitions[t.symbol].address as `0x${string}`, needsApproval: true }));
+        }
       }
+
       setNeededApprovals(needsApproval);
       if (needsApproval.length > 0) { setCurrentApprovalToken(needsApproval[0].symbol); setTxStep("approve"); }
       else setTxStep("permit");

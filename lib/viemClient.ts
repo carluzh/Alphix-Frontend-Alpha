@@ -19,7 +19,6 @@ function getRpcUrlsForNetwork(networkMode: NetworkMode): string[] {
   const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;
   const networkUrls = networkMode === 'mainnet' ? MAINNET_RPC_URLS : TESTNET_RPC_URLS;
 
-  // Only use custom URL if it matches the requested network
   if (customRpcUrl) {
     const isTestnetUrl = customRpcUrl.includes('sepolia') || customRpcUrl.includes('testnet');
     const isMainnetUrl = customRpcUrl.includes('mainnet') ||
@@ -37,7 +36,7 @@ function getRpcUrlsForNetwork(networkMode: NetworkMode): string[] {
   return networkUrls;
 }
 
-// Multiple RPC endpoints for better reliability - use network-aware URLs (for default client)
+// Alchemy first, public RPCs as fallback
 const RPC_URLS = [
   process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL,
   ...(isMainnet ? MAINNET_RPC_URLS : TESTNET_RPC_URLS),

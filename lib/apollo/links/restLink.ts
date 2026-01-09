@@ -10,6 +10,7 @@
 import { ApolloLink } from '@apollo/client'
 import { RestLink } from 'apollo-link-rest'
 import { getStoredNetworkMode } from '@/lib/network-mode'
+import { getAllTokenSymbols } from '@/lib/pools-config'
 
 /**
  * Get REST link for Alphix API endpoints
@@ -47,8 +48,8 @@ export function getRestLink(): ApolloLink {
         const networkMode = getStoredNetworkMode()
         const chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
 
-        // Convert price response to Token array
-        const tokens = ['BTC', 'ETH', 'USDC', 'USDT', 'aBTC', 'aETH', 'aUSDC', 'aUSDT']
+        // Convert price response to Token array - use config-derived token list
+        const tokens = getAllTokenSymbols(networkMode)
           .filter(symbol => data[symbol])
           .map(symbol => ({
             __typename: 'Token',

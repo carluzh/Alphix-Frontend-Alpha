@@ -1,6 +1,7 @@
 import { createElement, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential"
+import { MAINNET_CHAIN_ID } from "@/lib/network-mode"
 
 export type QuoteMode = "indicative" | "binding"
 
@@ -74,6 +75,7 @@ export function useSwapQuote({
             amountDecimalsStr: amountStr,
             swapType: lastEditedSideRef.current === "to" ? "ExactOut" : "ExactIn",
             chainId: targetChainId,
+            network: targetChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet',
             debug: true,
             binding: mode === "binding",
             // cache-bust only for binding; harmless if backend ignores

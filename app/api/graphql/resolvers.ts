@@ -1,5 +1,6 @@
 import type { NetworkMode } from '@/lib/pools-config'
 import { batchQuotePrices } from '@/lib/quote-prices'
+import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '@/lib/network-mode'
 
 /**
  * GraphQL Resolvers
@@ -53,9 +54,19 @@ export const resolvers = {
 
     // Token queries
     tokenPrices: async (_: unknown, args: { chain: string }, ctx: Context) => {
-      const symbols = ['BTC', 'ETH', 'USDC', 'USDT', 'aBTC', 'aETH', 'aUSDC', 'aUSDT']
-      const prices = await batchQuotePrices(symbols)
+      // Use network-specific symbols based on context
+      const isMainnet = ctx.networkMode === 'mainnet'
+      const chainId = isMainnet ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID
+
+      // Only query tokens that exist on the current network
+      const symbols = isMainnet
+        ? ['BTC', 'ETH', 'USDC', 'USDT']
+        : ['aBTC', 'aETH', 'aUSDC', 'aUSDT']
+
+      const prices = await batchQuotePrices(symbols, chainId, ctx.networkMode)
       const timestamp = Math.floor(Date.now() / 1000)
+
+      // Return prices with fallbacks for cross-network compatibility
       return {
         BTC: prices['BTC'] || null,
         aBTC: prices['aBTC'] || prices['BTC'] || null,

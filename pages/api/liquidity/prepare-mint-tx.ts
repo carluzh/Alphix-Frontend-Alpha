@@ -308,31 +308,34 @@ export default async function handler(
         let currentLiquidity: bigint;
 
         try {
-            // Promise.allSettled pattern (identical to Uniswap getPool.ts)
-            const [slot0Result, liquidityResult] = await Promise.allSettled([
-                publicClient.readContract({
-                    address: STATE_VIEW_ADDRESS,
-                    abi: stateViewAbiViem,
-                    functionName: 'getSlot0',
-                    args: [poolId as Hex]
-                }) as Promise<readonly [bigint, number, number, number]>,
-                publicClient.readContract({
-                    address: STATE_VIEW_ADDRESS,
-                    abi: stateViewAbiViem,
-                    functionName: 'getLiquidity',
-                    args: [poolId as Hex]
-                }) as Promise<bigint>
-            ]);
+            // Batch pool state reads into single multicall
+            const [slot0Result, liquidityResult] = await publicClient.multicall({
+                contracts: [
+                    {
+                        address: STATE_VIEW_ADDRESS,
+                        abi: stateViewAbiViem,
+                        functionName: 'getSlot0',
+                        args: [poolId as Hex]
+                    },
+                    {
+                        address: STATE_VIEW_ADDRESS,
+                        abi: stateViewAbiViem,
+                        functionName: 'getLiquidity',
+                        args: [poolId as Hex]
+                    }
+                ],
+                allowFailure: true,
+            });
 
             // Extract results - both required for pool state
-            if (slot0Result.status !== 'fulfilled' || liquidityResult.status !== 'fulfilled') {
-                const error = slot0Result.status === 'rejected' ? slot0Result.reason : liquidityResult.status === 'rejected' ? liquidityResult.reason : 'Unknown error';
+            if (slot0Result.status !== 'success' || liquidityResult.status !== 'success') {
+                const error = slot0Result.status === 'failure' ? slot0Result.error : liquidityResult.status === 'failure' ? liquidityResult.error : 'Unknown error';
                 console.error("API Error (prepare-mint-tx) fetching pool slot0 data:", error);
-                return res.status(500).json({ message: "Failed to fetch current pool data.", error: String(error?.message || error) });
+                return res.status(500).json({ message: "Failed to fetch current pool data.", error: String(error) });
             }
 
-            const slot0 = slot0Result.value;
-            const liquidity = liquidityResult.value;
+            const slot0 = slot0Result.result as readonly [bigint, number, number, number];
+            const liquidity = liquidityResult.result as bigint;
             const sqrtPriceX96Current = slot0[0] as bigint;
             currentTick = slot0[1] as number;
             currentLiquidity = liquidity as bigint;
@@ -437,26 +440,39 @@ export default async function handler(
 
         const hasNativeETH = sortedToken0.address === ETHERS_ADDRESS_ZERO || sortedToken1.address === ETHERS_ADDRESS_ZERO;
 
-        // Always check ERC20 allowances to Permit2 (required even with permit signature)
-        for (const t of tokensToCheck) {
-            if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.requiredAmount <= 0n) continue;
+        // Filter to non-native tokens that need checking
+        const erc20TokensToCheck = tokensToCheck.filter(
+            t => getAddress(t.sdkToken.address) !== ETHERS_ADDRESS_ZERO && t.requiredAmount > 0n
+        );
 
-            const erc20Allowance = await publicClient.readContract({
-                address: getAddress(t.sdkToken.address) as `0x${string}`,
-                abi: parseAbi(['function allowance(address,address) view returns (uint256)']),
-                functionName: 'allowance',
-                args: [getAddress(userAddress), PERMIT2_ADDRESS]
+        // Batch all ERC20 allowance checks into single multicall
+        if (erc20TokensToCheck.length > 0) {
+            const erc20AllowanceAbi = parseAbi(['function allowance(address,address) view returns (uint256)']);
+            const erc20AllowanceResults = await publicClient.multicall({
+                contracts: erc20TokensToCheck.map(t => ({
+                    address: getAddress(t.sdkToken.address) as `0x${string}`,
+                    abi: erc20AllowanceAbi,
+                    functionName: 'allowance',
+                    args: [getAddress(userAddress), PERMIT2_ADDRESS]
+                })),
+                allowFailure: false,
             });
 
-            if (erc20Allowance < t.requiredAmount) {
-                return res.status(200).json({
-                    needsApproval: true,
-                    approvalType: 'ERC20_TO_PERMIT2' as const,
-                    approvalTokenAddress: t.sdkToken.address,
-                    approvalTokenSymbol: t.symbol,
-                    approveToAddress: PERMIT2_ADDRESS,
-                    approvalAmount: maxUint256.toString(),
-                });
+            // Check results and return first token that needs approval
+            for (let i = 0; i < erc20TokensToCheck.length; i++) {
+                const t = erc20TokensToCheck[i];
+                const erc20Allowance = erc20AllowanceResults[i] as bigint;
+
+                if (erc20Allowance < t.requiredAmount) {
+                    return res.status(200).json({
+                        needsApproval: true,
+                        approvalType: 'ERC20_TO_PERMIT2' as const,
+                        approvalTokenAddress: t.sdkToken.address,
+                        approvalTokenSymbol: t.symbol,
+                        approveToAddress: PERMIT2_ADDRESS,
+                        approvalAmount: maxUint256.toString(),
+                    });
+                }
             }
         }
 
@@ -478,26 +494,38 @@ export default async function handler(
                 nonce: string;
             }> = [];
 
-            for (const t of tokensToCheck) {
-                if (getAddress(t.sdkToken.address) === ETHERS_ADDRESS_ZERO || t.permitAmount <= 0n) continue;
+            // Filter to non-native tokens that need permit checking
+            const permit2TokensToCheck = tokensToCheck.filter(
+                t => getAddress(t.sdkToken.address) !== ETHERS_ADDRESS_ZERO && t.permitAmount > 0n
+            );
 
-                const [permitAmt, permitExp, permitNonce] = await publicClient.readContract({
-                    address: PERMIT2_ADDRESS,
-                    abi: iallowance_transfer_abi,
-                    functionName: 'allowance',
-                    args: [getAddress(userAddress), getAddress(t.sdkToken.address), POSITION_MANAGER_ADDRESS]
-                }) as readonly [amount: bigint, expiration: number, nonce: number];
+            if (permit2TokensToCheck.length > 0) {
+                // Batch all Permit2 allowance checks into single multicall
+                const permit2AllowanceResults = await publicClient.multicall({
+                    contracts: permit2TokensToCheck.map(t => ({
+                        address: PERMIT2_ADDRESS as `0x${string}`,
+                        abi: iallowance_transfer_abi as any,
+                        functionName: 'allowance' as const,
+                        args: [getAddress(userAddress), getAddress(t.sdkToken.address), POSITION_MANAGER_ADDRESS] as const
+                    })),
+                    allowFailure: false,
+                });
 
-                // Check if existing permit covers slippage-adjusted amount
-                const hasValidPermit = permitAmt >= t.permitAmount && permitExp > currentTimestamp;
-                if (hasValidPermit) continue;
+                // Process results to build permitsNeeded array
+                permit2TokensToCheck.forEach((t, i) => {
+                    const [permitAmt, permitExp, permitNonce] = permit2AllowanceResults[i] as readonly [bigint, number, number];
 
-                // Use slippage-adjusted amount for permit (matches SDK's permitBatchData behavior)
-                permitsNeeded.push({
-                    token: getAddress(t.sdkToken.address),
-                    amount: t.permitAmount.toString(),
-                    expiration: toDeadline(PERMIT_EXPIRATION_MS).toString(),
-                    nonce: permitNonce.toString(),
+                    // Check if existing permit covers slippage-adjusted amount
+                    const hasValidPermit = permitAmt >= t.permitAmount && permitExp > currentTimestamp;
+                    if (hasValidPermit) return;
+
+                    // Use slippage-adjusted amount for permit (matches SDK's permitBatchData behavior)
+                    permitsNeeded.push({
+                        token: getAddress(t.sdkToken.address),
+                        amount: t.permitAmount.toString(),
+                        expiration: toDeadline(PERMIT_EXPIRATION_MS).toString(),
+                        nonce: permitNonce.toString(),
+                    });
                 });
             }
 
