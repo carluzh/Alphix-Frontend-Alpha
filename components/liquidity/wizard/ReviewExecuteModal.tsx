@@ -2,168 +2,161 @@
 
 /**
  * ReviewExecuteModal - Modal for reviewing and executing liquidity position
- * Combines review summary + transaction flow in a modal (Uniswap pattern)
+ * Follows Uniswap pattern where review content stays visible during transaction
+ * Errors are shown inline (not in a separate view) like Uniswap's ErrorCallout
+ * On success: closes modal and navigates to /overview (Uniswap pattern)
+ *
+ * @see interface/apps/web/src/components/Liquidity/ReviewModal.tsx
+ * @see interface/apps/web/src/pages/CreatePosition/CreatePositionModal.tsx (onSuccess pattern)
  *
  * States:
  * - review: Shows position summary with Confirm button
- * - executing: Shows transaction steps progress
- * - success: Shows success state with View Position button
- * - error: Shows error with retry option
+ * - executing: Review content visible, bottom shows ProgressIndicator
  */
 
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import {
-  Check,
-  Loader2,
-  AlertCircle,
-  ExternalLink,
-  X,
-  TrendingUp,
-  Info,
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { AlertCircle } from 'lucide-react';
+import { IconXmark } from 'nucleo-micro-bold-essential';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useCreatePositionTxContext } from './CreatePositionTxContext';
 import { getPoolById, getAllTokens, type TokenSymbol } from '@/lib/pools-config';
-import { TransactionStatus } from './types';
 import { useAddLiquidityTransaction } from '@/lib/liquidity/hooks/transaction/useAddLiquidityTransaction';
 import { PositionRangeChart } from '@/components/liquidity/PositionRangeChart/PositionRangeChart';
 import { PositionStatus } from '@uniswap/client-data-api/dist/data/v1/poolTypes_pb';
+import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
+import { useNetwork } from '@/lib/network-context';
 
-// Transaction step indicator
-interface TransactionStepProps {
-  label: string;
-  description?: string;
-  status: TransactionStatus;
-  errorMessage?: string;
-  txHash?: string;
-}
+// New Uniswap-style transaction progress components
+import { ProgressIndicator } from '@/components/transactions';
+import {
+  buildAddLiquiditySteps,
+  TransactionStep,
+  CurrentStepState,
+} from '@/lib/transactions';
 
-function TransactionStepIndicator({
-  label,
-  description,
-  status,
-  errorMessage,
-  txHash,
-}: TransactionStepProps) {
-  return (
-    <div className="flex flex-row items-start gap-3 p-3">
-      {/* Status indicator */}
-      <div className={cn(
-        'w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-colors',
-        status === 'completed' && 'bg-green-500',
-        status === 'in_progress' && 'bg-sidebar-primary',
-        status === 'error' && 'bg-red-500',
-        (status === 'pending' || status === 'idle') && 'bg-sidebar-accent'
-      )}>
-        {status === 'completed' && <Check className="w-3 h-3 text-white" />}
-        {status === 'in_progress' && <Loader2 className="w-3 h-3 text-sidebar-background animate-spin" />}
-        {status === 'error' && <AlertCircle className="w-3 h-3 text-white" />}
-        {(status === 'pending' || status === 'idle') && <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />}
-      </div>
 
-      {/* Content */}
-      <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-        <span className={cn(
-          'text-sm font-medium',
-          status === 'completed' && 'text-green-500',
-          status === 'in_progress' && 'text-white',
-          status === 'error' && 'text-red-500',
-          (status === 'pending' || status === 'idle') && 'text-muted-foreground'
-        )}>
-          {label}
-        </span>
-        {description && status === 'in_progress' && (
-          <span className="text-xs text-muted-foreground">{description}</span>
-        )}
-        {errorMessage && status === 'error' && (
-          <span className="text-xs text-red-500">{errorMessage}</span>
-        )}
-        {txHash && status === 'completed' && (
-          <a
-            href={`https://basescan.org/tx/${txHash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 text-xs text-sidebar-primary hover:text-sidebar-primary/80 transition-colors"
-          >
-            View on Explorer
-            <ExternalLink className="w-2.5 h-2.5" />
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Token amount row
-interface TokenAmountRowProps {
+// Token info row - Uniswap style: amount + symbol large, USD below, logo on right
+interface TokenInfoRowProps {
   symbol: string;
   icon?: string;
   amount: string;
   usdValue?: string;
 }
 
-function TokenAmountRow({ symbol, icon, amount, usdValue }: TokenAmountRowProps) {
+function TokenInfoRow({ symbol, icon, amount, usdValue }: TokenInfoRowProps) {
   return (
-    <div className="flex flex-row items-center justify-between py-2">
-      <div className="flex items-center gap-2">
-        {icon ? (
-          <Image
-            src={icon}
-            alt={symbol}
-            width={24}
-            height={24}
-            className="rounded-full"
-          />
-        ) : (
-          <div className="w-6 h-6 rounded-full bg-sidebar-accent flex items-center justify-center text-xs font-bold text-white">
-            {symbol.charAt(0)}
-          </div>
-        )}
-        <span className="text-sm font-medium text-white">{symbol}</span>
-      </div>
-      <div className="flex flex-col items-end">
-        <span className="text-sm font-semibold text-white">{amount || '0'}</span>
+    <div className="flex items-center justify-between">
+      <div className="flex flex-col">
+        <span className="text-xl font-semibold text-white">
+          {amount || '0'} {symbol}
+        </span>
         {usdValue && (
-          <span className="text-xs text-muted-foreground">≈ ${usdValue}</span>
+          <span className="text-sm text-muted-foreground">${usdValue}</span>
         )}
+      </div>
+      {icon ? (
+        <Image
+          src={icon}
+          alt={symbol}
+          width={36}
+          height={36}
+          className="rounded-full"
+        />
+      ) : (
+        <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white">
+          {symbol.charAt(0)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Double token logo component
+function DoubleCurrencyLogo({
+  icon0,
+  icon1,
+  symbol0,
+  symbol1,
+}: {
+  icon0?: string;
+  icon1?: string;
+  symbol0: string;
+  symbol1: string;
+}) {
+  return (
+    <div className="flex items-center -space-x-2">
+      {icon0 ? (
+        <Image src={icon0} alt={symbol0} width={36} height={36} className="rounded-full ring-2 ring-container" />
+      ) : (
+        <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white ring-2 ring-container">
+          {symbol0.charAt(0)}
+        </div>
+      )}
+      {icon1 ? (
+        <Image src={icon1} alt={symbol1} width={36} height={36} className="rounded-full ring-2 ring-container" />
+      ) : (
+        <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white ring-2 ring-container">
+          {symbol1.charAt(0)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Modal view types - error is shown inline, not as separate view (Uniswap pattern)
+// No 'success' view - on success we close modal and navigate (Uniswap pattern)
+type ModalView = 'review' | 'executing';
+
+// Error callout component - inline error display like Uniswap's ErrorCallout
+function ErrorCallout({ error, onRetry }: { error: string | null; onRetry: () => void }) {
+  if (!error) return null;
+
+  return (
+    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+      <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-red-400">{error}</p>
+        <button
+          onClick={onRetry}
+          className="text-xs text-red-400 hover:text-red-300 underline mt-1"
+        >
+          Try again
+        </button>
       </div>
     </div>
   );
 }
 
-// Modal view types
-type ModalView = 'review' | 'executing' | 'success' | 'error';
-
 export function ReviewExecuteModal() {
   const router = useRouter();
+  const { chainId } = useNetwork();
   const { state, closeReviewModal, reset, poolStateData } = useAddLiquidityContext();
 
   // Get transaction data from TxContext
   const {
     txInfo,
     calculatedData,
-    approvalData,
-    gasFeeEstimateUSD,
     usdValues,
   } = useCreatePositionTxContext();
 
+  // Refunded amounts (populated during migrations or when position manager returns excess)
+  // Currently unused for standard add liquidity, but ready for migration flow
+  const refundedAmounts = useMemo(() => {
+    // TODO: Populate from migration transaction result when migration is implemented
+    // Refunds occur when the mint/increase returns more tokens than expected
+    return { token0: null as string | null, token1: null as string | null };
+  }, []);
+
   // Modal state
   const [view, setView] = useState<ModalView>('review');
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [currentStep, setCurrentStep] = useState<CurrentStepState | undefined>(undefined);
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [txHash, setTxHash] = useState<string | null>(null);
 
   // Get pool and token info
   const pool = state.poolId ? getPoolById(state.poolId) : null;
@@ -188,9 +181,12 @@ export function ReviewExecuteModal() {
     tickUpper: (txInfo?.tickUpper ?? state.tickUpper ?? 0).toString(),
     activeInputSide: state.inputSide === 'token0' ? 'amount0' : state.inputSide === 'token1' ? 'amount1' : null,
     calculatedData,
-    onLiquidityAdded: (t0, t1, info) => {
-      setTxHash(info?.txHash || null);
-      setView('success');
+    onLiquidityAdded: () => {
+      // Uniswap pattern: clear steps, close modal, navigate
+      setCurrentStep(undefined);
+      closeReviewModal();
+      reset();
+      router.push('/overview');
     },
     onOpenChange: (isOpen) => {
       if (!isOpen) closeReviewModal();
@@ -199,82 +195,102 @@ export function ReviewExecuteModal() {
     zapInputToken: state.inputSide === 'token0' ? 'token0' : 'token1',
   });
 
-  // Define transaction steps based on real approval state
-  const steps = useMemo(() => {
-    const allSteps: { id: string; label: string; description: string }[] = [];
+  // Build transaction steps using Uniswap pattern
+  const steps: TransactionStep[] = useMemo(() => {
+    if (!pool) return [];
 
-    // Only add approval steps if actually needed (from txInfo)
-    if (txInfo?.needsToken0Approval) {
-      allSteps.push({
-        id: 'approve0',
-        label: `Approve ${pool?.currency0.symbol || 'Token 0'}`,
-        description: 'Waiting for approval...',
-      });
-    }
-
-    if (txInfo?.needsToken1Approval && !state.isZapMode) {
-      allSteps.push({
-        id: 'approve1',
-        label: `Approve ${pool?.currency1.symbol || 'Token 1'}`,
-        description: 'Waiting for approval...',
-      });
-    }
-
-    // Permit signing step
-    allSteps.push({
-      id: 'permit',
-      label: 'Sign Permit',
-      description: 'Sign the permit in your wallet...',
+    return buildAddLiquiditySteps({
+      needsToken0Approval: txInfo?.needsToken0Approval ?? false,
+      needsToken1Approval: txInfo?.needsToken1Approval ?? false,
+      isZapMode: state.isZapMode ?? false,
+      token0Symbol: pool.currency0.symbol,
+      token1Symbol: pool.currency1.symbol,
+      token0Address: pool.currency0.address,
+      token1Address: pool.currency1.address,
+      token0Icon: token0Config?.icon,
+      token1Icon: token1Config?.icon,
     });
+  }, [pool, state.isZapMode, txInfo, token0Config, token1Config]);
 
-    // Final execution step
-    allSteps.push({
-      id: 'execute',
-      label: state.isZapMode ? 'Swap & Create Position' : 'Create Position',
-      description: 'Confirm the transaction...',
-    });
+  // Get tick data for price calculations
+  const tickLower = txInfo?.tickLower ?? state.tickLower ?? 0;
+  const tickUpper = txInfo?.tickUpper ?? state.tickUpper ?? 0;
 
-    return allSteps;
-  }, [pool, state.isZapMode, txInfo]);
+  // Use Uniswap's price ordering hooks for proper tick-to-price conversion
+  // This matches how PositionCardCompact handles chart prices
+  // Note: Must provide valid AND different addresses when pool is null (SDK requires unique addresses)
+  const FALLBACK_TOKEN0_ADDRESS = '0x0000000000000000000000000000000000000001';
+  const FALLBACK_TOKEN1_ADDRESS = '0x0000000000000000000000000000000000000002';
+  const priceOrdering = usePriceOrdering({
+    chainId,
+    token0: {
+      address: pool?.currency0.address || FALLBACK_TOKEN0_ADDRESS,
+      symbol: pool?.currency0.symbol || 'TOKEN0',
+      decimals: token0Config?.decimals ?? 18,
+    },
+    token1: {
+      address: pool?.currency1.address || FALLBACK_TOKEN1_ADDRESS,
+      symbol: pool?.currency1.symbol || 'TOKEN1',
+      decimals: token1Config?.decimals ?? 18,
+    },
+    tickLower,
+    tickUpper,
+  });
 
-  // Get step status
-  const getStepStatus = (index: number): TransactionStatus => {
-    if (error && index === currentStepIndex) return 'error';
-    if (index < currentStepIndex) return 'completed';
-    if (index === currentStepIndex && isExecuting) return 'in_progress';
-    return 'pending';
-  };
+  // Get formatted prices using Uniswap's display hook
+  const { minPrice, maxPrice, isFullRange: isFullRangeFromHook } = useGetRangeDisplay({
+    priceOrdering,
+    pricesInverted: false,
+    tickSpacing: pool?.tickSpacing,
+    tickLower,
+    tickUpper,
+  });
 
-  // Calculate range label
-  const rangeLabel = useMemo(() => {
-    if (state.mode === 'rehypo' || state.isFullRange) {
-      return 'Full Range';
-    }
-    return 'Custom Range';
-  }, [state.mode, state.isFullRange]);
-
-  // Calculate price bounds for chart
+  // Calculate price bounds for chart using the properly formatted values
   const chartPrices = useMemo(() => {
-    if (!txInfo || !calculatedData) {
-      return { priceLower: undefined, priceUpper: undefined };
+    // For Unified Yield (rehypo) mode, use the predefined range from pool config
+    if (state.mode === 'rehypo' && pool?.rehypoRange) {
+      // If rehypoRange is full range, use full range values
+      if (pool.rehypoRange.isFullRange) {
+        return { priceLower: 0, priceUpper: Number.MAX_SAFE_INTEGER };
+      }
+      // Use the predefined min/max from pool config
+      const priceLower = parseFloat(pool.rehypoRange.min);
+      const priceUpper = parseFloat(pool.rehypoRange.max);
+      return { priceLower, priceUpper };
     }
 
-    // Convert ticks to prices if we have tick data
-    // For full range, prices are 0 and infinity
-    if (state.isFullRange || state.mode === 'rehypo') {
+    // For full range positions, the hook returns '0' and '∞'
+    if (isFullRangeFromHook || state.isFullRange) {
       return { priceLower: 0, priceUpper: Number.MAX_SAFE_INTEGER };
     }
 
-    // Use prices from calculatedData if available
-    const priceLower = calculatedData.priceAtTickLower
-      ? parseFloat(calculatedData.priceAtTickLower)
+    // Parse the formatted prices for the chart
+    const priceLower = minPrice && minPrice !== '-' && minPrice !== '∞'
+      ? parseFloat(minPrice.replace(/,/g, ''))
       : undefined;
-    const priceUpper = calculatedData.priceAtTickUpper
-      ? parseFloat(calculatedData.priceAtTickUpper)
+    const priceUpper = maxPrice && maxPrice !== '-' && maxPrice !== '∞'
+      ? parseFloat(maxPrice.replace(/,/g, ''))
       : undefined;
 
     return { priceLower, priceUpper };
-  }, [txInfo, calculatedData, state.isFullRange, state.mode]);
+  }, [minPrice, maxPrice, isFullRangeFromHook, state.isFullRange, state.mode, pool?.rehypoRange]);
+
+  // Use the hook's formatted prices for display
+  const formattedPrices = useMemo(() => {
+    // For Unified Yield (rehypo) mode, use the predefined range from pool config
+    if (state.mode === 'rehypo' && pool?.rehypoRange) {
+      if (pool.rehypoRange.isFullRange) {
+        return { min: '0', max: '∞' };
+      }
+      return { min: pool.rehypoRange.min, max: pool.rehypoRange.max };
+    }
+
+    if (isFullRangeFromHook || state.isFullRange) {
+      return { min: '0', max: '∞' };
+    }
+    return { min: minPrice || '-', max: maxPrice || '-' };
+  }, [minPrice, maxPrice, isFullRangeFromHook, state.isFullRange, state.mode, pool?.rehypoRange]);
 
   // Determine position status for chart (new position is always in-range initially)
   const chartPositionStatus = useMemo(() => {
@@ -292,28 +308,25 @@ export function ReviewExecuteModal() {
     return PositionStatus.OUT_OF_RANGE;
   }, [poolStateData, txInfo]);
 
-  // Calculate total USD value from TxContext
-  const totalUsdValue = useMemo(() => {
-    const usd0 = parseFloat(usdValues?.TOKEN0 || '0');
-    const usd1 = parseFloat(usdValues?.TOKEN1 || '0');
-    return (usd0 + usd1).toFixed(2);
-  }, [usdValues]);
-
   // Handle confirm - start execution with real transaction flow
   const handleConfirm = async () => {
-    if (!pool) return;
+    if (!pool || steps.length === 0) return;
 
     setView('executing');
     setIsExecuting(true);
     setError(null);
-    setCurrentStepIndex(0);
+
+    // Start with first step active
+    setCurrentStep({ step: steps[0], accepted: false });
 
     try {
       let stepIdx = 0;
 
       // Step 1: Approve token0 if needed
       if (txInfo?.needsToken0Approval) {
-        setCurrentStepIndex(stepIdx);
+        setCurrentStep({ step: steps[stepIdx], accepted: false });
+        // Mark as in-progress when wallet action is sent
+        setCurrentStep({ step: steps[stepIdx], accepted: true });
         await handleApprove(pool.currency0.symbol as TokenSymbol, state.amount0);
         await refetchApprovals();
         stepIdx++;
@@ -321,17 +334,21 @@ export function ReviewExecuteModal() {
 
       // Step 2: Approve token1 if needed (not in zap mode)
       if (txInfo?.needsToken1Approval && !state.isZapMode) {
-        setCurrentStepIndex(stepIdx);
+        setCurrentStep({ step: steps[stepIdx], accepted: false });
+        setCurrentStep({ step: steps[stepIdx], accepted: true });
         await handleApprove(pool.currency1.symbol as TokenSymbol, state.amount1);
         await refetchApprovals();
         stepIdx++;
       }
 
-      // Step 3: Permit signing + Step 4: Execute
-      // Note: handleDeposit/handleZapSwapAndDeposit handles permit signing internally
-      setCurrentStepIndex(stepIdx); // Permit step
+      // Step 3: Permit signing
+      setCurrentStep({ step: steps[stepIdx], accepted: false });
+      setCurrentStep({ step: steps[stepIdx], accepted: true });
       stepIdx++;
-      setCurrentStepIndex(stepIdx); // Execute step
+
+      // Step 4: Execute transaction
+      setCurrentStep({ step: steps[stepIdx], accepted: false });
+      setCurrentStep({ step: steps[stepIdx], accepted: true });
 
       if (state.isZapMode) {
         await handleZapSwapAndDeposit();
@@ -349,43 +366,28 @@ export function ReviewExecuteModal() {
         errorMessage.toLowerCase().includes('user rejected') ||
         errorMessage.toLowerCase().includes('user denied');
 
-      if (isUserRejection) {
-        // User rejected - go back to review instead of showing error
-        setView('review');
-      } else {
+      // Go back to review - errors shown inline (Uniswap pattern)
+      setView('review');
+      setCurrentStep(undefined);
+
+      // Only show error callout for non-rejection errors
+      if (!isUserRejection) {
         setError(errorMessage);
-        setView('error');
       }
     } finally {
       setIsExecuting(false);
     }
   };
 
-  // Handle retry
+  // Clear error and retry
   const handleRetry = () => {
     setError(null);
-    setView('review');
-  };
-
-  // Handle view position
-  const handleViewPosition = () => {
-    closeReviewModal();
-    router.push('/portfolio');
-  };
-
-  // Handle add more
-  const handleAddMore = () => {
-    closeReviewModal();
-    reset();
   };
 
   // Handle close
   const handleClose = () => {
     if (!isExecuting) {
       closeReviewModal();
-      if (view === 'success') {
-        reset();
-      }
     }
   };
 
@@ -393,10 +395,9 @@ export function ReviewExecuteModal() {
   useEffect(() => {
     if (state.isReviewModalOpen) {
       setView('review');
-      setCurrentStepIndex(0);
+      setCurrentStep(undefined);
       setIsExecuting(false);
       setError(null);
-      setTxHash(null);
     }
   }, [state.isReviewModalOpen]);
 
@@ -404,32 +405,103 @@ export function ReviewExecuteModal() {
 
   return (
     <Dialog open={state.isReviewModalOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="sm:max-w-[420px] bg-container border-sidebar-border">
-        <DialogHeader>
-          <DialogTitle className="text-lg font-semibold text-white">
-            {view === 'review' && 'Review Position'}
-            {view === 'executing' && 'Creating Position'}
-            {view === 'success' && 'Position Created'}
-            {view === 'error' && 'Transaction Failed'}
-          </DialogTitle>
-        </DialogHeader>
+      <DialogContent className="sm:max-w-[420px] bg-container border-sidebar-border p-0 gap-0 [&>button]:hidden">
+        {/* Review/Executing View - Uniswap pattern: content stays visible during transaction */}
+        {(view === 'review' || view === 'executing') && (
+          <div className="flex flex-col">
+            {/* Header: Title + Close X */}
+            <div className="flex items-center justify-between px-4 pt-4 pb-2">
+              <span className="text-base font-medium text-muted-foreground">
+                {view === 'executing' ? 'Creating position' : 'Add liquidity'}
+              </span>
+              <button
+                onClick={handleClose}
+                disabled={isExecuting}
+                className="text-muted-foreground hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <IconXmark className="w-5 h-5" />
+              </button>
+            </div>
 
-        {/* Review View */}
-        {view === 'review' && (
-          <div className="flex flex-col gap-4">
-            {/* Deposit amounts */}
-            <div className="flex flex-col gap-2">
+            {/* Token Pair Section */}
+            <div className="px-4 py-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
-                  {state.isZapMode ? 'You Provide' : 'You Deposit'}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  ~${totalUsdValue}
-                </span>
+                <div className="flex flex-col gap-1">
+                  {/* Token symbols */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl font-semibold text-white">
+                      {pool.currency0.symbol}
+                    </span>
+                    <span className="text-2xl font-semibold text-muted-foreground">/</span>
+                    <span className="text-2xl font-semibold text-white">
+                      {pool.currency1.symbol}
+                    </span>
+                  </div>
+                  {/* Position type badge */}
+                  <div className="flex items-center gap-2">
+                    {state.mode === 'rehypo' ? (
+                      <span
+                        className="text-xs font-medium px-2.5 py-1 rounded-lg border border-transparent hover:border-[#9896FF]/50 transition-colors"
+                        style={{ backgroundColor: 'rgba(152, 150, 255, 0.10)', color: '#9896FF' }}
+                      >
+                        Unified Yield
+                      </span>
+                    ) : (
+                      <span className="text-xs px-2 py-0.5 rounded bg-sidebar-accent text-muted-foreground">
+                        Custom
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {/* Double token logo */}
+                <DoubleCurrencyLogo
+                  icon0={token0Config?.icon}
+                  icon1={token1Config?.icon}
+                  symbol0={pool.currency0.symbol}
+                  symbol1={pool.currency1.symbol}
+                />
               </div>
-              <div className="rounded-lg bg-surface border border-sidebar-border/60 px-3 divide-y divide-sidebar-border/60">
+
+              {/* Chart - use subgraphId for GraphQL data fetching */}
+              {pool.subgraphId && (
+                <div className="mt-4">
+                  <PositionRangeChart
+                    poolId={pool.subgraphId}
+                    token0={pool.currency0.symbol}
+                    token1={pool.currency1.symbol}
+                    priceInverted={false}
+                    positionStatus={chartPositionStatus}
+                    priceLower={chartPrices.priceLower}
+                    priceUpper={chartPrices.priceUpper}
+                    height={80}
+                    className="w-full"
+                  />
+                </div>
+              )}
+
+              {/* Min / Max prices */}
+              <div className="flex mt-3 gap-4">
+                <div className="flex-1">
+                  <span className="text-xs text-muted-foreground">Min</span>
+                  <p className="text-sm text-white">
+                    {formattedPrices.min} {pool.currency1.symbol} per {pool.currency0.symbol}
+                  </p>
+                </div>
+                <div className="flex-1">
+                  <span className="text-xs text-muted-foreground">Max</span>
+                  <p className="text-sm text-white">
+                    {formattedPrices.max} {pool.currency1.symbol} per {pool.currency0.symbol}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Depositing Section */}
+            <div className="px-4 py-3 mt-2">
+              <span className="text-sm text-muted-foreground mb-3 block">Depositing</span>
+              <div className="flex flex-col gap-4">
                 {state.amount0 && parseFloat(state.amount0) > 0 && (
-                  <TokenAmountRow
+                  <TokenInfoRow
                     symbol={pool.currency0.symbol}
                     icon={token0Config?.icon}
                     amount={state.amount0}
@@ -437,7 +509,7 @@ export function ReviewExecuteModal() {
                   />
                 )}
                 {!state.isZapMode && state.amount1 && parseFloat(state.amount1) > 0 && (
-                  <TokenAmountRow
+                  <TokenInfoRow
                     symbol={pool.currency1.symbol}
                     icon={token1Config?.icon}
                     amount={state.amount1}
@@ -447,170 +519,56 @@ export function ReviewExecuteModal() {
               </div>
             </div>
 
-            {/* Position range chart */}
-            {pool && state.poolId && (
-              <div className="rounded-lg bg-surface border border-sidebar-border/60 p-3 overflow-hidden">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-muted-foreground">Price Range</span>
-                  <span className={cn(
-                    'text-xs font-medium',
-                    chartPositionStatus === PositionStatus.IN_RANGE ? 'text-green-500' : 'text-red-500'
-                  )}>
-                    {chartPositionStatus === PositionStatus.IN_RANGE ? 'In Range' : 'Out of Range'}
-                  </span>
+            {/* Refunded Amounts Section - shown only during migrations when excess tokens are returned */}
+            {(refundedAmounts.token0 || refundedAmounts.token1) && (
+              <div className="px-4 py-3">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-sm text-muted-foreground">Refunded</span>
+                  <div className="group relative">
+                    <AlertCircle className="w-4 h-4 text-muted-foreground cursor-help" />
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-sidebar-accent rounded-lg text-xs text-muted-foreground whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                      Tokens returned from the position manager
+                    </div>
+                  </div>
                 </div>
-                <PositionRangeChart
-                  poolId={state.poolId}
-                  token0={pool.currency0.symbol}
-                  token1={pool.currency1.symbol}
-                  priceInverted={false}
-                  positionStatus={chartPositionStatus}
-                  priceLower={chartPrices.priceLower}
-                  priceUpper={chartPrices.priceUpper}
-                  height={64}
-                  className="w-full"
-                />
+                <div className="flex flex-col gap-4">
+                  {refundedAmounts.token0 && parseFloat(refundedAmounts.token0) > 0 && (
+                    <TokenInfoRow
+                      symbol={pool.currency0.symbol}
+                      icon={token0Config?.icon}
+                      amount={refundedAmounts.token0}
+                    />
+                  )}
+                  {refundedAmounts.token1 && parseFloat(refundedAmounts.token1) > 0 && (
+                    <TokenInfoRow
+                      symbol={pool.currency1.symbol}
+                      icon={token1Config?.icon}
+                      amount={refundedAmounts.token1}
+                    />
+                  )}
+                </div>
               </div>
             )}
 
-            {/* Position details */}
-            <div className="flex flex-col gap-2 p-3 rounded-lg bg-surface border border-sidebar-border/60">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Pool</span>
-                <span className="text-sm font-medium text-white">
-                  {pool.currency0.symbol}/{pool.currency1.symbol}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Strategy</span>
-                <span className={cn(
-                  'text-sm font-medium',
-                  state.mode === 'rehypo' ? 'text-sidebar-primary' : 'text-white'
-                )}>
-                  {state.mode === 'rehypo' ? 'Rehypothecation' : 'Concentrated'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Range</span>
-                <span className="text-sm font-medium text-white">{rangeLabel}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Network Fee</span>
-                <span className="text-sm font-medium text-white">{gasFeeEstimateUSD || '~$2.50'}</span>
-              </div>
-            </div>
-
-            {/* Rehypo info */}
-            {state.mode === 'rehypo' && (
-              <div className="flex items-start gap-2 p-2 rounded-lg bg-sidebar-primary/10 border border-sidebar-primary/30">
-                <TrendingUp className="w-4 h-4 text-sidebar-primary shrink-0 mt-0.5" />
-                <span className="text-xs text-muted-foreground">
-                  Your position will earn additional yield from Aave lending markets.
-                </span>
+            {/* Error Callout - inline like Uniswap */}
+            {error && (
+              <div className="px-4 pb-2">
+                <ErrorCallout error={error} onRetry={handleRetry} />
               </div>
             )}
 
-            {/* Confirm button */}
-            <Button
-              onClick={handleConfirm}
-              className="w-full bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90"
-            >
-              Confirm
-            </Button>
-          </div>
-        )}
-
-        {/* Executing View */}
-        {view === 'executing' && (
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col rounded-lg border border-sidebar-border/60 divide-y divide-sidebar-border/60">
-              {steps.map((step, index) => (
-                <TransactionStepIndicator
-                  key={step.id}
-                  label={step.label}
-                  description={step.description}
-                  status={getStepStatus(index)}
-                />
-              ))}
-            </div>
-
-            <div className="flex items-center justify-center gap-2 py-2">
-              <Loader2 className="w-4 h-4 animate-spin text-sidebar-primary" />
-              <span className="text-sm text-muted-foreground">
-                Waiting for wallet confirmation...
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Success View */}
-        {view === 'success' && (
-          <div className="flex flex-col items-center gap-5 py-4">
-            <div className="w-14 h-14 rounded-full bg-green-500/20 flex items-center justify-center">
-              <Check className="w-7 h-7 text-green-500" />
-            </div>
-
-            <div className="text-center">
-              <p className="text-muted-foreground">
-                You&apos;ve successfully added liquidity to {pool.currency0.symbol}/{pool.currency1.symbol}
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2 p-3 rounded-lg bg-surface border border-sidebar-border/60 w-full">
-              <div className="flex justify-between">
-                <span className="text-xs text-muted-foreground">Deposited</span>
-                <span className="text-sm font-medium text-white">
-                  {state.amount0} {pool.currency0.symbol}
-                  {!state.isZapMode && ` + ${state.amount1} ${pool.currency1.symbol}`}
-                </span>
-              </div>
-              {txHash && (
-                <div className="flex justify-between">
-                  <span className="text-xs text-muted-foreground">Transaction</span>
-                  <a
-                    href={`https://basescan.org/tx/${txHash}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-xs text-sidebar-primary hover:text-sidebar-primary/80"
-                  >
-                    View
-                    <ExternalLink className="w-2.5 h-2.5" />
-                  </a>
-                </div>
+            {/* Bottom Section: Button OR Progress Indicator */}
+            <div className="p-4 pt-2">
+              {view === 'executing' && currentStep && steps.length > 0 ? (
+                <ProgressIndicator steps={steps} currentStep={currentStep} />
+              ) : (
+                <Button
+                  onClick={handleConfirm}
+                  className="w-full h-12 text-base font-semibold bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90"
+                >
+                  Create
+                </Button>
               )}
-            </div>
-
-            <div className="flex flex-col gap-2 w-full">
-              <Button onClick={handleViewPosition} className="w-full">
-                View Position
-              </Button>
-              <Button variant="outline" onClick={handleAddMore} className="w-full">
-                Add More Liquidity
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Error View */}
-        {view === 'error' && (
-          <div className="flex flex-col items-center gap-5 py-4">
-            <div className="w-14 h-14 rounded-full bg-red-500/20 flex items-center justify-center">
-              <AlertCircle className="w-7 h-7 text-red-500" />
-            </div>
-
-            <div className="text-center">
-              <p className="text-muted-foreground">
-                {error || 'Something went wrong. Please try again.'}
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2 w-full">
-              <Button onClick={handleRetry} className="w-full">
-                Try Again
-              </Button>
-              <Button variant="outline" onClick={handleClose} className="w-full">
-                Close
-              </Button>
             </div>
           </div>
         )}

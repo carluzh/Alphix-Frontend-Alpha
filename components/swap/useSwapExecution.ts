@@ -9,6 +9,7 @@ import { invalidateAfterTx } from "@/lib/invalidation"
 import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings"
 import { PERMIT2_ADDRESS, UniversalRouterAbi, Erc20AbiDefinition } from "@/lib/swap-constants"
 import { getExplorerTxUrl, activeChainId } from "@/lib/wagmiConfig"
+import { useTransactionAdder, TransactionType, TradeType, type ExactInputSwapTransactionInfo, type ExactOutputSwapTransactionInfo, type ApproveTransactionInfo } from "@/lib/transactions"
 
 import type { Token, SwapTxInfo } from "./swap-interface"
 import type { ExecutionTradeParams } from "./useSwapTrade"
@@ -140,6 +141,9 @@ export function useSwapExecution({
   const { signTypedDataAsync } = useSignTypedData()
   const { writeContractAsync: sendSwapTx } = useWriteContract()
   const { writeContractAsync: sendApprovalTx } = useWriteContract()
+
+  // Transaction tracking
+  const addTransaction = useTransactionAdder()
 
   const [swapState, setSwapState] = useState<SwapState>("input")
   const [swapProgressState, setSwapProgressState] = useState<SwapProgressState>("init")
@@ -352,12 +356,25 @@ export function useSwapExecution({
         })
         if (!approveTxHash) throw new Error("Failed to send approval transaction")
 
+        // Track approval transaction in Redux store
+        if (approveTxHash && currentChainId) {
+          const approveInfo: ApproveTransactionInfo = {
+            type: TransactionType.Approve,
+            tokenAddress: fromToken.address,
+            spender: PERMIT2_ADDRESS,
+          }
+          addTransaction(
+            { hash: approveTxHash, chainId: currentChainId, from: accountAddress, to: fromToken.address } as any,
+            approveInfo
+          )
+        }
+
         setSwapProgressState("waiting_approval")
         const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approveTxHash as Hex })
         if (!approvalReceipt || approvalReceipt.status !== "success") throw new Error("Approval transaction failed on-chain")
 
         toast.success(`${fromToken.symbol} Approved`, {
-          icon: createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          icon: createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
           description: isInfinite ? `Approved infinite ${fromToken.symbol} for swapping` : `Approved ${fromAmount} ${fromToken.symbol} for this swap`,
           action: { label: "View Transaction", onClick: () => window.open(getExplorerTxUrl(approveTxHash), "_blank") },
         })
@@ -423,7 +440,7 @@ export function useSwapExecution({
         setObtainedSignature(signatureFromSigning)
 
         toast.success("Signature Complete", {
-          icon: createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+          icon: createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
           description: `${fromToken.symbol} permit signed`,
         })
 
@@ -565,6 +582,34 @@ export function useSwapExecution({
       })
       if (!txHash) throw new Error("Failed to send swap transaction (no hash received)")
 
+      // Track swap transaction in Redux store for cache invalidation
+      if (txHash && currentChainId) {
+        const isExactInput = swapType === 'ExactIn'
+        const typeInfo = isExactInput
+          ? {
+              type: TransactionType.Swap,
+              tradeType: TradeType.EXACT_INPUT,
+              inputCurrencyId: `${currentChainId}-${fromToken.address}`,
+              outputCurrencyId: `${currentChainId}-${toToken.address}`,
+              inputCurrencyAmountRaw: safeParseUnits(fromAmount, fromToken.decimals).toString(),
+              expectedOutputCurrencyAmountRaw: safeParseUnits(toAmount, toToken.decimals).toString(),
+              minimumOutputCurrencyAmountRaw: safeParseUnits(toAmount, toToken.decimals).toString(),
+            } as ExactInputSwapTransactionInfo
+          : {
+              type: TransactionType.Swap,
+              tradeType: TradeType.EXACT_OUTPUT,
+              inputCurrencyId: `${currentChainId}-${fromToken.address}`,
+              outputCurrencyId: `${currentChainId}-${toToken.address}`,
+              outputCurrencyAmountRaw: safeParseUnits(toAmount, toToken.decimals).toString(),
+              expectedInputCurrencyAmountRaw: safeParseUnits(fromAmount, fromToken.decimals).toString(),
+              maximumInputCurrencyAmountRaw: safeParseUnits(fromAmount, fromToken.decimals).toString(),
+            } as ExactOutputSwapTransactionInfo
+        addTransaction(
+          { hash: txHash, chainId: currentChainId, from: accountAddress, to: buildTxApiData.to } as any,
+          typeInfo
+        )
+      }
+
       setSwapTxInfo({
         hash: txHash as string,
         fromAmount,
@@ -639,8 +684,10 @@ export function useSwapExecution({
     signTypedDataAsync,
     swapProgressState,
     toAmount,
+    toToken.address,
     toToken.decimals,
     toToken.symbol,
+    addTransaction,
   ])
 
   const actions = useMemo(

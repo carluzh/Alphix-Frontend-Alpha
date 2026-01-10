@@ -112,7 +112,7 @@ export function FormWrapper({
 
   return (
     <div
-      className="w-full px-10 xl:px-6 sm:px-2 mt-6 mx-auto"
+      className="w-full px-10 lg:px-6 sm:px-2 mt-6 mx-auto"
       style={{ maxWidth: WIDTH.positionCard + WIDTH.sidebar + 80 }}
     >
       {/* Breadcrumb navigation */}
@@ -121,22 +121,22 @@ export function FormWrapper({
       </nav>
 
       {/* Header with title and toolbar */}
-      <div className="flex flex-row xl:flex-col items-center xl:items-stretch gap-5 w-full justify-between mr-auto mb-6 xl:mb-4">
+      <div className="flex flex-row lg:flex-col items-center lg:items-stretch gap-5 w-full justify-between mr-auto mb-6 lg:mb-4">
         <h1 className="text-2xl font-semibold text-white">{title}</h1>
         {toolbar}
       </div>
 
-      {/* Mobile progress header */}
+      {/* Mobile/tablet progress header (screens < 1024px) */}
       <WizardProgressHeader />
 
-      {/* Main content area with sidebar */}
-      <div className="flex flex-row gap-5 justify-center w-full">
-        {/* Desktop sidebar progress */}
+      {/* Main content area with sidebar - Uniswap pattern: flex row with align-start for sticky */}
+      <div className="flex flex-row gap-5 justify-between items-start w-full">
+        {/* Desktop sidebar progress (screens >= 1024px) - sticky when scrolling */}
         <WizardProgressSidebar />
 
         {/* Form content */}
         <div
-          className="flex flex-col gap-6 flex-1 mb-7 xl:max-w-full"
+          className="flex flex-col gap-6 flex-1 mb-7 lg:max-w-full"
           style={{ maxWidth: WIDTH.positionCard }}
         >
           {children}

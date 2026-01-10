@@ -5,11 +5,39 @@
  * Updated for 2-step flow (Uniswap-aligned)
  */
 
-import { Fragment } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Check } from 'lucide-react';
 import { WizardStep, WIZARD_STEPS } from '../types';
 import { useAddLiquidityContext } from '../AddLiquidityContext';
+
+/**
+ * Hook to detect when a sticky element reaches its sticky position
+ * Shows a border when the element is "stuck"
+ * @see Uniswap's useStickyHeaderBorder pattern
+ */
+function useStickyBorder(stickyTop: number = 0) {
+  const [isSticky, setIsSticky] = useState(false);
+  const elementRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element) return;
+
+    const handleScroll = () => {
+      const rect = element.getBoundingClientRect();
+      // Element is sticky when its top position reaches the sticky threshold
+      setIsSticky(rect.top <= stickyTop + 1); // +1 for rounding tolerance
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll(); // Check initial state
+
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [stickyTop]);
+
+  return { isSticky, elementRef };
+}
 
 interface ProgressStep {
   id: WizardStep;
@@ -21,19 +49,29 @@ interface ProgressStep {
 }
 
 const SIDEBAR_WIDTH = 360;
+const STICKY_TOP_PX = 24; // top-6 = 24px
 
 /**
  * Sidebar progress indicator for desktop
  * Shows 2 steps with numbers and connecting line
+ * Sticky behavior: stays at top when scrolling, with visual feedback
  */
 export function WizardProgressSidebar() {
   const { currentStep, setStep } = useAddLiquidityContext();
+  const { isSticky, elementRef } = useStickyBorder(STICKY_TOP_PX);
 
   const steps = getVisibleSteps(currentStep, setStep);
 
   return (
     <div
-      className="hidden xl:flex flex-col self-start sticky top-24 rounded-lg py-3 px-4 border border-sidebar-border bg-container"
+      ref={elementRef}
+      className={cn(
+        // Uniswap pattern: hidden on mobile, flex on lg+, alignSelf flex-start, sticky positioning
+        "hidden lg:flex flex-col self-start sticky top-6 rounded-lg py-3 px-4 border bg-container transition-shadow duration-200",
+        isSticky
+          ? "border-sidebar-border shadow-lg shadow-black/20"
+          : "border-sidebar-border"
+      )}
       style={{ width: SIDEBAR_WIDTH }}
     >
       {steps.map((step, index) => (
@@ -105,9 +143,11 @@ export function WizardProgressSidebar() {
 
 /**
  * Header progress indicator for mobile/tablet
+ * Shows on screens < 1024px (lg breakpoint)
  */
 export function WizardProgressHeader() {
   const { currentStep, setStep } = useAddLiquidityContext();
+  const { isSticky, elementRef } = useStickyBorder(0);
 
   const steps = getVisibleSteps(currentStep, setStep);
   const currentIndex = steps.findIndex(s => s.active);
@@ -118,7 +158,15 @@ export function WizardProgressHeader() {
   }
 
   return (
-    <div className="xl:hidden flex flex-row w-full items-center justify-between gap-3 p-4 bg-container border-b border-sidebar-border sticky top-0 z-10">
+    <div
+      ref={elementRef}
+      className={cn(
+        "lg:hidden flex flex-row w-full items-center justify-between gap-3 p-4 bg-container sticky top-0 z-10 transition-all duration-200",
+        isSticky
+          ? "border-b border-sidebar-border shadow-md shadow-black/10"
+          : "border-b border-transparent"
+      )}
+    >
       {/* Step number - rounded rectangle */}
       <div className="h-7 w-7 rounded-md bg-muted flex items-center justify-center shrink-0">
         <span className="text-xs font-semibold text-foreground font-[Consolas,monospace]">

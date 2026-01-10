@@ -123,7 +123,8 @@ export const V4_POSITION_MANAGER_ADDRESS_RAW = V4_POSITION_MANAGER_ADDRESS;
 // Use pools-config.getQuoterAddress() instead of hardcoding here
 
 // Empty bytes constant for hook data
-export const EMPTY_BYTES = '0x00' as const;
+// Uniswap SDK ref: sdks/v4-sdk/src/internalConstants.ts:11 → EMPTY_BYTES = '0x'
+export const EMPTY_BYTES = '0x' as const;
 export const V4_POSITION_MANAGER_ABI = position_manager_abi;
 
 // --- V4 Quoter ABI ---

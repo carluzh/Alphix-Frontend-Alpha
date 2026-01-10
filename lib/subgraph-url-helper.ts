@@ -124,3 +124,26 @@ export function isMainnetSubgraphMode(networkModeOverride?: NetworkMode): boolea
   const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   return networkMode === 'mainnet';
 }
+
+// Goldsky fallback for mainnet (free public endpoint)
+const GOLDSKY_MAINNET_URL = 'https://api.goldsky.com/api/public/project_cmh0hxyiq007sw2p20wxl5s79/subgraphs/alphix-mainnet/1.0.0/gn';
+
+/**
+ * Returns an array of subgraph URLs to try in order (primary + fallbacks).
+ * Used by subgraphClient for automatic failover.
+ */
+export function getSubgraphUrlsWithFallback(networkModeOverride?: NetworkMode): string[] {
+  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
+  const urls: string[] = [];
+
+  if (networkMode === 'mainnet') {
+    const primary = process.env.SUBGRAPH_URL_MAINNET_ALPHIX;
+    if (primary) urls.push(primary);
+    urls.push(GOLDSKY_MAINNET_URL);
+  } else {
+    const primary = process.env.SUBGRAPH_URL;
+    if (primary) urls.push(primary);
+  }
+
+  return urls.filter(Boolean);
+}

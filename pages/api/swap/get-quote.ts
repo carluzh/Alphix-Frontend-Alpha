@@ -1,6 +1,22 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, parseUnits, type Address } from 'viem';
 import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
+import { RetryUtility } from '../../../lib/retry-utility';
+
+// Simple in-memory cache with 15s TTL (matches Uniswap's 10s pattern)
+const quoteCache = new Map<string, { result: any; timestamp: number }>();
+const QUOTE_CACHE_TTL = 15_000;
+
+function getCacheKey(body: any): string {
+  return `${body.fromTokenSymbol}-${body.toTokenSymbol}-${body.amountDecimalsStr}-${body.swapType || 'ExactIn'}-${body.chainId}`;
+}
+
+// Retry only network errors, not contract reverts (liquidity errors should fail fast)
+const shouldRetryRpc = (_attempt: number, error: any): boolean => {
+  const msg = error?.message?.toLowerCase() || '';
+  return msg.includes('timeout') || msg.includes('network') ||
+         msg.includes('econnrefused') || msg.includes('etimedout');
+};
 import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '../../../lib/network-mode';
 
 // Helper function to safely parse amounts and prevent scientific notation errors
@@ -46,25 +62,17 @@ import { ethers } from 'ethers';
 import { findBestRoute, SwapRoute, routeToString } from '../../../lib/routing-engine';
 
 /**
- * Create an ethers provider with explicit network to avoid "could not detect network" errors.
- * Ethers v5 normally auto-detects the network, which can fail if RPC is slow or unavailable.
+ * Create an ethers provider that skips network detection entirely.
+ * StaticJsonRpcProvider trusts the network you pass and never calls eth_chainId.
  */
-function createProvider(networkMode?: NetworkMode): ethers.providers.JsonRpcProvider {
+function createProvider(networkMode?: NetworkMode): ethers.providers.StaticJsonRpcProvider {
   const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
   const chainId = networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
   const networkName = networkMode === 'mainnet' ? 'base' : 'base-sepolia';
 
-  // Pass network explicitly to skip auto-detection
-  // Use connectionInfo object with timeout to prevent indefinite hangs on contract reverts
-  return new ethers.providers.JsonRpcProvider(
-    {
-      url: rpcUrl,
-      timeout: 10000, // 10 seconds max
-    },
-    {
-      chainId,
-      name: networkName,
-    }
+  return new ethers.providers.StaticJsonRpcProvider(
+    { url: rpcUrl, timeout: 10000 },
+    { chainId, name: networkName }
   );
 }
 
@@ -273,7 +281,11 @@ async function getV4QuoteExactInputSingle(
     });
 
     console.log('[V4 Quoter] Calling quoter.quoteExactInputSingle...');
-    const [amountOut, gasEstimate] = await quoter.callStatic.quoteExactInputSingle(quoteParams);
+    const retryResult = await RetryUtility.execute(
+      () => quoter.callStatic.quoteExactInputSingle(quoteParams),
+      { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
+    );
+    const [amountOut, gasEstimate] = retryResult.data!;
     console.log('[V4 Quoter] Quote success:', { amountOut: amountOut.toString(), gasEstimate: gasEstimate.toString() });
 
     // Get mid price for price impact calculation
@@ -335,7 +347,11 @@ async function getV4QuoteExactOutputSingle(
     await stateView.callStatic.getSlot0(poolId);
 
     console.log('[V4 Quoter ExactOutputSingle] Calling quoter.quoteExactOutputSingle...');
-    const [amountIn, gasEstimate] = await quoter.callStatic.quoteExactOutputSingle(quoteParams);
+    const retryResult = await RetryUtility.execute(
+      () => quoter.callStatic.quoteExactOutputSingle(quoteParams),
+      { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
+    );
+    const [amountIn, gasEstimate] = retryResult.data!;
     console.log('[V4 Quoter ExactOutputSingle] Quote success:', { amountIn: amountIn.toString(), gasEstimate: gasEstimate.toString() });
 
     // Get mid price for price impact calculation
@@ -440,7 +456,11 @@ async function getV4QuoteExactInputMultiHop(
 
     console.log('[V4 Quoter ExactInputMultiHop] Calling quoter.quoteExactInput...');
     const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
-    const [amountOut, gasEstimate] = await quoter.callStatic.quoteExactInput(quoteParams);
+    const retryResult = await RetryUtility.execute(
+      () => quoter.callStatic.quoteExactInput(quoteParams),
+      { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
+    );
+    const [amountOut, gasEstimate] = retryResult.data!;
     console.log('[V4 Quoter ExactInputMultiHop] Quote success:', { amountOut: amountOut.toString(), gasEstimate: gasEstimate.toString() });
     return { amountOut, gasEstimate };
   } catch (error: any) {
@@ -519,6 +539,14 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
 
     if (fromTokenSymbol === toTokenSymbol) {
       return res.status(400).json({ message: 'From and To tokens cannot be the same' });
+    }
+
+    // Check cache first (15s TTL)
+    const cacheKey = getCacheKey(req.body);
+    const cached = quoteCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < QUOTE_CACHE_TTL) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.status(200).json(cached.result);
     }
 
     console.log(`[V4 Quoter] ${fromTokenSymbol} → ${toTokenSymbol}, amount: ${amountDecimalsStr}, chainId: ${req.body.chainId}`);
@@ -623,14 +651,17 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
 
     // Calculate price impact: (midPrice - executionPrice) / midPrice
     // Execution price = toAmount / fromAmount
+    // Uniswap sign convention (ref: interface/packages/uniswap/src/features/transactions/swap/utils/formatPriceImpact.ts):
+    //   POSITIVE = unfavorable (user receives less than mid price → triggers warnings)
+    //   NEGATIVE = favorable (user receives more than mid price → no warning)
     let priceImpact: number | null = null;
     if (midPrice !== null && parseFloat(fromAmountDecimals) > 0 && parseFloat(toAmountDecimals) > 0) {
       const executionPrice = parseFloat(toAmountDecimals) / parseFloat(fromAmountDecimals);
       if (midPrice > 0) {
         priceImpact = ((midPrice - executionPrice) / midPrice) * 100; // Convert to percentage
-        // Ensure positive (price impact is always how much worse you're getting)
-        if (priceImpact < 0) priceImpact = Math.abs(priceImpact);
-        
+        // DO NOT use abs() - sign is meaningful per Uniswap convention:
+        // Positive → unfavorable (show warning), Negative → favorable (no warning)
+
         console.log('[get-quote] Price Impact Calculation:', {
           fromToken: fromTokenSymbol,
           toToken: toTokenSymbol,
@@ -639,6 +670,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
           midPrice,
           executionPrice,
           priceImpact: `${priceImpact.toFixed(2)}%`,
+          favorable: priceImpact < 0,
         });
       }
     } else {
@@ -650,10 +682,8 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       });
     }
 
-    // Real-time quote data - never cache (Uniswap pattern)
-    res.setHeader('Cache-Control', 'no-store');
-
-    return res.status(200).json({
+    // Build response and cache it
+    const responseData = {
       success: true,
       swapType,
       fromAmount: fromAmountDecimals,
@@ -670,7 +700,14 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         pools: route.pools.map(pool => pool.poolName)
       },
       debug: true
-    });
+    };
+
+    // Cache successful quote (15s TTL)
+    quoteCache.set(cacheKey, { result: responseData, timestamp: Date.now() });
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Cache', 'MISS');
+    return res.status(200).json(responseData);
   } catch (error: any) {
     console.error('[V4 Quoter API] Full Error Details:', {
       message: error.message,

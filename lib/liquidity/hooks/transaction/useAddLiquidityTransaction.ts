@@ -20,6 +20,8 @@ import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { useCheckMintApprovals } from '@/lib/liquidity';
 import { useCheckZapApprovals } from '../approval/useCheckZapApprovals';
 import { isInfiniteApprovalEnabled, getStoredSlippageBps, getStoredUserSettings } from '@/hooks/useUserSettings';
+import { invalidateAfterTx } from '@/lib/invalidation';
+import { useTransactionAdder, TransactionType, TradeType, type LiquidityIncreaseTransactionInfo, type ApproveTransactionInfo, type ExactInputSwapTransactionInfo } from '@/lib/transactions';
 
 type LiquidityOperation = 'liquidity_mint' | 'liquidity_zap' | 'liquidity_approve';
 
@@ -202,6 +204,9 @@ export function useAddLiquidityTransaction({
   // Wagmi hook for Permit2 signing (zap mode)
   const { signTypedDataAsync } = useSignTypedData();
 
+  // Transaction tracking
+  const addTransaction = useTransactionAdder();
+
   const [isWorking, setIsWorking] = useState(false);
   const processedDepositHashRef = useRef<string | null>(null);
   const processedFailedHashRef = useRef<string | null>(null);
@@ -214,7 +219,7 @@ export function useAddLiquidityTransaction({
       if (!tokenConfig) throw new Error(`Token ${tokenSymbol} not found`);
 
       toast('Confirm in Wallet', {
-        icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
+        icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
       });
 
       let approvalAmount: bigint = maxUint256;
@@ -234,6 +239,19 @@ export function useAddLiquidityTransaction({
         args: [PERMIT2_ADDRESS, approvalAmount],
       });
 
+      // Track approval transaction in Redux store
+      if (hash && chainId) {
+        const approveInfo: ApproveTransactionInfo = {
+          type: TransactionType.Approve,
+          tokenAddress: tokenConfig.address,
+          spender: PERMIT2_ADDRESS,
+        };
+        addTransaction(
+          { hash, chainId, from: accountAddress, to: tokenConfig.address } as any,
+          approveInfo
+        );
+      }
+
       // Wait for confirmation
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
@@ -251,7 +269,7 @@ export function useAddLiquidityTransaction({
 
       // Don't refetch here - the form component handles refetch after a delay
     },
-    [approveAsync]
+    [approveAsync, chainId, accountAddress, addTransaction]
   );
 
   // Handle swap execution for zap mode (simplified - permits signed inline)
@@ -343,7 +361,7 @@ export function useAddLiquidityTransaction({
         }
 
         toast('Confirm Swap in Wallet', {
-          icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
+          icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
         });
 
         const swapTx = result.swapTransaction;
@@ -413,6 +431,38 @@ export function useAddLiquidityTransaction({
 
         // ========== STEP 4: EXECUTE SWAP TRANSACTION ==========
         const swapHash = await swapAsync(swapConfig);
+
+        // Track zap swap transaction in Redux store
+        if (swapHash && chainId) {
+          const inputTokenConfig = zapInputToken === 'token0' ? token0Config : token1Config;
+          const outputTokenConfig = zapInputToken === 'token0' ? token1Config : token0Config;
+          const swapAmount = BigInt(result.details?.swapAmount || '0');
+
+          // Get expected output amount from zapQuote based on input direction
+          const expectedOutputRaw = zapInputToken === 'token0'
+            ? result.zapQuote?.expectedToken1Amount || '0'
+            : result.zapQuote?.expectedToken0Amount || '0';
+
+          // Calculate minimum output with slippage (slippage is in basis points, e.g., 50 = 0.5%)
+          const expectedOutputBigInt = BigInt(expectedOutputRaw);
+          const slippageBps = BigInt(zapSlippageToleranceBps || 50);
+          const minimumOutputBigInt = expectedOutputBigInt - (expectedOutputBigInt * slippageBps / 10000n);
+
+          const swapTypeInfo: ExactInputSwapTransactionInfo = {
+            type: TransactionType.Swap,
+            tradeType: TradeType.EXACT_INPUT,
+            inputCurrencyId: `${chainId}-${inputTokenConfig?.address ?? ''}`,
+            outputCurrencyId: `${chainId}-${outputTokenConfig?.address ?? ''}`,
+            inputCurrencyAmountRaw: swapAmount.toString(),
+            expectedOutputCurrencyAmountRaw: expectedOutputRaw,
+            minimumOutputCurrencyAmountRaw: minimumOutputBigInt.toString(),
+          };
+          addTransaction(
+            { hash: swapHash, chainId, from: accountAddress, to: swapTx.to } as any,
+            swapTypeInfo
+          );
+        }
+
         const swapReceipt = await publicClient.waitForTransactionReceipt({ hash: swapHash });
 
         if (swapReceipt.status === 'reverted') {
@@ -621,26 +671,56 @@ export function useAddLiquidityTransaction({
             icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
           });
 
-          await sendTransactionAsync({
+          const zapDepositHash = await sendTransactionAsync({
             to: finalResult.transaction.to as `0x${string}`,
             data: finalResult.transaction.data as Hex,
             value: finalResult.transaction.value && finalResult.transaction.value !== '0'
               ? BigInt(finalResult.transaction.value)
               : undefined,
           });
+
+          // Track zap transaction in Redux store
+          if (zapDepositHash && chainId) {
+            const typeInfo: LiquidityIncreaseTransactionInfo = {
+              type: TransactionType.LiquidityIncrease,
+              currency0Id: `${chainId}-${token0Config?.address ?? ''}`,
+              currency1Id: `${chainId}-${token1Config?.address ?? ''}`,
+              currency0AmountRaw: actualToken0Amount.toString(),
+              currency1AmountRaw: actualToken1Amount.toString(),
+            };
+            addTransaction(
+              { hash: zapDepositHash, chainId, from: accountAddress, to: finalResult.transaction.to, data: finalResult.transaction.data } as any,
+              typeInfo
+            );
+          }
         } else if (mintResult.transaction && mintResult.transaction.data) {
           // No permit needed, execute directly - send raw transaction (Uniswap pattern)
           toast('Confirm LP Deposit in Wallet', {
             icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
           });
 
-          await sendTransactionAsync({
+          const zapDepositHash = await sendTransactionAsync({
             to: mintResult.transaction.to as `0x${string}`,
             data: mintResult.transaction.data as Hex,
             value: mintResult.transaction.value && mintResult.transaction.value !== '0'
               ? BigInt(mintResult.transaction.value)
               : undefined,
           });
+
+          // Track zap transaction in Redux store
+          if (zapDepositHash && chainId) {
+            const typeInfo: LiquidityIncreaseTransactionInfo = {
+              type: TransactionType.LiquidityIncrease,
+              currency0Id: `${chainId}-${token0Config?.address ?? ''}`,
+              currency1Id: `${chainId}-${token1Config?.address ?? ''}`,
+              currency0AmountRaw: actualToken0Amount.toString(),
+              currency1AmountRaw: actualToken1Amount.toString(),
+            };
+            addTransaction(
+              { hash: zapDepositHash, chainId, from: accountAddress, to: mintResult.transaction.to, data: mintResult.transaction.data } as any,
+              typeInfo
+            );
+          }
         } else {
           throw new Error('Invalid LP deposit response from API');
         }
@@ -648,7 +728,7 @@ export function useAddLiquidityTransaction({
         throw error;
       }
     },
-    [accountAddress, chainId, zapApprovalData, calculatedData, tickLower, tickUpper, zapInputToken, amount0, amount1, token0Symbol, token1Symbol, swapAsync, sendTransactionAsync, signTypedDataAsync, approveAsync, publicClient]
+    [accountAddress, chainId, zapApprovalData, calculatedData, tickLower, tickUpper, zapInputToken, amount0, amount1, token0Symbol, token1Symbol, swapAsync, sendTransactionAsync, signTypedDataAsync, approveAsync, publicClient, addTransaction]
   );
 
   // OLD HANDLERS REMOVED - Now using consolidated handleZapSwapAndDeposit
@@ -785,14 +865,30 @@ export function useAddLiquidityTransaction({
         }
 
         toast('Confirm Transaction in Wallet', {
-          icon: React.createElement(InfoIcon, { className: 'h-4 w-4' }),
+          icon: React.createElement(IconCircleInfo, { className: 'h-4 w-4' }),
         });
 
-        await sendTransactionAsync({
+        const hash = await sendTransactionAsync({
           to: txData.to as `0x${string}`,
           data: txData.data as Hex,
           value: txData.value && txData.value !== '0' ? BigInt(txData.value) : undefined,
         });
+
+        // Track transaction in Redux store for cache invalidation
+        if (hash && chainId) {
+          const typeInfo: LiquidityIncreaseTransactionInfo = {
+            type: TransactionType.LiquidityIncrease,
+            currency0Id: `${chainId}-${token0Config?.address ?? ''}`,
+            currency1Id: `${chainId}-${token1Config?.address ?? ''}`,
+            currency0AmountRaw: calculatedData?.amount0 ?? '0',
+            currency1AmountRaw: calculatedData?.amount1 ?? '0',
+          };
+          // Create a minimal TransactionResponse-compatible object
+          addTransaction(
+            { hash, chainId, from: accountAddress, to: txData.to, data: txData.data } as any,
+            typeInfo
+          );
+        }
 
       } catch (error: any) {
         console.error('[handleDeposit] Error:', error);
@@ -829,7 +925,7 @@ export function useAddLiquidityTransaction({
         setIsWorking(false);
       }
     },
-    [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, sendTransactionAsync, isZapMode, zapInputToken, signTypedDataAsync, activeInputSide, zapSlippageToleranceBps]
+    [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, sendTransactionAsync, isZapMode, zapInputToken, signTypedDataAsync, activeInputSide, zapSlippageToleranceBps, addTransaction, token0Config, token1Config]
   );
 
   // Handle deposit transaction failure

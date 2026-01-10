@@ -62,7 +62,7 @@ async function fetchSubgraphDirect(
   url: string,
   query: string,
   variables: any,
-  timeoutMs: number = 20000
+  timeoutMs: number = 10000
 ): Promise<{ success: boolean; data: any; error?: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);

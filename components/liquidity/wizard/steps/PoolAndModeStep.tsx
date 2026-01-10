@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Info, ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { IconCircleInfo } from 'nucleo-micro-bold-essential';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -15,6 +15,8 @@ import { getEnabledPools, getPoolById, getPoolSubgraphId, type PoolConfig } from
 import { useNetwork } from '@/lib/network-context';
 import { TokenStack } from '@/components/liquidity/TokenStack';
 import { APRBadge } from '@/components/liquidity/APRBadge';
+import { useAccount } from 'wagmi';
+import { OverviewConnectWalletBanner } from '@/app/(app)/overview/components/ConnectWalletBanner/ConnectWalletBanner';
 
 // Animation config using framer-motion's easeOut
 const FADE_TRANSITION = { duration: 0.2, ease: 'easeOut' };
@@ -198,6 +200,7 @@ function LPModeSection({ mode, onSelectMode, extraAaveApr }: { mode: LPMode; onS
 export function PoolAndModeStep() {
   const { state, setPoolId, setTokens, setMode, goNext, canGoForward, poolLoading } = useAddLiquidityContext();
   const { networkMode } = useNetwork();
+  const { isConnected } = useAccount();
   const [poolAprs, setPoolAprs] = useState<Record<string, number>>({});
   const [aprsLoading, setAprsLoading] = useState(true);
 
@@ -240,6 +243,11 @@ export function PoolAndModeStep() {
 
   return (
     <Container>
+      {/* Connect wallet banner - show when not connected */}
+      {!isConnected && (
+        <OverviewConnectWalletBanner />
+      )}
+
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
           <h2 className="text-lg font-semibold text-white">Select Pool</h2>
@@ -259,7 +267,7 @@ export function PoolAndModeStep() {
         </div>
         {pools.length === 0 && (
           <div className="flex flex-col items-center justify-center py-8 text-center">
-            <Info className="w-8 h-8 text-muted-foreground mb-3" />
+            <IconCircleInfo className="w-8 h-8 text-muted-foreground mb-3" />
             <p className="text-muted-foreground">No pools available</p>
           </div>
         )}

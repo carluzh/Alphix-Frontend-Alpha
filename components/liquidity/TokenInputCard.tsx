@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
+import { IconCaretExpandY } from "nucleo-micro-bold-essential";
 import { motion, useAnimation, type AnimationControls } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,12 +72,16 @@ interface TokenInputCardProps {
   onCalculateDependentAmount?: (value: string) => void;
   /** Whether the input is disabled */
   disabled?: boolean;
+  /** Whether the value is being calculated (Uniswap pattern - shows loading animation) */
+  isLoading?: boolean;
   /** Whether amount exceeds balance (triggers wiggle) */
   isOverBalance?: boolean;
   /** External animation controls (optional - creates internal if not provided) */
   animationControls?: AnimationControls;
   /** Optional className override */
   className?: string;
+  /** Callback when token selector is clicked (for switching tokens in Zap mode) */
+  onTokenClick?: () => void;
 }
 
 /**
@@ -97,9 +102,11 @@ export function TokenInputCard({
   onPercentageClick,
   onCalculateDependentAmount,
   disabled = false,
+  isLoading = false,
   isOverBalance = false,
   animationControls: externalControls,
   className,
+  onTokenClick,
 }: TokenInputCardProps) {
   // Internal animation controls if not provided externally
   const internalControls = useAnimation();
@@ -209,16 +216,34 @@ export function TokenInputCard({
 
           {/* Token Selector + Input Row */}
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
-              <Image
-                src={tokenIcon}
-                alt={tokenSymbol}
-                width={20}
-                height={20}
-                className="rounded-full"
-              />
-              <span className="text-sm font-medium">{tokenSymbol}</span>
-            </div>
+            {onTokenClick ? (
+              <button
+                type="button"
+                onClick={onTokenClick}
+                className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3 transition-colors hover:bg-sidebar-accent hover:border-sidebar-border group/token"
+              >
+                <Image
+                  src={tokenIcon}
+                  alt={tokenSymbol}
+                  width={20}
+                  height={20}
+                  className="rounded-full"
+                />
+                <span className="text-sm font-medium">{tokenSymbol}</span>
+                <IconCaretExpandY className="w-3.5 h-3.5 text-muted-foreground group-hover/token:text-white transition-colors" />
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
+                <Image
+                  src={tokenIcon}
+                  alt={tokenSymbol}
+                  width={20}
+                  height={20}
+                  className="rounded-full"
+                />
+                <span className="text-sm font-medium">{tokenSymbol}</span>
+              </div>
+            )}
             <div className="flex-1">
               <Input
                 id={id}
@@ -230,8 +255,11 @@ export function TokenInputCard({
                 inputMode="decimal"
                 enterKeyHint="done"
                 onChange={handleInputChange}
-                disabled={disabled}
-                className="border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto"
+                disabled={disabled || isLoading}
+                className={cn(
+                  "border-0 bg-transparent text-right text-xl md:text-xl font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto",
+                  isLoading && "animate-pulse opacity-50"
+                )}
               />
 
               {/* USD Value + Percentage Buttons */}

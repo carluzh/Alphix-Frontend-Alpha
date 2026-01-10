@@ -59,7 +59,12 @@
       "hooks": "0xc025186214711638070aF4e27B57B3D4B10B7Fff",
       "enabled": true,
       "featured": true,
-      "type": "Stable"
+      "type": "Stable",
+      "rehypoRange": {
+        "min": "1.001",
+        "max": "1.001601",
+        "isFullRange": false
+      }
     },
     {
       "id": "eth-usdc",
@@ -79,7 +84,12 @@
       "hooks": "0xc025186214711638070aF4e27B57B3D4B10B7Fff",
       "enabled": true,
       "featured": true,
-      "type": "Volatile"
+      "type": "Volatile",
+      "rehypoRange": {
+        "min": "0",
+        "max": "∞",
+        "isFullRange": true
+      }
     }
   ],
   "fees": {

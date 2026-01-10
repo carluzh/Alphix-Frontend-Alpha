@@ -26,19 +26,18 @@ try {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
   env: {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_GIT_COMMIT: gitCommitHash,
   },
-  webpack: (config, { isServer }) => {
+  webpack: (config) => {
     config.resolve = config.resolve || {};
     config.resolve.alias = config.resolve.alias || {};
     // SDK deduplication - identical to Uniswap vite.config.mts dedupe
-    // Note: react/react-dom handled by Next.js, ethers has subpath imports
     const sdkDedupe = ['@uniswap/sdk-core', '@uniswap/v4-sdk', '@uniswap/universal-router-sdk', 'jsbi'];
     sdkDedupe.forEach(pkg => { config.resolve.alias[pkg] = require.resolve(pkg); });
-    if (!isServer) config.resolve.alias['@react-native-async-storage/async-storage'] = false;
+    config.resolve.alias['@react-native-async-storage/async-storage'] = false;
+    config.ignoreWarnings = [{ module: /@whatwg-node\/fetch/ }];
     return config;
   },
   typescript: {

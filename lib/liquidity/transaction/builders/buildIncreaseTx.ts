@@ -13,6 +13,7 @@ import JSBI from 'jsbi';
 import { getToken, getTokenSymbolByAddress, type TokenSymbol } from '@/lib/pools-config';
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
 import type { NetworkMode } from '@/lib/network-mode';
+import { DEFAULT_LP_SLIPPAGE } from '@/lib/slippage-constants';
 
 // =============================================================================
 // TYPES
@@ -250,7 +251,9 @@ export async function buildIncreaseLiquidityTx(
   }
 
   // Build options for addCallParameters
-  const slippage = new Percent(0);
+  // Use user-provided slippage or fall back to default LP slippage (Uniswap pattern)
+  const slippageBps = options.slippageBps ?? (DEFAULT_LP_SLIPPAGE * 100); // DEFAULT_LP_SLIPPAGE is in %, convert to bps
+  const slippage = new Percent(Math.max(0, Math.min(10_000, slippageBps)), 10_000);
   const deadline = (options.deadlineSeconds && options.deadlineSeconds > 0)
     ? Math.floor(Date.now() / 1000) + options.deadlineSeconds
     : Math.floor(Date.now() / 1000) + 20 * 60;

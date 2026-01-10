@@ -86,6 +86,12 @@ export interface PoolCurrency {
   address: string;
 }
 
+export interface RehypoRangeConfig {
+  min: string;
+  max: string;
+  isFullRange: boolean;
+}
+
 export interface PoolConfig {
   id: string;
   name: string;
@@ -99,6 +105,7 @@ export interface PoolConfig {
   enabled: boolean;
   featured: boolean;
   type?: string; // Add the new type property
+  rehypoRange?: RehypoRangeConfig; // Visualization-only range for Rehypo mode
 }
 
 export interface ContractsConfig {

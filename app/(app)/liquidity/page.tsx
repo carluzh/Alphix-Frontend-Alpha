@@ -9,8 +9,9 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import * as React from "react";
-import { ColumnDef, RowData } from "@tanstack/react-table";
+import { ColumnDef, RowData, Row } from "@tanstack/react-table";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { usePrefetchOnHover } from "@/hooks/usePrefetchOnHover";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import { useAccount } from "wagmi";
@@ -32,6 +33,30 @@ import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 import { APRBadge } from "@/components/liquidity/APRBadge";
 
 const DEFAULT_TICK_SPACING = 60;
+
+/**
+ * PoolRowPrefetchWrapper - Wraps pool table rows with hover prefetch
+ * Prefetches pool detail page data when user hovers over a pool row
+ */
+function PoolRowPrefetchWrapper({
+  poolId,
+  children,
+}: {
+  poolId: string;
+  children: React.ReactNode;
+}) {
+  const { onMouseEnter, onMouseLeave } = usePrefetchOnHover({
+    prefetchRoute: `/liquidity/${poolId}`,
+    prefetchData: () => prefetchService.prefetchPoolDetailData(poolId),
+    delay: 150,
+  });
+
+  return (
+    <div onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+      {children}
+    </div>
+  );
+}
 
 const generatePoolsFromConfig = (): Pool[] => {
   const enabledPools = getEnabledPools();
@@ -578,6 +603,21 @@ export default function LiquidityPage() {
     return { totalTVL, totalVol24h, totalFees24h, isLoading };
   }, [poolsData]);
 
+  // Prefetch wrapper for pool rows - prefetches data on hover
+  const poolRowWrapper = useCallback(
+    (row: Row<Pool & { link: string }>, content: React.ReactNode) => {
+      const poolId = row.original?.id;
+      if (!poolId) return content;
+
+      return (
+        <PoolRowPrefetchWrapper poolId={poolId}>
+          {content}
+        </PoolRowPrefetchWrapper>
+      );
+    },
+    []
+  );
+
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto">
       {/* Header Section */}
@@ -664,6 +704,7 @@ export default function LiquidityPage() {
           maxWidth={1200}
           defaultPinnedColumns={['pair']}
           loadingRowsCount={6}
+          rowWrapper={poolRowWrapper}
         />
       )}
     </div>

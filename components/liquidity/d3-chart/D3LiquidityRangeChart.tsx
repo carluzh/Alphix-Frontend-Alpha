@@ -1,24 +1,18 @@
 'use client';
 
 /**
- * D3 Liquidity Range Chart
- *
- * Main orchestrator component for the D3-based interactive liquidity range chart.
- * Uses separate renderer modules for each visual layer.
- *
- * @see interface/apps/web/src/components/Charts/D3LiquidityRangeInput/D3LiquidityRangeChart
+ * D3 Liquidity Range Chart - Interactive range selector for liquidity positions.
+ * Agnostic to price inversion - all data should be pre-transformed by parent.
  */
 
 import { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import * as d3 from 'd3';
 import { cn } from '@/lib/utils';
-import { CHART_BEHAVIOR, CHART_DIMENSIONS, CHART_COLORS } from './constants';
-import { getPoolSubgraphId } from '@/lib/pools-config';
+import { CHART_BEHAVIOR, CHART_DIMENSIONS } from './constants';
 import type { ChartEntry, ChartState, ChartActions, TickScale, PriceToYFn, YToPriceFn, Renderer, PriceDataPoint } from './types';
 import { createTickScale, priceToY, yToPrice } from './utils/scaleUtils';
 import { calculateDynamicZoomMin, calculateRangeViewport, getClosestTick, boundPanY, getPriceDataBounds } from './utils/viewportUtils';
-import { LiquidityChartSkeleton } from './LiquidityChartSkeleton';
-import { usePoolPriceChartData, HistoryDuration } from '@/lib/chart';
+import { HistoryDuration } from '@/lib/chart';
 
 // Renderers
 import { createLiquidityBarsRenderer } from './renderers/LiquidityBarsRenderer';
@@ -31,26 +25,18 @@ import { createLiquidityBarsOverlayRenderer } from './renderers/LiquidityBarsOve
 import { createTimescaleRenderer } from './renderers/TimescaleRenderer';
 
 export interface D3LiquidityRangeChartProps {
-  poolId?: string;
-  token0Symbol?: string;
-  token1Symbol?: string;
-  tickSpacing: number;
+  liquidityData: ChartEntry[];
+  priceData: PriceDataPoint[];
   currentPrice: number;
-  currentTick?: number; // Optional - skeleton shows until available
+  currentTick?: number;
   minPrice?: number;
   maxPrice?: number;
   isFullRange?: boolean;
-  priceData?: PriceDataPoint[];
   duration?: HistoryDuration;
   onRangeChange: (minPrice: number, maxPrice: number) => void;
-  onDurationChange?: (duration: HistoryDuration) => void;
   className?: string;
 }
 
-/**
- * Ref handle for chart actions (Uniswap pattern)
- * @see interface/apps/web/src/components/Charts/D3LiquidityRangeInput/D3LiquidityRangeChart/store/actions/viewActions.ts
- */
 export interface D3LiquidityRangeChartHandle {
   zoomIn: () => void;
   zoomOut: () => void;
@@ -59,10 +45,8 @@ export interface D3LiquidityRangeChartHandle {
 }
 
 export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3LiquidityRangeChartProps>(function D3LiquidityRangeChart({
-  poolId,
-  token0Symbol,
-  token1Symbol,
-  tickSpacing,
+  liquidityData,
+  priceData,
   currentPrice,
   currentTick,
   minPrice: propMinPrice,
@@ -70,7 +54,6 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
   isFullRange = false,
   duration = HistoryDuration.MONTH,
   onRangeChange,
-  onDurationChange,
   className,
 }, ref) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -105,9 +88,13 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
 
   // React state for triggering re-renders
   const [dimensions, setDimensions] = useState({ width: 0, height: CHART_DIMENSIONS.CHART_HEIGHT });
-  const [liquidityData, setLiquidityData] = useState<ChartEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [isInitialized, setIsInitialized] = useState(false);
+
+  // Sync liquidityData prop to ref (renderers access via ref)
+  useEffect(() => {
+    liquidityDataRef.current = liquidityData;
+    dynamicZoomMinRef.current = calculateDynamicZoomMin(liquidityData.length);
+  }, [liquidityData]);
 
   /**
    * Expose chart actions via ref (Uniswap pattern)
@@ -314,7 +301,7 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
     },
   }), [currentPrice, onRangeChange]);
 
-  // Sync props to ref
+  // Sync props to ref (chart is agnostic to inversion - all values come pre-transformed)
   useEffect(() => {
     stateRef.current = {
       ...stateRef.current,
@@ -324,6 +311,11 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
       isFullRange,
     };
   }, [propMinPrice, propMaxPrice, currentPrice, isFullRange]);
+
+  // Sync priceData prop to ref
+  useEffect(() => {
+    priceDataRef.current = priceData;
+  }, [priceData]);
 
   // Update dimensions on mount and resize
   useEffect(() => {
@@ -371,93 +363,7 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
     }
 
     return () => resizeObserver.disconnect();
-  }, [isLoading]); // Re-run when loading state changes so we measure the actual container
-
-  // Get the subgraph pool ID for external API calls (Uniswap Gateway, subgraph)
-  // This is required for the spoofed Uniswap Gateway headers to work correctly
-  const subgraphPoolId = poolId ? (getPoolSubgraphId(poolId) || poolId) : undefined;
-
-  // Fetch liquidity data
-  useEffect(() => {
-    let cancelled = false;
-
-    const fetchLiquidityData = async () => {
-      if (!poolId) {
-        setLiquidityData([]);
-        liquidityDataRef.current = [];
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-
-      try {
-        const resp = await fetch('/api/liquidity/get-ticks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poolId: subgraphPoolId, first: 500 }),
-        });
-
-        if (!resp.ok) throw new Error(`API failed: ${resp.status}`);
-
-        const json = await resp.json();
-        const ticks = Array.isArray(json?.ticks) ? json.ticks : [];
-
-        if (cancelled) return;
-
-        // Convert ticks to ChartEntry format
-        const sortedTicks = [...ticks].sort((a: any, b: any) =>
-          parseInt(a.tickIdx) - parseInt(b.tickIdx)
-        );
-
-        let cumulativeLiquidity = 0;
-        const chartEntries: ChartEntry[] = [];
-
-        for (const tick of sortedTicks) {
-          const tickIdx = parseInt(tick.tickIdx);
-          const liquidityNet = parseFloat(tick.liquidityNet);
-
-          if (!isNaN(tickIdx) && !isNaN(liquidityNet)) {
-            cumulativeLiquidity += liquidityNet;
-            const price0 = Math.pow(1.0001, tickIdx);
-
-            chartEntries.push({
-              tick: tickIdx,
-              price0,
-              price1: 1 / price0,
-              activeLiquidity: Math.max(0, cumulativeLiquidity),
-            });
-          }
-        }
-
-        setLiquidityData(chartEntries);
-        liquidityDataRef.current = chartEntries;
-        // Update dynamic zoom minimum based on data length
-        dynamicZoomMinRef.current = calculateDynamicZoomMin(chartEntries.length);
-      } catch {
-        setLiquidityData([]);
-        liquidityDataRef.current = [];
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    };
-
-    fetchLiquidityData();
-    return () => { cancelled = true; };
-  }, [subgraphPoolId]);
-
-  // Fetch price data (same pattern as PositionRangeChart)
-  // Uses subgraphPoolId for Uniswap Gateway compatibility (spoofed headers)
-  // @see components/liquidity/PositionRangeChart/PositionRangeChart.tsx
-  const { entries: priceEntries } = usePoolPriceChartData({
-    variables: {
-      poolId: subgraphPoolId,
-      token0: token0Symbol,
-      token1: token1Symbol,
-      duration,
-    },
-    priceInverted: false,
-  });
+  }, []);
 
   // Create scale functions bound to current data
   const createPriceToY = useCallback((): PriceToYFn => {
@@ -653,19 +559,12 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
     };
   }, [isInitialized, liquidityData, dimensions, createPriceToY, createYToPrice, drawAll, onRangeChange, currentPrice, propMinPrice, propMaxPrice, duration]);
 
-  // Redraw when props or price data change
+  // Redraw when props change
   useEffect(() => {
-    // Sync price data BEFORE drawing (must happen in same effect to avoid race)
-    priceDataRef.current = priceEntries.map(e => ({ time: e.time, value: e.value }));
-
     if (Object.keys(renderersRef.current).length > 0) {
       drawAll();
     }
-  }, [propMinPrice, propMaxPrice, isFullRange, priceEntries, drawAll]);
-
-  // Determine if we should show the skeleton overlay
-  // Show skeleton when: loading, no data, or missing essential props (poolId, currentTick)
-  const showSkeleton = isLoading || liquidityData.length === 0 || !poolId || currentTick === undefined;
+  }, [propMinPrice, propMaxPrice, isFullRange, priceData, drawAll]);
 
   // Total height includes chart + timescale
   const totalHeight = CHART_DIMENSIONS.CHART_HEIGHT + CHART_DIMENSIONS.TIMESCALE_HEIGHT;
@@ -682,13 +581,6 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
         height={totalHeight}
         style={{ touchAction: 'manipulation' }}
       />
-
-      {/* Skeleton overlay - shown while loading */}
-      {showSkeleton && (
-        <div className="absolute inset-0">
-          <LiquidityChartSkeleton height={totalHeight} />
-        </div>
-      )}
     </div>
   );
 });

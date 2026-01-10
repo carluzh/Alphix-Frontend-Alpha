@@ -3,7 +3,7 @@
 import { config, wagmiAdapter, projectId, isMainnet } from '@/lib/wagmiConfig'
 import { createAppKit } from '@reown/appkit'
 import { base as appKitBase, baseSepolia as appKitBaseSepolia } from '@reown/appkit/networks'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient } from '@tanstack/react-query'
 import { ApolloProvider } from '@apollo/client'
 import { type ReactNode } from 'react'
 import { WagmiProvider, cookieToInitialState } from 'wagmi'
@@ -11,6 +11,8 @@ import { FetchError } from '@/lib/utils/errors'
 import { ONE_SECOND_MS, ONE_DAY_MS } from '@/lib/utils/time'
 import { hashKey } from '@/lib/utils/hashKey'
 import { apolloClient } from '@/lib/apollo/client'
+import { PersistQueryClientProvider } from '@/components/PersistQueryClientProvider'
+import { TransactionProvider } from '@/lib/transactions/TransactionProvider'
 
 // Store the AppKit instance for direct access (avoids useAppKit hook SSR issues)
 export const appKit = typeof window !== 'undefined' && projectId
@@ -46,11 +48,13 @@ function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: s
 
   return (
     <WagmiProvider config={config} initialState={initialState}>
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider client={queryClient}>
         <ApolloProvider client={apolloClient}>
-          {children}
+          <TransactionProvider>
+            {children}
+          </TransactionProvider>
         </ApolloProvider>
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </WagmiProvider>
   )
 }

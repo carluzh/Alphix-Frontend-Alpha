@@ -5,7 +5,7 @@
  * Handles dependent amount calculation with debouncing.
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo } from 'react';
 import { formatUnits, parseUnits } from 'viem';
 import { TokenSymbol, getTokenDefinitions } from '@/lib/pools-config';
 import { formatTokenDisplayAmount } from '@/lib/utils';
@@ -63,25 +63,6 @@ export interface UseAddLiquidityCalculationResult {
 }
 
 // =============================================================================
-// DEBOUNCE UTILITY
-// =============================================================================
-
-function debounce<F extends (...args: unknown[]) => unknown>(
-  func: F,
-  waitFor: number
-): (...args: Parameters<F>) => void {
-  let timeout: NodeJS.Timeout | null = null;
-
-  return (...args: Parameters<F>) => {
-    if (timeout !== null) {
-      clearTimeout(timeout);
-      timeout = null;
-    }
-    timeout = setTimeout(() => func(...args), waitFor);
-  };
-}
-
-// =============================================================================
 // HOOK
 // =============================================================================
 
@@ -103,11 +84,14 @@ export function useAddLiquidityCalculation(
   const [dependentAmountFullPrecision, setDependentAmountFullPrecision] = useState('');
   const [dependentField, setDependentField] = useState<'amount0' | 'amount1' | null>(null);
 
-  const tokenDefinitions = getTokenDefinitions();
+  // Memoize tokenDefinitions to prevent recreating debounced function on every render
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(), []);
 
-  // Debounced calculation function
-  const debouncedCalculate = useCallback(
-    debounce(async (input: CalculationInput) => {
+  // Use ref to persist debounce timeout across renders
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Stable calculation function (not recreated on every render)
+  const performCalculation = useCallback(async (input: CalculationInput) => {
       const {
         amount0,
         amount1,
@@ -239,9 +223,19 @@ export function useAddLiquidityCalculation(
       } finally {
         setIsCalculating(false);
       }
-    }, 700),
-    [chainId, token0Symbol, token1Symbol, tokenDefinitions]
-  );
+  }, [chainId, token0Symbol, token1Symbol, tokenDefinitions]);
+
+  // Debounced wrapper using ref to persist timeout across renders
+  const debouncedCalculate = useCallback((input: CalculationInput) => {
+    // Clear any existing timeout
+    if (debounceTimeoutRef.current !== null) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+    // Set new timeout
+    debounceTimeoutRef.current = setTimeout(() => {
+      performCalculation(input);
+    }, 700);
+  }, [performCalculation]);
 
   const reset = useCallback(() => {
     setCalculatedData(null);

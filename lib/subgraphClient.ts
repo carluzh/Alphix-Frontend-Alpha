@@ -1,7 +1,7 @@
 // Server-side Subgraph client with concurrency cap, retry, jitter, rate limiting, and timeout
 
 import { withRateLimitRetry, rateLimitMiddleware } from './rateLimiter';
-import { getBaseSubgraphUrl } from './subgraph-url-helper';
+import { getSubgraphUrlsWithFallback } from './subgraph-url-helper';
 
 type GraphQLRequest = {
   query: string;
@@ -13,8 +13,8 @@ type GraphQLResponse<T> = {
   errors?: Array<{ message?: string; [k: string]: any }>;
 };
 
-// Use network-aware subgraph URL
-const SUBGRAPH_URL: string = getBaseSubgraphUrl();
+// Get subgraph URLs with fallback support
+const SUBGRAPH_URLS: string[] = getSubgraphUrlsWithFallback();
 const SUBGRAPH_API_KEY: string | undefined = process.env.SUBGRAPH_API_KEY;
 
 if (typeof window !== 'undefined') {
@@ -59,22 +59,14 @@ export interface ExecuteGraphOptions {
   headers?: Record<string, string>;
 }
 
-async function executeSubgraphQueryInternal<T>(req: GraphQLRequest, options: ExecuteGraphOptions = {}): Promise<T> {
-  if (!SUBGRAPH_URL) {
-    throw new Error('SUBGRAPH_URL env var is required for subgraph requests');
-  }
-
+async function trySubgraphUrl<T>(url: string, req: GraphQLRequest, options: ExecuteGraphOptions): Promise<T> {
   const timeoutMs = typeof options.timeoutMs === 'number' ? Math.max(1000, options.timeoutMs) : 10000;
-
-  let lastError: unknown = undefined;
-
-  // Single attempt with rate limiting handled at higher level
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     await acquire();
-    const resp = await fetch(SUBGRAPH_URL, {
+    const resp = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -90,37 +82,50 @@ async function executeSubgraphQueryInternal<T>(req: GraphQLRequest, options: Exe
     release();
 
     if (!resp.ok) {
-      if (resp.status === 429 || (resp.status >= 500 && resp.status <= 599)) {
-        lastError = new Error(`Subgraph HTTP ${resp.status}`);
-        throw lastError;
-      } else {
-        const text = await resp.text();
-        throw new Error(`Subgraph error ${resp.status}: ${text}`);
-      }
-    } else {
-      const json = (await resp.json()) as GraphQLResponse<T>;
-      if (json.errors && json.errors.length > 0) {
-        const first = json.errors[0]?.message || 'GraphQL error';
-        const transient = /timeout|rate|limit|temporar|overload|unavailable/i.test(first);
-        if (transient) {
-          lastError = new Error(first);
-          throw lastError;
-        } else {
-          throw new Error(first);
-        }
-      } else if (json.data) {
-        return json.data;
-      } else {
-        throw new Error('Subgraph returned no data');
-      }
+      const text = await resp.text();
+      throw new Error(`Subgraph HTTP ${resp.status}: ${text}`);
     }
+
+    const json = (await resp.json()) as GraphQLResponse<T>;
+    if (json.errors && json.errors.length > 0) {
+      throw new Error(json.errors[0]?.message || 'GraphQL error');
+    }
+    if (!json.data) {
+      throw new Error('Subgraph returned no data');
+    }
+    return json.data;
   } catch (err) {
     clearTimeout(timeout);
     try { release(); } catch {}
     throw err;
   }
+}
 
-  throw lastError instanceof Error ? lastError : new Error('Subgraph request failed');
+async function executeSubgraphQueryInternal<T>(req: GraphQLRequest, options: ExecuteGraphOptions = {}): Promise<T> {
+  if (SUBGRAPH_URLS.length === 0) {
+    throw new Error('No subgraph URLs configured');
+  }
+
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < SUBGRAPH_URLS.length; i++) {
+    const url = SUBGRAPH_URLS[i];
+    try {
+      const result = await trySubgraphUrl<T>(url, req, options);
+      if (i > 0) {
+        console.log(`[Subgraph] Fallback succeeded (URL index ${i})`);
+      }
+      return result;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const isLastUrl = i === SUBGRAPH_URLS.length - 1;
+      if (!isLastUrl) {
+        console.warn(`[Subgraph] Primary failed, trying fallback: ${lastError.message}`);
+      }
+    }
+  }
+
+  throw lastError || new Error('All subgraph URLs failed');
 }
 
 export async function executeSubgraphQuery<T>(req: GraphQLRequest, options: ExecuteGraphOptions = {}): Promise<T> {

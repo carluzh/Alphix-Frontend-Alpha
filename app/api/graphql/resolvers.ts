@@ -1,4 +1,4 @@
-import type { NetworkMode } from '@/lib/pools-config'
+import { type NetworkMode, getAllTokenSymbols } from '@/lib/pools-config'
 import { batchQuotePrices } from '@/lib/quote-prices'
 import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '@/lib/network-mode'
 
@@ -54,30 +54,10 @@ export const resolvers = {
 
     // Token queries
     tokenPrices: async (_: unknown, args: { chain: string }, ctx: Context) => {
-      // Use network-specific symbols based on context
-      const isMainnet = ctx.networkMode === 'mainnet'
-      const chainId = isMainnet ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID
-
-      // Only query tokens that exist on the current network
-      const symbols = isMainnet
-        ? ['BTC', 'ETH', 'USDC', 'USDT']
-        : ['aBTC', 'aETH', 'aUSDC', 'aUSDT']
-
+      const chainId = ctx.networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID
+      const symbols = getAllTokenSymbols(ctx.networkMode)
       const prices = await batchQuotePrices(symbols, chainId, ctx.networkMode)
-      const timestamp = Math.floor(Date.now() / 1000)
-
-      // Return prices with fallbacks for cross-network compatibility
-      return {
-        BTC: prices['BTC'] || null,
-        aBTC: prices['aBTC'] || prices['BTC'] || null,
-        ETH: prices['ETH'] || null,
-        aETH: prices['aETH'] || prices['ETH'] || null,
-        USDC: prices['USDC'] || 1,
-        aUSDC: prices['aUSDC'] || 1,
-        USDT: prices['USDT'] || 1,
-        aUSDT: prices['aUSDT'] || 1,
-        timestamp,
-      }
+      return { ...prices, timestamp: Math.floor(Date.now() / 1000) }
     },
 
     token: async (

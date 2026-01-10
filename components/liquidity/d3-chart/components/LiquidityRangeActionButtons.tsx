@@ -10,7 +10,6 @@
  */
 
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
 import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { HistoryDuration } from '@/lib/chart/types';
 
@@ -29,40 +28,35 @@ interface ZoomButtonsProps {
   isFullRange?: boolean;
 }
 
-/**
- * Zoom Buttons - copied from Uniswap's ZoomButtons.tsx
- */
 function ZoomButtons({ onZoomIn, onZoomOut, onCenterRange, isFullRange }: ZoomButtonsProps) {
   return (
-    <div className="flex rounded-full border border-sidebar-border">
+    <div className="flex items-center rounded-lg border border-sidebar-border overflow-hidden">
       <button
         onClick={onZoomOut}
-        className={cn(
-          'p-2 rounded-l-full hover:bg-sidebar-accent transition-colors',
-          'border-r border-sidebar-border'
-        )}
+        className="h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors duration-150 cursor-pointer border-r border-sidebar-border"
         title="Zoom out"
       >
-        <ZoomOut className="h-4 w-4 text-muted-foreground" />
+        <ZoomOut className="h-4 w-4" />
       </button>
       <button
         onClick={onCenterRange}
         disabled={isFullRange}
         className={cn(
-          'p-2 hover:bg-sidebar-accent transition-colors',
-          'border-r border-sidebar-border',
-          isFullRange && 'opacity-50 cursor-not-allowed'
+          'h-7 w-7 flex items-center justify-center transition-colors duration-150 cursor-pointer border-r border-sidebar-border',
+          isFullRange
+            ? 'text-muted-foreground/50 cursor-not-allowed'
+            : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
         )}
         title="Center range"
       >
-        <Maximize2 className="h-4 w-4 text-muted-foreground" />
+        <Maximize2 className="h-4 w-4" />
       </button>
       <button
         onClick={onZoomIn}
-        className="p-2 rounded-r-full hover:bg-sidebar-accent transition-colors"
+        className="h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors duration-150 cursor-pointer"
         title="Zoom in"
       >
-        <ZoomIn className="h-4 w-4 text-muted-foreground" />
+        <ZoomIn className="h-4 w-4" />
       </button>
     </div>
   );
@@ -73,24 +67,18 @@ interface TimePeriodButtonsProps {
   onDurationChange: (duration: HistoryDuration) => void;
 }
 
-/**
- * Time Period Buttons - copied from Uniswap's TimePeriodOptionButtons.tsx
- */
 function TimePeriodButtons({ selectedDuration, onDurationChange }: TimePeriodButtonsProps) {
   return (
-    <div className="flex rounded-full border border-sidebar-border">
-      {TIME_PERIODS.map((period, index) => (
+    <div className="flex items-center gap-1">
+      {TIME_PERIODS.map((period) => (
         <button
           key={period.value}
           onClick={() => onDurationChange(period.value)}
           className={cn(
-            'px-3 py-1.5 text-xs font-medium transition-colors',
-            index === 0 && 'rounded-l-full',
-            index === TIME_PERIODS.length - 1 && 'rounded-r-full',
-            index !== TIME_PERIODS.length - 1 && 'border-r border-sidebar-border',
+            'h-7 px-2.5 text-xs rounded-md transition-colors duration-150 cursor-pointer select-none',
             selectedDuration === period.value
-              ? 'bg-sidebar-accent text-white'
-              : 'text-muted-foreground hover:bg-sidebar-accent/50'
+              ? 'bg-muted/50 text-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
           )}
         >
           {period.label}
@@ -105,23 +93,20 @@ interface ResetButtonProps {
   isFullRange?: boolean;
 }
 
-/**
- * Reset Button - copied from Uniswap's ResetActionButton.tsx
- */
 function ResetButton({ onReset, isFullRange }: ResetButtonProps) {
   return (
-    <Button
-      variant="ghost"
-      size="sm"
+    <button
       onClick={onReset}
       disabled={isFullRange}
       className={cn(
-        'text-xs text-muted-foreground hover:text-white',
-        isFullRange && 'opacity-50 cursor-not-allowed'
+        'h-7 px-2.5 text-xs rounded-md transition-colors duration-150 cursor-pointer select-none',
+        isFullRange
+          ? 'text-muted-foreground/50 cursor-not-allowed'
+          : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
       )}
     >
       Reset
-    </Button>
+    </button>
   );
 }
 

@@ -39,6 +39,8 @@ import {
     createPoolKeyFromConfig,
     createCanonicalPoolKey,
     getNetworkModeFromRequest,
+    getToken,
+    NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS } from '../../../lib/swap-constants';
 import { getUniversalRouterAddress, getStateViewAddress } from '../../../lib/pools-config';
@@ -192,7 +194,10 @@ async function prepareV4ExactInSwapData(
     // Action order will follow the guide exactly; no optional price limit used
     const sqrtPriceLimitX96 = 0n;
 
-    const zeroForOne = getAddress(inputToken.address!) === v4PoolKey.currency0;
+    // Uniswap SDK ref: Use canonical token ordering to determine swap direction
+    // zeroForOne = true when swapping from lower address (currency0) to higher address (currency1)
+    // Matches get-quote.ts: fromToken.sortsBefore(toToken)
+    const zeroForOne = inputToken.sortsBefore(outputToken);
     v4Planner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [
         {
             poolKey: v4PoolKey,
@@ -211,11 +216,11 @@ async function prepareV4ExactInSwapData(
     ]);
 
     // Third: TAKE_ALL - take whatever amount the swap produced
-    // For native ETH output, use a very low minimum (1 wei) to avoid precision issues
-    // The SWAP action's amountOutMinimum already enforces the actual slippage protection
+    // minAmount matches SWAP's amountOutMinimum (slippage already applied)
     const outputCurrency = zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0;
     const isNativeOutput = outputCurrency === '0x0000000000000000000000000000000000000000';
-    const takeAllMin = isNativeOutput ? 1n : (minAmountOutSmallestUnits * 95n) / 100n;
+    // SWAP action's amountOutMinimum already enforces slippage - use same value for TAKE_ALL
+    const takeAllMin = isNativeOutput ? 1n : minAmountOutSmallestUnits;
     
     v4Planner.addAction(Actions.TAKE_ALL, [
         outputCurrency,
@@ -240,17 +245,20 @@ async function prepareV4ExactOutSwapData(
 
     const v4Planner = new V4Planner();
     
+    // Uniswap SDK ref: Use canonical token ordering to determine swap direction
+    // Matches get-quote.ts: fromToken.sortsBefore(toToken)
+    const zeroForOne = inputToken.sortsBefore(outputToken);
+
     // Calculate price limit if provided
     let sqrtPriceLimitX96 = 0n; // 0 means no limit
     if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
-        const zeroForOne = getAddress(inputToken.address!) === v4PoolKey.currency0;
         sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
     }
 
     v4Planner.addAction(Actions.SWAP_EXACT_OUT_SINGLE, [
         {
             poolKey: v4PoolKey,
-            zeroForOne: getAddress(inputToken.address!) === v4PoolKey.currency0,
+            zeroForOne,
             amountOut: BigNumber.from(amountOutSmallestUnits.toString()),
             amountInMaximum: BigNumber.from(maxAmountInSmallestUnits.toString()),
             sqrtPriceLimitX96: BigNumber.from(sqrtPriceLimitX96.toString()),
@@ -259,7 +267,6 @@ async function prepareV4ExactOutSwapData(
     ]);
 
     // After swap, settle input currency up to max
-    const zeroForOne = getAddress(inputToken.address!) === v4PoolKey.currency0;
     v4Planner.addAction(Actions.SETTLE_ALL, [
         zeroForOne ? v4PoolKey.currency0 : v4PoolKey.currency1,
         BigNumber.from(maxAmountInSmallestUnits.toString()),
@@ -319,19 +326,19 @@ async function prepareV4MultiHopExactInSwapData(
     ]);
 
     // TAKE_ALL on true output currency (final currencyOut)
-    // For native ETH output, use a very low minimum (1 wei) to avoid precision issues
-    // The SWAP action's amountOutMinimum already enforces the actual slippage protection
+    // minAmount matches SWAP's amountOutMinimum (slippage already applied)
     const lastPoolKey = poolKeys[poolKeys.length - 1];
     const finalOutputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
     if (!finalOutputToken) {
         throw new Error('Failed to create output token for TAKE_ALL');
     }
     // Determine which currency in the last pool is the output
-    const outputCurrency = getAddress(finalOutputToken.address!) === lastPoolKey.currency0 
-        ? lastPoolKey.currency0 
+    const outputCurrency = getAddress(finalOutputToken.address!) === lastPoolKey.currency0
+        ? lastPoolKey.currency0
         : lastPoolKey.currency1;
     const isNativeOutput = outputCurrency === '0x0000000000000000000000000000000000000000';
-    const takeAllMin = isNativeOutput ? 1n : (minAmountOutSmallestUnits * 95n) / 100n;
+    // SWAP action's amountOutMinimum already enforces slippage - use same value for TAKE_ALL
+    const takeAllMin = isNativeOutput ? 1n : minAmountOutSmallestUnits;
     
     v4Planner.addAction(Actions.TAKE_ALL, [
         outputCurrency,
@@ -387,7 +394,8 @@ async function prepareV4MultiHopExactOutSwapData(
     ]);
 
     const isNativeOutput = outputToken.isNative;
-    const takeAllMin = isNativeOutput ? 1n : (amountOutSmallestUnits * 95n) / 100n;
+    // SWAP action's amountOut already enforces slippage - use same value for TAKE_ALL
+    const takeAllMin = isNativeOutput ? 1n : amountOutSmallestUnits;
 
     v4Planner.addAction(Actions.TAKE_ALL, [
         outputToken.address,
@@ -512,7 +520,10 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         if (userAddrError) {
             return res.status(400).json({ ok: false, message: userAddrError });
         }
-        const permitAddrError = fromTokenSymbol !== 'ETH' ? validateAddress(permitTokenAddress, 'permitTokenAddress') : null;
+        // Security: Check by address (0x0000...), not symbol - prevents spoofed ERC20 tokens named "ETH"
+        const fromTokenConfig = getToken(fromTokenSymbol, networkMode);
+        const isNativeInput = fromTokenConfig?.address === NATIVE_TOKEN_ADDRESS;
+        const permitAddrError = !isNativeInput ? validateAddress(permitTokenAddress, 'permitTokenAddress') : null;
         if (permitAddrError) {
             return res.status(400).json({ ok: false, message: permitAddrError });
         }
@@ -568,7 +579,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         const routePlanner = new RoutePlanner();
 
         // 1. Add PERMIT2_PERMIT command *only if* a valid signature is provided and it's not a native ETH swap
-        if (fromTokenSymbol !== 'ETH' && permitSignature !== "0x") {
+        // Security: Use isNativeInput (address-based) instead of symbol check
+        if (!isNativeInput && permitSignature !== "0x") {
             // When submitting the permit command with a real signature,
             // the amount MUST match what was signed.
             routePlanner.addCommand(CommandType.PERMIT2_PERMIT, [
@@ -600,7 +612,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         }
 
         // Determine the value to send with the transaction (ETH input only)
-        const txValue = fromTokenSymbol === 'ETH'
+        // Security: Use isNativeInput (address-based) instead of symbol check
+        const txValue = isNativeInput
           ? (swapType === 'ExactIn' ? actualSwapAmount : actualLimitAmount)
           : 0n;
 

@@ -1,22 +1,12 @@
 /**
- * D3 Liquidity Range Chart - Scale Utilities
- *
- * Functions for converting between price and Y coordinates.
- * Based on Uniswap's priceToY.ts and yToPrice.ts patterns.
+ * Scale utilities for converting between price and Y coordinates.
  */
 
 import * as d3 from 'd3';
 import { CHART_DIMENSIONS } from '../constants';
 import type { ChartEntry, TickScale, TickAlignment, ChartDimensions } from '../types';
 
-/**
- * Create a tick scale (ScaleBand) for liquidity data.
- * Maps tick values to Y positions on the chart.
- *
- * Uniswap pattern: Scale range is [totalHeight * zoomLevel, 0] which:
- * - Inverts Y axis (higher prices at top)
- * - Allows scrolling through more ticks than visible
- */
+// Creates a tick scale mapping prices to Y positions (higher prices at top)
 export function createTickScale(
   liquidityData: ChartEntry[],
   dimensions: ChartDimensions,
@@ -35,20 +25,15 @@ export function createTickScale(
   const barSpacing = CHART_DIMENSIONS.LIQUIDITY_BAR_SPACING;
   const totalHeight = liquidityData.length * (barHeight + barSpacing);
 
-  // Sort ticks - the domain order determines Y positioning
-  // Ticks should be sorted ascending so that:
-  // - First tick (lowest) -> bottom of range (totalHeight)
-  // - Last tick (highest) -> top of range (0)
-  const sortedData = [...liquidityData].sort((a, b) => a.tick - b.tick);
+  // Sort by price0 (lowest at bottom, highest at top)
+  const sortedData = [...liquidityData].sort((a, b) => a.price0 - b.price0);
   const tickDomain = sortedData.map(d => d.tick.toString());
 
-  // Create base scale with inverted range (highest price at top)
   const baseScale = d3.scaleBand<string>()
     .domain(tickDomain)
-    .range([totalHeight * zoomLevel, 0]) // Inverted: highest tick at Y=0
+    .range([totalHeight * zoomLevel, 0])
     .paddingInner(0.05);
 
-  // Create wrapper that adds pan offset
   const scaleFn = (tick: string): number | undefined => {
     const baseY = baseScale(tick);
     return baseY !== undefined ? baseY + panY : undefined;
@@ -64,10 +49,7 @@ export function createTickScale(
   return scale;
 }
 
-/**
- * Convert a price to Y coordinate.
- * Finds the closest tick in liquidity data and returns its Y position.
- */
+// Convert price to Y coordinate
 export function priceToY({
   price,
   liquidityData,
@@ -79,11 +61,8 @@ export function priceToY({
   tickScale: TickScale;
   tickAlignment?: TickAlignment;
 }): number {
-  if (liquidityData.length === 0) {
-    return 0;
-  }
+  if (liquidityData.length === 0) return 0;
 
-  // Find the closest tick by price
   const closest = liquidityData.reduce((prev, curr) =>
     Math.abs(curr.price0 - price) < Math.abs(prev.price0 - price) ? curr : prev
   );
@@ -92,19 +71,13 @@ export function priceToY({
   const bandwidth = tickScale.bandwidth();
 
   switch (tickAlignment) {
-    case 'top':
-      return bandY;
-    case 'bottom':
-      return bandY + bandwidth;
-    default: // 'center'
-      return bandY + bandwidth / 2;
+    case 'top': return bandY;
+    case 'bottom': return bandY + bandwidth;
+    default: return bandY + bandwidth / 2;
   }
 }
 
-/**
- * Convert a Y coordinate back to price.
- * Finds the tick whose band center is closest to the Y position.
- */
+// Convert Y coordinate to price
 export function yToPrice({
   y,
   liquidityData,
@@ -114,9 +87,7 @@ export function yToPrice({
   liquidityData: ChartEntry[];
   tickScale: TickScale;
 }): number {
-  if (liquidityData.length === 0) {
-    return 0;
-  }
+  if (liquidityData.length === 0) return 0;
 
   const tickValues = tickScale.domain();
   const bandwidth = tickScale.bandwidth();
@@ -124,7 +95,6 @@ export function yToPrice({
   let closestTick = tickValues[0];
   let minDistance = Infinity;
 
-  // Find the tick whose center is closest to Y
   for (const tick of tickValues) {
     const tickY = tickScale(tick) ?? 0;
     const centerY = tickY + bandwidth / 2;
@@ -136,14 +106,11 @@ export function yToPrice({
     }
   }
 
-  // Find the price for this tick
   const tickData = liquidityData.find(d => d.tick.toString() === closestTick);
   return tickData ? tickData.price0 : 0;
 }
 
-/**
- * Create priceToY and yToPrice functions bound to specific data.
- */
+// Create bound scale functions
 export function createScaleFunctions(
   liquidityData: ChartEntry[],
   tickScale: TickScale
@@ -156,25 +123,17 @@ export function createScaleFunctions(
   };
 }
 
-/**
- * Find the closest tick entry for a given price.
- */
 export function findClosestTick(
   liquidityData: ChartEntry[],
   price: number
 ): ChartEntry | undefined {
-  if (liquidityData.length === 0) {
-    return undefined;
-  }
+  if (liquidityData.length === 0) return undefined;
 
   return liquidityData.reduce((prev, curr) =>
     Math.abs(curr.price0 - price) < Math.abs(prev.price0 - price) ? curr : prev
   );
 }
 
-/**
- * Get the price bounds from liquidity data.
- */
 export function getPriceBounds(liquidityData: ChartEntry[]): {
   minPrice: number;
   maxPrice: number;

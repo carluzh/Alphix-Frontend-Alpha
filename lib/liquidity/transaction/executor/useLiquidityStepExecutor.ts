@@ -13,6 +13,7 @@ import { useAccount, useSendTransaction, useSignTypedData, useWaitForTransaction
 import { waitForTransactionReceipt } from 'wagmi/actions';
 import { useConfig } from 'wagmi';
 import type { Hex } from 'viem';
+import { useTransactionAdder, TransactionType, type LiquidityIncreaseTransactionInfo, type LiquidityDecreaseTransactionInfo, type ApproveTransactionInfo, type Permit2ApproveTransactionInfo } from '@/lib/transactions';
 
 import {
   type TransactionStep,
@@ -87,10 +88,13 @@ export function useLiquidityStepExecutor(
 ): UseLiquidityStepExecutorReturn {
   const { onSuccess, onFailure, onStepChange } = options;
 
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const config = useConfig();
   const { sendTransactionAsync } = useSendTransaction();
   const { signTypedDataAsync } = useSignTypedData();
+
+  // Transaction tracking
+  const addTransaction = useTransactionAdder();
 
   const [state, setState] = useState<LiquidityExecutorState>(INITIAL_STATE);
 
@@ -247,6 +251,15 @@ export function useLiquidityStepExecutor(
                 sendTransaction,
                 waitForReceipt,
               );
+              // Track approval transaction
+              if (lastTxHash && chainId) {
+                const approveInfo: ApproveTransactionInfo = {
+                  type: TransactionType.Approve,
+                  tokenAddress: (step as any).token?.address || '',
+                  spender: (step as any).spender || '',
+                };
+                addTransaction({ hash: lastTxHash, chainId, from: address } as any, approveInfo);
+              }
               break;
             }
 
@@ -266,6 +279,16 @@ export function useLiquidityStepExecutor(
                 sendTransaction,
                 waitForReceipt,
               );
+              // Track Permit2 transaction (Uniswap parity)
+              if (lastTxHash && chainId) {
+                const permit2Info: Permit2ApproveTransactionInfo = {
+                  type: TransactionType.Permit2Approve,
+                  tokenAddress: (step as any).token?.address || '',
+                  spender: (step as any).spender || '',
+                  amount: (step as any).amount || '',
+                };
+                addTransaction({ hash: lastTxHash, chainId, from: address } as any, permit2Info);
+              }
               break;
             }
 
@@ -282,6 +305,23 @@ export function useLiquidityStepExecutor(
                 sendTransaction,
                 waitForReceipt,
               );
+              // Track liquidity transaction
+              if (lastTxHash && chainId && txContext.action) {
+                const isIncrease = step.type === TransactionStepType.IncreasePositionTransaction ||
+                                   step.type === TransactionStepType.IncreasePositionTransactionAsync;
+                const isCollect = step.type === TransactionStepType.CollectFeesTransactionStep;
+                const txType = isCollect ? TransactionType.CollectFees :
+                               isIncrease ? TransactionType.LiquidityIncrease : TransactionType.LiquidityDecrease;
+                const { currency0Amount, currency1Amount } = txContext.action;
+                const typeInfo = {
+                  type: txType,
+                  currency0Id: currency0Amount?.currency ? `${chainId}-${currency0Amount.currency.wrapped?.address || ''}` : '',
+                  currency1Id: currency1Amount?.currency ? `${chainId}-${currency1Amount.currency.wrapped?.address || ''}` : '',
+                  currency0AmountRaw: currency0Amount?.quotient?.toString() || '0',
+                  currency1AmountRaw: currency1Amount?.quotient?.toString() || '0',
+                };
+                addTransaction({ hash: lastTxHash, chainId, from: address } as any, typeInfo as any);
+              }
               break;
             }
 
@@ -347,7 +387,7 @@ export function useLiquidityStepExecutor(
 
       onSuccess?.(lastTxHash);
     },
-    [address, sendTransaction, waitForReceipt, signTypedData, setCurrentStep, onSuccess, onFailure],
+    [address, chainId, sendTransaction, waitForReceipt, signTypedData, setCurrentStep, onSuccess, onFailure, addTransaction],
   );
 
   return {

@@ -11,13 +11,13 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import Image from 'next/image';
-import { ArrowDownUp, Info, AlertTriangle, Loader2 } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
+import { IconCircleInfo, IconTriangleWarningFilled } from 'nucleo-micro-bold-essential';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { useAccount, useBalance } from 'wagmi';
-import { useAnimation } from 'framer-motion';
+import { motion, AnimatePresence, useAnimation } from 'framer-motion';
 
 import { useAddLiquidityContext } from '../AddLiquidityContext';
 import { useCreatePositionTxContext } from '../CreatePositionTxContext';
@@ -31,10 +31,12 @@ import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
 import { useRangeHopCallbacks } from '@/hooks/useRangeHopCallbacks';
 import { TokenInputCard, TokenInputStyles } from '@/components/liquidity/TokenInputCard';
 import { formatCalculatedAmount } from '@/components/liquidity/liquidity-form-utils';
-import { calculateTicksFromPercentage } from '@/lib/liquidity/utils/calculations';
+import { calculateTicksFromPercentage, getFieldsDisabled, PositionField, isInvalidRange } from '@/lib/liquidity/utils/calculations';
 import { nearestUsableTick } from '@uniswap/v3-sdk';
-import { D3LiquidityRangeChart, LiquidityRangeActionButtons, type D3LiquidityRangeChartHandle } from '@/components/liquidity/d3-chart';
-import { HistoryDuration } from '@/lib/chart/types';
+import { D3LiquidityRangeChart, LiquidityRangeActionButtons, LiquidityChartSkeleton, CHART_DIMENSIONS, type D3LiquidityRangeChartHandle } from '@/components/liquidity/d3-chart';
+import { HistoryDuration, usePoolPriceChartData } from '@/lib/chart';
+import { useLiquidityChartData } from '@/hooks/useLiquidityChartData';
+import { getPoolSubgraphId } from '@/lib/pools-config';
 
 // Price Strategy configurations (aligned with Uniswap's DefaultPriceStrategies)
 interface PriceStrategyConfig {
@@ -54,13 +56,13 @@ const PRICE_STRATEGIES: PriceStrategyConfig[] = [
   {
     id: 'wide',
     title: 'Wide',
-    display: '–50% — +100%',
+    display: '50% / +100%',
     description: 'Good for volatile pairs',
   },
   {
     id: 'one_sided_lower',
     title: 'One-sided lower',
-    display: '–50%',
+    display: '50%',
     description: 'Supply liquidity if price goes down',
   },
   {
@@ -71,6 +73,24 @@ const PRICE_STRATEGIES: PriceStrategyConfig[] = [
   },
 ];
 
+// Animation config for Deposit/Zap tab content switching (matches PointsTabsSection)
+const SLIDE_DISTANCE = 20;
+const SPRING_CONFIG = {
+  type: "spring" as const,
+  damping: 75,
+  stiffness: 1000,
+  mass: 1.4,
+};
+
+// Track previous value for animation direction
+function usePrevious<T>(value: T): T | undefined {
+  const ref = useRef<T | undefined>(undefined);
+  useEffect(() => {
+    ref.current = value;
+  }, [value]);
+  return ref.current;
+}
+
 // Price Strategy button (Uniswap's DefaultPriceStrategyComponent style)
 interface PriceStrategyButtonProps {
   strategy: PriceStrategyConfig;
@@ -80,6 +100,16 @@ interface PriceStrategyButtonProps {
 }
 
 function PriceStrategyButton({ strategy, selected, onSelect, disabled }: PriceStrategyButtonProps) {
+  const renderDisplay = () => {
+    if (strategy.id === 'one_sided_lower') {
+      return <>−{strategy.display}</>;
+    }
+    if (strategy.id === 'wide') {
+      return <>−50% <span className="text-muted-foreground/50">/</span> +100%</>;
+    }
+    return strategy.display;
+  };
+
   // Uses Disconnect button hover colors (bg-accent, border-white/30)
   return (
     <button
@@ -98,7 +128,7 @@ function PriceStrategyButton({ strategy, selected, onSelect, disabled }: PriceSt
           {strategy.title}
         </span>
         <span className="text-base font-semibold text-white">
-          {strategy.display}
+          {renderDisplay()}
         </span>
       </div>
       {/* Description */}
@@ -209,13 +239,12 @@ function CurrentPriceDisplay({
 // Min/Max price input (Uniswap RangeAmountInput style)
 interface RangeInputProps {
   label: 'Min' | 'Max';
-  percentFromCurrent: string; // e.g., "-50%" or "+100%"
+  percentFromCurrent: string;
   value: string;
   onChange: (value: string) => void;
   onIncrement: () => void;
   onDecrement: () => void;
   disabled?: boolean;
-  error?: boolean;
   position: 'left' | 'right';
 }
 
@@ -227,17 +256,14 @@ function RangeInput({
   onIncrement,
   onDecrement,
   disabled,
-  error,
   position,
 }: RangeInputProps) {
   return (
     <div className={cn(
       'flex flex-row justify-between flex-1 px-4 py-4',
       position === 'left' ? 'border-r border-sidebar-border' : '',
-      error && 'bg-red-500/5',
       disabled && 'opacity-50'
     )}>
-      {/* Left side: Label, Price, Percent from current */}
       <div className="flex flex-col gap-1 flex-1 overflow-hidden">
         <span className="text-sm font-medium text-muted-foreground">
           {label} price
@@ -247,10 +273,7 @@ function RangeInput({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
-          className={cn(
-            'bg-transparent border-none text-xl md:text-xl font-semibold p-0 h-auto focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0',
-            error ? 'text-red-400' : 'text-white'
-          )}
+          className="bg-transparent border-none text-xl md:text-xl font-semibold p-0 h-auto text-white focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
           placeholder="0"
         />
         <span className="text-sm text-muted-foreground mt-1">
@@ -274,24 +297,6 @@ function RangeInput({
           −
         </button>
       </div>
-    </div>
-  );
-}
-
-// Zap mode toggle (compact)
-interface ZapModeToggleProps {
-  enabled: boolean;
-  onToggle: (enabled: boolean) => void;
-}
-
-function ZapModeToggle({ enabled, onToggle }: ZapModeToggleProps) {
-  return (
-    <div className="flex flex-row items-center justify-between p-4 rounded-lg bg-surface border border-sidebar-border/60">
-      <div className="flex flex-col gap-1">
-        <span className="text-base font-medium text-white">Single Token Mode</span>
-        <span className="text-sm text-muted-foreground">Provide with one token</span>
-      </div>
-      <Switch checked={enabled} onCheckedChange={onToggle} />
     </div>
   );
 }
@@ -336,8 +341,47 @@ export function RangeAndAmountsStep() {
   const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
   const [chartDuration, setChartDuration] = useState<HistoryDuration>(HistoryDuration.MONTH);
 
+  // Track zap mode for animation direction (Deposit = index 0, Zap = index 1)
+  const previousZapMode = usePrevious(state.isZapMode);
+  const zapAnimationDirection = useMemo(() => {
+    if (previousZapMode === undefined) return 'fade' as const;
+    if (state.isZapMode && !previousZapMode) return 'forward' as const; // Deposit -> Zap
+    if (!state.isZapMode && previousZapMode) return 'backward' as const; // Zap -> Deposit
+    return 'fade' as const;
+  }, [state.isZapMode, previousZapMode]);
+
+  // Animation offsets based on direction
+  const zapEnterOffset = zapAnimationDirection === 'forward' ? SLIDE_DISTANCE : zapAnimationDirection === 'backward' ? -SLIDE_DISTANCE : 0;
+  const zapExitOffset = zapAnimationDirection === 'forward' ? -SLIDE_DISTANCE : zapAnimationDirection === 'backward' ? SLIDE_DISTANCE : 0;
+
   // Use isCalculating from TxContext
   const isCalculating = txIsCalculating;
+
+  // Invalid range check (Uniswap pattern)
+  const invalidRange = isInvalidRange(state.tickLower ?? undefined, state.tickUpper ?? undefined);
+
+  // Loading states (Uniswap Deposit.tsx pattern)
+  // requestLoading: true when calculation is in progress and we have amounts
+  const requestLoading = Boolean(
+    isCalculating &&
+    !invalidRange &&
+    (parseFloat(state.amount0 || '0') > 0 || parseFloat(state.amount1 || '0') > 0)
+  );
+
+  // Opposite field shows loading when user is typing in the other field
+  // amount0Loading = requestLoading && inputSide === 'token1'
+  // amount1Loading = requestLoading && inputSide === 'token0'
+  const amount0Loading = requestLoading && state.inputSide === 'token1';
+  const amount1Loading = requestLoading && state.inputSide === 'token0';
+
+  // Disabled fields based on price range (Uniswap priceRangeInfo.ts pattern)
+  // At range extremes, one token deposit may be disabled
+  const { [PositionField.TOKEN0]: deposit0Disabled, [PositionField.TOKEN1]: deposit1Disabled } = useMemo(() => {
+    return getFieldsDisabled({
+      pool: sdkPool,
+      ticks: [state.tickLower ?? undefined, state.tickUpper ?? undefined],
+    });
+  }, [sdkPool, state.tickLower, state.tickUpper]);
 
   // Animation controls
   const wiggleControls0 = useAnimation();
@@ -357,6 +401,34 @@ export function RangeAndAmountsStep() {
   // Current price from context (real on-chain data via usePoolState)
   const currentPriceRaw = poolStateData?.currentPrice || '1.00';
   const currentTick = poolStateData?.currentPoolTick;
+
+  const subgraphPoolId = state.poolId ? (getPoolSubgraphId(state.poolId) || state.poolId) : undefined;
+
+  // Fetch pre-transformed data for chart (handles inversion)
+  const { liquidityData, isLoading: isLiquidityLoading } = useLiquidityChartData({
+    poolId: state.poolId ?? undefined,
+    priceInverted,
+  });
+
+  const { entries: priceChartEntries, loading: isPriceLoading } = usePoolPriceChartData({
+    variables: {
+      poolId: subgraphPoolId,
+      token0: token0Symbol,
+      token1: token1Symbol,
+      duration: chartDuration,
+    },
+    priceInverted,
+  });
+
+  const priceData = useMemo(() => {
+    return priceChartEntries.map(e => ({ time: e.time, value: e.value }));
+  }, [priceChartEntries]);
+
+  const chartCurrentPrice = useMemo(() => {
+    const priceNum = parseFloat(currentPriceRaw);
+    if (!isFinite(priceNum) || priceNum <= 0) return 1;
+    return priceInverted ? (1 / priceNum) : priceNum;
+  }, [currentPriceRaw, priceInverted]);
 
   // Format current price with proper decimals and inversion (Uniswap pattern)
   const formattedCurrentPrice = useMemo(() => {
@@ -476,72 +548,61 @@ export function RangeAndAmountsStep() {
     });
   }, [token0Symbol, token1Symbol, poolConfig?.type]);
 
-  // Handle price strategy selection (Uniswap-aligned with REAL tick math)
+  // Price strategy selection
   const handleSelectStrategy = useCallback((strategy: RangePreset) => {
     setRangePreset(strategy);
 
-    // Get current tick and tick spacing from pool data
+    if (strategy === 'full') {
+      setMinPrice('0');
+      setMaxPrice('∞');
+      setRange(null, null);
+      return;
+    }
+
+    if (strategy === 'custom') return;
+
+    const tickSpacingVal = poolConfig?.tickSpacing || 10;
     const poolCurrentTick = currentTick ?? 0;
-    const tickSpacing = poolConfig?.tickSpacing ?? 10;
+    const tickToPrice = (tick: number) => Math.pow(1.0001, tick);
+    const tickFromPrice = (price: number) => Math.round(Math.log(price) / Math.log(1.0001));
 
     let tickLower: number;
     let tickUpper: number;
 
     switch (strategy) {
       case 'stable':
-        // ± 3 ticks (aligned to tick spacing using Uniswap SDK)
-        // For stable pools, use exactly 3 tick spacings in each direction
-        tickLower = nearestUsableTick(poolCurrentTick - 3 * tickSpacing, tickSpacing);
-        tickUpper = nearestUsableTick(poolCurrentTick + 3 * tickSpacing, tickSpacing);
+        // ±3 tick spacings from current tick
+        tickLower = nearestUsableTick(poolCurrentTick - 3 * tickSpacingVal, tickSpacingVal);
+        tickUpper = nearestUsableTick(poolCurrentTick + 3 * tickSpacingVal, tickSpacingVal);
         break;
-
       case 'wide':
-        // –50% — +100% (using calculateTicksFromPercentage for proper alignment)
-        [tickLower, tickUpper] = calculateTicksFromPercentage(50, 100, poolCurrentTick, tickSpacing);
+        // -50% to +100%
+        [tickLower, tickUpper] = calculateTicksFromPercentage(50, 100, poolCurrentTick, tickSpacingVal);
         break;
-
       case 'one_sided_lower':
-        // –50% to just below current tick
-        // Lower bound: 50% below current price
-        // Upper bound: one tick spacing below current tick (using SDK)
-        [tickLower] = calculateTicksFromPercentage(50, 0, poolCurrentTick, tickSpacing);
-        tickUpper = nearestUsableTick(poolCurrentTick - tickSpacing, tickSpacing);
+        // -50% to one tick below current
+        [tickLower] = calculateTicksFromPercentage(50, 0, poolCurrentTick, tickSpacingVal);
+        tickUpper = nearestUsableTick(poolCurrentTick - tickSpacingVal, tickSpacingVal);
         break;
-
       case 'one_sided_upper':
-        // Just above current tick to +100%
-        // Lower bound: one tick spacing above current tick (using SDK)
-        // Upper bound: 100% above current price
-        tickLower = nearestUsableTick(poolCurrentTick + tickSpacing, tickSpacing);
-        [, tickUpper] = calculateTicksFromPercentage(0, 100, poolCurrentTick, tickSpacing);
+        // One tick above current to +100%
+        tickLower = nearestUsableTick(poolCurrentTick + tickSpacingVal, tickSpacingVal);
+        [, tickUpper] = calculateTicksFromPercentage(0, 100, poolCurrentTick, tickSpacingVal);
         break;
-
-      case 'full':
-        setMinPrice('0');
-        setMaxPrice('∞');
-        setRange(null, null);
-        return;
-
-      case 'custom':
-        // Keep current values
-        return;
-
       default:
         return;
     }
 
     // Ensure tickLower < tickUpper
     if (tickLower >= tickUpper) {
-      tickUpper = tickLower + tickSpacing;
+      tickUpper = tickLower + tickSpacingVal;
     }
 
-    // Convert ticks to canonical prices (token1/token0)
+    // Convert ticks to prices
     const priceLower = tickToPrice(tickLower);
     const priceUpper = tickToPrice(tickUpper);
 
-    // Set display values (accounting for price inversion)
-    // When inverted: low display = 1/upper, high display = 1/lower
-    // When not inverted: low display = lower, high display = upper
+    // Set display prices (inverted if needed)
     if (priceInverted) {
       setMinPrice(formatPriceForDisplay(1 / priceUpper, true));
       setMaxPrice(formatPriceForDisplay(1 / priceLower, true));
@@ -550,21 +611,17 @@ export function RangeAndAmountsStep() {
       setMaxPrice(formatPriceForDisplay(priceUpper, false));
     }
 
-    // Set the actual tick range in context for transaction
     setRange(tickLower, tickUpper);
-  }, [setRangePreset, setRange, currentTick, poolConfig?.tickSpacing, priceInverted, tickToPrice, formatPriceForDisplay]);
+  }, [setRangePreset, setRange, currentTick, priceInverted, formatPriceForDisplay, poolConfig?.tickSpacing]);
 
-  // Handle token selection for price denomination (Uniswap pattern)
+  // Token selection for price denomination - resets to Stable on switch
   const handleSelectToken = useCallback((token: string) => {
     const shouldInvert = token === token1Symbol;
-    if (shouldInvert === priceInverted) return; // No change needed
+    if (shouldInvert === priceInverted) return;
 
-    // Swap and invert the prices
     setPriceInverted(shouldInvert);
-    const temp = minPrice;
-    setMinPrice(maxPrice === '∞' ? '0' : (1 / parseFloat(maxPrice)).toFixed(6));
-    setMaxPrice(temp === '0' ? '∞' : (1 / parseFloat(temp)).toFixed(6));
-  }, [minPrice, maxPrice, token1Symbol, priceInverted]);
+    setRangePreset('stable');
+  }, [token1Symbol, priceInverted, setRangePreset]);
 
   // Handle manual price input
   const handleMinPriceChange = useCallback((value: string) => {
@@ -598,11 +655,21 @@ export function RangeAndAmountsStep() {
     poolCurrentTick: currentTick ?? undefined,
   });
 
+  // Helper: Convert canonical price to display price (inverts if needed)
+  // useRangeHopCallbacks returns canonical prices (from tick), but when inverted we need to display 1/price
+  const toDisplayPrice = useCallback((canonicalPrice: string): string => {
+    if (!priceInverted) return canonicalPrice;
+    const price = parseFloat(canonicalPrice);
+    if (!isFinite(price) || price === 0) return canonicalPrice;
+    return formatPriceForDisplay(1 / price, true);
+  }, [priceInverted, formatPriceForDisplay]);
+
   // Left input (min price) handlers - swap based on isSorted (Uniswap RangeSelector pattern)
+  // When inverted (isSorted=false): min input controls tickUpper, prices need inversion
   const incrementMinPrice = useCallback(() => {
-    const newPrice = isSorted ? getIncrementLower() : getDecrementUpper();
-    if (newPrice) {
-      setMinPrice(newPrice);
+    const canonicalPrice = isSorted ? getIncrementLower() : getDecrementUpper();
+    if (canonicalPrice) {
+      setMinPrice(toDisplayPrice(canonicalPrice));
       setRangePreset('custom');
       // Update tick in context
       const newTick = isSorted
@@ -614,12 +681,12 @@ export function RangeAndAmountsStep() {
         setRange(state.tickLower, newTick);
       }
     }
-  }, [isSorted, getIncrementLower, getDecrementUpper, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange]);
+  }, [isSorted, getIncrementLower, getDecrementUpper, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange, toDisplayPrice]);
 
   const decrementMinPrice = useCallback(() => {
-    const newPrice = isSorted ? getDecrementLower() : getIncrementUpper();
-    if (newPrice) {
-      setMinPrice(newPrice);
+    const canonicalPrice = isSorted ? getDecrementLower() : getIncrementUpper();
+    if (canonicalPrice) {
+      setMinPrice(toDisplayPrice(canonicalPrice));
       setRangePreset('custom');
       // Update tick in context
       const newTick = isSorted
@@ -631,14 +698,15 @@ export function RangeAndAmountsStep() {
         setRange(state.tickLower, newTick);
       }
     }
-  }, [isSorted, getDecrementLower, getIncrementUpper, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange]);
+  }, [isSorted, getDecrementLower, getIncrementUpper, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange, toDisplayPrice]);
 
   // Right input (max price) handlers - swap based on isSorted
+  // When inverted (isSorted=false): max input controls tickLower, prices need inversion
   const incrementMaxPrice = useCallback(() => {
     if (maxPrice === '∞') return;
-    const newPrice = isSorted ? getIncrementUpper() : getDecrementLower();
-    if (newPrice) {
-      setMaxPrice(newPrice);
+    const canonicalPrice = isSorted ? getIncrementUpper() : getDecrementLower();
+    if (canonicalPrice) {
+      setMaxPrice(toDisplayPrice(canonicalPrice));
       setRangePreset('custom');
       // Update tick in context
       const newTick = isSorted
@@ -650,7 +718,7 @@ export function RangeAndAmountsStep() {
         setRange(newTick, state.tickUpper);
       }
     }
-  }, [maxPrice, isSorted, getIncrementUpper, getDecrementLower, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange]);
+  }, [maxPrice, isSorted, getIncrementUpper, getDecrementLower, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange, toDisplayPrice]);
 
   const decrementMaxPrice = useCallback(() => {
     if (maxPrice === '∞') {
@@ -660,9 +728,9 @@ export function RangeAndAmountsStep() {
       setRangePreset('custom');
       return;
     }
-    const newPrice = isSorted ? getDecrementUpper() : getIncrementLower();
-    if (newPrice) {
-      setMaxPrice(newPrice);
+    const canonicalPrice = isSorted ? getDecrementUpper() : getIncrementLower();
+    if (canonicalPrice) {
+      setMaxPrice(toDisplayPrice(canonicalPrice));
       setRangePreset('custom');
       // Update tick in context
       const newTick = isSorted
@@ -674,7 +742,7 @@ export function RangeAndAmountsStep() {
         setRange(newTick, state.tickUpper);
       }
     }
-  }, [maxPrice, isSorted, getDecrementUpper, getIncrementLower, currentPriceRaw, formatPriceForDisplay, priceInverted, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange]);
+  }, [maxPrice, isSorted, getDecrementUpper, getIncrementLower, currentPriceRaw, formatPriceForDisplay, priceInverted, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange, toDisplayPrice]);
 
   // Handle amount changes - sync to context for real calculation via TxContext
   const handleAmount0Change = useCallback((value: string) => {
@@ -736,12 +804,21 @@ export function RangeAndAmountsStep() {
     setIsAmount1OverBalance(amt1 > balance1 && amt1 > 0);
   }, [amount1, token1BalanceData]);
 
-  // Initialize range on mount - default to Wide strategy (Uniswap's most common)
+  // Initialize with stable strategy when data loads
   useEffect(() => {
-    if (!minPrice && !maxPrice) {
-      handleSelectStrategy('wide');
+    if (!minPrice && !maxPrice && liquidityData.length > 0) {
+      handleSelectStrategy('stable');
     }
-  }, []);
+  }, [liquidityData.length]);
+
+  // Re-apply strategy when inversion changes
+  const prevPriceInverted = useRef(priceInverted);
+  useEffect(() => {
+    if (prevPriceInverted.current !== priceInverted && liquidityData.length > 0) {
+      handleSelectStrategy(selectedPreset as RangePreset);
+      prevPriceInverted.current = priceInverted;
+    }
+  }, [priceInverted, liquidityData, selectedPreset, handleSelectStrategy]);
 
   // Validation
   const isValidRange = useMemo(() => {
@@ -760,7 +837,7 @@ export function RangeAndAmountsStep() {
   }, [amount0, amount1, state.isZapMode]);
 
   const hasInsufficientBalance = isAmount0OverBalance || isAmount1OverBalance;
-  const canReview = isValidRange && hasValidAmount && !hasInsufficientBalance && !isCalculating;
+  const canReview = isValidRange && hasValidAmount && !hasInsufficientBalance && !isCalculating && !inputError;
 
   if (!poolConfig) {
     return null;
@@ -770,16 +847,21 @@ export function RangeAndAmountsStep() {
     <Container>
       <TokenInputStyles />
 
+      {/* Back button */}
+      <button
+        onClick={goBack}
+        className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-md px-2 py-1 -ml-2 w-fit transition-colors"
+      >
+        <ChevronLeft className="w-4 h-4" />
+        Back
+      </button>
+
       {/* Section 1: Range Selection (collapsed for rehypo mode) */}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold text-white">
-            {isRehypoMode ? 'Position Range' : 'Set Price Range'}
-          </h2>
+          <h2 className="text-lg font-semibold text-white">Position Range</h2>
           <p className="text-sm text-muted-foreground">
-            {isRehypoMode
-              ? 'Rehypothecation uses full range for optimal yield'
-              : `Define your price range for ${poolConfig.currency0.symbol}/${poolConfig.currency1.symbol}`}
+            Set the price range for your {poolConfig.currency0.symbol}/{poolConfig.currency1.symbol} position
           </p>
         </div>
 
@@ -792,44 +874,81 @@ export function RangeAndAmountsStep() {
           onSelectToken={handleSelectToken}
         />
 
-        {/* Range controls (only for concentrated mode) */}
-        {!isRehypoMode && (
-          <>
-            {/* D3 Interactive Range Chart - always show container, chart handles loading */}
-            <div className="border border-sidebar-border rounded-xl overflow-hidden">
-              <D3LiquidityRangeChart
-                ref={chartRef}
-                poolId={state.poolId ?? undefined}
-                token0Symbol={poolConfig?.currency0.symbol}
-                token1Symbol={poolConfig?.currency1.symbol}
-                tickSpacing={poolConfig?.tickSpacing || 10}
-                currentPrice={parseFloat(currentPriceRaw) || 1}
-                currentTick={currentTick ?? undefined}
-                minPrice={minPrice !== '' && minPrice !== '0' ? parseFloat(minPrice) : undefined}
-                maxPrice={maxPrice !== '' && maxPrice !== '∞' ? parseFloat(maxPrice) : undefined}
-                isFullRange={selectedPreset === 'full'}
-                duration={chartDuration}
-                onRangeChange={(newMinPrice, newMaxPrice) => {
-                  // Update display prices
-                  setMinPrice(formatPriceForDisplay(newMinPrice, priceInverted));
-                  setMaxPrice(formatPriceForDisplay(newMaxPrice, priceInverted));
-                  setRangePreset('custom');
+        {/* Unified Yield info - show immediately after current price for visibility */}
+        {isRehypoMode && (
+          <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent hover:border-muted-foreground/30 transition-colors">
+            <IconCircleInfo className="w-5 h-5 text-muted-foreground shrink-0" />
+            <span className="text-sm text-muted-foreground">
+              {poolConfig.rehypoRange?.isFullRange
+                ? 'Full range position for maximum Aave lending yield'
+                : 'Unified Yield uses an optimized range to offer lending yield'}
+            </span>
+          </div>
+        )}
 
-                  // Convert prices to ticks and update context
-                  // price = 1.0001^tick => tick = log(price) / log(1.0001)
-                  const tickFromPrice = (price: number) => Math.round(Math.log(price) / Math.log(1.0001));
-                  const tickLower = tickFromPrice(newMinPrice);
-                  const tickUpper = tickFromPrice(newMaxPrice);
+        {/* D3 Interactive Range Chart - show chart OR skeleton (Uniswap pattern) */}
+        <div className={cn(
+          "border border-sidebar-border rounded-lg overflow-hidden",
+          isRehypoMode && "opacity-60 pointer-events-none"
+        )}>
+          {liquidityData.length > 0 ? (
+            <>
+            <D3LiquidityRangeChart
+              ref={chartRef}
+              liquidityData={liquidityData}
+              priceData={priceData}
+              currentPrice={chartCurrentPrice}
+              currentTick={currentTick ?? undefined}
+              minPrice={isRehypoMode
+                ? (poolConfig.rehypoRange?.isFullRange ? undefined : parseFloat(poolConfig.rehypoRange?.min || '0'))
+                : (minPrice !== '' && minPrice !== '0' ? parseFloat(minPrice) : undefined)
+              }
+              maxPrice={isRehypoMode
+                ? (poolConfig.rehypoRange?.isFullRange ? undefined : parseFloat(poolConfig.rehypoRange?.max || '0'))
+                : (maxPrice !== '' && maxPrice !== '∞' ? parseFloat(maxPrice) : undefined)
+              }
+              isFullRange={isRehypoMode ? (poolConfig.rehypoRange?.isFullRange ?? true) : selectedPreset === 'full'}
+              duration={chartDuration}
+              onRangeChange={isRehypoMode ? () => {} : (newMinPrice, newMaxPrice) => {
+              // Update display prices
+              setMinPrice(formatPriceForDisplay(newMinPrice, priceInverted));
+              setMaxPrice(formatPriceForDisplay(newMaxPrice, priceInverted));
+              setRangePreset('custom');
 
-                  // Align to tick spacing
-                  const tickSpacingVal = poolConfig?.tickSpacing || 10;
-                  const alignedTickLower = Math.round(tickLower / tickSpacingVal) * tickSpacingVal;
-                  const alignedTickUpper = Math.round(tickUpper / tickSpacingVal) * tickSpacingVal;
+              // Convert prices to ticks and update context
+              // When inverted, prices are in inverted form (e.g., USDC/ETH instead of ETH/USDC)
+              // We need canonical prices (token1/token0) for tick calculation
+              // Canonical price = 1.0001^tick => tick = log(price) / log(1.0001)
+              const tickFromPrice = (price: number) => Math.round(Math.log(price) / Math.log(1.0001));
 
-                  setRange(alignedTickLower, alignedTickUpper);
-                }}
-              />
-              {/* Action buttons below chart: Time period selector, zoom controls, reset */}
+              // When inverted: lower display price = higher canonical price, so swap min/max
+              // Also convert inverted prices back to canonical: canonical = 1/inverted
+              let canonicalMinPrice: number;
+              let canonicalMaxPrice: number;
+
+              if (priceInverted) {
+                // Inverted: newMinPrice is the lower inverted price (higher canonical)
+                // newMaxPrice is the higher inverted price (lower canonical)
+                canonicalMinPrice = 1 / newMaxPrice; // Lower canonical = 1/higher inverted
+                canonicalMaxPrice = 1 / newMinPrice; // Higher canonical = 1/lower inverted
+              } else {
+                canonicalMinPrice = newMinPrice;
+                canonicalMaxPrice = newMaxPrice;
+              }
+
+              const tickLower = tickFromPrice(canonicalMinPrice);
+              const tickUpper = tickFromPrice(canonicalMaxPrice);
+
+              // Align to tick spacing
+              const tickSpacingVal = poolConfig?.tickSpacing || 10;
+              const alignedTickLower = Math.round(tickLower / tickSpacingVal) * tickSpacingVal;
+              const alignedTickUpper = Math.round(tickUpper / tickSpacingVal) * tickSpacingVal;
+
+              setRange(alignedTickLower, alignedTickUpper);
+            }}
+            />
+            {/* Action buttons below chart */}
+            {!isRehypoMode && (
               <LiquidityRangeActionButtons
                 selectedDuration={chartDuration}
                 onDurationChange={setChartDuration}
@@ -839,41 +958,50 @@ export function RangeAndAmountsStep() {
                 onReset={() => chartRef.current?.reset()}
                 isFullRange={selectedPreset === 'full'}
               />
-            </div>
+            )}
+          </>
+          ) : (
+            <LiquidityChartSkeleton height={CHART_DIMENSIONS.CHART_HEIGHT + CHART_DIMENSIONS.TIMESCALE_HEIGHT} />
+          )}
+        </div>
 
-            {/* Min/Max Price Inputs (below chart - Uniswap RangeAmountInput style) */}
-            <div className="border border-sidebar-border rounded-xl overflow-hidden">
-              <div className="flex flex-row">
-                <RangeInput
-                  label="Min"
-                  percentFromCurrent={minPricePercent}
-                  value={minPrice}
-                  onChange={handleMinPriceChange}
-                  onIncrement={incrementMinPrice}
-                  onDecrement={decrementMinPrice}
-                  disabled={selectedPreset === 'full'}
-                  error={!isValidRange && selectedPreset !== 'full'}
-                  position="left"
-                />
-                <RangeInput
-                  label="Max"
-                  percentFromCurrent={maxPricePercent}
-                  value={maxPrice}
-                  onChange={handleMaxPriceChange}
-                  onIncrement={incrementMaxPrice}
-                  onDecrement={decrementMaxPrice}
-                  disabled={selectedPreset === 'full'}
-                  error={!isValidRange && selectedPreset !== 'full'}
-                  position="right"
-                />
-              </div>
-            </div>
+        {/* Min/Max Price Inputs - show in both modes, disabled in Rehypo */}
+        <div className={cn(
+          "border border-sidebar-border rounded-lg overflow-hidden",
+          isRehypoMode && "opacity-60"
+        )}>
+          <div className="flex flex-row">
+            <RangeInput
+              label="Min"
+              percentFromCurrent={isRehypoMode ? '—' : minPricePercent}
+              value={isRehypoMode ? (poolConfig.rehypoRange?.min || '0') : minPrice}
+              onChange={handleMinPriceChange}
+              onIncrement={incrementMinPrice}
+              onDecrement={decrementMinPrice}
+              disabled={isRehypoMode || selectedPreset === 'full'}
+              position="left"
+            />
+            <RangeInput
+              label="Max"
+              percentFromCurrent={isRehypoMode ? '—' : maxPricePercent}
+              value={isRehypoMode ? (poolConfig.rehypoRange?.max || '∞') : maxPrice}
+              onChange={handleMaxPriceChange}
+              onIncrement={incrementMaxPrice}
+              onDecrement={decrementMaxPrice}
+              disabled={isRehypoMode || selectedPreset === 'full'}
+              position="right"
+            />
+          </div>
+        </div>
 
+        {/* Concentrated mode only: Invalid range warning & Price strategies */}
+        {!isRehypoMode && (
+          <>
             {/* Invalid range warning */}
             {!isValidRange && selectedPreset !== 'full' && (
-              <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
-                <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
-                <span className="text-sm text-red-500">Min price must be less than max price</span>
+              <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-red-500/10 border border-transparent hover:border-red-500/30 transition-colors">
+                <IconTriangleWarningFilled className="w-5 h-5 text-red-500 shrink-0" />
+                <span className="text-sm text-red-500">Invalid range selected</span>
               </div>
             )}
 
@@ -895,16 +1023,6 @@ export function RangeAndAmountsStep() {
             </div>
           </>
         )}
-
-        {/* Range info for rehypo mode */}
-        {isRehypoMode && (
-          <div className="flex flex-row items-center gap-3 p-4 rounded-lg bg-sidebar-primary/10 border border-sidebar-primary/30">
-            <Info className="w-5 h-5 text-sidebar-primary shrink-0" />
-            <span className="text-base text-muted-foreground">
-              Full range position for maximum Aave lending yield
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Divider */}
@@ -915,121 +1033,139 @@ export function RangeAndAmountsStep() {
         <div className="flex flex-col gap-1">
           <h2 className="text-lg font-semibold text-white">Deposit Amounts</h2>
           <p className="text-sm text-muted-foreground">
-            Enter how much {poolConfig.currency0.symbol} and {poolConfig.currency1.symbol} to deposit
+            Enter how much liquidity to provide
           </p>
         </div>
 
-        {/* Zap mode toggle */}
-        <ZapModeToggle
-          enabled={state.isZapMode}
-          onToggle={handleZapModeToggle}
-        />
+        {/* Deposit Mode Tabs */}
+        <div className="flex flex-row gap-4 border-b border-sidebar-border">
+          <button
+            onClick={() => handleZapModeToggle(false)}
+            className={cn(
+              "relative pb-3 text-sm font-medium transition-colors",
+              !state.isZapMode
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            Deposit
+            <span className={cn(
+              "absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-all duration-200",
+              !state.isZapMode ? "bg-foreground opacity-100" : "bg-transparent opacity-0"
+            )} />
+          </button>
+          <button
+            onClick={() => handleZapModeToggle(true)}
+            className={cn(
+              "relative pb-3 text-sm font-medium transition-colors",
+              state.isZapMode
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            Zap
+            <span className={cn(
+              "absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-all duration-200",
+              state.isZapMode ? "bg-foreground opacity-100" : "bg-transparent opacity-0"
+            )} />
+          </button>
+        </div>
 
-        {/* Token inputs */}
-        <div className="flex flex-col gap-3">
-          <TokenInputCard
-            id="wizard-amount0"
-            tokenSymbol={poolConfig.currency0.symbol}
-            value={amount0}
-            onChange={handleAmount0Change}
-            label={state.isZapMode ? 'Input Token' : 'Add'}
-            maxAmount={token0BalanceData?.formatted || "0"}
-            usdPrice={token0USDPrice || 0}
-            formatUsdAmount={formatCalculatedAmount}
-            isOverBalance={isAmount0OverBalance}
-            animationControls={wiggleControls0}
-            onPercentageClick={(percentage) => handleToken0Percentage(percentage)}
-            disabled={state.isZapMode && state.inputSide === 'token1'}
-          />
+        {/* Token inputs with animated content switching */}
+        {/* Padding compensates for gradient border's -1px inset, negative margin restores layout */}
+        <div className="relative overflow-hidden -mx-px px-px -my-px py-px">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={state.isZapMode ? 'zap' : 'deposit'}
+              initial={{ x: zapEnterOffset, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: zapExitOffset, opacity: 0 }}
+              transition={SPRING_CONFIG}
+              className="flex flex-col gap-3"
+            >
+              {state.isZapMode ? (
+                /* Zap mode - single token input with switchable token */
+                <TokenInputCard
+                  id="wizard-amount-zap"
+                  tokenSymbol={state.inputSide === 'token0' ? poolConfig.currency0.symbol : poolConfig.currency1.symbol}
+                  value={state.inputSide === 'token0' ? amount0 : amount1}
+                  onChange={state.inputSide === 'token0' ? handleAmount0Change : handleAmount1Change}
+                  label="Add"
+                  maxAmount={(state.inputSide === 'token0' ? token0BalanceData?.formatted : token1BalanceData?.formatted) || "0"}
+                  usdPrice={(state.inputSide === 'token0' ? token0USDPrice : token1USDPrice) || 0}
+                  formatUsdAmount={formatCalculatedAmount}
+                  isOverBalance={state.inputSide === 'token0' ? isAmount0OverBalance : isAmount1OverBalance}
+                  isLoading={amount0Loading}
+                  animationControls={wiggleControls0}
+                  onPercentageClick={(percentage) => state.inputSide === 'token0' ? handleToken0Percentage(percentage) : handleToken1Percentage(percentage)}
+                  onTokenClick={() => setInputSide(state.inputSide === 'token0' ? 'token1' : 'token0')}
+                />
+              ) : (
+                /* Standard deposit mode - two token inputs */
+                <>
+                  <TokenInputCard
+                    id="wizard-amount0"
+                    tokenSymbol={poolConfig.currency0.symbol}
+                    value={amount0}
+                    onChange={handleAmount0Change}
+                    label="Add"
+                    maxAmount={token0BalanceData?.formatted || "0"}
+                    usdPrice={token0USDPrice || 0}
+                    formatUsdAmount={formatCalculatedAmount}
+                    isOverBalance={isAmount0OverBalance}
+                    isLoading={amount0Loading}
+                    animationControls={wiggleControls0}
+                    onPercentageClick={(percentage) => handleToken0Percentage(percentage)}
+                    disabled={deposit0Disabled}
+                  />
 
-          {/* Plus indicator */}
-          {!state.isZapMode && (
-            <div className="flex justify-center items-center py-1">
-              <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-surface border border-sidebar-border/60">
-                <span className="text-muted-foreground text-base">+</span>
-              </div>
-            </div>
-          )}
-
-          {/* Token 1 Input */}
-          {!state.isZapMode && (
-            <TokenInputCard
-              id="wizard-amount1"
-              tokenSymbol={poolConfig.currency1.symbol}
-              value={amount1}
-              onChange={handleAmount1Change}
-              label="Add"
-              maxAmount={token1BalanceData?.formatted || "0"}
-              usdPrice={token1USDPrice || 0}
-              formatUsdAmount={formatCalculatedAmount}
-              isOverBalance={isAmount1OverBalance}
-              animationControls={wiggleControls1}
-              onPercentageClick={(percentage) => handleToken1Percentage(percentage)}
-            />
-          )}
-
-          {/* Zap mode: Single token selection */}
-          {state.isZapMode && (
-            <div className="flex flex-row gap-3">
-              <button
-                onClick={() => setInputSide('token0')}
-                className={cn(
-                  'flex-1 p-3 rounded-lg border transition-colors text-center text-base font-medium',
-                  state.inputSide === 'token0'
-                    ? 'border-sidebar-primary bg-sidebar-primary/10 text-white'
-                    : 'border-sidebar-border bg-surface text-muted-foreground'
-                )}
-              >
-                Use {poolConfig.currency0.symbol}
-              </button>
-              <button
-                onClick={() => setInputSide('token1')}
-                className={cn(
-                  'flex-1 p-3 rounded-lg border transition-colors text-center text-base font-medium',
-                  state.inputSide === 'token1'
-                    ? 'border-sidebar-primary bg-sidebar-primary/10 text-white'
-                    : 'border-sidebar-border bg-surface text-muted-foreground'
-                )}
-              >
-                Use {poolConfig.currency1.symbol}
-              </button>
-            </div>
-          )}
+                  {/* Token 1 Input */}
+                  {!deposit1Disabled && (
+                    <TokenInputCard
+                      id="wizard-amount1"
+                      tokenSymbol={poolConfig.currency1.symbol}
+                      value={amount1}
+                      onChange={handleAmount1Change}
+                      label="Add"
+                      maxAmount={token1BalanceData?.formatted || "0"}
+                      usdPrice={token1USDPrice || 0}
+                      formatUsdAmount={formatCalculatedAmount}
+                      isOverBalance={isAmount1OverBalance}
+                      isLoading={amount1Loading}
+                      animationControls={wiggleControls1}
+                      onPercentageClick={(percentage) => handleToken1Percentage(percentage)}
+                      disabled={deposit1Disabled}
+                    />
+                  )}
+                </>
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
 
         {/* Insufficient balance warning */}
         {hasInsufficientBalance && (
-          <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
-            <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
+          <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-red-500/10 border border-transparent hover:border-red-500/30 transition-colors">
+            <IconTriangleWarningFilled className="w-5 h-5 text-red-500 shrink-0" />
             <span className="text-sm text-red-500">Insufficient balance for this deposit</span>
           </div>
         )}
       </div>
 
-      {/* Action buttons */}
-      <div className="flex flex-row gap-4 pt-4">
-        <Button
-          variant="outline"
-          onClick={goBack}
-          className="flex-shrink-0 h-11 px-6"
-        >
-          Back
-        </Button>
-        <Button
-          onClick={handleReview}
-          disabled={!canReview}
-          className="flex-1 h-11 bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90 text-base font-medium"
-        >
-          {isCalculating ? (
-            <>
-              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-              Calculating...
-            </>
-          ) : (
-            'Review'
-          )}
-        </Button>
-      </div>
+      {/* Review button */}
+      <Button
+        onClick={handleReview}
+        disabled={!canReview}
+        className={cn(
+          "w-full h-11",
+          !canReview
+            ? "relative border border-sidebar-border bg-button text-sm font-medium transition-all duration-200 overflow-hidden !opacity-100 text-white/75"
+            : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
+        )}
+        style={!canReview ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+      >
+        Review
+      </Button>
     </Container>
   );
 }

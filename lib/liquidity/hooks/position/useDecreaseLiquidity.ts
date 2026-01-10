@@ -17,6 +17,7 @@ import { prefetchService } from '@/lib/prefetch-service';
 import { invalidateAfterTx } from '@/lib/invalidation';
 import JSBI from 'jsbi';
 import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
+import { useTransactionAdder, TransactionType, type LiquidityDecreaseTransactionInfo } from '@/lib/transactions';
 
 // Re-export transaction builders and types for external use
 export { buildDecreaseLiquidityTx, buildCollectFeesTx, parseTokenIdFromPosition } from '@/lib/liquidity';
@@ -52,6 +53,10 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   const publicClient = usePublicClient();
   const { data: hash, writeContract, isPending: isDecreaseSendPending, error: decreaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isDecreaseConfirming, isSuccess: isDecreaseConfirmed, error: decreaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
+
+  // Transaction tracking
+  const addTransaction = useTransactionAdder();
+  const trackedHashes = useRef(new Set<string>());
 
   // (debug logging removed)
 
@@ -705,6 +710,32 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       setIsDecreasing(false);
     }
   }, [decreaseSendError]);
+
+  // Track transaction when hash is received
+  useEffect(() => {
+    if (!hash || !chainId || !accountAddress) return;
+    const hashString = hash.toString();
+    if (trackedHashes.current.has(hashString)) return;
+    trackedHashes.current.add(hashString);
+
+    // Determine transaction type based on action
+    const isCollect = lastWasCollectOnly.current;
+    const isBurn = lastIsFullBurn.current;
+    const posData = lastDecreaseData.current;
+
+    const typeInfo = {
+      type: isCollect ? TransactionType.CollectFees : TransactionType.LiquidityDecrease,
+      currency0Id: posData ? `${chainId}-${getToken(posData.token0Symbol)?.address ?? ''}` : '',
+      currency1Id: posData ? `${chainId}-${getToken(posData.token1Symbol)?.address ?? ''}` : '',
+      currency0AmountRaw: posData?.decreaseAmount0 ?? '0',
+      currency1AmountRaw: posData?.decreaseAmount1 ?? '0',
+    } as LiquidityDecreaseTransactionInfo;
+
+    addTransaction(
+      { hash, chainId, from: accountAddress, to: V4_POSITION_MANAGER_ADDRESS } as any,
+      typeInfo
+    );
+  }, [hash, chainId, accountAddress, addTransaction]);
 
   useEffect(() => {
     if (!hash) return;

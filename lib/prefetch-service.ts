@@ -1,6 +1,9 @@
 import { getAllPools } from './pools-config';
 import { getStoredNetworkMode } from './network-mode';
 
+/** Time to keep prefetched pools in memory before allowing re-prefetch (5 minutes) */
+const PREFETCH_CACHE_TTL = 5 * 60 * 1000;
+
 /**
  * Simplified prefetch service for liquidity pools
  * Removed over-engineering: no queues, no priorities, no complex listeners
@@ -12,6 +15,9 @@ class SimplePrefetchService {
     owner?: string;
     cb: (payload: { owner: string; reason?: string }) => void
   }> = [];
+
+  /** Track prefetched pools to avoid duplicate calls */
+  private static prefetchedPools = new Map<string, number>();
 
   /**
    * Simple pool data prefetch
@@ -28,6 +34,42 @@ class SimplePrefetchService {
     } catch (error) {
       // Silent failure - prefetch is not critical
     }
+  }
+
+  /**
+   * Prefetch pool detail page data (chart data, pool state)
+   * Called on hover to make pool detail navigation instant
+   */
+  static async prefetchPoolDetailData(poolId: string): Promise<void> {
+    // Check if already prefetched recently
+    const lastPrefetch = this.prefetchedPools.get(poolId);
+    if (lastPrefetch && Date.now() - lastPrefetch < PREFETCH_CACHE_TTL) {
+      return;
+    }
+
+    // Mark as prefetched
+    this.prefetchedPools.set(poolId, Date.now());
+
+    try {
+      const networkMode = getStoredNetworkMode();
+
+      // Prefetch pool chart data in parallel
+      await Promise.all([
+        // Pool batch data (includes TVL, volume, fees, APR)
+        fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`).catch(() => {}),
+        // Pool chart data (60 days of history)
+        fetch(`/api/liquidity/pool-chart-data?poolId=${poolId}&days=60`).catch(() => {}),
+      ]);
+    } catch {
+      // Silent failure - prefetch is not critical
+    }
+  }
+
+  /**
+   * Clear prefetch cache for a specific pool (e.g., after transaction)
+   */
+  static clearPoolPrefetchCache(poolId: string): void {
+    this.prefetchedPools.delete(poolId);
   }
 
   /**
