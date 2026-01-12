@@ -82,9 +82,35 @@ export interface CreateLPPositionRequestArgs {
 
 /**
  * Request args for increasing an existing LP position via Alphix API.
+ * Note: This uses amount0/amount1 instead of inputAmount/inputTokenSymbol
+ * because prepare-increase-tx.ts expects explicit amounts for both tokens.
  */
-export interface IncreaseLPPositionRequestArgs extends CreateLPPositionRequestArgs {
-  tokenId?: string;
+export interface IncreaseLPPositionRequestArgs {
+  userAddress: string;
+  tokenId: string;
+  amount0: string;
+  amount1: string;
+  chainId: number;
+  slippageBps?: number;
+  deadlineMinutes?: number;
+  permitBatchData?: {
+    domain?: {
+      name: string;
+      chainId: number;
+      verifyingContract: string;
+    };
+    types?: Record<string, Array<{ name: string; type: string }>>;
+    values?: {
+      details: Array<{
+        token: string;
+        amount: string;
+        expiration: string;
+        nonce: string;
+      }>;
+      spender: string;
+      sigDeadline: string;
+    };
+  };
 }
 
 /**

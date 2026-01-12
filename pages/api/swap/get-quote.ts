@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getAddress, parseUnits, type Address } from 'viem';
+import { getAddress, type Address } from 'viem';
 import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
 import { RetryUtility } from '../../../lib/retry-utility';
+import { safeParseUnits } from '../../../lib/liquidity/utils/parsing/amountParsing';
 
 // Simple in-memory cache with 15s TTL (matches Uniswap's 10s pattern)
 const quoteCache = new Map<string, { result: any; timestamp: number }>();
@@ -18,31 +19,6 @@ const shouldRetryRpc = (_attempt: number, error: any): boolean => {
          msg.includes('econnrefused') || msg.includes('etimedout');
 };
 import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '../../../lib/network-mode';
-
-// Helper function to safely parse amounts and prevent scientific notation errors
-const safeParseUnits = (amount: string, decimals: number): bigint => {
-  // Handle edge cases
-  if (!amount || amount === "0" || amount === "0.0") {
-    return 0n;
-  }
-
-  // Check for scientific notation (e.g., "1e-8")
-  if (amount.toLowerCase().includes('e')) {
-    // Convert scientific notation to decimal using parseFloat, then format
-    const numericAmount = parseFloat(amount);
-    if (isNaN(numericAmount)) {
-      throw new Error("Invalid number format");
-    }
-    const fullDecimalString = numericAmount.toFixed(decimals);
-    const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
-    const finalString = trimmedString === '.' ? '0' : trimmedString;
-    return parseUnits(finalString, decimals);
-  }
-
-  // For normal decimal strings, use parseUnits directly to preserve precision
-  // viem's parseUnits handles decimal strings correctly without floating point errors
-  return parseUnits(amount, decimals);
-};
 import { Token, CurrencyAmount } from '@uniswap/sdk-core';
 import { tickToPrice } from '@uniswap/v3-sdk';
 import { 
@@ -231,7 +207,7 @@ async function getV4QuoteExactInputSingle(
   amountInSmallestUnits: bigint,
   poolConfig: any,
   networkMode?: NetworkMode
-): Promise<{ amountOut: bigint; gasEstimate: bigint; midPrice?: number }> {
+): Promise<{ amountOut: bigint; gasEstimate: bigint; midPrice?: number; dynamicFeeBps?: number }> {
   const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
 
   // Structure the parameters as QuoteExactSingleParams struct
@@ -280,6 +256,9 @@ async function getV4QuoteExactInputSingle(
       lpFee: slot0.lpFee
     });
 
+    // Convert lpFee (millionths) to basis points
+    const dynamicFeeBps = Math.max(0, Math.round((Number(slot0.lpFee || 0) / 1_000_000) * 10_000 * 100) / 100);
+
     console.log('[V4 Quoter] Calling quoter.quoteExactInputSingle...');
     const retryResult = await RetryUtility.execute(
       () => quoter.callStatic.quoteExactInputSingle(quoteParams),
@@ -291,7 +270,7 @@ async function getV4QuoteExactInputSingle(
     // Get mid price for price impact calculation
     const midPrice = await getMidPrice(fromToken, toToken, poolConfig, networkMode);
 
-    return { amountOut, gasEstimate, midPrice: midPrice || undefined };
+    return { amountOut, gasEstimate, midPrice: midPrice || undefined, dynamicFeeBps };
   } catch (error: any) {
     console.error('[V4 Quoter ExactInputSingle] FAILED:', {
       errorMessage: error.message,
@@ -310,7 +289,7 @@ async function getV4QuoteExactOutputSingle(
   amountOutSmallestUnits: bigint,
   poolConfig: any,
   networkMode?: NetworkMode
-): Promise<{ amountIn: bigint; gasEstimate: bigint; midPrice?: number }> {
+): Promise<{ amountIn: bigint; gasEstimate: bigint; midPrice?: number; dynamicFeeBps?: number }> {
   const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
 
   const quoteParams = [
@@ -344,7 +323,10 @@ async function getV4QuoteExactOutputSingle(
 
     // Verify pool exists
     console.log('[V4 Quoter ExactOutputSingle] Verifying pool exists...');
-    await stateView.callStatic.getSlot0(poolId);
+    const slot0 = await stateView.callStatic.getSlot0(poolId);
+
+    // Convert lpFee (millionths) to basis points
+    const dynamicFeeBps = Math.max(0, Math.round((Number(slot0.lpFee || 0) / 1_000_000) * 10_000 * 100) / 100);
 
     console.log('[V4 Quoter ExactOutputSingle] Calling quoter.quoteExactOutputSingle...');
     const retryResult = await RetryUtility.execute(
@@ -357,7 +339,7 @@ async function getV4QuoteExactOutputSingle(
     // Get mid price for price impact calculation
     const midPrice = await getMidPrice(fromToken, toToken, poolConfig, networkMode);
 
-    return { amountIn, gasEstimate, midPrice: midPrice || undefined };
+    return { amountIn, gasEstimate, midPrice: midPrice || undefined, dynamicFeeBps };
   } catch (error: any) {
     console.error('[V4 Quoter ExactOutputSingle] FAILED:', {
       errorMessage: error.message,
@@ -376,7 +358,7 @@ async function getV4QuoteExactInputMultiHop(
   amountInSmallestUnits: bigint,
   chainId: number,
   networkMode?: NetworkMode
-): Promise<{ amountOut: bigint; gasEstimate: bigint }> {
+): Promise<{ amountOut: bigint; gasEstimate: bigint; dynamicFeeBps?: number }> {
 
   if (!fromToken.address) {
     throw new Error(`From token ${fromToken.symbol} has undefined address`);
@@ -442,6 +424,7 @@ async function getV4QuoteExactInputMultiHop(
 
     // Preflight: verify each hop pool exists via StateView
     const stateView = new ethers.Contract(getStateViewAddress(networkMode), STATE_VIEW_ABI as any, provider);
+    let dynamicFeeBps: number | undefined;
     for (let i = 0; i < route.pools.length; i++) {
       const hop = route.pools[i];
       const poolCfg = getPoolById(hop.poolId, networkMode);
@@ -451,7 +434,11 @@ async function getV4QuoteExactInputMultiHop(
       // Use subgraphId directly - DO NOT recalculate using keccak256
       const poolId = poolCfg.subgraphId;
       console.log(`[V4 Quoter ExactInputMultiHop] Verifying hop ${i}: ${poolCfg.name} (poolId: ${poolId})`);
-      await stateView.callStatic.getSlot0(poolId);
+      const slot0 = await stateView.callStatic.getSlot0(poolId);
+      // Use fee from first pool (matches existing behavior in useSwapRoutingFees)
+      if (i === 0) {
+        dynamicFeeBps = Math.max(0, Math.round((Number(slot0.lpFee || 0) / 1_000_000) * 10_000 * 100) / 100);
+      }
     }
 
     console.log('[V4 Quoter ExactInputMultiHop] Calling quoter.quoteExactInput...');
@@ -462,7 +449,7 @@ async function getV4QuoteExactInputMultiHop(
     );
     const [amountOut, gasEstimate] = retryResult.data!;
     console.log('[V4 Quoter ExactInputMultiHop] Quote success:', { amountOut: amountOut.toString(), gasEstimate: gasEstimate.toString() });
-    return { amountOut, gasEstimate };
+    return { amountOut, gasEstimate, dynamicFeeBps };
   } catch (error: any) {
     console.error('[V4 Quoter ExactInputMultiHop] FAILED:', {
       errorMessage: error.message,
@@ -479,40 +466,41 @@ async function getV4QuoteExactOutputMultiHop(
   amountOutSmallestUnits: bigint,
   chainId: number,
   networkMode?: NetworkMode
-): Promise<{ amountIn: bigint; gasEstimate: bigint }> {
+): Promise<{ amountIn: bigint; gasEstimate: bigint; dynamicFeeBps?: number }> {
   try {
-    // Note: provider is created but not used directly - each hop calls getV4QuoteExactOutputSingle
-    // which creates its own provider. Keeping for consistency but this could be removed.
     const _provider = createProvider(networkMode);
 
-    // Stepwise chain ExactOut over each hop (reliable across ABI quirks)
-    let requiredOut = amountOutSmallestUnits; // smallest units of final token
+    let requiredOut = amountOutSmallestUnits;
     let totalGas = 0n;
+    let dynamicFeeBps: number | undefined;
+
     for (let i = route.pools.length - 1; i >= 0; i--) {
       const outSymbol = route.path[i + 1];
       const inSymbol = route.path[i];
       const outTok = createTokenSDK(outSymbol as any, chainId, networkMode);
       const inTok = createTokenSDK(inSymbol as any, chainId, networkMode);
       if (!outTok || !inTok) throw new Error(`Token SDK missing for hop ${i}: ${inSymbol}->${outSymbol}`);
-      // Prefer resolving by token symbols for robustness
+
       let poolCfg = getPoolConfigForTokens(inSymbol as any, outSymbol as any, networkMode);
       if (!poolCfg) {
-        // Try reverse ordering if config sorted differently
         poolCfg = getPoolConfigForTokens(outSymbol as any, inSymbol as any, networkMode);
       }
       if (!poolCfg) throw new Error(`Missing pool config for hop ${i}: ${inSymbol}->${outSymbol}`);
 
-      // requiredOut is in outTok decimals already
       try {
-        const { amountIn, gasEstimate } = await getV4QuoteExactOutputSingle(inTok, outTok, requiredOut, poolCfg, networkMode);
-        requiredOut = amountIn; // becomes the exact output target for previous hop
-        totalGas += gasEstimate;
+        const result = await getV4QuoteExactOutputSingle(inTok, outTok, requiredOut, poolCfg, networkMode);
+        requiredOut = result.amountIn;
+        totalGas += result.gasEstimate;
+        // Use fee from first pool in swap direction (last in iteration)
+        if (i === 0 && result.dynamicFeeBps !== undefined) {
+          dynamicFeeBps = result.dynamicFeeBps;
+        }
       } catch (hopErr: any) {
         console.error(`[V4 Quoter] ExactOut hop failed ${inSymbol} -> ${outSymbol} (hop ${i})`, hopErr);
         throw new Error(`ExactOut hop failed: ${inSymbol} -> ${outSymbol}`);
       }
     }
-    return { amountIn: requiredOut, gasEstimate: totalGas };
+    return { amountIn: requiredOut, gasEstimate: totalGas, dynamicFeeBps };
   } catch (error: any) {
     throw error;
   }
@@ -545,7 +533,11 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     const cacheKey = getCacheKey(req.body);
     const cached = quoteCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < QUOTE_CACHE_TTL) {
+      const ageSeconds = Math.floor((Date.now() - cached.timestamp) / 1000);
+      const maxAgeRemaining = Math.max(0, Math.floor((QUOTE_CACHE_TTL - (Date.now() - cached.timestamp)) / 1000));
       res.setHeader('X-Cache', 'HIT');
+      res.setHeader('Age', ageSeconds.toString());
+      res.setHeader('Cache-Control', `private, max-age=${maxAgeRemaining}`);
       return res.status(200).json(cached.result);
     }
 
@@ -592,7 +584,15 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     const amountOutSmallestUnits = swapType === 'ExactOut'
       ? safeParseUnits(amountDecimalsStr, toToken.decimals)
       : 0n;
-    
+
+    // Fail fast: reject if parsed amount is 0 but input wasn't explicitly zero
+    // This preserves old behavior where invalid inputs threw errors
+    const isExplicitZero = !amountDecimalsStr || amountDecimalsStr === '0' || amountDecimalsStr === '0.0';
+    const parsedAmount = swapType === 'ExactIn' ? amountInSmallestUnits : amountOutSmallestUnits;
+    if (parsedAmount === 0n && !isExplicitZero) {
+      return res.status(400).json({ message: 'Invalid amount format' });
+    }
+
     // Find the best route using the routing engine (network-aware)
     const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol, networkMode);
 
@@ -610,6 +610,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     let amountIn: bigint = 0n;
     let gasEstimate: bigint;
     let midPrice: number | null = null;
+    let dynamicFeeBps: number | undefined;
 
     if (swapType === 'ExactIn') {
       if (route.isDirectRoute) {
@@ -621,11 +622,13 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         amountOut = result.amountOut;
         gasEstimate = result.gasEstimate;
         midPrice = result.midPrice || null;
+        dynamicFeeBps = result.dynamicFeeBps;
       } else {
         const result = await getV4QuoteExactInputMultiHop(fromToken, route, amountInSmallestUnits, req.body.chainId, networkMode);
         amountOut = result.amountOut;
         gasEstimate = result.gasEstimate;
         midPrice = await computeRouteMidPrice(route, req.body.chainId, networkMode);
+        dynamicFeeBps = result.dynamicFeeBps;
       }
     } else { // ExactOut
       if (route.isDirectRoute) {
@@ -637,11 +640,13 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         amountIn = result.amountIn;
         gasEstimate = result.gasEstimate;
         midPrice = result.midPrice || null;
+        dynamicFeeBps = result.dynamicFeeBps;
       } else {
         const result = await getV4QuoteExactOutputMultiHop(toToken, route, amountOutSmallestUnits, req.body.chainId, networkMode);
         amountIn = result.amountIn;
         gasEstimate = result.gasEstimate;
         midPrice = await computeRouteMidPrice(route, req.body.chainId, networkMode);
+        dynamicFeeBps = result.dynamicFeeBps;
       }
     }
     
@@ -662,6 +667,11 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         // DO NOT use abs() - sign is meaningful per Uniswap convention:
         // Positive → unfavorable (show warning), Negative → favorable (no warning)
 
+        if (priceImpact < -50 || priceImpact > 500) {
+          console.warn('[get-quote] Price impact out of bounds, setting to null:', priceImpact);
+          priceImpact = null;
+        }
+
         console.log('[get-quote] Price Impact Calculation:', {
           fromToken: fromTokenSymbol,
           toToken: toTokenSymbol,
@@ -669,8 +679,8 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
           toAmount: toAmountDecimals,
           midPrice,
           executionPrice,
-          priceImpact: `${priceImpact.toFixed(2)}%`,
-          favorable: priceImpact < 0,
+          priceImpact: priceImpact !== null ? `${priceImpact.toFixed(2)}%` : 'null (out of bounds)',
+          favorable: priceImpact !== null && priceImpact < 0,
         });
       }
     } else {
@@ -693,13 +703,14 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       gasEstimate: gasEstimate.toString(),
       midPrice: midPrice !== null ? midPrice.toString() : undefined,
       priceImpact: priceImpact !== null ? priceImpact.toString() : undefined,
+      dynamicFeeBps,
       route: {
         path: route.path,
         hops: route.hops,
         isDirectRoute: route.isDirectRoute,
         pools: route.pools.map(pool => pool.poolName)
       },
-      debug: true
+      debug: process.env.NODE_ENV !== 'production'
     };
 
     // Cache successful quote (15s TTL)

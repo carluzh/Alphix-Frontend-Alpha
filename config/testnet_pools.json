@@ -22,7 +22,8 @@
       "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD",
       "decimals": 6,
       "icon": "/tokens/aUSDC.png",
-      "usdPrice": "1.0"
+      "usdPrice": "1.0",
+      "color": "#2775CA"
     },
     "aUSDT": {
       "symbol": "aUSDT",
@@ -30,28 +31,32 @@
       "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC",
       "decimals": 6,
       "icon": "/tokens/aUSDT.png",
-      "usdPrice": "1.0"
+      "usdPrice": "1.0",
+      "color": "#26A17B"
     },
     "aETH": {
       "symbol": "aETH",
       "name": "Alphix Ethereum",
       "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7",
       "decimals": 18,
-      "icon": "/tokens/aETH.png"
+      "icon": "/tokens/aETH.png",
+      "color": "#627EEA"
     },
     "aBTC": {
       "symbol": "aBTC",
       "name": "Alphix Bitcoin",
       "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604",
       "decimals": 8,
-      "icon": "/tokens/aBTC.png"
+      "icon": "/tokens/aBTC.png",
+      "color": "#F7931A"
     },
     "ETH": {
       "symbol": "ETH",
       "name": "Ethereum",
       "address": "0x0000000000000000000000000000000000000000",
       "decimals": 18,
-      "icon": "/tokens/ETH.png"
+      "icon": "/tokens/ETH.png",
+      "color": "#627EEA"
     },
     "aDAI": {
       "symbol": "aDAI",
@@ -59,7 +64,8 @@
       "address": "0x6876Ef4dc1aBADd2f3dA7a0ccbF562E63b62964e",
       "decimals": 18,
       "icon": "/tokens/aDAI.png",
-      "usdPrice": "1.0"
+      "usdPrice": "1.0",
+      "color": "#F5AC37"
     }
   },
   "pools": [

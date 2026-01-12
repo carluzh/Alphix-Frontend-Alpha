@@ -430,8 +430,13 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
                         // @see interface/apps/web/src/components/Liquidity/utils/parseFromRest.ts (lines 393-394)
                         const feeData = feeCache.get(r.id);
 
+                        // Convert hex positionId to decimal for cleaner URLs
+                        const positionIdDecimal = r.id && r.id.startsWith('0x')
+                            ? BigInt(r.id).toString()
+                            : (r.id || '');
+
                         processed.push({
-                            positionId: r.id || '',
+                            positionId: positionIdDecimal,
                             owner: r.owner,
                             poolId: poolIdStr,
                             token0: { address: t0.address, symbol: t0.symbol || 'T0', amount: ethers.utils.formatUnits(raw0, t0.decimals), rawAmount: raw0 },

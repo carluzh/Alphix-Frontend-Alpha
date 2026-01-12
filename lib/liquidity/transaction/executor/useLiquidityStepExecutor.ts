@@ -139,11 +139,12 @@ export function useLiquidityStepExecutor(
    * Send transaction helper using wagmi
    */
   const sendTransaction = useCallback(
-    async (args: { to: `0x${string}`; data: Hex; value?: bigint }): Promise<`0x${string}`> => {
+    async (args: { to: `0x${string}`; data: Hex; value?: bigint; gasLimit?: bigint }): Promise<`0x${string}`> => {
       return sendTransactionAsync({
         to: args.to,
         data: args.data,
         value: args.value,
+        gas: args.gasLimit, // wagmi uses 'gas' not 'gasLimit'
       });
     },
     [sendTransactionAsync],
@@ -265,8 +266,25 @@ export function useLiquidityStepExecutor(
 
             // COPIED FROM UNISWAP: case TransactionStepType.Permit2Signature:
             case TransactionStepType.Permit2Signature: {
+              // C3: Extract token info for permit caching
+              const token0Symbol = txContext.action?.currency0Amount?.currency?.symbol;
+              const token1Symbol = txContext.action?.currency1Amount?.currency?.symbol;
+              // Extract ticks from context if available (for Create/Increase flows)
+              const tickLower = (txContext as any).sqrtRatioX96 ? undefined : undefined; // Ticks not directly available, caching will work without them
+              const tickUpper = undefined;
+
               signature = await handleSignatureStep(
-                { address, step, setCurrentStep: setCurrentStep(i) },
+                {
+                  address,
+                  step,
+                  setCurrentStep: setCurrentStep(i),
+                  // C3: Pass caching params
+                  chainId,
+                  token0Symbol,
+                  token1Symbol,
+                  tickLower,
+                  tickUpper,
+                },
                 signTypedData,
               );
               break;

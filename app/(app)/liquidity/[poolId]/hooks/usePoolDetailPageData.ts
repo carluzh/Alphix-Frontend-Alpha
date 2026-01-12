@@ -43,6 +43,7 @@ export interface PoolConfig {
   pair: string;
   tickSpacing: number;
   type?: string;
+  hooks?: string;
 }
 
 export interface PoolStats {
@@ -145,6 +146,7 @@ function getPoolConfiguration(poolId: string): PoolConfig | null {
     pair: `${token0.symbol} / ${token1.symbol}`,
     tickSpacing: poolConfig.tickSpacing || DEFAULT_TICK_SPACING,
     type: poolConfig.type,
+    hooks: poolConfig.hooks,
   };
 }
 

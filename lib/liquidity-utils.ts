@@ -1,5 +1,6 @@
 import { encodeFunctionData, parseUnits, type Address, type Hex, getAddress, encodeAbiParameters, keccak256 } from 'viem';
 import { getToken } from './pools-config';
+import { PERMIT2_TYPES } from './permit-types';
 
 // Helper function to safely parse amounts and prevent scientific notation errors
 const safeParseUnits = (amount: string, decimals: number): bigint => {
@@ -373,20 +374,9 @@ export async function buildCollectFeesCall({ tokenId, userAddress, chainId }: Bu
 }
 
 // --- Permit2 batch permit (EIP-712) preparation per guide ---
-// Types schema used for signing (kept local for clarity)
-export const PERMIT2_TYPES = {
-    PermitDetails: [
-        { name: 'token', type: 'address' },
-        { name: 'amount', type: 'uint160' },
-        { name: 'expiration', type: 'uint48' },
-        { name: 'nonce', type: 'uint48' },
-    ],
-    PermitBatch: [
-        { name: 'details', type: 'PermitDetails[]' },
-        { name: 'spender', type: 'address' },
-        { name: 'sigDeadline', type: 'uint256' },
-    ],
-} as const;
+// PERMIT2_TYPES imported from lib/permit-types.ts (consolidated source)
+// Re-export for backwards compatibility with existing imports
+export { PERMIT2_TYPES } from './permit-types';
 
 export type Permit2Details = {
     token: Address;

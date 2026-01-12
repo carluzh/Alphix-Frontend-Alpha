@@ -1,19 +1,13 @@
 "use client";
 
 import { memo, useState, useCallback, useEffect, useRef, useMemo, Suspense } from "react";
-import React from "react";
-import { toast } from "sonner";
 import { useAccount } from "wagmi";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { IconBadgeCheck2 } from "nucleo-micro-bold-essential";
-import { Sparkles, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { createLazy } from "@/lib/lazyWithRetry";
-import { getExplorerTxUrl } from "@/lib/wagmiConfig";
-import { useIncreaseLiquidity, useDecreaseLiquidity } from "@/lib/liquidity/hooks";
 import { parseSubgraphPosition, type SubgraphPosition, type PositionInfo } from "@/lib/uniswap/liquidity";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
@@ -21,6 +15,7 @@ import type { TokenSymbol } from "@/lib/pools-config";
 import { PoolDetailHeader } from "./PoolDetailHeader";
 import { PoolDetailStats } from "./PoolDetailStats";
 import { PoolDetailPositions } from "./PoolDetailPositions";
+import { PoolDetailSidebar } from "./PoolDetailSidebar";
 import { ChartSection } from "../ChartSection";
 import type {
   PoolConfig,
@@ -30,12 +25,6 @@ import type {
 } from "../../hooks";
 
 // Lazy load heavy modals
-const IncreaseLiquidityModal = createLazy(() =>
-  import("@/components/liquidity/increase").then((m) => ({ default: m.IncreaseLiquidityModal }))
-);
-const DecreaseLiquidityModal = createLazy(() =>
-  import("@/components/liquidity/decrease").then((m) => ({ default: m.DecreaseLiquidityModal }))
-);
 const PositionDetailsModal = createLazy(() =>
   import("@/components/liquidity/PositionDetailsModal").then((m) => ({
     default: m.PositionDetailsModal,
@@ -135,7 +124,7 @@ export const PoolDetail = memo(function PoolDetail({
 }: PoolDetailProps) {
   const isMobile = useIsMobile();
   const router = useRouter();
-  const { address: accountAddress, chainId } = useAccount();
+  const { chainId } = useAccount();
 
   // Window width for responsive chart
   const [windowWidth, setWindowWidth] = useState<number>(
@@ -156,14 +145,9 @@ export const PoolDetail = memo(function PoolDetail({
   // =========================================================================
   const [selectedPositionForDetails, setSelectedPositionForDetails] = useState<ProcessedPosition | null>(null);
   const [isPositionDetailsModalOpen, setIsPositionDetailsModalOpen] = useState(false);
-  const [showIncreaseModal, setShowIncreaseModal] = useState(false);
-  const [showDecreaseModal, setShowDecreaseModal] = useState(false);
-  const [positionToModify, setPositionToModify] = useState<ProcessedPosition | null>(null);
 
-  // Guard refs for preventing duplicate handlers
+  // Guard ref for preventing duplicate handlers
   const pendingActionRef = useRef<null | { type: "increase" | "decrease" | "withdraw" | "burn" | "collect" | "compound" }>(null);
-  const handledIncreaseHashRef = useRef<string | null>(null);
-  const handledDecreaseHashRef = useRef<string | null>(null);
 
   // =========================================================================
   // POSITION INFO CONVERSION
@@ -238,93 +222,6 @@ export const PoolDetail = memo(function PoolDetail({
   );
 
   // =========================================================================
-  // LIQUIDITY MODIFICATION CALLBACKS
-  // =========================================================================
-  const onLiquidityIncreasedCallback = useCallback(
-    (info?: { txHash?: `0x${string}`; blockNumber?: bigint; increaseAmounts?: { amount0: string; amount1: string } }) => {
-      if (!info?.txHash) return;
-      if (handledIncreaseHashRef.current === info.txHash) return;
-      handledIncreaseHashRef.current = info.txHash;
-
-      if (pendingActionRef.current?.type !== "increase") return;
-
-      // Optimistic update
-      if (positionToModify && info?.increaseAmounts) {
-        const currentAmount0 = parseFloat(positionToModify.token0.amount || "0");
-        const currentAmount1 = parseFloat(positionToModify.token1.amount || "0");
-        const addedAmount0 = parseFloat(info.increaseAmounts.amount0 || "0");
-        const addedAmount1 = parseFloat(info.increaseAmounts.amount1 || "0");
-
-        updatePositionOptimistically(positionToModify.positionId, {
-          token0: { ...positionToModify.token0, amount: (currentAmount0 + addedAmount0).toString() },
-          token1: { ...positionToModify.token1, amount: (currentAmount1 + addedAmount1).toString() },
-          isOptimisticallyUpdating: true,
-        });
-        clearOptimisticFees(positionToModify.positionId);
-      }
-
-      refreshAfterMutation({ txHash: info.txHash });
-      pendingActionRef.current = null;
-    },
-    [positionToModify, updatePositionOptimistically, clearOptimisticFees, refreshAfterMutation]
-  );
-
-  const onLiquidityDecreasedCallback = useCallback(
-    (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
-      if (!info?.txHash) return;
-      if (handledDecreaseHashRef.current === info.txHash) return;
-      handledDecreaseHashRef.current = info.txHash;
-
-      const targetPosition = positionToModify || selectedPositionForDetails;
-      const isPendingAction = pendingActionRef.current?.type === "decrease" || pendingActionRef.current?.type === "withdraw";
-      if (!isPendingAction && !targetPosition) return;
-
-      if (targetPosition) {
-        if (info?.isFullBurn) {
-          removePositionOptimistically(targetPosition.positionId);
-        } else {
-          updatePositionOptimistically(targetPosition.positionId, { isOptimisticallyUpdating: true });
-          clearOptimisticFees(targetPosition.positionId);
-        }
-      }
-
-      pendingActionRef.current = null;
-      refreshAfterMutation(info);
-    },
-    [positionToModify, selectedPositionForDetails, updatePositionOptimistically, removePositionOptimistically, clearOptimisticFees, refreshAfterMutation]
-  );
-
-  // Initialize liquidity hooks
-  const { increaseLiquidity, reset: resetIncreaseLiquidity } = useIncreaseLiquidity({
-    onLiquidityIncreased: onLiquidityIncreasedCallback,
-  });
-
-  const { decreaseLiquidity, reset: resetDecreaseLiquidity } = useDecreaseLiquidity({
-    onLiquidityDecreased: onLiquidityDecreasedCallback,
-    onFeesCollected: (info) => {
-      toast.success("Fees Collected", {
-        icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" />,
-        description: "Fees successfully collected",
-        action: info?.txHash
-          ? {
-              label: "View Transaction",
-              onClick: () => window.open(getExplorerTxUrl(info.txHash!), "_blank"),
-            }
-          : undefined,
-      });
-    },
-  });
-
-  // Reset hooks when modals open
-  useEffect(() => {
-    if (showIncreaseModal) resetIncreaseLiquidity();
-  }, [showIncreaseModal, resetIncreaseLiquidity]);
-
-  useEffect(() => {
-    if (showDecreaseModal) resetDecreaseLiquidity();
-  }, [showDecreaseModal, resetDecreaseLiquidity]);
-
-  // =========================================================================
   // HANDLERS
   // =========================================================================
   const handleAddLiquidity = useCallback(() => {
@@ -336,9 +233,25 @@ export const PoolDetail = memo(function PoolDetail({
   }, [poolConfig?.id, router]);
 
   const handlePositionClick = useCallback((position: ProcessedPosition) => {
-    setSelectedPositionForDetails(position);
-    setIsPositionDetailsModalOpen(true);
-  }, []);
+    router.push(`/liquidity/position/${position.positionId}`);
+  }, [router]);
+
+  const handleLiquidityDecreased = useCallback(
+    (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
+      if (!info?.txHash || !selectedPositionForDetails) return;
+
+      if (info?.isFullBurn) {
+        removePositionOptimistically(selectedPositionForDetails.positionId);
+      } else {
+        updatePositionOptimistically(selectedPositionForDetails.positionId, { isOptimisticallyUpdating: true });
+        clearOptimisticFees(selectedPositionForDetails.positionId);
+      }
+
+      pendingActionRef.current = null;
+      refreshAfterMutation(info);
+    },
+    [selectedPositionForDetails, updatePositionOptimistically, removePositionOptimistically, clearOptimisticFees, refreshAfterMutation]
+  );
 
   // =========================================================================
   // HELPERS
@@ -375,9 +288,9 @@ export const PoolDetail = memo(function PoolDetail({
   }
 
   return (
-    <div className="flex flex-col gap-6 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1400px] mx-auto pb-20 min-[1400px]:pb-6">
+    <div className="flex flex-col gap-6 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto pb-20 min-[1200px]:pb-6">
       {/* Two-column layout on desktop - matches Overview page ratios */}
-      <div className="flex flex-col min-[1400px]:flex-row gap-10">
+      <div className="flex flex-col min-[1200px]:flex-row gap-10">
         {/* Left Column: Header, Stats, Chart, Positions */}
         <div className="flex-1 flex flex-col gap-6 min-w-0 max-w-[720px]">
           {/* Header */}
@@ -407,9 +320,6 @@ export const PoolDetail = memo(function PoolDetail({
             isLoadingPositions={isLoadingPositions}
             isDerivingNewPosition={isDerivingNewPosition}
             priceMap={priceMap}
-            effectiveDenominationBase={effectiveDenominationBase}
-            denominationBaseOverride={denominationBaseOverride}
-            onDenominationToggle={handleDenominationToggle}
             onPositionClick={handlePositionClick}
             onAddLiquidity={handleAddLiquidity}
             getPositionInfo={getPositionInfo}
@@ -419,38 +329,13 @@ export const PoolDetail = memo(function PoolDetail({
           />
         </div>
 
-        {/* Right Column: Add Liquidity Actions - 380px matches Overview */}
-        <div className="hidden min-[1400px]:block w-[380px] flex-shrink-0">
-          <div className="sticky top-6 flex flex-col gap-3">
-            {/* Section Title */}
-            <h3 className="text-base font-semibold text-white">Add Liquidity</h3>
-
-            {/* Rehypo Mode - Primary CTA */}
-            <Button
-              asChild
-              className="relative w-full h-14 text-base font-semibold bg-gradient-to-r from-orange-500/20 to-amber-500/20 border border-orange-500/50 hover:border-orange-400 hover:from-orange-500/30 hover:to-amber-500/30 text-white"
-            >
-              <Link href={`/liquidity/add?pool=${poolConfig.id}&mode=rehypo&from=pool`}>
-                <Sparkles className="h-5 w-5 mr-2 text-orange-400" />
-                <div className="flex flex-col items-start">
-                  <span>Rehypothecation Mode</span>
-                  <span className="text-xs font-normal text-orange-300/80">Recommended - Higher yield</span>
-                </div>
-              </Link>
-            </Button>
-
-            {/* CLMM Mode - Secondary */}
-            <Button
-              asChild
-              variant="outline"
-              className="w-full h-11 text-sm font-medium border-sidebar-border hover:bg-sidebar-accent/50"
-            >
-              <Link href={`/liquidity/add?pool=${poolConfig.id}&mode=concentrated&from=pool`}>
-                <Settings2 className="h-4 w-4 mr-2 text-muted-foreground" />
-                <span>Concentrated Liquidity</span>
-                <span className="ml-auto text-xs text-muted-foreground">Advanced</span>
-              </Link>
-            </Button>
+        {/* Right Column: Add Liquidity Actions + Pool Info - 380px matches Overview */}
+        <div className="hidden min-[1200px]:block w-[380px] flex-shrink-0">
+          <div className="sticky top-6">
+            <PoolDetailSidebar
+              poolConfig={poolConfig}
+              poolApr={poolStats.aprRaw}
+            />
           </div>
         </div>
       </div>
@@ -460,27 +345,26 @@ export const PoolDetail = memo(function PoolDetail({
         "fixed z-40",
         isMobile
           ? "bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur-sm border-t border-sidebar-border"
-          : "bottom-6 right-6 min-[1400px]:hidden"
+          : "bottom-6 right-6 min-[1200px]:hidden"
       )}>
         <div className={cn(
           "flex gap-2",
           isMobile ? "flex-col" : "flex-row"
         )}>
-          {/* Rehypo Mode - Primary */}
+          {/* Unified Yield - Primary */}
           <Button
             asChild
             className={cn(
-              "font-semibold bg-gradient-to-r from-orange-500/20 to-amber-500/20 border border-orange-500/50 hover:border-orange-400 hover:from-orange-500/30 hover:to-amber-500/30 text-white",
+              "font-semibold bg-[#141414] border border-[#9896FF]/50 hover:border-[#9896FF] text-white",
               isMobile ? "h-12 text-base" : "h-10 px-4"
             )}
           >
             <Link href={`/liquidity/add?pool=${poolConfig.id}&mode=rehypo&from=pool`}>
-              <Sparkles className="h-4 w-4 mr-2 text-orange-400" />
-              Rehypo Mode
+              Unified Yield
             </Link>
           </Button>
 
-          {/* CLMM Mode - Secondary */}
+          {/* Custom Range - Secondary */}
           <Button
             asChild
             variant="outline"
@@ -490,8 +374,7 @@ export const PoolDetail = memo(function PoolDetail({
             )}
           >
             <Link href={`/liquidity/add?pool=${poolConfig.id}&mode=concentrated&from=pool`}>
-              <Settings2 className="h-4 w-4 mr-2 text-muted-foreground" />
-              CLMM
+              Custom Range
             </Link>
           </Button>
         </div>
@@ -514,7 +397,7 @@ export const PoolDetail = memo(function PoolDetail({
             currentPoolTick={poolState.currentPoolTick}
             onLiquidityDecreased={(info) => {
               pendingActionRef.current = { type: "decrease" };
-              onLiquidityDecreasedCallback(info);
+              handleLiquidityDecreased(info);
             }}
           />
         )}

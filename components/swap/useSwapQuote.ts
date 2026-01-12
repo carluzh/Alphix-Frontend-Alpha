@@ -2,6 +2,7 @@ import { createElement, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential"
 import { MAINNET_CHAIN_ID } from "@/lib/network-mode"
+import { POLLING_INTERVAL_L2_MS } from "@/hooks/usePollingIntervalByChain"
 
 export type QuoteMode = "indicative" | "binding"
 
@@ -31,6 +32,7 @@ export function useSwapQuote({
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
   const [priceImpact, setPriceImpact] = useState<number | null>(null)
+  const [dynamicFeeBps, setDynamicFeeBps] = useState<number | null>(null)
   const requestIdRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -47,6 +49,7 @@ export function useSwapQuote({
         setQuoteLoading(false)
         setQuoteError(null)
         setPriceImpact(null)
+        setDynamicFeeBps(null)
         return
       }
 
@@ -58,6 +61,7 @@ export function useSwapQuote({
         setQuoteLoading(false)
         setQuoteError(null)
         setPriceImpact(null)
+        setDynamicFeeBps(null)
         return
       }
 
@@ -110,6 +114,12 @@ export function useSwapQuote({
             setPriceImpact(null)
           }
 
+          if (data.dynamicFeeBps !== undefined && data.dynamicFeeBps !== null) {
+            setDynamicFeeBps(data.dynamicFeeBps)
+          } else {
+            setDynamicFeeBps(null)
+          }
+
           setQuoteError(null)
           return
         }
@@ -149,6 +159,7 @@ export function useSwapQuote({
 
         setQuoteError(errorMsg)
         setPriceImpact(null)
+        setDynamicFeeBps(null)
       } catch (error: any) {
         if (error?.name === "AbortError") return
         console.error("❌ V4 Quoter Exception:", error)
@@ -192,6 +203,7 @@ export function useSwapQuote({
 
         setQuoteError(errorMsg)
         setPriceImpact(null)
+        setDynamicFeeBps(null)
       } finally {
         if (requestId === requestIdRef.current) setQuoteLoading(false)
       }
@@ -212,6 +224,7 @@ export function useSwapQuote({
         setQuoteLoading(false)
         setQuoteError(null)
         setPriceImpact(null)
+        setDynamicFeeBps(null)
         return
       }
       fetchQuote(fromAmount, "indicative")
@@ -227,12 +240,31 @@ export function useSwapQuote({
         setQuoteLoading(false)
         setQuoteError(null)
         setPriceImpact(null)
+        setDynamicFeeBps(null)
         return
       }
       fetchQuote(toAmount, "indicative")
     }, 300)
     return () => clearTimeout(handler)
   }, [toAmount, fetchQuote])
+
+  // S10: Quote polling - refresh every 3s (L2) like Uniswap
+  // @see interface/packages/uniswap/src/features/transactions/swap/hooks/useTrade/useTradeQuery.ts
+  useEffect(() => {
+    // Skip polling if no tokens or loading
+    if (!fromToken || !toToken) return
+    if (quoteLoading) return
+
+    // Get the current amount to poll
+    const amountStr = lastEditedSideRef.current === "to" ? toAmount : fromAmount
+    if (!amountStr || parseFloat(amountStr) <= 0) return
+
+    const interval = setInterval(() => {
+      fetchQuote(amountStr, "indicative")
+    }, POLLING_INTERVAL_L2_MS) // 3000ms for L2 (Base)
+
+    return () => clearInterval(interval)
+  }, [fromToken, toToken, fromAmount, toAmount, fetchQuote, quoteLoading])
 
   const refreshBindingQuote = useCallback(async () => {
     const amountStr = lastEditedSideRef.current === "to" ? toAmount : fromAmount
@@ -244,6 +276,7 @@ export function useSwapQuote({
   const clearQuote = useCallback(() => {
     setQuoteError(null)
     setPriceImpact(null)
+    setDynamicFeeBps(null)
   }, [])
 
   return {
@@ -251,6 +284,7 @@ export function useSwapQuote({
     quoteError,
     setQuoteError,
     priceImpact,
+    dynamicFeeBps,
     clearQuote,
     refreshBindingQuote,
   }

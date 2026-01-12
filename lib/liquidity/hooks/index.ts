@@ -87,3 +87,18 @@ export {
   type UseAddLiquidityCalculationParams,
   type UseAddLiquidityCalculationResult,
 } from './transaction'
+
+// Gas fee estimation hooks
+export {
+  useGasFeeEstimate,
+  useMultiStepGasFeeEstimate,
+  type GasFeeEstimateResult,
+  type UseGasFeeEstimateParams,
+} from './useGasFeeEstimate'
+
+// Transaction preparation hooks
+export {
+  usePrepareMintQuery,
+  type PrepareMintQueryParams,
+  type PrepareMintQueryResult,
+} from './usePrepareMintQuery'

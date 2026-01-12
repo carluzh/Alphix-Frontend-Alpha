@@ -23,11 +23,7 @@ import {
   useOverviewChartData,
   type ChartPeriod,
 } from "../../hooks/useOverviewChartData";
-import {
-  usePositionsChartData,
-  positionsToInputFormat,
-} from "../../hooks/usePositionsChartData";
-import type { PositionInput } from "@/lib/backend-client";
+import { usePositionsChartData } from "../../hooks/usePositionsChartData";
 
 const CHART_HEIGHT = 300;
 
@@ -38,15 +34,8 @@ interface ChartDataPoint {
 
 interface PortfolioChartProps {
   className?: string;
-  positions?: Array<{
-    positionId: string;
-    poolId: string;
-    liquidity?: string;
-    tickLower?: number;
-    tickUpper?: number;
-    token0UncollectedFees?: string;
-    token1UncollectedFees?: string;
-  }>;
+  /** Current total value of all positions (calculated by parent using live data) */
+  currentPositionsValue?: number;
   /** Parent loading state - when true, positions data is not yet available */
   isParentLoading?: boolean;
 }
@@ -119,7 +108,7 @@ class ChartModelWrapper implements ChartModelWithLiveDot {
   updateData(data: ChartDataPoint[]): void { this.data = data; }
 }
 
-export function PortfolioChart({ className, positions, isParentLoading }: PortfolioChartProps) {
+export function PortfolioChart({ className, currentPositionsValue, isParentLoading }: PortfolioChartProps) {
   const { address, isConnected } = useAccount();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -146,16 +135,13 @@ export function PortfolioChart({ className, positions, isParentLoading }: Portfo
     enabled: isConnected && !!address,
   });
 
-  const positionInputs: PositionInput[] = useMemo(() => {
-    if (!positions || positions.length === 0) return [];
-    return positionsToInputFormat(positions);
-  }, [positions]);
-
+  // Fetch historical position values from backend
+  // Backend returns stored snapshots, frontend adds "live now" point
   const { data: positionsHistoricalData, isLoading: isLoadingPositions } = usePositionsChartData({
     address,
-    positions: positionInputs,
     period: selectedPeriod,
-    enabled: isConnected && !!address && positionInputs.length > 0,
+    currentTotalValue: currentPositionsValue,
+    enabled: isConnected && !!address,
   });
 
   const chartData = useMemo((): ChartDataPoint[] => {
@@ -170,14 +156,14 @@ export function PortfolioChart({ className, positions, isParentLoading }: Portfo
 
   const hasPositionsData = positionsChartData.length > 0;
   const hasBalanceData = chartData.length > 0;
-  const currentValue = hasBalanceData ? chartData[chartData.length - 1].value : 0;
-  const currentPositionsValue = hasPositionsData ? positionsChartData[positionsChartData.length - 1].value : 0;
+  const currentBalanceValue = hasBalanceData ? chartData[chartData.length - 1].value : 0;
+  const latestPositionsValue = hasPositionsData ? positionsChartData[positionsChartData.length - 1].value : 0;
 
   // Show loading state until all data sources have finished loading:
   // - Parent loading: positions data not yet available from parent component
   // - Balance loading: balance chart data is loading
-  // - Positions loading: only wait if there are positions to load
-  const showSkeleton = isParentLoading || isLoading || (positionInputs.length > 0 && isLoadingPositions);
+  // - Positions loading: positions data is loading
+  const showSkeleton = isParentLoading || isLoading || isLoadingPositions;
 
   // Create stable dataKey based on actual data + visibility state (for dot repositioning on filter)
   const balanceDataKey = useMemo(() => {
@@ -391,8 +377,8 @@ export function PortfolioChart({ className, positions, isParentLoading }: Portfo
   const isHovering = hoverTime !== undefined;
 
   // Only include visible series in values (Issue #2)
-  const displayPositionsValue = showPositions ? (isHovering ? (hoverPositionsValue ?? 0) : currentPositionsValue) : 0;
-  const displayBalanceValue = showBalance ? (isHovering ? (hoverBalanceValue ?? 0) : currentValue) : 0;
+  const displayPositionsValue = showPositions ? (isHovering ? (hoverPositionsValue ?? 0) : latestPositionsValue) : 0;
+  const displayBalanceValue = showBalance ? (isHovering ? (hoverBalanceValue ?? 0) : currentBalanceValue) : 0;
   const displayTotalValue = displayPositionsValue + displayBalanceValue;
 
   const positionsStartValue = showPositions ? (positionsChartData[0]?.value ?? 0) : 0;

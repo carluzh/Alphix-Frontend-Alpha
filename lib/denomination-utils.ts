@@ -4,7 +4,7 @@ import { TickMath } from '@uniswap/v3-sdk';
 // Includes both mainnet (USDC, USDT, etc.) and testnet (aUSDC, aUSDT, etc.) symbols
 const QUOTE_TOKEN_PRIORITY: Record<string, number> = {
   // Mainnet symbols
-  'USDC': 10, 'USDT': 9, 'DAI': 8, 'BTC': 5, 'WETH': 4, 'ETH': 2,
+  'USDC': 10, 'USDT': 9, 'DAI': 8, 'BTC': 5, 'ETH': 4,
   // Testnet symbols (same priority as mainnet counterparts)
   'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'aBTC': 5, 'aETH': 4
 };

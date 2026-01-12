@@ -3,12 +3,16 @@
 /**
  * usePositionsChartData - Fetches position value history from AlphixBackend
  *
- * Uses the backend's /portfolio/chart endpoint to calculate historical
- * position values based on pool snapshots and Uniswap math.
+ * Simple architecture:
+ * - Backend returns stored historical values (SUM of position_snapshots.value_usd)
+ * - Frontend adds the "live now" point using position data it already has
+ * - SSE updates append new points in real-time
  */
 
-import { useQuery } from "@tanstack/react-query";
-import { fetchPositionsChart, type PositionInput } from "@/lib/backend-client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useMemo } from "react";
+import { fetchPositionsChart } from "@/lib/backend-client";
+import { useSSEContext } from "@/lib/realtime";
 
 export type ChartPeriod = "DAY" | "WEEK" | "MONTH";
 
@@ -19,8 +23,9 @@ export interface PositionsChartPoint {
 
 interface UsePositionsChartDataParams {
   address: string | undefined;
-  positions: PositionInput[] | undefined;
   period: ChartPeriod;
+  /** Current total value calculated by frontend (for "live now" point) */
+  currentTotalValue?: number;
   enabled?: boolean;
 }
 
@@ -31,25 +36,35 @@ interface UsePositionsChartDataResult {
   isError: boolean;
   error: Error | null;
   refetch: () => void;
+  isSSEConnected: boolean;
 }
 
 /**
  * Hook to fetch historical position values from AlphixBackend
+ * with real-time updates via SSE
  */
 export function usePositionsChartData({
   address,
-  positions,
   period,
+  currentTotalValue,
   enabled = true,
 }: UsePositionsChartDataParams): UsePositionsChartDataResult {
+  const queryClient = useQueryClient();
+  const { subscribeToSnapshots, isConnected } = useSSEContext();
+
+  const queryKey = ["positions-chart", address, period];
+  // Use ref to avoid stale closure in subscription callback
+  const queryKeyRef = useRef(queryKey);
+  queryKeyRef.current = queryKey;
+
   const query = useQuery({
-    queryKey: ["positions-chart", address, period, positions?.length],
+    queryKey,
     queryFn: async (): Promise<PositionsChartPoint[]> => {
-      if (!address || !positions || positions.length === 0) {
+      if (!address) {
         return [];
       }
 
-      const response = await fetchPositionsChart(address, positions, period);
+      const response = await fetchPositionsChart(address, period);
 
       if (!response.success) {
         console.warn("[usePositionsChartData] Backend error:", response.error);
@@ -61,48 +76,88 @@ export function usePositionsChartData({
         value: point.positionsValue,
       }));
     },
-    enabled: enabled && !!address && !!positions && positions.length > 0,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    refetchInterval: 5 * 60 * 1000, // Refetch every 5 minutes
+    enabled: enabled && !!address,
+    staleTime: 5 * 60 * 1000, // 5 minutes - data considered fresh
     retry: 2,
     retryDelay: 1000,
   });
 
+  // Subscribe to SSE snapshots and append new points to chart
+  useEffect(() => {
+    if (!enabled || !address) return;
+
+    const unsubscribe = subscribeToSnapshots((snapshot) => {
+      // Calculate total value from all positions in the snapshot
+      const totalValue = snapshot.positions.reduce(
+        (sum, pos) => sum + pos.valueUsd,
+        0
+      );
+
+      const newPoint: PositionsChartPoint = {
+        timestamp: snapshot.timestamp,
+        value: totalValue,
+      };
+
+      // Use ref to get current queryKey (avoids stale closure)
+      queryClient.setQueryData<PositionsChartPoint[]>(
+        queryKeyRef.current,
+        (oldData) => {
+          if (!oldData) return [newPoint];
+
+          // Check if we already have this timestamp (avoid duplicates)
+          const exists = oldData.some(
+            (p) => p.timestamp === newPoint.timestamp
+          );
+          if (exists) {
+            // Update existing point
+            return oldData.map((p) =>
+              p.timestamp === newPoint.timestamp ? newPoint : p
+            );
+          }
+
+          // Append and sort by timestamp
+          const updated = [...oldData, newPoint].sort(
+            (a, b) => a.timestamp - b.timestamp
+          );
+
+          console.log("[usePositionsChartData] SSE update - new point:", newPoint);
+          return updated;
+        }
+      );
+    });
+
+    return () => unsubscribe();
+  }, [enabled, address, queryClient, subscribeToSnapshots]);
+
+  // Add "live now" point using frontend's current total value
+  const dataWithLivePoint = useMemo(() => {
+    const historicalData = query.data;
+    if (!historicalData) return undefined;
+
+    // If we have a current total value from frontend, append it as the "now" point
+    if (currentTotalValue !== undefined && currentTotalValue > 0) {
+      const now = Math.floor(Date.now() / 1000);
+      const lastPoint = historicalData[historicalData.length - 1];
+
+      // Only add if it's newer than the last historical point
+      if (!lastPoint || now > lastPoint.timestamp) {
+        return [
+          ...historicalData,
+          { timestamp: now, value: currentTotalValue },
+        ];
+      }
+    }
+
+    return historicalData;
+  }, [query.data, currentTotalValue]);
+
   return {
-    data: query.data,
+    data: dataWithLivePoint,
     isLoading: query.isLoading,
     isPending: query.isPending,
     isError: query.isError,
     error: query.error,
     refetch: query.refetch,
+    isSSEConnected: isConnected,
   };
-}
-
-/**
- * Convert active positions from portfolio data to PositionInput format
- */
-export function positionsToInputFormat(
-  positions: Array<{
-    positionId: string;
-    poolId: string;
-    token0?: { symbol: string; amount: string };
-    token1?: { symbol: string; amount: string };
-    liquidity?: string;
-    tickLower?: number;
-    tickUpper?: number;
-    token0UncollectedFees?: string;
-    token1UncollectedFees?: string;
-  }>
-): PositionInput[] {
-  return positions
-    .filter((p) => p.liquidity && p.tickLower !== undefined && p.tickUpper !== undefined)
-    .map((p) => ({
-      positionId: p.positionId,
-      poolId: p.poolId,
-      liquidity: p.liquidity!,
-      tickLower: p.tickLower!,
-      tickUpper: p.tickUpper!,
-      token0UncollectedFees: p.token0UncollectedFees,
-      token1UncollectedFees: p.token1UncollectedFees,
-    }));
 }

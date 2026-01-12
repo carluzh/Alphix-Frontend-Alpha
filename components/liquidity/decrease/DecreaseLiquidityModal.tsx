@@ -1,12 +1,20 @@
 "use client";
 
+/**
+ * DecreaseLiquidityModal - Modal wrapper for withdraw liquidity flow
+ *
+ * Single-step modal that wraps the form in context providers.
+ * The form handles input, execution, and success states internally.
+ *
+ * @see components/liquidity/decrease/DecreaseLiquidityForm.tsx
+ */
+
 import React from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
-import { DecreaseLiquidityContextProvider, useDecreaseLiquidityContext, DecreaseLiquidityStep } from "./DecreaseLiquidityContext";
+import { DecreaseLiquidityContextProvider } from "./DecreaseLiquidityContext";
 import { DecreaseLiquidityTxContextProvider } from "./DecreaseLiquidityTxContext";
 import { DecreaseLiquidityForm } from "./DecreaseLiquidityForm";
-import { DecreaseLiquidityReview } from "./DecreaseLiquidityReview";
 
 interface DecreaseLiquidityModalProps {
   position: ProcessedPosition;
@@ -15,30 +23,28 @@ interface DecreaseLiquidityModalProps {
   onSuccess?: () => void;
 }
 
-function DecreaseLiquidityModalInner({ onClose, onSuccess }: { onClose: () => void; onSuccess?: () => void }) {
-  const { step } = useDecreaseLiquidityContext();
-
-  switch (step) {
-    case DecreaseLiquidityStep.Input:
-      return <DecreaseLiquidityForm />;
-    case DecreaseLiquidityStep.Review:
-      return <DecreaseLiquidityReview onClose={onClose} onSuccess={onSuccess} />;
-    default:
-      return <DecreaseLiquidityForm />;
-  }
-}
-
-export function DecreaseLiquidityModal({ position, isOpen, onClose, onSuccess }: DecreaseLiquidityModalProps) {
+/**
+ * Main modal component - wraps form in providers
+ */
+export function DecreaseLiquidityModal({
+  position,
+  isOpen,
+  onClose,
+  onSuccess,
+}: DecreaseLiquidityModalProps) {
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[440px] bg-container border-sidebar-border">
+      <DialogContent
+          className="sm:max-w-[440px] bg-container border-sidebar-border"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
         <DialogHeader>
-          <DialogTitle>Withdraw Liquidity</DialogTitle>
+          <DialogTitle className="text-base font-medium text-muted-foreground">Withdraw Liquidity</DialogTitle>
         </DialogHeader>
 
         <DecreaseLiquidityContextProvider position={position}>
           <DecreaseLiquidityTxContextProvider>
-            <DecreaseLiquidityModalInner onClose={onClose} onSuccess={onSuccess} />
+            <DecreaseLiquidityForm onClose={onClose} onSuccess={onSuccess} />
           </DecreaseLiquidityTxContextProvider>
         </DecreaseLiquidityContextProvider>
       </DialogContent>

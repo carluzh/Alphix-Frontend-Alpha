@@ -1,6 +1,6 @@
 "use client";
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Image from 'next/image';
 import {
@@ -9,12 +9,15 @@ import {
   FileTextIcon,
   WalletIcon
 } from "lucide-react";
+import { IconTriangleWarningFilled } from 'nucleo-micro-bold-essential';
 
 import { Button } from "@/components/ui/button";
-import { Token, SwapProgressState } from './swap-interface'; // Removed FeeDetail and SwapTxInfo as they are not directly used in this simplified props interface yet
+import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
+import { Token, SwapProgressState } from './swap-interface';
 import { formatTokenAmount } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
-import type { SwapTradeModel } from "./useSwapTrade";
+import type { SwapTradeModel, PriceImpactWarning } from "./useSwapTrade";
 
 // Forward declare props that might come from the main interface or be defined here
 interface SwapReviewViewProps {
@@ -26,7 +29,6 @@ interface SwapReviewViewProps {
   swapProgressState: SwapProgressState;
   completedSteps: SwapProgressState[];
   isSwapping: boolean;
-  // getStepIcon and renderStepIndicator might be moved here or passed as props
 }
 
 // Helper function to render the step indicator with modern style matching AddLiquidityForm
@@ -153,7 +155,7 @@ const isStepWaiting = (step: 'approval' | 'signature' | 'transaction', swapProgr
   }
 };
 
-export function SwapReviewView({ 
+export function SwapReviewView({
   displayFromToken,
   displayToToken,
   trade,
@@ -163,6 +165,18 @@ export function SwapReviewView({
   completedSteps,
   isSwapping
 }: SwapReviewViewProps) {
+  // Price impact acknowledgment state - Uniswap pattern
+  const [priceImpactAcknowledged, setPriceImpactAcknowledged] = useState(false);
+
+  // Reset acknowledgment when price impact changes or when returning to review
+  useEffect(() => {
+    setPriceImpactAcknowledged(false);
+  }, [trade.priceImpact]);
+
+  // Determine if we need acknowledgment (high severity = 5%+)
+  const requiresAcknowledgment = trade.priceImpactWarning?.severity === 'high';
+  const canProceed = !requiresAcknowledgment || priceImpactAcknowledged;
+
   return (
     <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
       <div 
@@ -263,6 +277,33 @@ export function SwapReviewView({
           </p>
         </div>
       </div>
+      {/* Price Impact Warning with Acknowledgment - Uniswap pattern */}
+      {trade.priceImpactWarning && (
+        <div className={cn(
+          "mb-4 flex flex-col gap-2 rounded-md px-3 py-3 text-xs",
+          trade.priceImpactWarning.severity === 'high'
+            ? "bg-red-500/10 text-red-500 border border-red-500/20"
+            : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
+        )}>
+          <div className="flex items-center gap-2">
+            <IconTriangleWarningFilled className="h-4 w-4 shrink-0" />
+            <span className="font-medium">{trade.priceImpactWarning.message}</span>
+          </div>
+          {requiresAcknowledgment && (
+            <label className="flex items-center gap-2 cursor-pointer mt-1">
+              <Checkbox
+                checked={priceImpactAcknowledged}
+                onCheckedChange={(checked) => setPriceImpactAcknowledged(checked === true)}
+                className="border-red-500/50 data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500"
+              />
+              <span className="text-xs text-muted-foreground">
+                I acknowledge the price impact and want to proceed
+              </span>
+            </label>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
         <Button
           variant="outline"
@@ -274,23 +315,30 @@ export function SwapReviewView({
           Change
         </Button>
         <Button
-          className={
-            swapProgressState === "needs_approval" ||
+          className={cn(
+            // Disable button during quote loading or if high price impact not acknowledged
+            !trade.quoteLoading && canProceed && (swapProgressState === "needs_approval" ||
             swapProgressState === "needs_signature" ||
-            swapProgressState === "ready_to_swap"
-              ? "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
+            swapProgressState === "ready_to_swap")
+              ? trade.priceImpactWarning?.severity === 'high'
+                ? "text-red-500 border border-red-500 bg-red-500/10 hover:bg-red-500/20"
+                : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
               : "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 cursor-default text-white/75"
-          }
+          )}
           onClick={handleConfirmSwap}
-          disabled={!(swapProgressState === "needs_approval" || swapProgressState === "needs_signature" || swapProgressState === "ready_to_swap")}
-          style={!(swapProgressState === "needs_approval" || swapProgressState === "needs_signature" || swapProgressState === "ready_to_swap")
+          disabled={trade.quoteLoading || !canProceed || !(swapProgressState === "needs_approval" || swapProgressState === "needs_signature" || swapProgressState === "ready_to_swap")}
+          aria-busy={trade.quoteLoading}
+          style={trade.quoteLoading || !canProceed || !(swapProgressState === "needs_approval" || swapProgressState === "needs_signature" || swapProgressState === "ready_to_swap")
             ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }
             : undefined
           }
         >
           <span className={isSwapping ? "animate-pulse" : ""}>
-            {swapProgressState === "needs_approval" || swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approve" :
+            {trade.quoteLoading ? "Finalizing Quote..." :
+              !canProceed ? "Acknowledge Impact" :
+              swapProgressState === "needs_approval" || swapProgressState === "approving" || swapProgressState === "waiting_approval" ? "Approve" :
               swapProgressState === "needs_signature" || swapProgressState === "signing_permit" ? "Sign" :
+              trade.priceImpactWarning?.severity === 'high' ? "Swap Anyway" :
               "Confirm Swap"}
           </span>
         </Button>

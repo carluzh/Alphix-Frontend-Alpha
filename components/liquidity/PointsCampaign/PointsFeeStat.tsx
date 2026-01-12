@@ -2,7 +2,7 @@
  * PointsFeeStat
  *
  * Displays total APR with visual emphasis for positions earning points.
- * Shows breakdown tooltip on hover with Pool APR and Points APR.
+ * Shows unified breakdown tooltip on hover with Swap APR, Unified Yield, and Points.
  *
  * @example
  * ```tsx
@@ -21,16 +21,18 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 import { PointsTooltip, TooltipSize } from './PointsTooltip';
-import { PointsFeeStatTooltip } from './PointsFeeStatTooltip';
+import { APRBreakdownTooltip } from '../APRBreakdownTooltip';
 import { formatPercent, PLACEHOLDER_TEXT } from './formatters';
 
 interface PointsFeeStatProps {
-  /** Pool APR from trading fees */
+  /** Pool APR from trading fees (Swap APR) */
   poolApr?: number;
   /** Points campaign APR bonus */
   pointsApr: number;
-  /** Total APR (pool + points) */
+  /** Total APR (pool + points + unified yield) */
   totalApr?: number;
+  /** Unified Yield APR (Aave lending) - optional */
+  unifiedYieldApr?: number;
   /** Token0 symbol (for tooltip) */
   token0Symbol?: string;
   /** Token1 symbol (for tooltip) */
@@ -44,14 +46,14 @@ interface PointsFeeStatProps {
  * Displays total APR with visual emphasis and hover tooltip for breakdown.
  *
  * Design:
- * - Shows total APR value in primary color with subtle background
- * - Green color indicates boosted APR from points campaign
- * - Hover shows breakdown: Pool APR + Points APR
+ * - Shows total APR value with dotted underline indicating hover for more info
+ * - Hover shows unified breakdown: Swap APR + Unified Yield + Points
  */
 export function PointsFeeStat({
   poolApr,
   pointsApr,
   totalApr,
+  unifiedYieldApr,
   token0Symbol,
   token1Symbol,
   className,
@@ -73,15 +75,16 @@ export function PointsFeeStat({
     </div>
   );
 
-  // Wrap with tooltip for breakdown
+  // Wrap with unified tooltip for breakdown
   return (
     <PointsTooltip
       content={
-        <PointsFeeStatTooltip
+        <APRBreakdownTooltip
+          swapApr={poolApr}
+          unifiedYieldApr={unifiedYieldApr}
+          pointsApr={pointsApr}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
-          poolApr={poolApr}
-          pointsApr={pointsApr}
         />
       }
       size={TooltipSize.Small}

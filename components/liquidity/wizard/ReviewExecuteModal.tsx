@@ -2,43 +2,129 @@
 
 /**
  * ReviewExecuteModal - Modal for reviewing and executing liquidity position
- * Follows Uniswap pattern where review content stays visible during transaction
- * Errors are shown inline (not in a separate view) like Uniswap's ErrorCallout
- * On success: closes modal and navigates to /overview (Uniswap pattern)
+ *
+ * Uses Uniswap's step-based executor pattern:
+ * 1. Token approvals (if needed)
+ * 2. Permit2 signature (separate step)
+ * 3. Position creation transaction
  *
  * @see interface/apps/web/src/components/Liquidity/ReviewModal.tsx
- * @see interface/apps/web/src/pages/CreatePosition/CreatePositionModal.tsx (onSuccess pattern)
- *
- * States:
- * - review: Shows position summary with Confirm button
- * - executing: Review content visible, bottom shows ProgressIndicator
+ * @see lib/liquidity/transaction/executor/useLiquidityStepExecutor.ts
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { AlertCircle } from 'lucide-react';
+import { useAccount } from 'wagmi';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 import { IconXmark } from 'nucleo-micro-bold-essential';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { parseUnits, type Address } from 'viem';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useCreatePositionTxContext } from './CreatePositionTxContext';
-import { getPoolById, getAllTokens, type TokenSymbol } from '@/lib/pools-config';
-import { useAddLiquidityTransaction } from '@/lib/liquidity/hooks/transaction/useAddLiquidityTransaction';
+import { getPoolById, getAllTokens, getToken, type TokenSymbol } from '@/lib/pools-config';
 import { PositionRangeChart } from '@/components/liquidity/PositionRangeChart/PositionRangeChart';
 import { PositionStatus } from '@uniswap/client-data-api/dist/data/v1/poolTypes_pb';
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 import { useNetwork } from '@/lib/network-context';
+import { getStoredUserSettings } from '@/hooks/useUserSettings';
 
-// New Uniswap-style transaction progress components
+// Uniswap step-based executor
+import {
+  useLiquidityStepExecutor,
+  buildLiquidityTxContext,
+  generateLPTransactionSteps,
+  type MintTxApiResponse,
+} from '@/lib/liquidity/transaction';
+import {
+  LiquidityTransactionType,
+  type TransactionStep,
+  type ValidatedLiquidityTxContext,
+} from '@/lib/liquidity/types';
+
+// C4: Flow state tracking
+import {
+  getOrCreateFlowState,
+  clearFlowState,
+  clearCachedPermit,
+} from '@/lib/permit-types';
+
+// Progress indicator
 import { ProgressIndicator } from '@/components/transactions';
 import {
-  buildAddLiquiditySteps,
-  TransactionStep,
-  CurrentStepState,
+  type CurrentStepState,
+  type TransactionStep as UITransactionStep,
+  TransactionStepType as UIStepType,
 } from '@/lib/transactions';
 
+// Map executor step types to UI step types
+function mapExecutorStepsToUI(
+  executorSteps: TransactionStep[],
+  pool: { currency0: { symbol: string; address: string }; currency1: { symbol: string; address: string } } | null,
+  token0Icon?: string,
+  token1Icon?: string
+): UITransactionStep[] {
+  if (!pool) return [];
+
+  return executorSteps.map((step): UITransactionStep => {
+    switch (step.type) {
+      case 'TokenApproval':
+      case 'TokenRevocation': {
+        const tokenSymbol = (step as any).token?.symbol || pool.currency0.symbol;
+        const tokenAddress = (step as any).token?.address || pool.currency0.address;
+        const isToken0 = tokenAddress.toLowerCase() === pool.currency0.address.toLowerCase();
+        return {
+          type: UIStepType.TokenApprovalTransaction,
+          tokenSymbol,
+          tokenAddress,
+          tokenIcon: isToken0 ? token0Icon : token1Icon,
+        };
+      }
+
+      case 'Permit2Signature':
+        return { type: UIStepType.Permit2Signature };
+
+      case 'IncreasePositionTransaction':
+      case 'IncreasePositionTransactionAsync':
+        return {
+          type: UIStepType.CreatePositionTransaction,
+          token0Symbol: pool.currency0.symbol,
+          token1Symbol: pool.currency1.symbol,
+          token0Icon,
+          token1Icon,
+        };
+
+      case 'DecreasePositionTransaction':
+        return {
+          type: UIStepType.DecreasePositionTransaction,
+          token0Symbol: pool.currency0.symbol,
+          token1Symbol: pool.currency1.symbol,
+          token0Icon,
+          token1Icon,
+        };
+
+      case 'CollectFeesTransaction':
+        return {
+          type: UIStepType.CollectFeesTransactionStep,
+          token0Symbol: pool.currency0.symbol,
+          token1Symbol: pool.currency1.symbol,
+          token0Icon,
+          token1Icon,
+        };
+
+      default:
+        return {
+          type: UIStepType.CreatePositionTransaction,
+          token0Symbol: pool.currency0.symbol,
+          token1Symbol: pool.currency1.symbol,
+          token0Icon,
+          token1Icon,
+        };
+    }
+  });
+}
 
 // Token info row - Uniswap style: amount + symbol large, USD below, logo on right
 interface TokenInfoRowProps {
@@ -113,7 +199,18 @@ function DoubleCurrencyLogo({
 type ModalView = 'review' | 'executing';
 
 // Error callout component - inline error display like Uniswap's ErrorCallout
-function ErrorCallout({ error, onRetry }: { error: string | null; onRetry: () => void }) {
+// Enhanced for C2-C5 permit error handling
+function ErrorCallout({
+  error,
+  onRetry,
+  isPermitError,
+  onRefreshPermit,
+}: {
+  error: string | null;
+  onRetry: () => void;
+  isPermitError?: boolean;
+  onRefreshPermit?: () => void;
+}) {
   if (!error) return null;
 
   return (
@@ -121,12 +218,23 @@ function ErrorCallout({ error, onRetry }: { error: string | null; onRetry: () =>
       <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
         <p className="text-sm text-red-400">{error}</p>
-        <button
-          onClick={onRetry}
-          className="text-xs text-red-400 hover:text-red-300 underline mt-1"
-        >
-          Try again
-        </button>
+        <div className="flex gap-3 mt-2">
+          <button
+            onClick={onRetry}
+            className="text-xs text-red-400 hover:text-red-300 underline"
+          >
+            Try again
+          </button>
+          {isPermitError && onRefreshPermit && (
+            <button
+              onClick={onRefreshPermit}
+              className="text-xs text-blue-400 hover:text-blue-300 underline flex items-center gap-1"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Sign new permit
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -134,7 +242,8 @@ function ErrorCallout({ error, onRetry }: { error: string | null; onRetry: () =>
 
 export function ReviewExecuteModal() {
   const router = useRouter();
-  const { chainId } = useNetwork();
+  const { address } = useAccount();
+  const { chainId, networkMode } = useNetwork();
   const { state, closeReviewModal, reset, poolStateData } = useAddLiquidityContext();
 
   // Get transaction data from TxContext
@@ -142,21 +251,24 @@ export function ReviewExecuteModal() {
     txInfo,
     calculatedData,
     usdValues,
+    gasFeeEstimateUSD,
   } = useCreatePositionTxContext();
 
   // Refunded amounts (populated during migrations or when position manager returns excess)
-  // Currently unused for standard add liquidity, but ready for migration flow
   const refundedAmounts = useMemo(() => {
-    // TODO: Populate from migration transaction result when migration is implemented
-    // Refunds occur when the mint/increase returns more tokens than expected
     return { token0: null as string | null, token1: null as string | null };
   }, []);
 
   // Modal state
   const [view, setView] = useState<ModalView>('review');
-  const [currentStep, setCurrentStep] = useState<CurrentStepState | undefined>(undefined);
+  const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
+  const [stepAccepted, setStepAccepted] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPermitError, setIsPermitError] = useState(false);
+  const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
+  // C4: Flow tracking for recovery
+  const [flowId, setFlowId] = useState<string | undefined>(undefined);
 
   // Get pool and token info
   const pool = state.poolId ? getPoolById(state.poolId) : null;
@@ -164,53 +276,63 @@ export function ReviewExecuteModal() {
   const token0Config = pool ? tokens[pool.currency0.symbol] : null;
   const token1Config = pool ? tokens[pool.currency1.symbol] : null;
 
-  // Transaction hook for real execution
-  const {
-    handleApprove,
-    handleDeposit,
-    handleZapSwapAndDeposit,
-    isWorking,
-    isDepositSuccess,
-    refetchApprovals,
-  } = useAddLiquidityTransaction({
-    token0Symbol: (pool?.currency0.symbol || 'aUSDC') as TokenSymbol,
-    token1Symbol: (pool?.currency1.symbol || 'aUSDT') as TokenSymbol,
-    amount0: state.amount0 || '0',
-    amount1: state.amount1 || '0',
-    tickLower: (txInfo?.tickLower ?? state.tickLower ?? 0).toString(),
-    tickUpper: (txInfo?.tickUpper ?? state.tickUpper ?? 0).toString(),
-    activeInputSide: state.inputSide === 'token0' ? 'amount0' : state.inputSide === 'token1' ? 'amount1' : null,
-    calculatedData,
-    onLiquidityAdded: () => {
-      // Uniswap pattern: clear steps, close modal, navigate
-      setCurrentStep(undefined);
+  // Map executor steps to UI steps for ProgressIndicator
+  const uiSteps = useMemo(() => {
+    return mapExecutorStepsToUI(executorSteps, pool, token0Config?.icon, token1Config?.icon);
+  }, [executorSteps, pool, token0Config?.icon, token1Config?.icon]);
+
+  // Compute currentStep for ProgressIndicator
+  const currentStep = useMemo((): CurrentStepState | undefined => {
+    if (uiSteps.length === 0 || currentStepIndex >= uiSteps.length) return undefined;
+    return { step: uiSteps[currentStepIndex], accepted: stepAccepted };
+  }, [uiSteps, currentStepIndex, stepAccepted]);
+
+  // Uniswap step-based executor
+  const executor = useLiquidityStepExecutor({
+    onSuccess: async () => {
+      setIsExecuting(false);
+      setCurrentStepIndex(0);
+      setStepAccepted(false);
+
+      // C4: Clear flow state and cached permit on success
+      if (flowId) {
+        clearFlowState(flowId);
+      }
+      if (address && chainId && pool) {
+        clearCachedPermit(address, chainId, pool.currency0.symbol, pool.currency1.symbol);
+      }
+
       closeReviewModal();
       reset();
       router.push('/overview');
     },
-    onOpenChange: (isOpen) => {
-      if (!isOpen) closeReviewModal();
+    onFailure: (err) => {
+      setIsExecuting(false);
+      const errorMessage = err?.message || 'Transaction failed';
+      const isUserRejection =
+        errorMessage.toLowerCase().includes('user rejected') ||
+        errorMessage.toLowerCase().includes('user denied');
+
+      setView('review');
+      setCurrentStepIndex(0);
+      setStepAccepted(false);
+
+      if (!isUserRejection) {
+        const isNonceError = errorMessage.includes('nonce') || errorMessage.includes('InvalidNonce');
+        if (isNonceError) {
+          setError('The permit signature has expired. Please try again.');
+          setIsPermitError(true);
+        } else {
+          setError(errorMessage);
+          setIsPermitError(false);
+        }
+      }
     },
-    isZapMode: state.isZapMode,
-    zapInputToken: state.inputSide === 'token0' ? 'token0' : 'token1',
+    onStepChange: (stepIndex, _step, accepted) => {
+      setCurrentStepIndex(stepIndex);
+      setStepAccepted(accepted);
+    },
   });
-
-  // Build transaction steps using Uniswap pattern
-  const steps: TransactionStep[] = useMemo(() => {
-    if (!pool) return [];
-
-    return buildAddLiquiditySteps({
-      needsToken0Approval: txInfo?.needsToken0Approval ?? false,
-      needsToken1Approval: txInfo?.needsToken1Approval ?? false,
-      isZapMode: state.isZapMode ?? false,
-      token0Symbol: pool.currency0.symbol,
-      token1Symbol: pool.currency1.symbol,
-      token0Address: pool.currency0.address,
-      token1Address: pool.currency1.address,
-      token0Icon: token0Config?.icon,
-      token1Icon: token1Config?.icon,
-    });
-  }, [pool, state.isZapMode, txInfo, token0Config, token1Config]);
 
   // Get tick data for price calculations
   const tickLower = txInfo?.tickLower ?? state.tickLower ?? 0;
@@ -308,96 +430,211 @@ export function ReviewExecuteModal() {
     return PositionStatus.OUT_OF_RANGE;
   }, [poolStateData, txInfo]);
 
-  // Handle confirm - start execution with real transaction flow
-  const handleConfirm = async () => {
-    if (!pool || steps.length === 0) return;
+  // Fetch API data and build context for step executor
+  const fetchAndBuildContext = useCallback(async (): Promise<ValidatedLiquidityTxContext | null> => {
+    if (!pool || !address || !chainId) return null;
+
+    const token0Symbol = pool.currency0.symbol as TokenSymbol;
+    const token1Symbol = pool.currency1.symbol as TokenSymbol;
+    const token0 = getToken(token0Symbol, networkMode);
+    const token1 = getToken(token1Symbol, networkMode);
+
+    if (!token0 || !token1) {
+      throw new Error('Token configuration not found');
+    }
+
+    // Determine input token and amount
+    const tl = calculatedData?.finalTickLower ?? txInfo?.tickLower ?? 0;
+    const tu = calculatedData?.finalTickUpper ?? txInfo?.tickUpper ?? 0;
+
+    let inputAmount = state.amount0 || state.amount1 || '0';
+    let inputTokenSymbol = token0Symbol;
+
+    if (state.inputSide === 'token0') {
+      inputAmount = state.amount0 || '0';
+      inputTokenSymbol = token0Symbol;
+    } else if (state.inputSide === 'token1') {
+      inputAmount = state.amount1 || '0';
+      inputTokenSymbol = token1Symbol;
+    }
+
+    // Get user settings
+    const userSettings = getStoredUserSettings();
+    const slippageBps = Math.round(userSettings.slippage * 100);
+    const deadlineMinutes = userSettings.deadline;
+
+    // Call API to get permit data
+    const response = await fetch('/api/liquidity/prepare-mint-tx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userAddress: address,
+        token0Symbol,
+        token1Symbol,
+        inputAmount,
+        inputTokenSymbol,
+        userTickLower: tl,
+        userTickUpper: tu,
+        chainId,
+        slippageBps,
+        deadlineMinutes,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || 'Failed to prepare transaction');
+    }
+
+    const apiResponse: MintTxApiResponse = await response.json();
+
+    // Build context for step executor
+    // Note: API returns raw amounts (wei), but state amounts are display amounts.
+    // CurrencyAmount.fromRawAmount expects raw amounts, so convert state amounts if needed.
+    const getRawAmount0 = (): string => {
+      if (apiResponse.details?.token0.amount) {
+        return apiResponse.details.token0.amount; // Already raw (wei)
+      }
+      // Convert display amount to raw using parseUnits
+      try {
+        return parseUnits(state.amount0 || '0', token0.decimals).toString();
+      } catch {
+        return '0';
+      }
+    };
+
+    const getRawAmount1 = (): string => {
+      if (apiResponse.details?.token1.amount) {
+        return apiResponse.details.token1.amount; // Already raw (wei)
+      }
+      // Convert display amount to raw using parseUnits
+      try {
+        return parseUnits(state.amount1 || '0', token1.decimals).toString();
+      } catch {
+        return '0';
+      }
+    };
+
+    const context = buildLiquidityTxContext({
+      type: LiquidityTransactionType.Create,
+      apiResponse,
+      token0: {
+        address: token0.address as Address,
+        symbol: token0.symbol,
+        decimals: token0.decimals,
+        chainId,
+      },
+      token1: {
+        address: token1.address as Address,
+        symbol: token1.symbol,
+        decimals: token1.decimals,
+        chainId,
+      },
+      amount0: getRawAmount0(),
+      amount1: getRawAmount1(),
+      chainId,
+      // Pass request args for async step - needed to call API with signature after permit
+      // Uniswap pattern: batchPermitData is embedded in request args so it's available
+      // when getTxRequest(signature) is called after user signs the permit
+      createPositionRequestArgs: {
+        userAddress: address,
+        token0Symbol,
+        token1Symbol,
+        inputAmount,
+        inputTokenSymbol,
+        userTickLower: tl,
+        userTickUpper: tu,
+        chainId,
+        slippageBps,
+        deadlineMinutes,
+        permitBatchData: apiResponse.permitBatchData,
+      },
+    });
+
+    return context as ValidatedLiquidityTxContext;
+  }, [pool, address, chainId, networkMode, state, txInfo, calculatedData]);
+
+  // Handle confirm - use Uniswap step executor
+  const handleConfirm = useCallback(async () => {
+    if (!pool || !address) return;
 
     setView('executing');
     setIsExecuting(true);
     setError(null);
+    setIsPermitError(false);
 
-    // Start with first step active
-    setCurrentStep({ step: steps[0], accepted: false });
+    // C4: Initialize flow tracking
+    const tl = calculatedData?.finalTickLower ?? txInfo?.tickLower ?? state.tickLower ?? 0;
+    const tu = calculatedData?.finalTickUpper ?? txInfo?.tickUpper ?? state.tickUpper ?? 0;
+    const flow = getOrCreateFlowState(
+      address,
+      chainId || 0,
+      pool.currency0.symbol,
+      pool.currency1.symbol,
+      tl,
+      tu
+    );
+    setFlowId(flow.flowId);
 
     try {
-      let stepIdx = 0;
-
-      // Step 1: Approve token0 if needed
-      if (txInfo?.needsToken0Approval) {
-        setCurrentStep({ step: steps[stepIdx], accepted: false });
-        // Mark as in-progress when wallet action is sent
-        setCurrentStep({ step: steps[stepIdx], accepted: true });
-        await handleApprove(pool.currency0.symbol as TokenSymbol, state.amount0);
-        await refetchApprovals();
-        stepIdx++;
+      // Build context from API
+      const context = await fetchAndBuildContext();
+      if (!context) {
+        throw new Error('Failed to build transaction context');
       }
 
-      // Step 2: Approve token1 if needed (not in zap mode)
-      if (txInfo?.needsToken1Approval && !state.isZapMode) {
-        setCurrentStep({ step: steps[stepIdx], accepted: false });
-        setCurrentStep({ step: steps[stepIdx], accepted: true });
-        await handleApprove(pool.currency1.symbol as TokenSymbol, state.amount1);
-        await refetchApprovals();
-        stepIdx++;
+      // Generate steps for UI display
+      const steps = generateLPTransactionSteps(context);
+      setExecutorSteps(steps);
+
+      // Start with first step
+      if (steps.length > 0) {
+        setCurrentStepIndex(0);
+        setStepAccepted(false);
       }
 
-      // Step 3: Permit signing
-      setCurrentStep({ step: steps[stepIdx], accepted: false });
-      setCurrentStep({ step: steps[stepIdx], accepted: true });
-      stepIdx++;
-
-      // Step 4: Execute transaction
-      setCurrentStep({ step: steps[stepIdx], accepted: false });
-      setCurrentStep({ step: steps[stepIdx], accepted: true });
-
-      if (state.isZapMode) {
-        await handleZapSwapAndDeposit();
-      } else {
-        await handleDeposit();
-      }
-
-      // Success is handled by onLiquidityAdded callback which sets view to 'success'
-    } catch (err) {
+      // Execute using Uniswap step executor
+      await executor.execute(context);
+    } catch (err: any) {
       console.error('[ReviewExecuteModal] Transaction error:', err);
-
-      // Check for user rejection
-      const errorMessage = err instanceof Error ? err.message : 'Transaction failed';
-      const isUserRejection =
-        errorMessage.toLowerCase().includes('user rejected') ||
-        errorMessage.toLowerCase().includes('user denied');
-
-      // Go back to review - errors shown inline (Uniswap pattern)
-      setView('review');
-      setCurrentStep(undefined);
-
-      // Only show error callout for non-rejection errors
-      if (!isUserRejection) {
-        setError(errorMessage);
-      }
-    } finally {
+      // Error handling is done in onFailure callback
       setIsExecuting(false);
+      setView('review');
+      setError(err?.message || 'Transaction failed');
     }
-  };
+  }, [pool, fetchAndBuildContext, executor]);
 
   // Clear error and retry
-  const handleRetry = () => {
+  const handleRetry = useCallback(() => {
     setError(null);
-  };
+    setIsPermitError(false);
+  }, []);
+
+  // Handle permit refresh (retry the flow)
+  const handleRefreshPermit = useCallback(() => {
+    setError(null);
+    setIsPermitError(false);
+    // Auto-start the flow again
+    handleConfirm();
+  }, [handleConfirm]);
 
   // Handle close
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     if (!isExecuting) {
       closeReviewModal();
     }
-  };
+  }, [isExecuting, closeReviewModal]);
 
   // Reset state when modal opens
   useEffect(() => {
     if (state.isReviewModalOpen) {
       setView('review');
-      setCurrentStep(undefined);
+      setCurrentStepIndex(0);
+      setStepAccepted(false);
+      setExecutorSteps([]);
       setIsExecuting(false);
       setError(null);
+      setIsPermitError(false);
     }
   }, [state.isReviewModalOpen]);
 
@@ -553,14 +790,38 @@ export function ReviewExecuteModal() {
             {/* Error Callout - inline like Uniswap */}
             {error && (
               <div className="px-4 pb-2">
-                <ErrorCallout error={error} onRetry={handleRetry} />
+                <ErrorCallout
+                  error={error}
+                  onRetry={handleRetry}
+                  isPermitError={isPermitError}
+                  onRefreshPermit={handleRefreshPermit}
+                />
               </div>
+            )}
+
+            {/* Network Cost - Uniswap pattern: shown before button, hidden during steps */}
+            {gasFeeEstimateUSD && view !== 'executing' && (
+              <>
+                <div className="mx-4 border-t border-sidebar-border" />
+                <div className="flex items-center justify-between px-4 py-3">
+                  <span className="text-sm text-muted-foreground">Network cost</span>
+                  <div className="flex items-center gap-2">
+                    {/* Chain icon - Base network */}
+                    <div className="w-4 h-4 rounded-sm bg-blue-500 flex items-center justify-center">
+                      <svg width="10" height="10" viewBox="0 0 111 111" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M54.921 110.034C85.359 110.034 110.034 85.402 110.034 55.017C110.034 24.6319 85.359 0 54.921 0C26.0432 0 2.35281 22.1714 0 50.3923H72.8467V59.6416H0C2.35281 87.8625 26.0432 110.034 54.921 110.034Z" fill="white"/>
+                      </svg>
+                    </div>
+                    <span className="text-sm text-white">{gasFeeEstimateUSD}</span>
+                  </div>
+                </div>
+              </>
             )}
 
             {/* Bottom Section: Button OR Progress Indicator */}
             <div className="p-4 pt-2">
-              {view === 'executing' && currentStep && steps.length > 0 ? (
-                <ProgressIndicator steps={steps} currentStep={currentStep} />
+              {view === 'executing' && currentStep && uiSteps.length > 0 ? (
+                <ProgressIndicator steps={uiSteps} currentStep={currentStep} />
               ) : (
                 <Button
                   onClick={handleConfirm}

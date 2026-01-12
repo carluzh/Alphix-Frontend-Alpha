@@ -149,12 +149,13 @@ export function LiquidityPositionFeeStats({
       />
 
       {/* APR - Conditional: PointsFeeStat or APRFeeStat */}
-      {/* Mirrors Uniswap's: lpIncentiveRewardApr ? <LPIncentiveFeeStat /> : <APRFeeStat /> */}
+      {/* Both now use unified APRBreakdownTooltip with Swap APR, Unified Yield, Points */}
       {pointsData?.pointsApr ? (
         <PointsFeeStat
           poolApr={apr}
           pointsApr={pointsData.pointsApr}
           totalApr={pointsData.totalApr}
+          unifiedYieldApr={pointsData.unifiedYieldApr}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
         />
@@ -163,6 +164,11 @@ export function LiquidityPositionFeeStats({
           formattedApr={formattedApr || '-'}
           isFallback={isAprFallback}
           isLoading={isLoadingApr}
+          swapApr={apr}
+          unifiedYieldApr={0}
+          pointsApr={0}
+          token0Symbol={token0Symbol}
+          token1Symbol={token1Symbol}
         />
       )}
     </div>

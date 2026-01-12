@@ -13,6 +13,7 @@ import { TokenSymbol, getNetworkModeFromRequest } from '../../../lib/pools-confi
 import { iallowance_transfer_abi } from '../../../lib/abis/IAllowanceTransfer_abi';
 import { getUniversalRouterAddress } from '../../../lib/pools-config';
 import { Erc20AbiDefinition } from '../../../lib/swap-constants';
+import { PERMIT_TYPES } from '../../../lib/permit-types';
 
 // Ensure this matches the structure viem expects for signTypedData
 type PermitSingleMessage = {
@@ -147,19 +148,7 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
         };
 
         const domain: PermitDomain = getPermit2Domain(chainId, PERMIT2_ADDRESS);
-        const types = {
-            PermitSingle: [
-                { name: 'details', type: 'PermitDetails' },
-                { name: 'spender', type: 'address' },
-                { name: 'sigDeadline', type: 'uint256' }
-            ],
-            PermitDetails: [
-                { name: 'token', type: 'address' },
-                { name: 'amount', type: 'uint160' },
-                { name: 'expiration', type: 'uint48' },
-                { name: 'nonce', type: 'uint48' }
-            ]
-        };
+        const types = PERMIT_TYPES;
 
         res.status(200).json({
             ok: true,

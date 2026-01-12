@@ -1,12 +1,10 @@
 "use client";
 
 import { memo, ReactNode, useMemo } from "react";
-import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { StatSectionBubble } from "../shared/DetailBubble";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { getToken } from "@/lib/pools-config";
-import { PointsIcon } from "@/components/PointsIcons/PointsIcon";
+import { APRBreakdownTooltip } from "@/components/liquidity/APRBreakdownTooltip";
 import type { PoolStats } from "../../hooks";
 
 // Points campaign gives 50% APR bonus
@@ -92,12 +90,6 @@ export const PoolDetailStats = memo(function PoolDetailStats({
     };
   }, [poolStats.aprRaw, hasPointsRewards]);
 
-  // Get token icons for tooltip
-  const token0Config = token0Symbol ? getToken(token0Symbol) : null;
-  const token1Config = token1Symbol ? getToken(token1Symbol) : null;
-  const icon0 = (token0Config as any)?.icon;
-  const icon1 = (token1Config as any)?.icon;
-
   // Stat card class (solid border, not dashed - the outer wrapper has the dashed border)
   const statCardClass = "flex-1 min-w-[130px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3";
 
@@ -177,59 +169,18 @@ export const PoolDetailStats = memo(function PoolDetailStats({
                   </div>
                 </div>
               </TooltipTrigger>
-              {hasPointsRewards && hasPositiveApr && (
-                <TooltipContent
-                  side="bottom"
-                  className="p-0 bg-popover border border-sidebar-border rounded-lg shadow-lg"
-                >
-                  <div className="flex flex-col py-1 min-w-[180px]">
-                    {/* Pool APR Row - with token images */}
-                    <div className="flex items-center justify-between px-2.5 py-1.5 gap-3">
-                      <div className="flex items-center gap-2 flex-1">
-                        <div className="flex items-center -space-x-1 flex-shrink-0">
-                          {icon0 ? (
-                            <Image
-                              src={icon0}
-                              alt={token0Symbol || ''}
-                              width={14}
-                              height={14}
-                              className="rounded-full ring-1 ring-popover"
-                            />
-                          ) : (
-                            <div className="w-3.5 h-3.5 rounded-full bg-muted ring-1 ring-popover" />
-                          )}
-                          {icon1 ? (
-                            <Image
-                              src={icon1}
-                              alt={token1Symbol || ''}
-                              width={14}
-                              height={14}
-                              className="rounded-full ring-1 ring-popover"
-                            />
-                          ) : (
-                            <div className="w-3.5 h-3.5 rounded-full bg-muted ring-1 ring-popover" />
-                          )}
-                        </div>
-                        <span className="text-xs text-muted-foreground">Pool APR</span>
-                      </div>
-                      <span className="text-xs text-foreground flex-shrink-0 font-mono">
-                        {poolApr.toFixed(2)}%
-                      </span>
-                    </div>
-
-                    {/* Points APR Row - with backdrop and PointsIcon */}
-                    <div className="flex items-center justify-between px-2.5 py-1.5 gap-3 bg-primary/10 rounded-lg mx-1 mt-1">
-                      <div className="flex items-center gap-2 flex-1">
-                        <PointsIcon className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                        <span className="text-xs text-primary">Points APR</span>
-                      </div>
-                      <span className="text-xs text-primary flex-shrink-0 font-mono">
-                        {pointsApr.toFixed(2)}%
-                      </span>
-                    </div>
-                  </div>
-                </TooltipContent>
-              )}
+              <TooltipContent
+                side="bottom"
+                className="p-0 bg-popover border border-sidebar-border rounded-lg shadow-lg"
+              >
+                <APRBreakdownTooltip
+                  swapApr={poolApr}
+                  unifiedYieldApr={0}
+                  pointsApr={pointsApr}
+                  token0Symbol={token0Symbol}
+                  token1Symbol={token1Symbol}
+                />
+              </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </div>

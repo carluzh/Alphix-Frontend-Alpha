@@ -57,6 +57,7 @@ export function PointsRewardsCard({
       className="group cursor-pointer"
       onMouseEnter={() => setIsCardHovered(true)}
       onMouseLeave={() => setIsCardHovered(false)}
+      onClick={() => router.push("/points")}
     >
       <div
         className={cn(
@@ -128,7 +129,7 @@ export function PointsRewardsCard({
           )}
           onMouseEnter={() => { setIsCtaHovered(true); setIsCardHovered(false); }}
           onMouseLeave={() => { setIsCtaHovered(false); setIsCardHovered(true); }}
-          onClick={() => router.push("/liquidity")}
+          onClick={(e) => { e.stopPropagation(); router.push("/liquidity"); }}
         >
           <div className="flex flex-row items-center gap-1.5">
             <span className={cn("text-foreground", isMobile ? "text-xs" : "text-sm")}>

@@ -70,11 +70,13 @@ export interface MintTxApiResponse {
     data: string;
     value: string;
     chainId: number;
+    gasLimit?: string;
   };
   transaction?: {
     to: string;
     data: string;
     value: string;
+    gasLimit?: string;
   };
   sqrtRatioX96?: string;
   currentTick?: number;
@@ -111,6 +113,32 @@ export interface BuildLiquidityContextParams {
   // Optional permit data (built from permit batch signature flow)
   permit?: SignTypedDataStepFields;
   permitSignature?: string;
+  // Request args for async step (needed to call API with signature after permit)
+  // Uniswap pattern: permitBatchData is embedded here so it's sent with signature
+  createPositionRequestArgs?: {
+    userAddress: string;
+    token0Symbol: string;
+    token1Symbol: string;
+    inputAmount: string;
+    inputTokenSymbol: string;
+    userTickLower: number;
+    userTickUpper: number;
+    chainId: number;
+    slippageBps?: number;
+    deadlineMinutes?: number;
+    permitBatchData?: MintTxApiResponse['permitBatchData'];
+  };
+  // Request args for increase position async step
+  // Note: Uses amount0/amount1 format for prepare-increase-tx.ts
+  increasePositionRequestArgs?: {
+    userAddress: string;
+    tokenId: string;
+    amount0: string;
+    amount1: string;
+    chainId: number;
+    slippageBps?: number;
+    deadlineMinutes?: number;
+  };
 }
 
 // =============================================================================
@@ -162,10 +190,24 @@ function buildTxRequest(
     return undefined;
   }
 
+  // Safely parse bigint values - handle potential decimal strings
+  const safeBigInt = (val: string | undefined, fieldName: string): bigint | undefined => {
+    if (!val) return undefined;
+    try {
+      // Handle decimal strings by truncating (these should be integers)
+      const cleanVal = val.includes('.') ? val.split('.')[0] : val;
+      return BigInt(cleanVal);
+    } catch (e) {
+      console.warn(`[buildTxRequest] Invalid ${fieldName} value:`, val);
+      return undefined;
+    }
+  };
+
   return {
     to: txData.to as Address,
     data: txData.data as Hex,
-    value: txData.value ? BigInt(txData.value) : undefined,
+    value: safeBigInt(txData.value, 'value'),
+    gasLimit: safeBigInt(txData.gasLimit, 'gasLimit'),
     chainId,
   };
 }
@@ -198,7 +240,7 @@ function buildPermitData(apiResponse: MintTxApiResponse): SignTypedDataStepField
 export function buildCreatePositionContext(
   params: BuildLiquidityContextParams,
 ): CreatePositionTxAndGasInfo {
-  const { apiResponse, token0, token1, amount0, amount1, chainId, approveToken0Request, approveToken1Request, permit } = params;
+  const { apiResponse, token0, token1, amount0, amount1, chainId, approveToken0Request, approveToken1Request, permit, createPositionRequestArgs } = params;
 
   const action = buildLiquidityAction(LiquidityTransactionType.Create, token0, token1, amount0, amount1);
   const txRequest = buildTxRequest(apiResponse, chainId);
@@ -218,7 +260,8 @@ export function buildCreatePositionContext(
     revokeToken1Request: undefined,
     txRequest,
     unsigned: !!permitData && !txRequest,
-    createPositionRequestArgs: undefined,
+    // Pass request args for async step - needed to call API with signature after permit
+    createPositionRequestArgs,
     sqrtRatioX96: apiResponse.sqrtRatioX96,
   };
 }
@@ -229,7 +272,7 @@ export function buildCreatePositionContext(
 export function buildIncreasePositionContext(
   params: BuildLiquidityContextParams,
 ): IncreasePositionTxAndGasInfo {
-  const { apiResponse, token0, token1, amount0, amount1, chainId, approveToken0Request, approveToken1Request, permit } = params;
+  const { apiResponse, token0, token1, amount0, amount1, chainId, approveToken0Request, approveToken1Request, permit, increasePositionRequestArgs } = params;
 
   const action = buildLiquidityAction(LiquidityTransactionType.Increase, token0, token1, amount0, amount1);
   const txRequest = buildTxRequest(apiResponse, chainId);
@@ -249,7 +292,7 @@ export function buildIncreasePositionContext(
     revokeToken1Request: undefined,
     txRequest,
     unsigned: !!permitData && !txRequest,
-    increasePositionRequestArgs: undefined,
+    increasePositionRequestArgs,
     sqrtRatioX96: apiResponse.sqrtRatioX96,
   };
 }

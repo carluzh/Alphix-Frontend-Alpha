@@ -537,17 +537,17 @@ export function SwapInputView({
                 {(() => {
                   const isMultiHop = (trade.routeInfo?.path?.length || 2) > 2;
                   if (!isMultiHop) return null;
-                  
+
                   const showDesktopSelection = !isMobile && clickedTokenIndex !== null;
-                  return showDesktopSelection && trade.routeFees?.[selectedPoolIndexForChart] ? (
+                  return showDesktopSelection && trade.dynamicFeeBps !== null ? (
                     <div className="flex items-center gap-1.5">
                       <span className="text-muted-foreground text-xs">
                         {trade.quoteError ? (
                           "-"
-                        ) : trade.routeFeesLoading ? (
+                        ) : trade.quoteLoading ? (
                           <div className="h-3 w-8 bg-muted/60 rounded animate-pulse"></div>
                         ) : (
-                          formatPercentFromBps(trade.routeFees[selectedPoolIndexForChart].fee)
+                          formatPercentFromBps(trade.dynamicFeeBps)
                         )}
                       </span>
                     </div>
@@ -781,16 +781,15 @@ export function SwapInputView({
                       if (trade.quoteError) {
                         return <span className="text-muted-foreground">-</span>;
                       }
-                      if (trade.routeFeesLoading) {
+                      if (trade.quoteLoading) {
                         return <div className="h-3 w-16 bg-muted/60 rounded animate-pulse"></div>;
                       }
-                      if (!trade.routeFees || trade.routeFees.length === 0) {
+                      if (trade.dynamicFeeBps === null) {
                         return <span className="text-muted-foreground">N/A</span>;
                       }
-                      const totalFeeBps = trade.routeFees.reduce((total, routeFee) => total + routeFee.fee, 0);
                       const inputAmountUSD = parseFloat(fromAmount || "0") * (fromTokenPrice.price || displayFromToken.usdPrice || 0);
-                      const feeInUSD = inputAmountUSD * (totalFeeBps / 10000);
-                      const percentDisplay = formatPercentFromBps(totalFeeBps);
+                      const feeInUSD = inputAmountUSD * (trade.dynamicFeeBps / 10000);
+                      const percentDisplay = formatPercentFromBps(trade.dynamicFeeBps);
                       const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : trade.formatCurrency(feeInUSD.toString());
 
                       return (

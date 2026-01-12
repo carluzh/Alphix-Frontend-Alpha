@@ -68,16 +68,13 @@ export const getPermit2Domain = (chainId: number, verifyingContract: Address) =>
 
 export const PERMIT2_DOMAIN_NAME = "Permit2";
 
-export const PERMIT_TYPES = {
-    PermitDetails: [
-        { name: 'token', type: 'address' }, { name: 'amount', type: 'uint160' },
-        { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' },
-    ],
-    PermitSingle: [
-        { name: 'details', type: 'PermitDetails' }, { name: 'spender', type: 'address' },
-        { name: 'sigDeadline', type: 'uint256' },
-    ],
-} as const;
+// Re-export permit types from consolidated source
+// See lib/permit-types.ts for all Permit2 EIP-712 type definitions
+export { PERMIT_TYPES, PERMIT_BATCH_TYPES, PERMIT2_TYPES } from './permit-types';
+
+// C9: Re-export CommandType for convenient imports
+// @see interface/packages/uniswap/src/data/tradingApi/index.ts
+export { CommandType } from '@uniswap/universal-router-sdk';
 
 // --- ABI Definitions ---
 export const UNIVERSAL_ROUTER_ABI_STRINGS = [

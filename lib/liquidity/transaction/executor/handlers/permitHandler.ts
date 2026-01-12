@@ -6,9 +6,12 @@
  *
  * Handles Permit2 signature steps for gasless approvals.
  * Adapted from Redux Saga to async/await with wagmi hooks.
+ *
+ * C3 Enhancement: Caches signed permits for retry resilience.
  */
 
 import type { Permit2SignatureStep } from '../../../types';
+import { cacheSignedPermit, type CachedPermit } from '@/lib/permit-types';
 
 // =============================================================================
 // TYPES - Matches Uniswap's HandleSignatureStepParams
@@ -18,6 +21,12 @@ export interface HandleSignatureStepParams {
   address: `0x${string}`;
   step: Permit2SignatureStep;
   setCurrentStep: (params: { step: Permit2SignatureStep; accepted: boolean }) => void;
+  // C3: Optional caching params for permit recovery
+  chainId?: number;
+  token0Symbol?: string;
+  token1Symbol?: string;
+  tickLower?: number;
+  tickUpper?: number;
 }
 
 // =============================================================================
@@ -47,7 +56,7 @@ export async function handleSignatureStep(
     message: Record<string, unknown>;
   }) => Promise<`0x${string}`>,
 ): Promise<string> {
-  const { step, setCurrentStep } = params;
+  const { step, setCurrentStep, address, chainId, token0Symbol, token1Symbol, tickLower, tickUpper } = params;
 
   // Trigger UI prompting user to accept
   setCurrentStep({ step, accepted: false });
@@ -62,6 +71,30 @@ export async function handleSignatureStep(
     primaryType,
     message: step.values,
   });
+
+  // C3: Cache signed permit for retry resilience
+  if (chainId && token0Symbol && token1Symbol) {
+    try {
+      const cached: CachedPermit = {
+        permitBatchData: {
+          domain: step.domain,
+          types: step.types,
+          values: step.values as CachedPermit['permitBatchData']['values'],
+        },
+        signature,
+        timestamp: Date.now(),
+        userAddress: address,
+        chainId,
+        token0Symbol,
+        token1Symbol,
+        tickLower: tickLower ?? 0,
+        tickUpper: tickUpper ?? 0,
+      };
+      cacheSignedPermit(cached);
+    } catch (e) {
+      console.warn('[permitHandler] Failed to cache permit signature:', e);
+    }
+  }
 
   // Mark step as accepted after successful signature - MATCHES UNISWAP
   setCurrentStep({ step, accepted: true });

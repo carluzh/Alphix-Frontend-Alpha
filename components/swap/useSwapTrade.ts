@@ -74,12 +74,38 @@ export const formatCurrency = (valueString: string): string => {
   }).format(numberValue)
 }
 
-export const formatTokenAmountDisplay = (amountString: string): string => {
+// Uniswap-aligned token amount formatting
+export const formatTokenAmountDisplay = (
+  amountString: string,
+  tokenOrDecimals?: { decimals: number } | number
+): string => {
   try {
     const amount = parseFloat(amountString)
     if (isNaN(amount) || amount === 0) return "0"
-    if (amount > 0 && amount < 0.001) return "< 0.001"
-    return amount.toFixed(6)
+
+    const maxDecimals =
+      typeof tokenOrDecimals === "number"
+        ? tokenOrDecimals
+        : tokenOrDecimals?.decimals ?? 6
+    const TOKEN_AMOUNT_DISPLAY_FLOOR = 0.00001
+
+    if (amount > 0 && amount < TOKEN_AMOUNT_DISPLAY_FLOOR) {
+      return `< ${TOKEN_AMOUNT_DISPLAY_FLOOR.toFixed(Math.min(5, maxDecimals))}`
+    }
+
+    if (amount < 0.1) {
+      return amount.toPrecision(Math.min(6, maxDecimals + 1))
+    }
+    if (amount < 1) {
+      const formatted = amount.toFixed(Math.min(5, maxDecimals))
+      return parseFloat(formatted).toString()
+    }
+    if (amount < 10000) {
+      const formatted = amount.toFixed(Math.min(2, maxDecimals))
+      return parseFloat(formatted).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }
+
+    return amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   } catch {
     return amountString
   }
@@ -107,24 +133,17 @@ export function useSwapTrade({
   const {
     routeInfo,
     setRouteInfo,
-    routeFees,
-    routeFeesLoading,
-    dynamicFeeBps,
-    dynamicFeeLoading,
-    dynamicFeeError,
+    routeError,
   } = useSwapRoutingFees({
     fromToken,
     toToken,
     tokenDefinitions,
-    targetChainId,
-    isConnected,
-    currentChainId,
     currentRoute,
     setCurrentRoute,
     setSelectedPoolIndexForChart,
   })
 
-  const { quoteLoading, quoteError, setQuoteError, priceImpact, clearQuote, refreshBindingQuote } = useSwapQuote({
+  const { quoteLoading, quoteError, setQuoteError, priceImpact, dynamicFeeBps, clearQuote, refreshBindingQuote } = useSwapQuote({
     fromToken,
     toToken,
     fromAmount,
@@ -148,43 +167,37 @@ export function useSwapTrade({
   }
 
   const tradeState: TradeState = useMemo(() => {
-    // no trade intent yet
     if (!fromAmount && !toAmount) return "idle"
 
-    // errors first
     if (quoteError) return "error"
-    if (dynamicFeeError && !dynamicFeeError.toLowerCase().includes("no route found")) return "error"
+    if (routeError && !routeError.toLowerCase().includes("no route")) return "error"
 
     const inParsed = tryParseUnits(fromAmount, fromToken.decimals)
     const outParsed = tryParseUnits(toAmount, toToken.decimals)
     const wantsTrade = (inParsed !== null && inParsed > 0n) || (outParsed !== null && outParsed > 0n)
     if (!wantsTrade) return "idle"
 
-    // loading (quote, routing, fees)
-    if (quoteLoading || dynamicFeeLoading || routeFeesLoading) return "loading"
+    if (quoteLoading) return "loading"
 
-    // no route conditions
+    if (quoteError) return "error"
+
     if (!currentRoute || currentRoute.pools.length === 0) return "no_route"
-    if (dynamicFeeError && dynamicFeeError.toLowerCase().includes("no route found")) return "no_route"
+    if (routeError && routeError.toLowerCase().includes("no route")) return "no_route"
 
-    // require a usable quote in both fields before "ready"
     const hasQuote = inParsed !== null && inParsed > 0n && outParsed !== null && outParsed > 0n
     if (!hasQuote) return "loading"
 
-    // fee can be null briefly; don't allow execution until we have it
     if (dynamicFeeBps === null) return "loading"
 
     return "ready"
   }, [
     currentRoute,
     dynamicFeeBps,
-    dynamicFeeError,
-    dynamicFeeLoading,
+    routeError,
     fromAmount,
     fromToken.decimals,
     quoteError,
     quoteLoading,
-    routeFeesLoading,
     toAmount,
     toToken.decimals,
   ])
@@ -192,8 +205,8 @@ export function useSwapTrade({
   const tradeError: string | null = useMemo(() => {
     if (tradeState !== "error" && tradeState !== "no_route") return null
     if (tradeState === "no_route") return "No route found"
-    return quoteError || dynamicFeeError || "Trade error"
-  }, [dynamicFeeError, quoteError, tradeState])
+    return quoteError || routeError || "Trade error"
+  }, [routeError, quoteError, tradeState])
 
   const execution: ExecutionTradeParams = useMemo(() => {
     const swapType: ExecutionTradeParams["swapType"] = lastEditedSideRef.current === "to" ? "ExactOut" : "ExactIn"
@@ -282,38 +295,18 @@ export function useSwapTrade({
     const updatedFeesArray: FeeDetail[] = []
 
     if (canQuoteOnTargetChain) {
-      if (routeFeesLoading || dynamicFeeLoading) {
-        if (routeFees.length > 0) {
-          routeFees.forEach((routeFee, index) => {
-            const feeDisplayName = routeFees.length > 1 ? `Fee ${index + 1} (${routeFee.poolName})` : "Fee"
-            updatedFeesArray.push({
-              name: feeDisplayName,
-              value: `${(routeFee.fee / 10000).toFixed(2)}%`,
-              type: "percentage",
-            })
-          })
-        } else {
-          updatedFeesArray.push({ name: "Fee", value: "N/A", type: "percentage" })
-        }
-      } else if (dynamicFeeError) {
+      if (quoteLoading) {
+        updatedFeesArray.push({ name: "Fee", value: "...", type: "percentage" })
+      } else if (routeError) {
         updatedFeesArray.push({
           name: "Fee",
-          value: dynamicFeeError.includes("No route found") ? "No Route Available" : "Fee N/A",
+          value: routeError.includes("No route") ? "No Route Available" : "Fee N/A",
           type: "percentage",
-        })
-      } else if (routeFees.length > 0) {
-        routeFees.forEach((routeFee, index) => {
-          const feeDisplayName = routeFees.length > 1 ? `Fee ${index + 1} (${routeFee.poolName})` : "Fee"
-          updatedFeesArray.push({
-            name: feeDisplayName,
-            value: `${(routeFee.fee / 10000).toFixed(2)}%`,
-            type: "percentage",
-          })
         })
       } else if (dynamicFeeBps !== null) {
         updatedFeesArray.push({
           name: "Fee",
-          value: `${(dynamicFeeBps / 10000).toFixed(2)}%`,
+          value: `${(dynamicFeeBps / 100).toFixed(2)}%`,
           type: "percentage",
         })
       } else {
@@ -323,13 +316,13 @@ export function useSwapTrade({
       updatedFeesArray.push({ name: "Fee", value: "N/A", type: "percentage" })
     }
 
-    if (fromValueNum > 0 && canQuoteOnTargetChain && routeFees.length > 0 && !routeFeesLoading && !dynamicFeeError) {
-      const totalFeeRate = routeFees.reduce((total, routeFee) => total + routeFee.fee / 10000, 0)
-      const totalFeeInUsd = fromValueNum * fromTokenUsdPrice * (totalFeeRate / 100)
+    if (fromValueNum > 0 && canQuoteOnTargetChain && dynamicFeeBps !== null) {
+      const feeRate = dynamicFeeBps / 100
+      const totalFeeInUsd = fromValueNum * fromTokenUsdPrice * (feeRate / 100)
       const feeValueDisplay =
         totalFeeInUsd > 0 && totalFeeInUsd < 0.01 ? "< $0.01" : formatCurrency(totalFeeInUsd.toString())
       updatedFeesArray.push({
-        name: routeFees.length > 1 ? "Total Fee Value (USD)" : "Fee Value (USD)",
+        name: "Fee Value (USD)",
         value: feeValueDisplay,
         type: "usd",
       })
@@ -356,18 +349,14 @@ export function useSwapTrade({
     currentChainId,
     currentSlippage,
     dynamicFeeBps,
-    dynamicFeeError,
-    dynamicFeeLoading,
+    routeError,
+    quoteLoading,
     fromAmount,
-    fromToken.symbol,
     fromToken.usdPrice,
     isConnected,
     quoteError,
-    routeFees,
-    routeFeesLoading,
     targetChainId,
     toAmount,
-    toToken.symbol,
     toToken.usdPrice,
   ])
 
@@ -379,7 +368,6 @@ export function useSwapTrade({
   }, [priceImpact])
 
   return {
-    // canonical "trade model"
     quoteLoading,
     quoteError,
     setQuoteError,
@@ -390,22 +378,15 @@ export function useSwapTrade({
 
     routeInfo,
     setRouteInfo,
-    routeFees,
-    routeFeesLoading,
     dynamicFeeBps,
-    dynamicFeeLoading,
-    dynamicFeeError,
 
     calculatedValues,
 
-    // formatting helpers used by existing UI components
     formatCurrency,
     formatTokenAmountDisplay,
 
-    // execution-ready trade params (Uniswap-style)
     execution,
 
-    // trade status (Uniswap-style)
     tradeState,
     tradeError,
   }

@@ -1,34 +1,159 @@
 "use client";
 
 /**
- * IncreaseLiquidityForm - Input UI for increase liquidity flow
+ * IncreaseLiquidityForm - Combined input and execution UI for add liquidity flow
  *
- * Following Uniswap's pattern: Uses both UI and TX contexts,
- * renders shared DepositInputForm with callbacks.
+ * Features:
+ * - Header with TokenStack + Range/Yield badges
+ * - Token input fields with percentage buttons
+ * - Position segment showing current/projected position
+ * - Single "Review" button that starts transaction flow directly
+ * - Progress indicator during execution
+ * - Success state with done button
  *
  * @see interface/apps/web/src/pages/IncreaseLiquidity/IncreaseLiquidityForm.tsx
  */
 
-import React from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import { useAnimation } from "framer-motion";
+import { useAccount } from "wagmi";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { formatCalculatedAmount } from "../liquidity-form-utils";
+import { cn, formatTokenDisplayAmount } from "@/lib/utils";
+import { getExplorerTxUrl } from "@/lib/wagmiConfig";
+import { useNetwork } from "@/lib/network-context";
+import { toast } from "sonner";
+import { formatCalculatedAmount, getTokenIcon } from "../liquidity-form-utils";
 import { DepositInputForm, type PositionField } from "../shared/DepositInputForm";
-import { LiquidityDetailRows } from "../shared/LiquidityDetailRows";
-import { LiquidityPositionInfo } from "../shared/LiquidityPositionInfo";
-import {
-  useIncreaseLiquidityContext,
-  IncreaseLiquidityStep,
-} from "./IncreaseLiquidityContext";
+import { PositionAmountsDisplay } from "../shared/PositionAmountsDisplay";
+import { useIncreaseLiquidityContext } from "./IncreaseLiquidityContext";
 import { useIncreaseLiquidityTxContext } from "./IncreaseLiquidityTxContext";
+import type { TokenSymbol } from "@/lib/pools-config";
+import { getPoolById } from "@/lib/pools-config";
+import Image from "next/image";
 
-export function IncreaseLiquidityForm() {
+// Flow state tracking for permit recovery
+import {
+  getOrCreateFlowState,
+  clearFlowState,
+  clearCachedPermit,
+} from "@/lib/permit-types";
+
+// Step executor and progress indicator
+import {
+  useLiquidityStepExecutor,
+  generateLPTransactionSteps,
+} from "@/lib/liquidity/transaction";
+import { type TransactionStep } from "@/lib/liquidity/types";
+import { ProgressIndicator } from "@/components/transactions";
+import {
+  type CurrentStepState,
+  type TransactionStep as UITransactionStep,
+  TransactionStepType as UIStepType,
+} from "@/lib/transactions";
+// Modal view types (success is handled via toast + immediate close)
+type ModalView = "input" | "executing";
+
+// Map executor step types to UI step types for ProgressIndicator
+function mapExecutorStepsToUI(
+  executorSteps: TransactionStep[],
+  token0Symbol: string,
+  token1Symbol: string,
+  token0Icon?: string,
+  token1Icon?: string
+): UITransactionStep[] {
+  return executorSteps.map((step): UITransactionStep => {
+    switch (step.type) {
+      case "TokenApproval":
+      case "TokenRevocation": {
+        const tokenSymbol = (step as any).token?.symbol || token0Symbol;
+        const tokenAddress = (step as any).token?.address || "";
+        const isToken0 = tokenSymbol === token0Symbol;
+        return {
+          type: UIStepType.TokenApprovalTransaction,
+          tokenSymbol,
+          tokenAddress,
+          tokenIcon: isToken0 ? token0Icon : token1Icon,
+        };
+      }
+      case "Permit2Signature":
+        return {
+          type: UIStepType.Permit2Signature,
+        };
+      case "IncreasePositionTransaction":
+      case "IncreasePositionTransactionAsync":
+        return {
+          type: UIStepType.IncreasePositionTransaction,
+          token0Symbol,
+          token1Symbol,
+          token0Icon,
+          token1Icon,
+        };
+      default:
+        return {
+          type: UIStepType.IncreasePositionTransaction,
+          token0Symbol,
+          token1Symbol,
+          token0Icon,
+          token1Icon,
+        };
+    }
+  });
+}
+
+// Error callout component with permit refresh option
+function ErrorCallout({
+  error,
+  onRetry,
+  isPermitError,
+  onRefreshPermit,
+}: {
+  error: string | null;
+  onRetry: () => void;
+  isPermitError?: boolean;
+  onRefreshPermit?: () => void;
+}) {
+  if (!error) return null;
+
+  return (
+    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+      <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-red-400">{error}</p>
+        <div className="flex gap-3 mt-2">
+          <button
+            onClick={onRetry}
+            className="text-xs text-red-400 hover:text-red-300 underline"
+          >
+            Try again
+          </button>
+          {isPermitError && onRefreshPermit && (
+            <button
+              onClick={onRefreshPermit}
+              className="text-xs text-blue-400 hover:text-blue-300 underline flex items-center gap-1"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Sign new permit
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface IncreaseLiquidityFormProps {
+  onClose?: () => void;
+  onSuccess?: () => void;
+}
+
+export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityFormProps) {
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
+  const { address } = useAccount();
+  const { chainId } = useNetwork();
 
   const {
-    setStep,
     increaseLiquidityState,
     derivedIncreaseLiquidityInfo,
     setAmount0,
@@ -39,7 +164,6 @@ export function IncreaseLiquidityForm() {
   } = useIncreaseLiquidityContext();
 
   const {
-    prepareTransaction,
     token0Balance,
     token1Balance,
     token0USDPrice,
@@ -48,11 +172,25 @@ export function IncreaseLiquidityForm() {
     handlePercentage1,
     calculateDependentAmount,
     isCalculating,
-    isWorking,
+    isLoading,
+    error: contextError,
+    fetchAndBuildContext,
+    refetchBalances,
+    clearError,
   } = useIncreaseLiquidityTxContext();
 
   const { position } = increaseLiquidityState;
   const { formattedAmounts } = derivedIncreaseLiquidityInfo;
+
+  // Local state
+  const [view, setView] = useState<ModalView>("input");
+  const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
+  const [stepAccepted, setStepAccepted] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [isPermitError, setIsPermitError] = useState(false);
+  const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
+  const [flowId, setFlowId] = useState<string | undefined>(undefined);
 
   // Determine deposit disabled states based on position range
   const isOutOfRange = !position.isInRange;
@@ -62,13 +200,104 @@ export function IncreaseLiquidityForm() {
   if (isOutOfRange) {
     const amt0 = parseFloat(position.token0?.amount || "0");
     const amt1 = parseFloat(position.token1?.amount || "0");
-    // When out of range, only one side is productive
     if (amt0 > 0 && amt1 <= 0) {
       deposit1Disabled = true;
     } else if (amt1 > 0 && amt0 <= 0) {
       deposit0Disabled = true;
     }
   }
+
+  // Computed values
+  const amount0 = parseFloat(formattedAmounts?.TOKEN0 || "0");
+  const amount1 = parseFloat(formattedAmounts?.TOKEN1 || "0");
+  const usdValue0 = amount0 * token0USDPrice;
+  const usdValue1 = amount1 * token1USDPrice;
+  const error = localError || contextError;
+
+  // Calculate position amounts (current + input for projected)
+  const currentToken0Amount = parseFloat(position.token0.amount || "0");
+  const currentToken1Amount = parseFloat(position.token1.amount || "0");
+  const projectedToken0Amount = currentToken0Amount + amount0;
+  const projectedToken1Amount = currentToken1Amount + amount1;
+
+  // Show projected if user has entered any amounts
+  const showProjected = amount0 > 0 || amount1 > 0;
+
+  // Map executor steps to UI steps
+  const uiSteps = useMemo(() => {
+    return mapExecutorStepsToUI(
+      executorSteps,
+      position.token0.symbol,
+      position.token1.symbol,
+      getTokenIcon(position.token0.symbol),
+      getTokenIcon(position.token1.symbol)
+    );
+  }, [executorSteps, position.token0.symbol, position.token1.symbol]);
+
+  // Current step for ProgressIndicator
+  const currentStep = useMemo((): CurrentStepState | undefined => {
+    if (uiSteps.length === 0 || currentStepIndex >= uiSteps.length) return undefined;
+    return { step: uiSteps[currentStepIndex], accepted: stepAccepted };
+  }, [uiSteps, currentStepIndex, stepAccepted]);
+
+  // Step executor
+  const executor = useLiquidityStepExecutor({
+    onSuccess: (hash) => {
+      setIsExecuting(false);
+      setCurrentStepIndex(0);
+      setStepAccepted(false);
+      refetchBalances();
+
+      if (flowId) {
+        clearFlowState(flowId);
+      }
+      if (address && chainId) {
+        clearCachedPermit(address, chainId, position.token0.symbol, position.token1.symbol);
+      }
+
+      // Show success toast with explorer link
+      if (hash) {
+        toast.success("Liquidity added successfully!", {
+          action: {
+            label: "View",
+            onClick: () => window.open(getExplorerTxUrl(hash), "_blank"),
+          },
+        });
+      } else {
+        toast.success("Liquidity added successfully!");
+      }
+
+      // Trigger refetch and close modal
+      onSuccess?.();
+      onClose?.();
+    },
+    onFailure: (err) => {
+      setIsExecuting(false);
+      const errorMessage = err?.message || "Transaction failed";
+      const isUserRejection =
+        errorMessage.toLowerCase().includes("user rejected") ||
+        errorMessage.toLowerCase().includes("user denied");
+
+      setView("input");
+      setCurrentStepIndex(0);
+      setStepAccepted(false);
+
+      if (!isUserRejection) {
+        const isNonceError = errorMessage.includes("nonce") || errorMessage.includes("InvalidNonce");
+        if (isNonceError) {
+          setLocalError("The permit signature has expired. Please try again.");
+          setIsPermitError(true);
+        } else {
+          setLocalError(errorMessage);
+          setIsPermitError(false);
+        }
+      }
+    },
+    onStepChange: (stepIndex, _step, accepted) => {
+      setCurrentStepIndex(stepIndex);
+      setStepAccepted(accepted);
+    },
+  });
 
   // Handle user input
   const handleUserInput = (field: PositionField, value: string) => {
@@ -79,11 +308,68 @@ export function IncreaseLiquidityForm() {
     }
   };
 
-  // Handle continue to review
-  const handleContinue = async () => {
-    await prepareTransaction();
-    setStep(IncreaseLiquidityStep.Review);
-  };
+  // Handle Review button click - starts transaction flow
+  const handleReview = useCallback(async () => {
+    if (!address || !hasValidAmounts) return;
+
+    setView("executing");
+    setIsExecuting(true);
+    setLocalError(null);
+    setIsPermitError(false);
+
+    const flow = getOrCreateFlowState(
+      address,
+      chainId || 0,
+      position.token0.symbol,
+      position.token1.symbol,
+      position.tickLower,
+      position.tickUpper
+    );
+    setFlowId(flow.flowId);
+
+    try {
+      const context = await fetchAndBuildContext();
+      if (!context) {
+        throw new Error("Failed to build transaction context");
+      }
+
+      const steps = generateLPTransactionSteps(context);
+      setExecutorSteps(steps);
+
+      if (steps.length > 0) {
+        setCurrentStepIndex(0);
+        setStepAccepted(false);
+      }
+
+      await executor.execute(context);
+    } catch (err: any) {
+      console.error("[IncreaseLiquidityForm] Transaction error:", err);
+      setIsExecuting(false);
+      setView("input");
+      setLocalError(err?.message || "Transaction failed");
+    }
+  }, [address, chainId, position, hasValidAmounts, fetchAndBuildContext, executor]);
+
+  // Handle retry
+  const handleRetry = useCallback(() => {
+    setLocalError(null);
+    setIsPermitError(false);
+    clearError();
+  }, [clearError]);
+
+  // Handle permit refresh
+  const handleRefreshPermit = useCallback(() => {
+    setLocalError(null);
+    setIsPermitError(false);
+    handleReview();
+  }, [handleReview]);
+
+  // Reset state when view changes to input
+  useEffect(() => {
+    if (view === "input") {
+      setExecutorSteps([]);
+    }
+  }, [view]);
 
   // Button state
   const isDisabled =
@@ -91,26 +377,85 @@ export function IncreaseLiquidityForm() {
     isOverBalance0 ||
     isOverBalance1 ||
     isCalculating ||
-    isWorking;
+    isLoading ||
+    isExecuting;
 
-  const buttonText = isCalculating
-    ? "Calculating..."
-    : isOverBalance0 || isOverBalance1
+  const buttonText = isOverBalance0 || isOverBalance1
     ? "Insufficient Balance"
-    : "Continue";
+    : "Add Liquidity";
 
+  // Input/Executing view
   return (
     <div className="space-y-4">
-      {/* Position Info Header */}
-      <LiquidityPositionInfo
-        position={{
-          token0Symbol: position.token0.symbol,
-          token1Symbol: position.token1.symbol,
-          isInRange: position.isInRange,
-        }}
-        isMiniVersion
-        showFeeTier={false}
-      />
+      {/* Header - Token pair with badges */}
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-1">
+          {/* Token symbols */}
+          <div className="flex items-center gap-2">
+            <span className="text-2xl font-semibold text-white">
+              {position.token0.symbol}
+            </span>
+            <span className="text-2xl font-semibold text-muted-foreground">/</span>
+            <span className="text-2xl font-semibold text-white">
+              {position.token1.symbol}
+            </span>
+          </div>
+          {/* Range indicator + pool type badges */}
+          <div className="flex items-center gap-2">
+            {/* Range badge */}
+            <div className="flex items-center gap-1.5">
+              <div
+                className={cn(
+                  "w-2 h-2 rounded-full",
+                  position.isInRange ? "bg-green-500" : "bg-red-500"
+                )}
+              />
+              <span
+                className={cn(
+                  "text-xs font-medium",
+                  position.isInRange ? "text-green-500" : "text-red-500"
+                )}
+              >
+                {position.isInRange ? "In Range" : "Out of Range"}
+              </span>
+            </div>
+            {/* Pool type badge */}
+            {position.poolId && (() => {
+              const poolConfig = getPoolById(position.poolId);
+              const isUnifiedYield = poolConfig?.rehypoRange !== undefined;
+              return isUnifiedYield ? (
+                <span
+                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                  style={{ backgroundColor: "rgba(152, 150, 255, 0.10)", color: "#9896FF" }}
+                >
+                  Unified Yield
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted/40 text-muted-foreground">
+                  Custom
+                </span>
+              );
+            })()}
+          </div>
+        </div>
+        {/* Double token logo */}
+        <div className="flex items-center -space-x-2">
+          <Image
+            src={getTokenIcon(position.token0.symbol)}
+            alt=""
+            width={36}
+            height={36}
+            className="rounded-full ring-2 ring-container"
+          />
+          <Image
+            src={getTokenIcon(position.token1.symbol)}
+            alt=""
+            width={36}
+            height={36}
+            className="rounded-full ring-2 ring-container"
+          />
+        </div>
+      </div>
 
       {/* Deposit Input Form */}
       <DepositInputForm
@@ -137,27 +482,37 @@ export function IncreaseLiquidityForm() {
         inputLabel="Add"
       />
 
-      {/* Detail Rows (preview) */}
-      {hasValidAmounts && (
-        <LiquidityDetailRows
-          token0Amount={formattedAmounts?.TOKEN0}
-          token0Symbol={position.token0.symbol}
-          token1Amount={formattedAmounts?.TOKEN1}
-          token1Symbol={position.token1.symbol}
-          token0USDValue={
-            parseFloat(formattedAmounts?.TOKEN0 || "0") * token0USDPrice
-          }
-          token1USDValue={
-            parseFloat(formattedAmounts?.TOKEN1 || "0") * token1USDPrice
-          }
-          showNetworkCost={false}
-          title="You will add"
+      {/* Position Segment */}
+      <PositionAmountsDisplay
+        token0={{
+          symbol: position.token0.symbol,
+          amount: showProjected ? projectedToken0Amount.toString() : position.token0.amount,
+        }}
+        token1={{
+          symbol: position.token1.symbol,
+          amount: showProjected ? projectedToken1Amount.toString() : position.token1.amount,
+        }}
+        title="Position"
+      />
+
+      {/* Progress Indicator (during execution) */}
+      {view === "executing" && currentStep && uiSteps.length > 0 && (
+        <ProgressIndicator steps={uiSteps} currentStep={currentStep} />
+      )}
+
+      {/* Error Display */}
+      {error && (
+        <ErrorCallout
+          error={error}
+          onRetry={handleRetry}
+          isPermitError={isPermitError}
+          onRefreshPermit={handleRefreshPermit}
         />
       )}
 
-      {/* Continue Button */}
+      {/* Review Button */}
       <Button
-        onClick={handleContinue}
+        onClick={handleReview}
         disabled={isDisabled}
         className={cn(
           "w-full",
@@ -166,7 +521,7 @@ export function IncreaseLiquidityForm() {
             : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
         )}
         style={
-          isDisabled
+          isDisabled && !isExecuting
             ? {
                 backgroundImage: "url(/pattern_wide.svg)",
                 backgroundSize: "cover",
@@ -175,7 +530,9 @@ export function IncreaseLiquidityForm() {
             : undefined
         }
       >
-        <span className={isCalculating ? "animate-pulse" : ""}>{buttonText}</span>
+        <span className={(isCalculating || isExecuting) ? "animate-pulse" : ""}>
+          {buttonText}
+        </span>
       </Button>
     </div>
   );

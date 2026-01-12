@@ -272,7 +272,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 {/* Version info - shown below Discord */}
-                <div className="px-1.5 pt-3 pb-1 sm:hidden">
+                <div className="px-1.5 pt-3 sm:hidden">
                   <div
                     className="text-xs text-muted-foreground/50 font-mono select-none cursor-pointer hover:text-muted-foreground/70 transition-colors"
                     onClick={handleBetaBadgeClick}
@@ -288,7 +288,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
           </SidebarGroup>
         </div>
       </SidebarContent>
-      <SidebarFooter className="p-2">
+      <SidebarFooter className="p-0">
         {/* AccountStatus moved to header */}
       </SidebarFooter>
     </Sidebar>

@@ -30,11 +30,12 @@ import { CurrencyAmount, Currency } from '@uniswap/sdk-core';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useAddLiquidityCalculation, type CalculatedLiquidityData } from '@/lib/liquidity/hooks/transaction/useAddLiquidityCalculation';
-import { useCheckMintApprovals } from '@/lib/liquidity';
+import { useCheckMintApprovals, usePrepareMintQuery, useGasFeeEstimate } from '@/lib/liquidity';
 import { getToken, getPoolById, TokenSymbol } from '@/lib/pools-config';
 import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
 import { PositionField } from '@/lib/liquidity/types';
 import { useUserSlippageTolerance } from '@/hooks/useSlippage';
+import type { Address } from 'viem';
 
 // =============================================================================
 // TYPES
@@ -266,6 +267,48 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   });
 
   // ==========================================================================
+  // TRANSACTION PREPARATION HOOK (Uniswap pattern: useCreateLpPositionCalldataQuery)
+  // ==========================================================================
+
+  // Determine input side for prepare query
+  const activeInputSide = inputSide === 'token0' ? 'amount0' : inputSide === 'token1' ? 'amount1' : null;
+  const primaryAmount = activeInputSide === 'amount0' ? amount0 : amount1;
+  const inputTokenForQuery = activeInputSide === 'amount0' ? token0Symbol : token1Symbol;
+
+  // Get tick values - prefer calculated, then state, then ticks array
+  const queryTickLower = calculatedData?.finalTickLower ?? tickLower ?? (ticks[0] !== null ? parseInt(String(ticks[0])) : undefined);
+  const queryTickUpper = calculatedData?.finalTickUpper ?? tickUpper ?? (ticks[1] !== null ? parseInt(String(ticks[1])) : undefined);
+
+  const { gasLimit: preparedGasLimit } = usePrepareMintQuery(
+    {
+      userAddress: accountAddress as Address | undefined,
+      token0Symbol,
+      token1Symbol,
+      inputAmount: primaryAmount || undefined,
+      inputTokenSymbol: inputTokenForQuery,
+      tickLower: queryTickLower,
+      tickUpper: queryTickUpper,
+      chainId,
+      slippageBps: slippageToleranceBps,
+    },
+    {
+      enabled: !!calculatedData && !isZapMode && !transactionError,
+      refetchInterval: 10000, // Refresh every 10 seconds
+      staleTime: 5000,
+    }
+  );
+
+  // ==========================================================================
+  // GAS FEE ESTIMATION HOOK
+  // ==========================================================================
+
+  const { gasFeeFormatted, isLoading: isGasLoading } = useGasFeeEstimate({
+    gasLimit: preparedGasLimit,
+    chainId,
+    skip: !preparedGasLimit,
+  });
+
+  // ==========================================================================
   // DERIVED VALUES
   // ==========================================================================
 
@@ -305,11 +348,10 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     return { TOKEN0: usd0, TOKEN1: usd1 };
   }, [formattedAmounts, token0USDPrice, token1USDPrice]);
 
-  // Gas fee estimate (placeholder - would need actual estimation)
+  // Gas fee estimate in USD (from Uniswap-style hooks above)
   const gasFeeEstimateUSD = useMemo(() => {
-    // TODO: Implement actual gas estimation
-    return '~$2.50';
-  }, []);
+    return gasFeeFormatted;
+  }, [gasFeeFormatted]);
 
   // Transaction info
   const txInfo = useMemo((): CreatePositionTxInfo | undefined => {

@@ -21,7 +21,8 @@
       "name": "Ethereum",
       "address": "0x0000000000000000000000000000000000000000",
       "decimals": 18,
-      "icon": "/tokens/ETH.png"
+      "icon": "/tokens/ETH.png",
+      "color": "#627EEA"
     },
     "USDC": {
       "symbol": "USDC",
@@ -29,7 +30,8 @@
       "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "decimals": 6,
       "icon": "/tokens/USDC.png",
-      "usdPrice": "1.0"
+      "usdPrice": "1.0",
+      "color": "#2775CA"
     },
     "USDT": {
       "symbol": "USDT",
@@ -37,7 +39,8 @@
       "address": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
       "decimals": 6,
       "icon": "/tokens/USDT.png",
-      "usdPrice": "1.0"
+      "usdPrice": "1.0",
+      "color": "#26A17B"
     }
   },
   "pools": [

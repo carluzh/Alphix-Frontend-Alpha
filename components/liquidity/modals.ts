@@ -37,7 +37,6 @@ export {
   IncreaseLiquidityTxContextProvider,
   useIncreaseLiquidityTxContext,
   IncreaseLiquidityStep,
-  type IncreaseTxStep,
   type IncreaseLiquidityState,
   type IncreaseLiquidityDerivedInfo,
 } from './increase';

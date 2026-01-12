@@ -132,7 +132,6 @@ const getTokenColor = (symbol: string): string => {
     'USDT': '#26A17B',
     'aDAI': '#F5AC37',
     'DAI': '#F5AC37',
-    'WETH': '#627EEA',
   };
   return colorMap[symbol] || '#9CA3AF'; // Default gray
 };

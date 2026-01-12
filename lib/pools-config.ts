@@ -12,7 +12,7 @@ interface PoolsConfigFile {
   meta: { version: string; description: string; chainId: number; chainName: string };
   contracts: { poolManager: string; universalRouter?: string; quoter: string; positionManager: string; stateView: string };
   hooks: { alphixHookId: string };
-  tokens: Record<string, { symbol: string; name: string; address: string; decimals: number; icon: string; usdPrice?: string }>;
+  tokens: Record<string, { symbol: string; name: string; address: string; decimals: number; icon: string; usdPrice?: string; color?: string }>;
   pools: Array<{
     id: string;
     name: string;
@@ -79,6 +79,8 @@ export interface TokenConfig {
   address: string;
   decimals: number;
   icon: string;
+  usdPrice?: string;
+  color?: string;
 }
 
 export interface PoolCurrency {

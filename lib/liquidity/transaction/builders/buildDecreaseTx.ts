@@ -5,7 +5,7 @@
  * Pure async function - no React hooks, no UI side effects.
  */
 
-import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
+import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position, toHex } from '@uniswap/v4-sdk';
 import { TickMath } from '@uniswap/v3-sdk';
 import { Token, Percent } from '@uniswap/sdk-core';
 import { getAddress, type Hex, parseUnits, formatUnits, encodeAbiParameters, keccak256 } from 'viem';
@@ -271,13 +271,14 @@ async function buildPlannerDecrease(
     : [sdkToken1, sdkToken0];
 
   const planner = new V4PositionPlanner();
-  const tokenIdJSBI = JSBI.BigInt(nftTokenId.toString());
+  // Uniswap SDK parity: use toHex() for tokenId (ref: PositionManager.ts:342)
+  const tokenIdHex = toHex(nftTokenId.toString());
 
   if (isFullBurn) {
     // Full burn path
     const amount0MinJSBI = JSBI.BigInt(0);
     const amount1MinJSBI = JSBI.BigInt(0);
-    planner.addBurn(tokenIdJSBI, amount0MinJSBI, amount1MinJSBI, EMPTY_BYTES || '0x');
+    planner.addBurn(tokenIdHex, amount0MinJSBI, amount1MinJSBI, EMPTY_BYTES || '0x');
   } else {
     // Partial decrease or collect-only
     let liquidityJSBI: JSBI;
@@ -455,19 +456,19 @@ async function buildPlannerDecrease(
     const amountMinSorted0 = JSBI.BigInt((sorted0IsPool0 ? minPool0Raw : minPool1Raw).toString());
     const amountMinSorted1 = JSBI.BigInt((sorted0IsPool0 ? minPool1Raw : minPool0Raw).toString());
 
-    planner.addDecrease(tokenIdJSBI, liquidityJSBI, amountMinSorted0, amountMinSorted1, EMPTY_BYTES || '0x');
+    planner.addDecrease(tokenIdHex, liquidityJSBI, amountMinSorted0, amountMinSorted1, EMPTY_BYTES || '0x');
   }
 
   // Take tokens back
   const hasNativeETH = token0Def.address === '0x0000000000000000000000000000000000000000' ||
     token1Def.address === '0x0000000000000000000000000000000000000000';
 
-  planner.addTakePair(sortedSdkToken0.wrapped, sortedSdkToken1.wrapped, accountAddress);
+  planner.addTakePair(sortedSdkToken0, sortedSdkToken1, accountAddress);
 
   if (hasNativeETH && getAddress(sortedSdkToken0.address) === '0x0000000000000000000000000000000000000000') {
-    planner.addSweep(sortedSdkToken0.wrapped, accountAddress);
+    planner.addSweep(sortedSdkToken0, accountAddress);
   } else if (hasNativeETH && getAddress(sortedSdkToken1.address) === '0x0000000000000000000000000000000000000000') {
-    planner.addSweep(sortedSdkToken1.wrapped, accountAddress);
+    planner.addSweep(sortedSdkToken1, accountAddress);
   }
 
   const deadline = Math.floor(Date.now() / 1000) + 60;
@@ -576,19 +577,20 @@ export async function buildCollectFeesTx(
     : [sdkToken1, sdkToken0];
 
   const planner = new V4PositionPlanner();
-  const tokenIdJSBI = JSBI.BigInt(nftTokenId.toString());
+  // Uniswap SDK parity: use toHex() for tokenId (ref: PositionManager.ts:342)
+  const tokenIdHex = toHex(nftTokenId.toString());
   const zero = JSBI.BigInt(0);
 
-  planner.addDecrease(tokenIdJSBI, zero, zero, zero, EMPTY_BYTES || '0x');
-  planner.addTakePair(sortedSdkToken0.wrapped, sortedSdkToken1.wrapped, accountAddress);
+  planner.addDecrease(tokenIdHex, zero, zero, zero, EMPTY_BYTES || '0x');
+  planner.addTakePair(sortedSdkToken0, sortedSdkToken1, accountAddress);
 
   const hasNativeETH = getAddress(details.poolKey.currency0) === '0x0000000000000000000000000000000000000000' ||
     getAddress(details.poolKey.currency1) === '0x0000000000000000000000000000000000000000';
 
   if (hasNativeETH && getAddress(sortedSdkToken0.address) === '0x0000000000000000000000000000000000000000') {
-    planner.addSweep(sortedSdkToken0.wrapped, accountAddress);
+    planner.addSweep(sortedSdkToken0, accountAddress);
   } else if (hasNativeETH && getAddress(sortedSdkToken1.address) === '0x0000000000000000000000000000000000000000') {
-    planner.addSweep(sortedSdkToken1.wrapped, accountAddress);
+    planner.addSweep(sortedSdkToken1, accountAddress);
   }
 
   const deadline = Math.floor(Date.now() / 1000) + 600;

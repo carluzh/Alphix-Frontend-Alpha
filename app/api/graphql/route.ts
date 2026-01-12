@@ -33,8 +33,11 @@ const { handleRequest } = createYoga({
     const networkModeCookie = cookieStore.get('alphix-network-mode')
     const networkMode = networkModeCookie?.value === 'testnet' ? 'testnet' : 'mainnet'
 
-    // Fail-fast: No localhost fallback in production
+    // Resolve base URL with Vercel fallback for preview deployments
+    // Priority: NEXT_PUBLIC_APP_URL > VERCEL_URL (auto-set by Vercel)
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)
+
     if (!baseUrl) {
       throw new Error(
         'NEXT_PUBLIC_APP_URL environment variable is required for GraphQL resolvers. ' +

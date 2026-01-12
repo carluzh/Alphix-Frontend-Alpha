@@ -26,7 +26,6 @@ const CACHE_TTL = { fresh: 900, stale: 1800 }
 const COINGECKO_IDS: Record<string, string> = {
   'ETH': 'ethereum',
   'aETH': 'ethereum',
-  'WETH': 'ethereum',
   'USDC': 'usd-coin',
   'aUSDC': 'usd-coin',
   'USDT': 'tether',
@@ -34,7 +33,8 @@ const COINGECKO_IDS: Record<string, string> = {
   'mUSDT': 'tether',
 }
 
-const STABLECOINS = ['USDC', 'aUSDC', 'USDT', 'aUSDT', 'mUSDT']
+// Only USDC is the quote currency ($1.00) - USDT uses actual on-chain prices
+const STABLECOINS = ['USDC', 'aUSDC']
 
 interface UniswapPriceHistoryResponse {
   data?: {

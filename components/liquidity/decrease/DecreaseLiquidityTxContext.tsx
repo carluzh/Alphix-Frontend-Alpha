@@ -1,30 +1,59 @@
 "use client";
 
+/**
+ * DecreaseLiquidityTxContext - Transaction context for decrease liquidity flow
+ *
+ * Refactored to use Uniswap's step-based executor pattern:
+ * - Calls API to build transaction calldata
+ * - Returns context for step executor to handle
+ * - No approvals/permits needed for decrease (user is withdrawing)
+ *
+ * @see components/liquidity/increase/IncreaseLiquidityTxContext.tsx
+ * @see components/liquidity/wizard/ReviewExecuteModal.tsx
+ */
+
 import React, { createContext, useContext, useState, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount } from "wagmi";
-import { formatUnits } from "viem";
+import { formatUnits, type Address } from "viem";
 import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
-import { useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
 import { useAllPrices } from "@/components/data/hooks";
 import { getTokenSymbolByAddress, debounce } from "@/lib/utils";
 import { useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
+import { getStoredUserSettings } from "@/hooks/useUserSettings";
+
+// Import from transaction module
+import {
+  buildLiquidityTxContext,
+  type MintTxApiResponse,
+} from "@/lib/liquidity/transaction";
+import {
+  LiquidityTransactionType,
+  type ValidatedLiquidityTxContext,
+} from "@/lib/liquidity/types";
 
 export type DecreaseTxStep = "input" | "withdraw";
 
 interface DecreaseLiquidityTxContextType {
-  txStep: DecreaseTxStep;
-  setTxStep: (step: DecreaseTxStep) => void;
-  isWorking: boolean;
+  // API/Context state
+  isLoading: boolean;
   error: string | null;
-  isSuccess: boolean;
-  txHash: `0x${string}` | null;
+
+  // Transaction context for step executor
+  txContext: ValidatedLiquidityTxContext | null;
+
+  // Prices
   token0USDPrice: number;
   token1USDPrice: number;
-  feesForWithdraw: { amount0: string; amount1: string } | null;
+
+  // Dependent amount calculation
+  isCalculating: boolean;
   calculateWithdrawAmount: (inputAmount: string, inputSide: "amount0" | "amount1") => void;
-  executeWithdraw: () => void;
+
+  // Actions
+  fetchAndBuildContext: () => Promise<ValidatedLiquidityTxContext | null>;
   getWithdrawButtonText: () => string;
+  clearError: () => void;
 }
 
 const DecreaseLiquidityTxContext = createContext<DecreaseLiquidityTxContextType | null>(null);
@@ -36,15 +65,13 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const { data: allPrices } = useAllPrices();
 
   const { decreaseLiquidityState, derivedDecreaseInfo, setDerivedInfo } = useDecreaseLiquidityContext();
-  const { position, activeInputSide } = decreaseLiquidityState;
+  const { position } = decreaseLiquidityState;
   const { withdrawAmount0, withdrawAmount1 } = derivedDecreaseInfo;
 
-  const [txStep, setTxStep] = useState<DecreaseTxStep>("input");
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const { decreaseLiquidity, isLoading: isDecreasingLiquidity, isSuccess, hash: txHash } = useDecreaseLiquidity({
-    onLiquidityDecreased: () => {},
-  });
+  const [txContext, setTxContext] = useState<ValidatedLiquidityTxContext | null>(null);
+  const [isCalculating, setIsCalculating] = useState(false);
 
   const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
     if (!symbol) return 0;
@@ -59,6 +86,22 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const token0USDPrice = getUSDPriceForSymbol(position.token0.symbol);
   const token1USDPrice = getUSDPriceForSymbol(position.token1.symbol);
 
+  // Helper to parse token ID from position
+  const parseTokenId = useCallback((positionId: string): string => {
+    const compositeId = positionId.toString();
+    const parts = compositeId.split('-');
+    const saltHex = parts[parts.length - 1];
+    if (saltHex && saltHex !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+      try {
+        return BigInt(saltHex).toString();
+      } catch {
+        return compositeId;
+      }
+    }
+    return compositeId;
+  }, []);
+
+  // Calculate dependent amount based on input
   const calculateWithdrawAmount = useMemo(() => debounce(async (inputAmount: string, inputSide: "amount0" | "amount1") => {
     if (!position || !inputAmount || parseFloat(inputAmount) <= 0) {
       if (inputSide === "amount0") setDerivedInfo((prev) => ({ ...prev, withdrawAmount1: "" }));
@@ -66,12 +109,14 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       return;
     }
 
+    setIsCalculating(true);
     setDerivedInfo((prev) => ({ ...prev, isCalculating: true }));
 
     try {
       if (!position.isInRange) {
         if (inputSide === "amount0") setDerivedInfo((prev) => ({ ...prev, withdrawAmount1: "0", isCalculating: false }));
         else setDerivedInfo((prev) => ({ ...prev, withdrawAmount0: "0", isCalculating: false }));
+        setIsCalculating(false);
         return;
       }
 
@@ -79,6 +124,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
 
       if (!token0Symbol || !token1Symbol) {
+        // Fallback: simple ratio calculation
         const amount0Total = parseFloat(position.token0.amount);
         const amount1Total = parseFloat(position.token1.amount);
         const inputAmountNum = parseFloat(inputAmount);
@@ -90,6 +136,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           const ratio = inputAmountNum / amount1Total;
           setDerivedInfo((prev) => ({ ...prev, withdrawAmount0: (amount0Total * ratio).toString(), isCalculating: false }));
         }
+        setIsCalculating(false);
         return;
       }
 
@@ -114,6 +161,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         setDerivedInfo((prev) => ({ ...prev, withdrawAmount0: amount0Display, isCalculating: false }));
       }
     } catch {
+      // Fallback: simple ratio calculation
       const amount0Total = parseFloat(position.token0.amount);
       const amount1Total = parseFloat(position.token1.amount);
       const inputAmountNum = parseFloat(inputAmount);
@@ -126,48 +174,114 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         setDerivedInfo((prev) => ({ ...prev, withdrawAmount0: (amount0Total * ratio).toString(), isCalculating: false }));
       }
     }
+    setIsCalculating(false);
   }, 300), [position, chainId, networkMode, tokenDefinitions, setDerivedInfo]);
 
-  const executeWithdraw = useCallback(() => {
-    if (!position || !accountAddress) return;
+  /**
+   * Fetch API and build transaction context for step executor.
+   * Decrease operations don't need approvals or permits.
+   */
+  const fetchAndBuildContext = useCallback(async (): Promise<ValidatedLiquidityTxContext | null> => {
+    if (!accountAddress || !chainId) return null;
 
+    setIsLoading(true);
     setError(null);
+
     const token0Symbol = getTokenSymbolByAddress(position.token0.address, networkMode);
     const token1Symbol = getTokenSymbolByAddress(position.token1.address, networkMode);
 
     if (!token0Symbol || !token1Symbol) {
-      setError("Token configuration is invalid.");
-      return;
+      setError("Token configuration not found");
+      setIsLoading(false);
+      return null;
     }
 
+    const token0Config = tokenDefinitions[token0Symbol];
+    const token1Config = tokenDefinitions[token1Symbol];
+    if (!token0Config || !token1Config) {
+      setError("Token configuration not found");
+      setIsLoading(false);
+      return null;
+    }
+
+    const tokenId = parseTokenId(position.positionId);
+
+    // Check if this is a full burn
     const amt0 = parseFloat(withdrawAmount0 || "0");
     const amt1 = parseFloat(withdrawAmount1 || "0");
     const max0 = parseFloat(position.token0.amount || "0");
     const max1 = parseFloat(position.token1.amount || "0");
     const pct0 = max0 > 0 ? amt0 / max0 : 0;
     const pct1 = max1 > 0 ? amt1 / max1 : 0;
-    const effectivePct = Math.max(pct0, pct1) * 100;
     const nearFull0 = max0 > 0 ? pct0 >= 0.99 : true;
     const nearFull1 = max1 > 0 ? pct1 >= 0.99 : true;
-    const isBurnAll = position.isInRange ? nearFull0 && nearFull1 : pct0 >= 0.99 || pct1 >= 0.99;
+    const isFullBurn = position.isInRange ? nearFull0 && nearFull1 : pct0 >= 0.99 || pct1 >= 0.99;
 
-    const decreaseData: DecreasePositionData = {
-      tokenId: position.positionId,
-      token0Symbol,
-      token1Symbol,
-      decreaseAmount0: withdrawAmount0 || "0",
-      decreaseAmount1: withdrawAmount1 || "0",
-      isFullBurn: isBurnAll,
-      poolId: position.poolId,
-      tickLower: position.tickLower,
-      tickUpper: position.tickUpper,
-      enteredSide: activeInputSide === "amount0" ? "token0" : activeInputSide === "amount1" ? "token1" : undefined,
-    };
+    // Get user settings
+    const userSettings = getStoredUserSettings();
+    const slippageBps = Math.round(userSettings.slippage * 100);
+    const deadlineMinutes = userSettings.deadline;
 
-    const pctRounded = isBurnAll ? 100 : Math.max(0, Math.min(100, Math.round(effectivePct)));
-    decreaseLiquidity(decreaseData, position.isInRange ? pctRounded : 0);
-  }, [position, accountAddress, networkMode, withdrawAmount0, withdrawAmount1, activeInputSide, decreaseLiquidity]);
+    try {
+      // Call API to build transaction
+      const response = await fetch("/api/liquidity/prepare-decrease-tx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userAddress: accountAddress,
+          tokenId,
+          decreaseAmount0: withdrawAmount0 || "0",
+          decreaseAmount1: withdrawAmount1 || "0",
+          chainId,
+          isFullBurn,
+          slippageBps,
+          deadlineMinutes,
+        }),
+      });
 
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to prepare transaction");
+      }
+
+      // Build context (decrease doesn't need approvals/permits)
+      const context = buildLiquidityTxContext({
+        type: LiquidityTransactionType.Decrease,
+        apiResponse: {
+          needsApproval: false,
+          create: data.create,
+          sqrtRatioX96: data.sqrtRatioX96,
+        } as MintTxApiResponse,
+        token0: {
+          address: token0Config.address as Address,
+          symbol: token0Config.symbol,
+          decimals: token0Config.decimals,
+          chainId,
+        },
+        token1: {
+          address: token1Config.address as Address,
+          symbol: token1Config.symbol,
+          decimals: token1Config.decimals,
+          chainId,
+        },
+        amount0: data.details?.token0?.amount || "0",
+        amount1: data.details?.token1?.amount || "0",
+        chainId,
+      });
+
+      setTxContext(context as ValidatedLiquidityTxContext);
+      setIsLoading(false);
+      return context as ValidatedLiquidityTxContext;
+    } catch (err: any) {
+      console.error("[DecreaseLiquidityTxContext] fetchAndBuildContext error:", err);
+      setError(err.message || "Failed to prepare transaction");
+      setIsLoading(false);
+      return null;
+    }
+  }, [accountAddress, chainId, position, withdrawAmount0, withdrawAmount1, networkMode, tokenDefinitions, parseTokenId]);
+
+  // Get button text based on amounts
   const getWithdrawButtonText = useCallback(() => {
     if (!position) return "Withdraw";
     const max0 = parseFloat(position.token0.amount || "0");
@@ -185,20 +299,33 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     return near0 || near1 ? "Withdraw All" : "Withdraw";
   }, [position, withdrawAmount0, withdrawAmount1]);
 
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
   const value = useMemo(() => ({
-    txStep,
-    setTxStep,
-    isWorking: isDecreasingLiquidity,
+    isLoading,
     error,
-    isSuccess,
-    txHash: txHash ?? null,
+    txContext,
     token0USDPrice,
     token1USDPrice,
-    feesForWithdraw: null,
+    isCalculating,
     calculateWithdrawAmount,
-    executeWithdraw,
+    fetchAndBuildContext,
     getWithdrawButtonText,
-  }), [txStep, isDecreasingLiquidity, error, isSuccess, txHash, token0USDPrice, token1USDPrice, calculateWithdrawAmount, executeWithdraw, getWithdrawButtonText]);
+    clearError,
+  }), [
+    isLoading,
+    error,
+    txContext,
+    token0USDPrice,
+    token1USDPrice,
+    isCalculating,
+    calculateWithdrawAmount,
+    fetchAndBuildContext,
+    getWithdrawButtonText,
+    clearError,
+  ]);
 
   return <DecreaseLiquidityTxContext.Provider value={value}>{children}</DecreaseLiquidityTxContext.Provider>;
 }

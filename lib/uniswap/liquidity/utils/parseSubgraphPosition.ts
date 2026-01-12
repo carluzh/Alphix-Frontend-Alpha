@@ -226,12 +226,17 @@ export function parseSubgraphPosition(
 
     // Return V4 PositionInfo
     // Note: We return as PositionInfo but it's effectively V4PositionInfo
+    // Convert hex positionId to decimal for cleaner URLs (0x000d0e35 → 854581)
+    const tokenId = position.positionId.startsWith('0x')
+      ? BigInt(position.positionId).toString()
+      : position.positionId
+
     return {
       status,
       version: ProtocolVersion.V4,
       chainId,
       poolId: position.poolId,
-      tokenId: position.positionId,
+      tokenId,
       currency0Amount,
       currency1Amount,
       fee0Amount,

@@ -61,6 +61,19 @@ export const getTokenIcon = (symbol?: string, networkMode: NetworkMode = 'mainne
   return "/placeholder-logo.svg";
 };
 
+export const DEFAULT_TOKEN_COLOR = "#6B7280";
+
+export const getTokenColor = (symbol?: string, networkMode: NetworkMode = 'mainnet'): string => {
+  if (!symbol) return DEFAULT_TOKEN_COLOR;
+
+  const tokenConfig = getToken(symbol as TokenSymbol, networkMode);
+  if (tokenConfig?.color) {
+    return tokenConfig.color;
+  }
+
+  return DEFAULT_TOKEN_COLOR;
+};
+
 export const sanitizeDecimalInput = (input: string) => {
   if (!input) return '';
   // Treat commas as dots first

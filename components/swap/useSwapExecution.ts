@@ -21,6 +21,13 @@ declare global {
 }
 
 export type SwapState = "input" | "review" | "swapping" | "success" | "error"
+
+export type SwapError = {
+  kind: "rejected" | "backend" | "revert" | "unknown"
+  title: string
+  description: string
+  timestamp: number
+} | null
 export type SwapProgressState =
   | "init"
   | "checking_allowance"
@@ -150,6 +157,7 @@ export function useSwapExecution({
   const [isSwapping, setIsSwapping] = useState(false)
   const [completedSteps, setCompletedSteps] = useState<SwapProgressState[]>([])
   const [swapTxInfo, setSwapTxInfo] = useState<SwapTxInfo | null>(null)
+  const [swapError, setSwapError] = useState<SwapError>(null)
 
   const [currentPermitDetailsForSign, setCurrentPermitDetailsForSign] = useState<PreparePermitResponse | null>(null)
   const [obtainedSignature, setObtainedSignature] = useState<Hex | null>(null)
@@ -196,13 +204,33 @@ export function useSwapExecution({
   const isUserRejected = useCallback((err: any) => {
     const name = err?.name || err?.cause?.name
     if (name === "UserRejectedRequestError") return true
-    const msg = String(err?.shortMessage || err?.message || err?.cause?.message || "").toLowerCase()
+
+    const code = err?.code || err?.cause?.code
+    if (code === 4001 || code === 5750 || code === "ACTION_REJECTED") return true
+
+    const msg = String(err?.shortMessage || err?.message || err?.cause?.message || "")
+
     return (
-      msg.includes("user rejected") ||
-      msg.includes("user denied") ||
-      msg.includes("denied transaction signature") ||
-      msg.includes("rejected the request") ||
-      msg.includes("rejected request")
+      // Rainbow: request + reject
+      (/request/i.test(msg) && /reject/i.test(msg)) ||
+      // Frame: declined
+      /declined/i.test(msg) ||
+      // SafePal: cancelled/canceled by user
+      /cancell?ed by user/i.test(msg) ||
+      // Trust: user cancelled/canceled
+      /user cancell?ed/i.test(msg) ||
+      // Coinbase: user denied
+      /user denied/i.test(msg) ||
+      // Fireblocks: user rejected
+      /user rejected/i.test(msg) ||
+      // Binance: closed modal
+      /closed modal/i.test(msg) ||
+      // Solflare connection: connection rejected
+      /connection rejected/i.test(msg) ||
+      // Solflare transaction: transaction cancelled
+      /transaction cancelled/i.test(msg) ||
+      // Generic fallbacks
+      /denied transaction signature/i.test(msg)
     )
   }, [])
 
@@ -214,6 +242,13 @@ export function useSwapExecution({
 
       const msg = String(err?.shortMessage || err?.message || err?.cause?.message || "")
       const msgLc = msg.toLowerCase()
+
+      if (msgLc.includes("permit nonce") || msgLc.includes("nonce changed") || msgLc.includes("nonce stale")) {
+        return { kind: "backend" as const, title: "Permit Expired", description: msg || "Your permit was already used. Please sign again." }
+      }
+      if (msgLc.includes("signature invalid") || msgLc.includes("invalid signature") || msgLc.includes("signature expired")) {
+        return { kind: "backend" as const, title: "Signature Invalid", description: msg || "Your signature is invalid or expired. Please sign again." }
+      }
 
       // Heuristic: backend / API failures
       if (msgLc.includes("failed to fetch permit data") || msgLc.includes("failed to build transaction") || msgLc.includes("backend")) {
@@ -247,6 +282,7 @@ export function useSwapExecution({
     setIsSwapping(false)
     setObtainedSignature(null)
     setCurrentPermitDetailsForSign(null)
+    setSwapError(null)
     // do NOT clear amounts/route here; caller owns those UX choices
   }, [])
 
@@ -259,6 +295,7 @@ export function useSwapExecution({
     setIsSwapping(false)
     setObtainedSignature(null)
     setCurrentPermitDetailsForSign(null)
+    setSwapError(null)
     // caller clears amounts/route
   }, [])
 
@@ -461,17 +498,28 @@ export function useSwapExecution({
       } else {
         const needsSig = currentPermitDetailsForSign?.needsPermit === true
         let effectiveSignature = obtainedSignature
+        let signatureExpired = false
         if (needsSig && currentPermitDetailsForSign?.permitData?.message?.sigDeadline) {
           const now = Math.floor(Date.now() / 1000)
           const sigDeadlineNum = Number(currentPermitDetailsForSign.permitData.message.sigDeadline)
-          if (Number.isFinite(sigDeadlineNum) && sigDeadlineNum <= now) effectiveSignature = null
+          if (Number.isFinite(sigDeadlineNum) && sigDeadlineNum <= now) {
+            effectiveSignature = null
+            signatureExpired = true
+          }
         }
         if (effectiveSignature !== obtainedSignature) setObtainedSignature(null)
         if (!currentPermitDetailsForSign || (needsSig && !effectiveSignature)) {
-          toast.error("Backend Error", {
-            icon: createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
-            description: "We encountered an internal issue. Please start over.",
-          })
+          if (signatureExpired) {
+            toast.error("Signature Expired", {
+              icon: createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
+              description: "Your signature expired. Please sign again to continue.",
+            })
+          } else {
+            toast.error("Permit Error", {
+              icon: createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
+              description: "Unable to prepare permit. Please try again.",
+            })
+          }
           setIsSwapping(false)
           setSwapProgressState("error")
           return
@@ -655,6 +703,7 @@ export function useSwapExecution({
         description: classified.description,
         action: { label: "Copy Error", onClick: () => navigator.clipboard.writeText(err?.message || String(err)) },
       })
+      setSwapError({ ...classified, timestamp: Date.now() })
       setSwapProgressState("error")
       window.swapBuildData = undefined
     }
@@ -710,6 +759,7 @@ export function useSwapExecution({
     isSwapping,
     completedSteps,
     swapTxInfo,
+    swapError,
     actions,
   }
 }

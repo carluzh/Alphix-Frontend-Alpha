@@ -2,16 +2,14 @@
  * DenominationToggle
  *
  * A pill-style toggle for switching between token0 and token1 as the price denomination base.
- * Used in the pool detail page to allow users to choose their preferred price display.
- *
- * Mirrors Uniswap's price inversion toggle pattern from:
- * - interface/apps/web/src/components/Liquidity/LiquidityPositionCard.tsx (pricesInverted state)
+ * Shows token icons and symbols in a clean pill design.
  */
 
 "use client"
 
 import React from 'react';
-import { cn } from '@/lib/utils';
+import Image from 'next/image';
+import { cn, getTokenIcon } from '@/lib/utils';
 
 interface DenominationToggleProps {
   /** Symbol of token0 */
@@ -27,18 +25,8 @@ interface DenominationToggleProps {
 }
 
 /**
- * Denomination toggle component.
- * Displays both tokens with the active one highlighted.
- *
- * @example
- * ```tsx
- * <DenominationToggle
- *   token0Symbol="USDC"
- *   token1Symbol="WETH"
- *   activeBase="USDC"
- *   onToggle={(newBase) => setDenominationBase(newBase)}
- * />
- * ```
+ * Denomination toggle component with token icons.
+ * Displays both tokens as selectable options in a pill.
  */
 export function DenominationToggle({
   token0Symbol,
@@ -47,10 +35,13 @@ export function DenominationToggle({
   onToggle,
   className,
 }: DenominationToggleProps) {
+  const icon0 = getTokenIcon(token0Symbol);
+  const icon1 = getTokenIcon(token1Symbol);
+
   return (
     <div
       className={cn(
-        "flex items-center gap-0.5 rounded-full bg-muted/30 px-1 py-0.5",
+        "flex items-center rounded-md border border-sidebar-border bg-muted/20 p-0.5",
         className
       )}
     >
@@ -61,15 +52,21 @@ export function DenominationToggle({
           onToggle(token0Symbol);
         }}
         className={cn(
-          "px-1.5 py-0.5 text-[11px] rounded-full transition-all",
+          "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all",
           activeBase === token0Symbol
             ? "bg-muted/60 text-foreground"
-            : "text-muted-foreground hover:text-foreground/80"
+            : "text-muted-foreground hover:text-foreground"
         )}
       >
-        {token0Symbol}
+        <Image
+          src={icon0}
+          alt={token0Symbol}
+          width={16}
+          height={16}
+          className="rounded-full"
+        />
+        <span className="text-xs font-medium">{token0Symbol}</span>
       </button>
-      <span className="text-[11px] text-muted-foreground/60">/</span>
       <button
         type="button"
         onClick={(e) => {
@@ -77,13 +74,20 @@ export function DenominationToggle({
           onToggle(token1Symbol);
         }}
         className={cn(
-          "px-1.5 py-0.5 text-[11px] rounded-full transition-all",
+          "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all",
           activeBase === token1Symbol
             ? "bg-muted/60 text-foreground"
-            : "text-muted-foreground hover:text-foreground/80"
+            : "text-muted-foreground hover:text-foreground"
         )}
       >
-        {token1Symbol}
+        <Image
+          src={icon1}
+          alt={token1Symbol}
+          width={16}
+          height={16}
+          className="rounded-full"
+        />
+        <span className="text-xs font-medium">{token1Symbol}</span>
       </button>
     </div>
   );

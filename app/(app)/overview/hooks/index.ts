@@ -34,6 +34,5 @@ export {
 
 export {
   usePositionsChartData,
-  positionsToInputFormat,
   type PositionsChartPoint,
 } from "./usePositionsChartData";

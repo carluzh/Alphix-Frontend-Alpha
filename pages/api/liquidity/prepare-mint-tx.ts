@@ -117,7 +117,9 @@ interface ApprovalNeededResponse {
             verifyingContract: Hex; // PERMIT2_ADDRESS
             version?: string;
         };
-        types: typeof PERMIT2_TYPES; // The actual type definitions for EIP-712
+        // Using SDK's types directly for proper EIP-712 format
+        // Previously used PERMIT2_TYPES which included PermitSingle and confused wallet decoders
+        types: Record<string, Array<{ name: string; type: string }>>;
         primaryType: 'PermitBatch';
     };
 }
@@ -133,12 +135,14 @@ interface TransactionPreparedResponse {
         data: string;
         value: string;
         chainId: number;
+        gasLimit?: string; // Estimated gas limit with 20% buffer
     };
     // Backwards compatibility - same as 'create'
     transaction: {
         to: string;
         data: string;
         value: string;
+        gasLimit?: string; // Estimated gas limit with 20% buffer
     };
     // Pool state (matches Uniswap)
     sqrtRatioX96: string;
@@ -574,7 +578,9 @@ export default async function handler(
                                 chainId: Number(domain.chainId || chainId),
                                 verifyingContract: (domain.verifyingContract || PERMIT2_ADDRESS) as `0x${string}`,
                             },
-                            types: PERMIT2_TYPES,
+                            // Use types from SDK's getPermitData - contains only PermitBatch + PermitDetails
+                            // Don't use PERMIT2_TYPES which includes PermitSingle and confuses wallet decoders
+                            types,
                             primaryType: 'PermitBatch',
                         }
                     });
@@ -632,6 +638,22 @@ export default async function handler(
         const isInputToken0 = sdkInputToken.address === sortedToken0.address;
         const dependentAmount = isInputToken0 ? amount1.toString() : amount0.toString();
 
+        // Estimate gas for the transaction
+        let gasLimit: string | undefined;
+        try {
+            const estimatedGas = await publicClient.estimateGas({
+                account: getAddress(userAddress),
+                to: POSITION_MANAGER_ADDRESS as `0x${string}`,
+                data: encodedModifyLiquiditiesCallDataViem as `0x${string}`,
+                value: transactionValue ? BigInt(transactionValue) : undefined,
+            });
+            // Add 20% buffer for safety
+            gasLimit = ((estimatedGas * 120n) / 100n).toString();
+        } catch (e) {
+            console.warn('[prepare-mint-tx] Gas estimation failed, proceeding without:', e);
+            // Don't fail the request, just proceed without gasLimit
+        }
+
         // Response format aligned with Uniswap Trading API CreateLPPositionResponse
         return res.status(200).json({
             needsApproval: false,
@@ -642,12 +664,14 @@ export default async function handler(
                 data: encodedModifyLiquiditiesCallDataViem,
                 value: transactionValue,
                 chainId: chainId,
+                gasLimit, // Include gas estimate
             },
             // Backwards compatibility
             transaction: {
                 to: POSITION_MANAGER_ADDRESS,
                 data: encodedModifyLiquiditiesCallDataViem,
-                value: transactionValue
+                value: transactionValue,
+                gasLimit, // Include gas estimate
             },
             // Pool state (matches Uniswap response)
             sqrtRatioX96: currentSqrtPriceX96_JSBI.toString(),

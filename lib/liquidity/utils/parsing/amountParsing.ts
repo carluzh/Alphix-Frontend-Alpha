@@ -19,41 +19,40 @@ import { parseUnits, formatUnits } from 'viem';
  * @returns Parsed bigint amount
  */
 export function safeParseUnits(amount: string, decimals: number): bigint {
-  // Clean the input
-  let cleaned = (amount || '').toString().replace(/,/g, '').trim();
+  // Clean the input: remove commas and trim whitespace
+  const cleaned = (amount || '').toString().replace(/,/g, '').trim();
 
   // Handle empty or special cases
   if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') {
     return 0n;
   }
 
-  // Handle scientific notation
+  // Handle scientific notation - must use parseFloat + toFixed
   if (cleaned.includes('e') || cleaned.includes('E')) {
     const numericValue = parseFloat(cleaned);
     if (isNaN(numericValue) || !isFinite(numericValue)) {
       return 0n;
     }
     // Convert to fixed decimal representation
-    cleaned = numericValue.toFixed(decimals);
+    const fullDecimalString = numericValue.toFixed(decimals);
+    const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+    const finalString = trimmedString === '.' || trimmedString === '' ? '0' : trimmedString;
+    try {
+      return parseUnits(finalString, decimals);
+    } catch {
+      return 0n;
+    }
   }
 
-  // Parse numeric value
-  const numericAmount = parseFloat(cleaned);
-  if (isNaN(numericAmount) || !isFinite(numericAmount)) {
+  // For regular numbers (no scientific notation), pass directly to parseUnits
+  // to preserve full precision. Only validate it's a valid number first.
+  const numericCheck = parseFloat(cleaned);
+  if (isNaN(numericCheck) || !isFinite(numericCheck)) {
     return 0n;
   }
 
-  // Convert to string with full decimal representation (no scientific notation)
-  const fullDecimalString = numericAmount.toFixed(decimals);
-
-  // Remove trailing zeros after decimal point for cleaner parsing
-  const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
-
-  // If the result is just a decimal point, return 0
-  const finalString = trimmedString === '.' || trimmedString === '' ? '0' : trimmedString;
-
   try {
-    return parseUnits(finalString, decimals);
+    return parseUnits(cleaned, decimals);
   } catch {
     return 0n;
   }

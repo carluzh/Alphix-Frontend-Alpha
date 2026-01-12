@@ -7,11 +7,13 @@ import { useQuery } from '@tanstack/react-query'
 import { getStablecoin, PollingInterval, type PollingIntervalValue } from '../config'
 import { MAINNET_CHAIN_ID } from '@/lib/network-mode'
 
-const STABLECOIN_SYMBOLS = new Set(['usdc', 'usdt', 'dai'])
+// USDC is the quote currency, so it's always $1.00
+// Other stablecoins (USDT, DAI) are quoted on-chain for accurate pricing
+const QUOTE_CURRENCY_SYMBOLS = new Set(['usdc', 'ausdc'])
 
-function isStablecoin(symbol?: string): boolean {
+function isQuoteCurrency(symbol?: string): boolean {
   if (!symbol) return false
-  return STABLECOIN_SYMBOLS.has(symbol.toLowerCase())
+  return QUOTE_CURRENCY_SYMBOLS.has(symbol.toLowerCase())
 }
 
 async function fetchQuotePrice(symbol: string, chainId: number): Promise<number | null> {
@@ -51,7 +53,7 @@ export function useUSDCPrice(
   const { data: usdPrice, isLoading } = useQuery({
     queryKey: ['quote-price', symbol, chainId],
     queryFn: () => fetchQuotePrice(symbol!, chainId!),
-    enabled: !!symbol && !!chainId && !isStablecoin(symbol),
+    enabled: !!symbol && !!chainId && !isQuoteCurrency(symbol),
     refetchInterval: pollInterval,
     staleTime: pollInterval / 2,
   })
@@ -59,7 +61,7 @@ export function useUSDCPrice(
   const price = useMemo(() => {
     if (!currency || !stablecoin) return undefined
 
-    if (isStablecoin(symbol)) {
+    if (isQuoteCurrency(symbol)) {
       return new Price(currency, stablecoin, 1, 1)
     }
 

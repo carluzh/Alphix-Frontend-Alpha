@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -10,7 +10,6 @@ import { PointsRewardsCard } from "./PointsRewardsCard";
 import { OverviewStatsTiles } from "./StatsTiles";
 import { PortfolioChart } from "../Charts/PortfolioChart";
 import { PositionCardCompact, PositionCardCompactLoader } from "@/components/liquidity/PositionCardCompact";
-import { PositionDetailsModal } from "@/components/liquidity/PositionDetailsModal";
 import { MiniTokensTable } from "./MiniTokensTable";
 import { Separator } from "../shared/Separator";
 import { TableSectionHeader } from "../shared/TableSectionHeader";
@@ -100,9 +99,10 @@ export const Overview = memo(function Overview({
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const isPortfolioZero = totalValue === 0 && activePositions.length === 0;
 
-  // Modal state for position details
-  const [selectedPositionIndex, setSelectedPositionIndex] = useState<number | null>(null);
-  const isModalOpen = selectedPositionIndex !== null;
+  // Navigate to position detail page
+  const handlePositionClick = useCallback((tokenId: string) => {
+    router.push(`/liquidity/position/${tokenId}`);
+  }, [router]);
 
   // Get USD price for a symbol from priceMap
   const getUsdPriceForSymbol = useCallback(
@@ -127,26 +127,6 @@ export const Overview = memo(function Overview({
     [getUsdPriceForSymbol]
   );
 
-  // Format token display amount (for modal)
-  const formatTokenDisplayAmount = useCallback((amount: string): string => {
-    const num = parseFloat(amount);
-    if (isNaN(num)) return "0";
-    if (num === 0) return "0";
-    if (num < 0.0001) return "<0.0001";
-    if (num < 1) return num.toFixed(4);
-    if (num < 1000) return num.toFixed(2);
-    return num.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  }, []);
-
-  // Close modal handler
-  const handleCloseModal = useCallback(() => {
-    setSelectedPositionIndex(null);
-  }, []);
-
-  // Open modal handler
-  const handleOpenModal = useCallback((index: number) => {
-    setSelectedPositionIndex(index);
-  }, []);
 
   // Convert positions to PositionInfo[] - mirrors Uniswap's pattern
   const positions = useMemo(() => {
@@ -182,8 +162,10 @@ export const Overview = memo(function Overview({
     }).filter(isPositionInfo);
   }, [activePositions, chainId, tokenDefinitions]);
 
-  // Selected position for modal
-  const selectedPosition = selectedPositionIndex !== null ? positions[selectedPositionIndex] : null;
+  // Calculate total positions value for the chart's "live now" point
+  const totalPositionsValue = useMemo(() => {
+    return positions.reduce((sum, pos) => sum + getPositionValueUSD(pos), 0);
+  }, [positions, getPositionValueUSD]);
 
   // Default pool context for overview display
   const defaultPoolContext = useMemo(
@@ -218,7 +200,7 @@ export const Overview = memo(function Overview({
       >
         {/* PORTFOLIO CHART - Left (grows, max 720px) */}
         <div className="flex-1 min-w-0 flex flex-col">
-          <PortfolioChart className="w-full max-w-[720px]" positions={activePositions} isParentLoading={isLoading} />
+          <PortfolioChart className="w-full max-w-[720px]" currentPositionsValue={totalPositionsValue} isParentLoading={isLoading} />
         </div>
 
         {/* RIGHT COLUMN - Points Earned + Stats (380px fixed) */}
@@ -290,12 +272,12 @@ export const Overview = memo(function Overview({
                 </div>
               ) : positions.length > 0 ? (
                 <div className="flex flex-col gap-3">
-                  {positions.map((position, index) => (
+                  {positions.map((position) => (
                     <PositionCardCompact
                       key={position.tokenId}
                       position={position}
                       valueUSD={getPositionValueUSD(position)}
-                      onClick={() => handleOpenModal(index)}
+                      onClick={() => position.tokenId && handlePositionClick(position.tokenId)}
                       poolContext={defaultPoolContext}
                       showMenuButton={false}
                       pointsData={MOCK_POINTS_DATA}
@@ -326,27 +308,6 @@ export const Overview = memo(function Overview({
           />
         </div>
       </div>
-
-      {/* Position Details Modal */}
-      {selectedPosition && (
-        <PositionDetailsModal
-          isOpen={isModalOpen}
-          onClose={handleCloseModal}
-          position={selectedPosition}
-          valueUSD={getPositionValueUSD(selectedPosition)}
-          formatTokenDisplayAmount={formatTokenDisplayAmount}
-          getUsdPriceForSymbol={getUsdPriceForSymbol}
-          onRefreshPosition={() => {
-            // Trigger a refresh - the parent component should handle this
-          }}
-          selectedPoolId={selectedPosition.poolId}
-          showViewPoolButton
-          onViewPool={() => {
-            handleCloseModal();
-            router.push(`/liquidity/${selectedPosition.poolId}`);
-          }}
-        />
-      )}
     </div>
   );
 });

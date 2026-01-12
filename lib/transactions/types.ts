@@ -182,6 +182,10 @@ export interface AddLiquidityStepsConfig {
 
 /**
  * Build transaction steps for add liquidity flow
+ * Following Uniswap's generateLPTransactionSteps pattern:
+ * - Approvals first (if needed)
+ * - Permit2 signature step (for async flows - signature happens before tx is built)
+ * - Position creation step (receives signature, fetches tx, executes)
  */
 export function buildAddLiquiditySteps(config: AddLiquidityStepsConfig): TransactionStep[] {
   const steps: TransactionStep[] = []
@@ -200,7 +204,7 @@ export function buildAddLiquiditySteps(config: AddLiquidityStepsConfig): Transac
     )
   }
 
-  // Permit2 signature
+  // Permit2 signature step (Uniswap async flow pattern)
   steps.push(createPermit2SignatureStep())
 
   // Final execution step
@@ -239,16 +243,20 @@ export interface IncreaseLiquidityStepsConfig {
 
 /**
  * Build transaction steps for increase liquidity flow
+ * Following Uniswap's generateLPTransactionSteps pattern:
+ * - Approvals first (if needed)
+ * - Permit2 signature step (async flow)
+ * - Increase position step
  */
 export function buildIncreaseLiquiditySteps(config: IncreaseLiquidityStepsConfig): TransactionStep[] {
   const steps: TransactionStep[] = []
 
-  // Add approval steps
+  // Add approval steps (only those that are needed)
   for (const approval of config.neededApprovals) {
     steps.push(createTokenApprovalStep(approval.symbol, approval.address, approval.icon))
   }
 
-  // Permit2 signature
+  // Permit2 signature step (Uniswap async flow pattern)
   steps.push(createPermit2SignatureStep())
 
   // Increase position

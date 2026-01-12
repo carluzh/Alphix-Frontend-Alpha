@@ -152,7 +152,7 @@ export const TokenSearchBar = memo(function TokenSearchBar({
             className="absolute right-2 p-1 rounded hover:bg-muted/60 transition-colors"
             type="button"
           >
-            <IconXmark className="h-3.5 w-3.5 text-muted-foreground" />
+            <X className="h-3.5 w-3.5 text-muted-foreground" />
           </button>
         )}
       </div>

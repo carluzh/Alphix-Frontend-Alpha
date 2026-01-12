@@ -1,31 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getAddress, parseUnits, encodeFunctionData, type Address, type Hex, type Abi, TransactionExecutionError } from 'viem';
+import { getAddress, encodeFunctionData, type Address, type Hex, type Abi, TransactionExecutionError } from 'viem';
 import { validateChainId, validateAddress, checkTxRateLimit } from '../../../lib/tx-validation';
-
-// Helper function to safely parse amounts and prevent scientific notation errors
-const safeParseUnits = (amount: string, decimals: number): bigint => {
-  // Handle edge case where amount is "0" or empty
-  if (!amount || amount === "0" || amount === "0.0") {
-    return 0n;
-  }
-  
-  // Check if the amount is in scientific notation
-  const numericAmount = parseFloat(amount);
-  if (isNaN(numericAmount)) {
-    throw new Error("Invalid number format");
-  }
-  
-  // If the string contains 'e' or 'E', it's in scientific notation - convert it
-  if (amount.toLowerCase().includes('e')) {
-    const fullDecimalString = numericAmount.toFixed(decimals);
-    const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
-    const finalString = trimmedString === '.' ? '0' : trimmedString;
-    return parseUnits(finalString, decimals);
-  }
-  
-  // Otherwise, use the string directly to preserve precision
-  return parseUnits(amount, decimals);
-};
+import { safeParseUnits } from '../../../lib/liquidity/utils/parsing/amountParsing';
 import { Token } from '@uniswap/sdk-core';
 import { RoutePlanner, CommandType } from '@uniswap/universal-router-sdk';
 import { Pool, Route as V4Route, PoolKey, V4Planner, Actions, encodeRouteToPath } from '@uniswap/v4-sdk';
@@ -42,7 +18,7 @@ import {
     getToken,
     NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
-import { UniversalRouterAbi, TX_DEADLINE_SECONDS } from '../../../lib/swap-constants';
+import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '../../../lib/swap-constants';
 import { getUniversalRouterAddress, getStateViewAddress } from '../../../lib/pools-config';
 import { findBestRoute, SwapRoute, routeToString } from '../../../lib/routing-engine';
 import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
@@ -581,6 +557,25 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         // 1. Add PERMIT2_PERMIT command *only if* a valid signature is provided and it's not a native ETH swap
         // Security: Use isNativeInput (address-based) instead of symbol check
         if (!isNativeInput && permitSignature !== "0x") {
+            // S9: Re-validate nonce before building tx to prevent TOCTOU vulnerability
+            // @see interface/apps/web/src/hooks/useUniswapXSwapCallback.ts:65-87
+            const currentAllowance = await publicClient.readContract({
+                address: PERMIT2_ADDRESS,
+                abi: Permit2Abi_allowance,
+                functionName: 'allowance',
+                args: [getAddress(userAddress), getAddress(permitTokenAddress), getUniversalRouterAddress(networkMode)],
+            }) as [bigint, number, number];
+            const currentNonce = currentAllowance[2];
+
+            if (currentNonce !== permitNonce) {
+                return res.status(409).json({
+                    ok: false,
+                    message: 'Permit nonce changed. Please refresh and try again.',
+                    error: 'NONCE_STALE',
+                    details: { expectedNonce: permitNonce, currentNonce }
+                });
+            }
+
             // When submitting the permit command with a real signature,
             // the amount MUST match what was signed.
             routePlanner.addCommand(CommandType.PERMIT2_PERMIT, [
@@ -609,6 +604,13 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             // ExactOut: amount is in OUTPUT token units; limit is max INPUT
             actualSwapAmount = safeParseUnits(amountDecimalsStr, OUTPUT_TOKEN.decimals);
             actualLimitAmount = safeParseUnits(limitAmountDecimalsStr, INPUT_TOKEN.decimals);
+        }
+
+        // Fail fast: reject if swap amount parsed to 0 but input wasn't explicitly zero
+        // This preserves old behavior where invalid inputs threw errors
+        const isExplicitZero = !amountDecimalsStr || amountDecimalsStr === '0' || amountDecimalsStr === '0.0';
+        if (actualSwapAmount === 0n && !isExplicitZero) {
+            return res.status(400).json({ ok: false, message: 'Invalid swap amount format' });
         }
 
         // Determine the value to send with the transaction (ETH input only)
@@ -721,23 +723,66 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
     } catch (error: any) {
         console.error("Error in /api/swap/build-tx:", error);
 
-        // Extract a user-friendly message
         let errorMessage = "Failed to build transaction.";
-        if (error instanceof TransactionExecutionError) {
-             // Prefer shortMessage if available, otherwise use the main message
+
+        if (error?.message) {
+            const errorStr = error.message.toLowerCase();
+            const swapType = req.body?.swapType;
+
+            // Check for smart contract call exceptions
+            if (errorStr.includes('call_exception') ||
+                errorStr.includes('call revert exception') ||
+                errorStr.includes('0x6190b2b0') || errorStr.includes('0x486aa307')) {
+                errorMessage = swapType === 'ExactOut'
+                    ? 'Amount exceeds available liquidity'
+                    : 'Not enough liquidity';
+            }
+            // Check for liquidity depth errors
+            else if (errorStr.includes('insufficient liquidity') ||
+                     errorStr.includes('not enough liquidity') ||
+                     errorStr.includes('pool has no liquidity')) {
+                errorMessage = 'Not enough liquidity';
+            }
+            // Check for slippage-related errors
+            else if (errorStr.includes('price impact too high') ||
+                     errorStr.includes('slippage') ||
+                     errorStr.includes('price moved too much')) {
+                errorMessage = 'Price impact too high';
+            }
+            // Nonce errors (S9)
+            else if (errorStr.includes('nonce') || errorStr.includes('invalid signature')) {
+                errorMessage = 'Permit signature invalid or expired. Please try again.';
+            }
+            // Generic revert
+            else if (errorStr.includes('revert') || errorStr.includes('execution reverted')) {
+                errorMessage = swapType === 'ExactOut'
+                    ? 'Cannot fulfill exact output amount'
+                    : 'Transaction would revert';
+            }
+            // Balance errors
+            else if (errorStr.includes('exceeds balance') ||
+                     errorStr.includes('insufficient balance') ||
+                     errorStr.includes('amount too large')) {
+                errorMessage = 'Amount exceeds available liquidity';
+            }
+            // Keep specific error for viem TransactionExecutionError
+            else if (error instanceof TransactionExecutionError) {
+                errorMessage = error.shortMessage || error.message || errorMessage;
+            }
+        } else if (error instanceof TransactionExecutionError) {
             errorMessage = error.shortMessage || error.message || errorMessage;
         } else if (error instanceof Error) {
             errorMessage = error.message || errorMessage;
         }
-        
+
         // Use the helper function to serialize the error safely
         const safeErrorJson = jsonifyError(error);
 
         res.status(500).json({
             ok: false,
             message: errorMessage,
-            // error: error // Consider sending a less verbose error in production
-            errorDetails: safeErrorJson // Send the sanitized error details
+            // Include errorDetails only in development
+            ...(process.env.NODE_ENV !== 'production' && { errorDetails: safeErrorJson })
         });
     }
 } 

@@ -4,11 +4,13 @@
 import type { NetworkMode } from './pools-config'
 import { MAINNET_CHAIN_ID } from './network-mode'
 
-const STABLECOINS = new Set(['USDC', 'USDT', 'DAI', 'AUSDC', 'AUSDT', 'ADAI', 'aUSDC', 'aUSDT'])
+// USDC is the quote currency, so it's always $1.00
+// Other stablecoins (USDT, DAI) are quoted on-chain for accurate pricing
+const QUOTE_CURRENCY = new Set(['USDC', 'AUSDC', 'aUSDC'])
 
-function isStablecoin(symbol: string | null | undefined): boolean {
+function isQuoteCurrency(symbol: string | null | undefined): boolean {
   if (!symbol || typeof symbol !== 'string') return false
-  return STABLECOINS.has(symbol.toUpperCase())
+  return QUOTE_CURRENCY.has(symbol.toUpperCase()) || QUOTE_CURRENCY.has(symbol)
 }
 
 function getBaseUrl(): string {
@@ -23,7 +25,7 @@ export async function getQuotePrice(
   networkMode?: NetworkMode
 ): Promise<number> {
   if (!symbol || typeof symbol !== 'string' || symbol.trim() === '') return 0
-  if (isStablecoin(symbol)) return 1
+  if (isQuoteCurrency(symbol)) return 1
 
   // Derive networkMode from chainId if not explicitly provided
   const resolvedNetworkMode: NetworkMode = networkMode ?? (chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet')

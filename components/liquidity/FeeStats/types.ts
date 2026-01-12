@@ -108,7 +108,7 @@ export interface FeeStatProps {
 
 /**
  * Props for APRFeeStat component.
- * Mirrors Uniswap's APRFeeStat function.
+ * Extended to support unified APR breakdown tooltip.
  *
  * @see interface/apps/web/src/components/Liquidity/LiquidityPositionFeeStats.tsx (lines 267-279)
  */
@@ -119,6 +119,16 @@ export interface APRFeeStatProps {
   isFallback?: boolean;
   /** Whether APR is loading */
   isLoading?: boolean;
+  /** Swap/Pool APR from trading fees (for tooltip breakdown) */
+  swapApr?: number;
+  /** Unified Yield APR from Aave lending (for tooltip breakdown) */
+  unifiedYieldApr?: number;
+  /** Points APR bonus (for tooltip breakdown) */
+  pointsApr?: number;
+  /** Token0 symbol (for tooltip) */
+  token0Symbol?: string;
+  /** Token1 symbol (for tooltip) */
+  token1Symbol?: string;
 }
 
 /**

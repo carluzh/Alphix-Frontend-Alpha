@@ -179,6 +179,7 @@ export async function handlePositionTransactionStep(
     to: `0x${string}`;
     data: Hex;
     value?: bigint;
+    gasLimit?: bigint;
   }) => Promise<`0x${string}`>,
   waitForReceipt: (args: { hash: `0x${string}` }) => Promise<{ status: 'success' | 'reverted' }>,
 ): Promise<`0x${string}`> {
@@ -190,11 +191,12 @@ export async function handlePositionTransactionStep(
   // Trigger UI prompting user to accept
   setCurrentStep({ step, accepted: false });
 
-  // Submit transaction
+  // Submit transaction with gas limit from API
   const hash = await sendTransaction({
     to: txRequest.to,
     data: txRequest.data,
     value: txRequest.value,
+    gasLimit: txRequest.gasLimit,
   });
 
   // Trigger waiting UI after user accepts

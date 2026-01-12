@@ -4,9 +4,9 @@
  * Returns the swap details that will be used for the actual transactions
  */
 
-import { Token, Fraction } from '@uniswap/sdk-core';
+import { Token, Fraction, CurrencyAmount } from '@uniswap/sdk-core';
 import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
-import { nearestUsableTick, TickMath, SqrtPriceMath } from '@uniswap/v3-sdk';
+import { nearestUsableTick, TickMath, SqrtPriceMath, tickToPrice } from '@uniswap/v3-sdk';
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -373,27 +373,38 @@ async function calculateOptimalSwapAmount(
             const leftoverBpsValue = bps(leftoverInputTotal, inputAmount);
             const imbalance = leftoverInputBase - convertedOther;
 
+            // Price impact calculation using SDK classes (matches prepare-zap-mint-tx.ts)
+            // tickToPrice + Price.quote() handles decimal differences automatically
             let priceImpactBps = 0n;
             if (clampedSwap > 0n && swapQuote.amountOut > 0n) {
-                const sqrtPriceX96n = BigInt(v4Pool.sqrtRatioX96.toString());
-                const sqrtPriceSquared = sqrtPriceX96n * sqrtPriceX96n;
+                try {
+                    const inputAmountCurrency = CurrencyAmount.fromRawAmount(
+                        inputToken,
+                        JSBI.BigInt(clampedSwap.toString())
+                    );
+                    const outputAmountCurrency = CurrencyAmount.fromRawAmount(
+                        otherToken,
+                        JSBI.BigInt(swapQuote.amountOut.toString())
+                    );
 
-                let expectedOutput = mulDiv(clampedSwap, sqrtPriceSquared, Q192n);
-                const decimalsDiff = otherToken.decimals - inputToken.decimals;
-                if (decimalsDiff !== 0) {
-                    const adjustment = pow10(Math.abs(decimalsDiff));
-                    if (decimalsDiff > 0) {
-                        expectedOutput *= adjustment;
-                    } else if (adjustment > 0n) {
-                        expectedOutput /= adjustment;
+                    const midPrice = tickToPrice(inputToken, otherToken, v4Pool.tickCurrent);
+                    const expectedOutputCurrency = midPrice.quote(inputAmountCurrency);
+
+                    const expectedRaw = expectedOutputCurrency.quotient;
+                    const actualRaw = outputAmountCurrency.quotient;
+
+                    if (!JSBI.equal(expectedRaw, JSBI.BigInt(0))) {
+                        const differenceRaw = JSBI.greaterThan(expectedRaw, actualRaw)
+                            ? JSBI.subtract(expectedRaw, actualRaw)
+                            : JSBI.subtract(actualRaw, expectedRaw);
+
+                        const priceImpactFraction = new Fraction(differenceRaw, expectedRaw);
+                        const impactBpsFraction = priceImpactFraction.multiply(new Fraction(JSBI.BigInt(10_000), JSBI.BigInt(1)));
+                        priceImpactBps = BigInt(impactBpsFraction.quotient.toString());
                     }
-                }
-
-                if (expectedOutput > 0n) {
-                    const difference = expectedOutput > swapQuote.amountOut
-                        ? expectedOutput - swapQuote.amountOut
-                        : swapQuote.amountOut - expectedOutput;
-                    priceImpactBps = bps(difference, expectedOutput);
+                } catch (priceImpactError) {
+                    console.error("Failed to compute price impact:", priceImpactError);
+                    priceImpactBps = 0n;
                 }
             }
 

@@ -6,7 +6,7 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom', // Use jsdom for React component/hook tests
     setupFiles: ['./test/setupTests.ts'],
-    include: ['lib/**/*.test.ts', 'lib/**/*.test.tsx', 'test/**/*.test.ts', 'test/**/*.test.tsx'],
+    include: ['lib/**/*.test.ts', 'lib/**/*.test.tsx', 'test/**/*.test.ts', 'test/**/*.test.tsx', 'pages/api/**/*.test.ts'],
     exclude: [
       'node_modules',
       'interface',

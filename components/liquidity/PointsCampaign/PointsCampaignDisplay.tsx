@@ -30,7 +30,7 @@ import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { POINTS_CAMPAIGN_ICON, POINTS_UNIT } from './constants';
 import { PointsTooltip, TooltipSize } from './PointsTooltip';
-import { PointsFeeStatTooltip } from './PointsFeeStatTooltip';
+import { APRBreakdownTooltip } from '../APRBreakdownTooltip';
 import { formatPercent } from './formatters';
 
 // =============================================================================
@@ -129,16 +129,17 @@ export function PointsCampaignDisplay({
   );
 
   // Wrap with tooltip when tooltipProps provided
-  // Mirrors Uniswap's MouseoverTooltip with LPIncentiveFeeStatTooltip
+  // Uses unified APRBreakdownTooltip with Swap APR, Unified Yield, Points
   if (tooltipProps) {
     return (
       <PointsTooltip
         content={
-          <PointsFeeStatTooltip
+          <APRBreakdownTooltip
+            swapApr={tooltipProps.poolApr}
+            unifiedYieldApr={0}
+            pointsApr={pointsApr}
             token0Symbol={tooltipProps.token0Symbol}
             token1Symbol={tooltipProps.token1Symbol}
-            poolApr={tooltipProps.poolApr}
-            pointsApr={pointsApr}
           />
         }
         size={TooltipSize.Small}

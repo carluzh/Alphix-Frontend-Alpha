@@ -3,32 +3,147 @@
 /**
  * IncreaseLiquidityReview - Confirmation UI for increase liquidity flow
  *
- * Following Uniswap's pattern: Shows transaction details and progress,
- * handles approval/permit/deposit flow.
+ * Refactored to use Uniswap's step-based executor pattern:
+ * - Uses useLiquidityStepExecutor for ALL transaction steps
+ * - Step executor handles approvals, permits, and position transaction
+ * - Uses ProgressIndicator for step visualization
+ * - Matches the pattern from ReviewExecuteModal.tsx
  *
  * @see interface/apps/web/src/pages/IncreaseLiquidity/IncreaseLiquidityReview.tsx
+ * @see components/liquidity/wizard/ReviewExecuteModal.tsx
  */
 
-import React, { useMemo } from "react";
-import { ExternalLink as ExternalLinkIcon } from "lucide-react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
+import { ExternalLink as ExternalLinkIcon, AlertCircle, RefreshCw } from "lucide-react";
 import { IconBadgeCheck2 } from "nucleo-micro-bold-essential";
 import Image from "next/image";
+import { useAccount } from "wagmi";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
+import { useNetwork } from "@/lib/network-context";
 import { getTokenIcon, formatCalculatedAmount } from "../liquidity-form-utils";
 import { LiquidityDetailRows } from "../shared/LiquidityDetailRows";
 import { LiquidityPositionInfo } from "../shared/LiquidityPositionInfo";
-import {
-  TransactionProgress,
-  createIncreaseLiquiditySteps,
-  type TransactionStepStatus,
-} from "../shared/TransactionProgress";
 import {
   useIncreaseLiquidityContext,
   IncreaseLiquidityStep,
 } from "./IncreaseLiquidityContext";
 import { useIncreaseLiquidityTxContext } from "./IncreaseLiquidityTxContext";
+import type { TokenSymbol } from "@/lib/pools-config";
+
+// Flow state tracking for permit recovery
+import {
+  getOrCreateFlowState,
+  clearFlowState,
+  clearCachedPermit,
+} from "@/lib/permit-types";
+
+// Step executor and progress indicator
+import {
+  useLiquidityStepExecutor,
+  generateLPTransactionSteps,
+} from "@/lib/liquidity/transaction";
+import {
+  type TransactionStep,
+} from "@/lib/liquidity/types";
+import { ProgressIndicator } from "@/components/transactions";
+import {
+  type CurrentStepState,
+  type TransactionStep as UITransactionStep,
+  TransactionStepType as UIStepType,
+} from "@/lib/transactions";
+
+// Modal view types
+type ModalView = "review" | "executing" | "success";
+
+// Map executor step types to UI step types for ProgressIndicator
+function mapExecutorStepsToUI(
+  executorSteps: TransactionStep[],
+  token0Symbol: string,
+  token1Symbol: string,
+  token0Icon?: string,
+  token1Icon?: string
+): UITransactionStep[] {
+  return executorSteps.map((step): UITransactionStep => {
+    switch (step.type) {
+      case "TokenApproval":
+      case "TokenRevocation": {
+        const tokenSymbol = (step as any).token?.symbol || token0Symbol;
+        const tokenAddress = (step as any).token?.address || "";
+        const isToken0 = tokenSymbol === token0Symbol;
+        return {
+          type: UIStepType.TokenApprovalTransaction,
+          tokenSymbol,
+          tokenAddress,
+          tokenIcon: isToken0 ? token0Icon : token1Icon,
+        };
+      }
+      case "Permit2Signature":
+        return {
+          type: UIStepType.Permit2Signature,
+        };
+      case "IncreasePositionTransaction":
+      case "IncreasePositionTransactionAsync":
+        return {
+          type: UIStepType.IncreasePositionTransaction,
+          token0Symbol,
+          token1Symbol,
+          token0Icon,
+          token1Icon,
+        };
+      default:
+        return {
+          type: UIStepType.IncreasePositionTransaction,
+          token0Symbol,
+          token1Symbol,
+          token0Icon,
+          token1Icon,
+        };
+    }
+  });
+}
+
+// Error callout component with permit refresh option
+function ErrorCallout({
+  error,
+  onRetry,
+  isPermitError,
+  onRefreshPermit,
+}: {
+  error: string | null;
+  onRetry: () => void;
+  isPermitError?: boolean;
+  onRefreshPermit?: () => void;
+}) {
+  if (!error) return null;
+
+  return (
+    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+      <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-red-400">{error}</p>
+        <div className="flex gap-3 mt-2">
+          <button
+            onClick={onRetry}
+            className="text-xs text-red-400 hover:text-red-300 underline"
+          >
+            Try again
+          </button>
+          {isPermitError && onRefreshPermit && (
+            <button
+              onClick={onRefreshPermit}
+              className="text-xs text-blue-400 hover:text-blue-300 underline flex items-center gap-1"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Sign new permit
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface IncreaseLiquidityReviewProps {
   onClose: () => void;
@@ -36,6 +151,9 @@ interface IncreaseLiquidityReviewProps {
 }
 
 export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidityReviewProps) {
+  const { address } = useAccount();
+  const { chainId } = useNetwork();
+
   const {
     setStep,
     increaseLiquidityState,
@@ -43,125 +161,186 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
   } = useIncreaseLiquidityContext();
 
   const {
-    txStep,
-    isWorking,
-    error,
-    neededApprovals,
-    completedApprovals,
-    currentApprovalToken,
-    permitSigned,
-    isSuccess,
-    txHash,
+    isLoading,
+    error: contextError,
     token0USDPrice,
     token1USDPrice,
-    executeApproval,
-    executePermit,
-    executeDeposit,
+    fetchAndBuildContext,
+    refetchBalances,
+    clearError,
   } = useIncreaseLiquidityTxContext();
 
   const { position } = increaseLiquidityState;
   const { formattedAmounts } = derivedIncreaseLiquidityInfo;
 
+  // Local state
+  const [view, setView] = useState<ModalView>("review");
+  const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
+  const [stepAccepted, setStepAccepted] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [isPermitError, setIsPermitError] = useState(false);
+  const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [flowId, setFlowId] = useState<string | undefined>(undefined);
+
+  // Computed values
   const amount0 = parseFloat(formattedAmounts?.TOKEN0 || "0");
   const amount1 = parseFloat(formattedAmounts?.TOKEN1 || "0");
   const usdValue0 = amount0 * token0USDPrice;
   const usdValue1 = amount1 * token1USDPrice;
   const totalUSDValue = usdValue0 + usdValue1;
+  const error = localError || contextError;
 
-  // Generate transaction steps
-  const transactionSteps = useMemo(() => {
-    const getStepStatus = (
-      step: "approve" | "permit" | "deposit"
-    ): TransactionStepStatus => {
-      if (step === "approve") {
-        if (completedApprovals >= neededApprovals.length && neededApprovals.length > 0)
-          return "completed";
-        if (txStep === "approve" && isWorking) return "in_progress";
-        if (txStep === "approve") return "pending";
-        if (neededApprovals.length === 0) return "completed";
-        return "pending";
+  // Map executor steps to UI steps
+  const uiSteps = useMemo(() => {
+    return mapExecutorStepsToUI(
+      executorSteps,
+      position.token0.symbol,
+      position.token1.symbol,
+      getTokenIcon(position.token0.symbol),
+      getTokenIcon(position.token1.symbol)
+    );
+  }, [executorSteps, position.token0.symbol, position.token1.symbol]);
+
+  // Current step for ProgressIndicator
+  const currentStep = useMemo((): CurrentStepState | undefined => {
+    if (uiSteps.length === 0 || currentStepIndex >= uiSteps.length) return undefined;
+    return { step: uiSteps[currentStepIndex], accepted: stepAccepted };
+  }, [uiSteps, currentStepIndex, stepAccepted]);
+
+  // Step executor - handles ALL steps (approvals, permits, position transaction)
+  const executor = useLiquidityStepExecutor({
+    onSuccess: async (hash) => {
+      setIsExecuting(false);
+      setTxHash(hash || null);
+      setView("success");
+      setCurrentStepIndex(0);
+      setStepAccepted(false);
+      refetchBalances();
+
+      // Clear flow state and cached permit on success
+      if (flowId) {
+        clearFlowState(flowId);
       }
-      if (step === "permit") {
-        if (permitSigned) return "completed";
-        if (txStep === "permit" && isWorking) return "in_progress";
-        if (txStep === "permit") return "pending";
-        return "pending";
+      if (address && chainId) {
+        clearCachedPermit(address, chainId, position.token0.symbol, position.token1.symbol);
       }
-      if (step === "deposit") {
-        if (isSuccess) return "completed";
-        if (txStep === "deposit" && isWorking) return "in_progress";
-        if (txStep === "deposit") return "pending";
-        return "pending";
+
+    },
+    onFailure: (err) => {
+      setIsExecuting(false);
+      const errorMessage = err?.message || "Transaction failed";
+      const isUserRejection =
+        errorMessage.toLowerCase().includes("user rejected") ||
+        errorMessage.toLowerCase().includes("user denied");
+
+      setView("review");
+      setCurrentStepIndex(0);
+      setStepAccepted(false);
+
+      if (!isUserRejection) {
+        const isNonceError = errorMessage.includes("nonce") || errorMessage.includes("InvalidNonce");
+        if (isNonceError) {
+          setLocalError("The permit signature has expired. Please try again.");
+          setIsPermitError(true);
+        } else {
+          setLocalError(errorMessage);
+          setIsPermitError(false);
+        }
       }
-      return "pending";
-    };
+    },
+    onStepChange: (stepIndex, _step, accepted) => {
+      setCurrentStepIndex(stepIndex);
+      setStepAccepted(accepted);
+    },
+  });
 
-    // Calculate total approvals needed (tokens with amounts > 0)
-    const totalApprovals = [
-      { symbol: position.token0.symbol, amount: amount0 },
-      { symbol: position.token1.symbol, amount: amount1 },
-    ].filter((t) => t.amount > 0).length;
+  // Handle confirm - fetch context and let executor handle ALL steps
+  const handleConfirm = useCallback(async () => {
+    if (!address) return;
 
-    return createIncreaseLiquiditySteps({
-      approvalStatus: getStepStatus("approve"),
-      approvalCount: {
-        completed: neededApprovals.length === 0 ? totalApprovals : totalApprovals - neededApprovals.length + completedApprovals,
-        total: totalApprovals,
-      },
-      permitSigned,
-      permitStatus: getStepStatus("permit"),
-      depositStatus: getStepStatus("deposit"),
-    });
-  }, [
-    txStep,
-    isWorking,
-    neededApprovals,
-    completedApprovals,
-    permitSigned,
-    isSuccess,
-    position,
-    amount0,
-    amount1,
-  ]);
+    setView("executing");
+    setIsExecuting(true);
+    setLocalError(null);
+    setIsPermitError(false);
 
-  // Handle back button
-  const handleBack = () => {
-    setStep(IncreaseLiquidityStep.Input);
-  };
+    // Initialize flow tracking for permit recovery
+    const flow = getOrCreateFlowState(
+      address,
+      chainId || 0,
+      position.token0.symbol,
+      position.token1.symbol,
+      position.tickLower,
+      position.tickUpper
+    );
+    setFlowId(flow.flowId);
 
-  // Handle action button
-  const handleAction = () => {
-    if (txStep === "approve") {
-      executeApproval();
-    } else if (txStep === "permit") {
-      executePermit();
-    } else if (txStep === "deposit") {
-      executeDeposit();
+    try {
+      // Build context from API (includes approvals, permits, tx data)
+      const context = await fetchAndBuildContext();
+      if (!context) {
+        throw new Error("Failed to build transaction context");
+      }
+
+      // Generate steps for UI display
+      const steps = generateLPTransactionSteps(context);
+      setExecutorSteps(steps);
+
+      // Start with first step
+      if (steps.length > 0) {
+        setCurrentStepIndex(0);
+        setStepAccepted(false);
+      }
+
+      // Execute using step executor - handles ALL steps
+      await executor.execute(context);
+    } catch (err: any) {
+      console.error("[IncreaseLiquidityReview] Transaction error:", err);
+      setIsExecuting(false);
+      setView("review");
+      setLocalError(err?.message || "Transaction failed");
     }
-  };
+  }, [address, chainId, position, fetchAndBuildContext, executor]);
 
-  // Handle done (after success)
-  const handleDone = () => {
+  // Handle back
+  const handleBack = useCallback(() => {
+    if (!isExecuting) {
+      setStep(IncreaseLiquidityStep.Input);
+    }
+  }, [isExecuting, setStep]);
+
+  // Handle done
+  const handleDone = useCallback(() => {
     onSuccess?.();
     onClose();
-  };
+  }, [onSuccess, onClose]);
 
-  // Get action button text
-  const getActionButtonText = () => {
-    if (isWorking) return "Processing...";
-    if (txStep === "approve" && currentApprovalToken) {
-      return `Approve ${currentApprovalToken}`;
+  // Handle retry
+  const handleRetry = useCallback(() => {
+    setLocalError(null);
+    setIsPermitError(false);
+    clearError();
+  }, [clearError]);
+
+  // Handle permit refresh (retry the flow)
+  const handleRefreshPermit = useCallback(() => {
+    setLocalError(null);
+    setIsPermitError(false);
+    handleConfirm();
+  }, [handleConfirm]);
+
+  // Reset state when view changes to review
+  useEffect(() => {
+    if (view === "review") {
+      setExecutorSteps([]);
     }
-    if (txStep === "permit") return "Sign Permit";
-    if (txStep === "deposit") return "Add Liquidity";
-    return "Continue";
-  };
+  }, [view]);
 
   // Success view
-  if (isSuccess) {
+  if (view === "success") {
     return (
       <div className="space-y-4">
-        {/* Success Header */}
         <div className="text-center py-4">
           <div className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
             <IconBadgeCheck2 className="h-6 w-6 text-green-500" />
@@ -180,7 +359,6 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
           )}
         </div>
 
-        {/* Summary */}
         <div className="rounded-lg border border-primary p-4 bg-muted/30">
           <div className="flex items-center justify-between">
             {amount0 > 0 && (
@@ -194,7 +372,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
                 />
                 <div>
                   <div className="font-medium text-sm">
-                    {amount0.toFixed(6)} {position.token0.symbol}
+                    {formatTokenDisplayAmount(amount0.toString(), position.token0.symbol as TokenSymbol)} {position.token0.symbol}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {formatCalculatedAmount(usdValue0)}
@@ -209,7 +387,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
               <div className="flex items-center gap-2">
                 <div className="text-right">
                   <div className="font-medium text-sm">
-                    {amount1.toFixed(6)} {position.token1.symbol}
+                    {formatTokenDisplayAmount(amount1.toString(), position.token1.symbol as TokenSymbol)} {position.token1.symbol}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {formatCalculatedAmount(usdValue1)}
@@ -227,7 +405,6 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
           </div>
         </div>
 
-        {/* Done Button */}
         <Button
           onClick={handleDone}
           className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
@@ -238,7 +415,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
     );
   }
 
-  // Review view
+  // Review/executing view
   return (
     <div className="space-y-4">
       {/* Position Info */}
@@ -265,14 +442,19 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
         title="Adding to position"
       />
 
-      {/* Transaction Progress */}
-      <TransactionProgress steps={transactionSteps} />
+      {/* Progress Indicator (during execution) */}
+      {view === "executing" && currentStep && uiSteps.length > 0 && (
+        <ProgressIndicator steps={uiSteps} currentStep={currentStep} />
+      )}
 
       {/* Error Display */}
       {error && (
-        <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3">
-          <p className="text-sm text-red-400">{error}</p>
-        </div>
+        <ErrorCallout
+          error={error}
+          onRetry={handleRetry}
+          isPermitError={isPermitError}
+          onRefreshPermit={handleRefreshPermit}
+        />
       )}
 
       {/* Action Buttons */}
@@ -280,7 +462,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
         <Button
           variant="outline"
           onClick={handleBack}
-          disabled={isWorking}
+          disabled={isExecuting || isLoading}
           className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
           style={{
             backgroundImage: "url(/pattern.svg)",
@@ -292,15 +474,15 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
         </Button>
 
         <Button
-          onClick={handleAction}
-          disabled={isWorking}
+          onClick={handleConfirm}
+          disabled={isExecuting || isLoading}
           className={cn(
             "text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90",
-            isWorking && "opacity-80"
+            (isExecuting || isLoading) && "opacity-80"
           )}
         >
-          <span className={isWorking ? "animate-pulse" : ""}>
-            {getActionButtonText()}
+          <span className={(isExecuting || isLoading) ? "animate-pulse" : ""}>
+            {isExecuting || isLoading ? "Processing..." : "Add Liquidity"}
           </span>
         </Button>
       </div>

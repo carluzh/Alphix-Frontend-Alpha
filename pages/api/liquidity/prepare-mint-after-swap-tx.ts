@@ -14,7 +14,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
 import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getPoolByTokens, getNetworkModeFromRequest } from "../../../lib/pools-config";
-import { PERMIT2_TYPES } from "../../../lib/liquidity-utils";
+import { PERMIT_BATCH_TYPES } from "../../../lib/permit-types";
 import { AllowanceTransfer, PERMIT2_ADDRESS } from '@uniswap/permit2-sdk';
 
 import { createNetworkClient } from "../../../lib/viemClient";
@@ -131,12 +131,14 @@ interface TransactionPreparedResponse {
         data: string;
         value: string;
         chainId: number;
+        gasLimit?: string; // Estimated gas limit with 20% buffer
     };
     // Backwards compatibility - same as 'create'
     transaction: {
         to: string;
         data: string;
         value: string;
+        gasLimit?: string; // Estimated gas limit with 20% buffer
     };
     // Pool state (matches Uniswap)
     sqrtRatioX96: string;
@@ -312,7 +314,9 @@ export default async function handler(
                     approvalType: 'PERMIT2_BATCH_SIGNATURE',
                     permitBatchData: {
                         domain,
-                        types: PERMIT2_TYPES,
+                        // Use PERMIT_BATCH_TYPES (only PermitBatch + PermitDetails)
+                        // Don't use PERMIT2_TYPES which includes PermitSingle and confuses wallet decoders
+                        types: PERMIT_BATCH_TYPES,
                         message: {
                             details: permitDetails,
                             spender: POSITION_MANAGER_ADDRESS,
@@ -536,6 +540,22 @@ export default async function handler(
             ? (token0IsNative ? parsedToken0Amount : parsedToken1Amount).toString()
             : '0';
 
+        // Estimate gas for the transaction
+        let gasLimit: string | undefined;
+        try {
+            const estimatedGas = await publicClient.estimateGas({
+                account: getAddress(userAddress),
+                to: POSITION_MANAGER_ADDRESS as `0x${string}`,
+                data: mintMethodParameters.calldata as `0x${string}`,
+                value: txValue ? BigInt(txValue) : undefined,
+            });
+            // Add 20% buffer for safety
+            gasLimit = ((estimatedGas * 120n) / 100n).toString();
+        } catch (e) {
+            console.warn('[prepare-mint-after-swap-tx] Gas estimation failed, proceeding without:', e);
+            // Don't fail the request, just proceed without gasLimit
+        }
+
         // Response format aligned with Uniswap Trading API CreateLPPositionResponse
         return res.status(200).json({
             needsApproval: false,
@@ -546,12 +566,14 @@ export default async function handler(
                 data: mintMethodParameters.calldata,
                 value: txValue,
                 chainId: chainId,
+                gasLimit, // Include gas estimate
             },
             // Backwards compatibility
             transaction: {
                 to: POSITION_MANAGER_ADDRESS,
                 data: mintMethodParameters.calldata,
-                value: txValue
+                value: txValue,
+                gasLimit, // Include gas estimate
             },
             // Pool state (matches Uniswap response)
             sqrtRatioX96: sqrtPriceX96.toString(),

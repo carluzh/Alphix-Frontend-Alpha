@@ -138,6 +138,7 @@ interface TransactionPreparedResponse {
         to: string;
         data: string;
         value: string;
+        gasLimit?: string; // Estimated gas limit with 20% buffer
     };
     deadline: string;
     zapQuote: ZapQuoteResponse;
@@ -1119,7 +1120,24 @@ export default async function handler(
         };
 
         const mintMethodParameters = V4PositionManager.addCallParameters(resultingPosition, mintOptions);
-        const mintTxValue = hasNativeETH ? remainingInputAmount.toString() : '0';
+        // SDK returns { calldata, value } - value is the correct ETH amount based on position amounts
+        const mintTxValue = mintMethodParameters.value;
+
+        // Estimate gas for mint transaction
+        let mintGasLimit: string | undefined;
+        try {
+            const estimatedMintGas = await publicClient.estimateGas({
+                account: getAddress(userAddress),
+                to: POSITION_MANAGER_ADDRESS as `0x${string}`,
+                data: mintMethodParameters.calldata as `0x${string}`,
+                value: mintTxValue ? BigInt(mintTxValue) : undefined,
+            });
+            // Add 20% buffer for safety
+            mintGasLimit = ((estimatedMintGas * 120n) / 100n).toString();
+        } catch (e) {
+            console.warn('[prepare-zap-mint-tx] Mint gas estimation failed, proceeding without:', e);
+            // Don't fail the request, just proceed without gasLimit
+        }
 
         return res.status(200).json({
             needsApproval: false,
@@ -1133,7 +1151,8 @@ export default async function handler(
             mintTransaction: {
                 to: POSITION_MANAGER_ADDRESS,
                 data: mintMethodParameters.calldata,
-                value: mintTxValue
+                value: mintTxValue,
+                gasLimit: mintGasLimit, // Include gas estimate
             },
             deadline: deadlineBigInt.toString(),
             zapQuote,

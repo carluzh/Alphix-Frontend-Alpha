@@ -215,7 +215,8 @@ export function createIncreasePositionAsyncStep(
 
       try {
         // Call Alphix API with signature to get the transaction
-        const response = await fetch('/api/liquidity/prepare-mint-tx', {
+        // Note: prepare-increase-tx expects tokenId, amount0, amount1 (not inputAmount/inputTokenSymbol)
+        const response = await fetch('/api/liquidity/prepare-increase-tx', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -237,10 +238,22 @@ export function createIncreasePositionAsyncStep(
           return { txRequest: undefined, sqrtRatioX96: data.sqrtRatioX96 };
         }
 
+        // Safely parse bigint values - handle potential decimal strings
+        const safeBigInt = (val: string | undefined): bigint | undefined => {
+          if (!val) return undefined;
+          try {
+            const cleanVal = val.includes('.') ? val.split('.')[0] : val;
+            return BigInt(cleanVal);
+          } catch {
+            return undefined;
+          }
+        };
+
         const txRequest: ValidatedTransactionRequest = {
           to: txData.to as Address,
           data: txData.data as Hex,
-          value: txData.value ? BigInt(txData.value) : undefined,
+          value: safeBigInt(txData.value),
+          gasLimit: safeBigInt(txData.gasLimit),
           chainId: txData.chainId || increasePositionRequestArgs.chainId,
         };
 
@@ -295,10 +308,22 @@ export function createCreatePositionAsyncStep(
           return { txRequest: undefined, sqrtRatioX96: data.sqrtRatioX96 };
         }
 
+        // Safely parse bigint values - handle potential decimal strings
+        const safeBigInt = (val: string | undefined): bigint | undefined => {
+          if (!val) return undefined;
+          try {
+            const cleanVal = val.includes('.') ? val.split('.')[0] : val;
+            return BigInt(cleanVal);
+          } catch {
+            return undefined;
+          }
+        };
+
         const txRequest: ValidatedTransactionRequest = {
           to: txData.to as Address,
           data: txData.data as Hex,
-          value: txData.value ? BigInt(txData.value) : undefined,
+          value: safeBigInt(txData.value),
+          gasLimit: safeBigInt(txData.gasLimit),
           chainId: txData.chainId || createPositionRequestArgs.chainId,
         };
 

@@ -11,8 +11,17 @@ import { useNetwork } from '@/lib/network-context'
 
 const ONE_SECOND_MS = 1000
 
-export const AVERAGE_L1_BLOCK_TIME_MS = 12 * ONE_SECOND_MS
-export const AVERAGE_L2_BLOCK_TIME_MS = 3 * ONE_SECOND_MS
+// Polling intervals (conservative, slightly longer than actual block times)
+// These are for API/RPC polling cadence, NOT for deadline calculations
+// For actual block times, use lib/swap-constants.ts: AVERAGE_L1_BLOCK_TIME_MS (12s), AVERAGE_L2_BLOCK_TIME_MS (2s)
+export const POLLING_INTERVAL_L1_MS = 12 * ONE_SECOND_MS
+export const POLLING_INTERVAL_L2_MS = 3 * ONE_SECOND_MS
+
+// Re-export with old names for backwards compatibility (deprecated)
+/** @deprecated Use POLLING_INTERVAL_L1_MS or import from lib/swap-constants.ts */
+export const AVERAGE_L1_BLOCK_TIME_MS = POLLING_INTERVAL_L1_MS
+/** @deprecated Use POLLING_INTERVAL_L2_MS or import from lib/swap-constants.ts */
+export const AVERAGE_L2_BLOCK_TIME_MS = POLLING_INTERVAL_L2_MS
 
 /**
  * Returns the appropriate polling interval based on the current chain.
@@ -31,7 +40,7 @@ export function usePollingIntervalByChain(): number {
   // L2 chains have faster block times (~2-3 seconds)
   const isL2 = networkMode === 'mainnet' || networkMode === 'testnet'
 
-  return isL2 ? AVERAGE_L2_BLOCK_TIME_MS : AVERAGE_L1_BLOCK_TIME_MS
+  return isL2 ? POLLING_INTERVAL_L2_MS : POLLING_INTERVAL_L1_MS
 }
 
 /**
@@ -39,5 +48,5 @@ export function usePollingIntervalByChain(): number {
  * Assumes L2 since we're only on Base
  */
 export function getPollingIntervalByChain(isL2: boolean = true): number {
-  return isL2 ? AVERAGE_L2_BLOCK_TIME_MS : AVERAGE_L1_BLOCK_TIME_MS
+  return isL2 ? POLLING_INTERVAL_L2_MS : POLLING_INTERVAL_L1_MS
 }

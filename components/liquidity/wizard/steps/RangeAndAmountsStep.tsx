@@ -32,7 +32,9 @@ import { useRangeHopCallbacks } from '@/hooks/useRangeHopCallbacks';
 import { TokenInputCard, TokenInputStyles } from '@/components/liquidity/TokenInputCard';
 import { formatCalculatedAmount } from '@/components/liquidity/liquidity-form-utils';
 import { calculateTicksFromPercentage, getFieldsDisabled, PositionField, isInvalidRange } from '@/lib/liquidity/utils/calculations';
+import { DEFAULT_TICK_SPACING } from '@/lib/liquidity/utils/validation/feeTiers';
 import { nearestUsableTick } from '@uniswap/v3-sdk';
+import { tickToPrice as tickToPriceV4 } from '@uniswap/v4-sdk';
 import { D3LiquidityRangeChart, LiquidityRangeActionButtons, LiquidityChartSkeleton, CHART_DIMENSIONS, type D3LiquidityRangeChartHandle } from '@/components/liquidity/d3-chart';
 import { HistoryDuration, usePoolPriceChartData } from '@/lib/chart';
 import { useLiquidityChartData } from '@/hooks/useLiquidityChartData';
@@ -531,10 +533,20 @@ export function RangeAndAmountsStep() {
     setAmount1
   );
 
-  // Helper: Convert tick to price (price = 1.0001^tick)
-  const tickToPrice = useCallback((tick: number): number => {
-    return Math.pow(1.0001, tick);
-  }, []);
+  // Helper: Convert tick to price using SDK (Uniswap-aligned - handles token decimals properly)
+  // @see interface/apps/web/src/utils/getTickToPrice.ts getV4TickToPrice
+  // @see interface/apps/web/src/components/Liquidity/utils/priceRangeInfo.ts lines 528-543
+  const tickToPrice = useCallback((tick: number): number | undefined => {
+    // Match Uniswap pattern: return undefined if currencies not available
+    if (!sdkPool) {
+      return undefined;
+    }
+    // Use SDK's tickToPrice which properly accounts for token decimal differences
+    // This matches: tickToPriceV4(baseCurrency, quoteCurrency, tick)
+    const price = tickToPriceV4(sdkPool.token0, sdkPool.token1, tick);
+    // Convert Price object to number for display
+    return parseFloat(price.toSignificant(18));
+  }, [sdkPool]);
 
   // Helper: Format price for display based on pool type and inversion
   const formatPriceForDisplay = useCallback((price: number, inverted: boolean = false): string => {
@@ -561,9 +573,9 @@ export function RangeAndAmountsStep() {
 
     if (strategy === 'custom') return;
 
-    const tickSpacingVal = poolConfig?.tickSpacing || 10;
+    const tickSpacingVal = poolConfig?.tickSpacing || DEFAULT_TICK_SPACING;
     const poolCurrentTick = currentTick ?? 0;
-    const tickToPrice = (tick: number) => Math.pow(1.0001, tick);
+    // Note: tickToPrice is from the hook above (uses SDK with proper decimal handling)
     const tickFromPrice = (price: number) => Math.round(Math.log(price) / Math.log(1.0001));
 
     let tickLower: number;
@@ -598,9 +610,15 @@ export function RangeAndAmountsStep() {
       tickUpper = tickLower + tickSpacingVal;
     }
 
-    // Convert ticks to prices
+    // Convert ticks to prices (Uniswap pattern: early return if pool not ready)
     const priceLower = tickToPrice(tickLower);
     const priceUpper = tickToPrice(tickUpper);
+
+    // Guard: if pool not available yet, just set ticks without updating display prices
+    if (priceLower === undefined || priceUpper === undefined) {
+      setRange(tickLower, tickUpper);
+      return;
+    }
 
     // Set display prices (inverted if needed)
     if (priceInverted) {
@@ -612,7 +630,7 @@ export function RangeAndAmountsStep() {
     }
 
     setRange(tickLower, tickUpper);
-  }, [setRangePreset, setRange, currentTick, priceInverted, formatPriceForDisplay, poolConfig?.tickSpacing]);
+  }, [setRangePreset, setRange, currentTick, priceInverted, formatPriceForDisplay, poolConfig?.tickSpacing, tickToPrice]);
 
   // Token selection for price denomination - resets to Stable on switch
   const handleSelectToken = useCallback((token: string) => {
@@ -636,7 +654,7 @@ export function RangeAndAmountsStep() {
 
   // Tick-based increment/decrement (Uniswap pattern)
   // @see interface/apps/web/src/state/mint/v3/hooks.tsx useRangeHopCallbacks
-  const tickSpacing = poolConfig?.tickSpacing || 10;
+  const tickSpacing = poolConfig?.tickSpacing || DEFAULT_TICK_SPACING;
 
   // isSorted determines if we need to swap increment/decrement for inverted display
   // When not sorted (inverted), left input controls upper tick, right input controls lower tick
@@ -910,9 +928,6 @@ export function RangeAndAmountsStep() {
               isFullRange={isRehypoMode ? (poolConfig.rehypoRange?.isFullRange ?? true) : selectedPreset === 'full'}
               duration={chartDuration}
               onRangeChange={isRehypoMode ? () => {} : (newMinPrice, newMaxPrice) => {
-              // Update display prices
-              setMinPrice(formatPriceForDisplay(newMinPrice, priceInverted));
-              setMaxPrice(formatPriceForDisplay(newMaxPrice, priceInverted));
               setRangePreset('custom');
 
               // Convert prices to ticks and update context
@@ -940,9 +955,28 @@ export function RangeAndAmountsStep() {
               const tickUpper = tickFromPrice(canonicalMaxPrice);
 
               // Align to tick spacing
-              const tickSpacingVal = poolConfig?.tickSpacing || 10;
+              const tickSpacingVal = poolConfig?.tickSpacing || DEFAULT_TICK_SPACING;
               const alignedTickLower = Math.round(tickLower / tickSpacingVal) * tickSpacingVal;
               const alignedTickUpper = Math.round(tickUpper / tickSpacingVal) * tickSpacingVal;
+
+              // Convert aligned ticks back to canonical prices
+              const alignedPriceLower = tickToPrice(alignedTickLower);
+              const alignedPriceUpper = tickToPrice(alignedTickUpper);
+
+              // Guard: if pool not available yet, just set ticks without updating display prices
+              if (alignedPriceLower === undefined || alignedPriceUpper === undefined) {
+                setRange(alignedTickLower, alignedTickUpper);
+                return;
+              }
+
+              // Update display with aligned prices (inverted if needed)
+              if (priceInverted) {
+                setMinPrice(formatPriceForDisplay(1 / alignedPriceUpper, true));
+                setMaxPrice(formatPriceForDisplay(1 / alignedPriceLower, true));
+              } else {
+                setMinPrice(formatPriceForDisplay(alignedPriceLower, false));
+                setMaxPrice(formatPriceForDisplay(alignedPriceUpper, false));
+              }
 
               setRange(alignedTickLower, alignedTickUpper);
             }}

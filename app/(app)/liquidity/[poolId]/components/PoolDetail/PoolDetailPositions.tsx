@@ -3,7 +3,6 @@
 import { memo, useMemo } from "react";
 import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
 import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
-import { DenominationToggle } from "@/components/liquidity/DenominationToggle";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { PositionInfo } from "@/lib/uniswap/liquidity";
 import type { PoolConfig, PoolStateData } from "../../hooks";
@@ -17,9 +16,6 @@ interface PoolDetailPositionsProps {
   isLoadingPositions: boolean;
   isDerivingNewPosition: boolean;
   priceMap: Record<string, number>;
-  effectiveDenominationBase: string;
-  denominationBaseOverride: string | null;
-  onDenominationToggle: (newBase: string) => void;
   onPositionClick: (position: ProcessedPosition) => void;
   onAddLiquidity: () => void;
   getPositionInfo: (position: ProcessedPosition) => PositionInfo | undefined;
@@ -53,9 +49,6 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
   isLoadingPositions,
   isDerivingNewPosition,
   priceMap,
-  effectiveDenominationBase,
-  denominationBaseOverride,
-  onDenominationToggle,
   onPositionClick,
   onAddLiquidity,
   getPositionInfo,
@@ -124,17 +117,9 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
       {/* Horizontal divider */}
       <div className="h-px bg-sidebar-border/60" />
 
-      {/* Header with Denomination Toggle */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Your Positions</h2>
-        {userPositions.length > 0 && (
-          <DenominationToggle
-            token0Symbol={token0Symbol}
-            token1Symbol={token1Symbol}
-            activeBase={effectiveDenominationBase}
-            onToggle={onDenominationToggle}
-          />
-        )}
       </div>
 
       {/* Positions List - Full width cards */}
@@ -161,7 +146,7 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
               position={positionInfo}
               valueUSD={valueUSD}
               poolContext={poolContext}
-              denominationBaseOverride={denominationBaseOverride ?? undefined}
+              poolType={poolConfig?.type}
               onClick={() => onPositionClick(position)}
               blockTimestamp={position.blockTimestamp}
               lastTimestamp={position.lastTimestamp}

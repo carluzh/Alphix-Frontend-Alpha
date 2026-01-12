@@ -9,19 +9,6 @@
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
 /**
- * Position data for portfolio chart calculation
- */
-export interface PositionInput {
-  positionId: string;
-  poolId: string;
-  liquidity: string;
-  tickLower: number;
-  tickUpper: number;
-  token0UncollectedFees?: string;
-  token1UncollectedFees?: string;
-}
-
-/**
  * Chart point from backend
  */
 export interface PortfolioChartPoint {
@@ -105,26 +92,27 @@ export async function checkBackendHealth(): Promise<HealthStatus> {
 }
 
 /**
- * Fetch portfolio chart data for positions
+ * Fetch portfolio chart data (historical position values)
+ *
+ * Simple GET endpoint - just pass address and period.
+ * Backend returns SUM of stored position values grouped by timestamp.
+ * Frontend adds the "live now" point using position data it already has.
  *
  * @param address - User's wallet address
- * @param positions - User's LP positions
  * @param period - Time period (DAY, WEEK, MONTH)
  */
 export async function fetchPositionsChart(
   address: string,
-  positions: PositionInput[],
   period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK'
 ): Promise<PortfolioChartResponse> {
   try {
-    const response = await fetch(`${BACKEND_URL}/portfolio/chart?period=${period}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        address,
-        positions,
-      }),
-    });
+    const response = await fetch(
+      `${BACKEND_URL}/portfolio/chart?address=${encodeURIComponent(address)}&period=${period}`,
+      {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -180,6 +168,80 @@ export async function fetchPoolHistory(
       toTimestamp: 0,
       snapshotCount: 0,
       snapshots: [],
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Position fee chart point
+ */
+export interface FeeChartPoint {
+  timestamp: number;
+  feesUsd: number;
+  accumulatedFeesUsd: number;
+  apr: number;
+}
+
+/**
+ * Position fee chart response
+ */
+export interface PositionFeeChartResponse {
+  success: boolean;
+  positionId: string;
+  period: 'DAY' | 'WEEK' | 'MONTH';
+  fromTimestamp: number;
+  toTimestamp: number;
+  points: FeeChartPoint[];
+  error?: string;
+}
+
+/**
+ * Fetch position fee chart data (historical fee values)
+ *
+ * Simple GET endpoint - just pass positionId and period.
+ * Backend returns stored fee snapshots.
+ * Frontend adds the "live now" point using data it already has.
+ *
+ * @param positionId - Position token ID
+ * @param period - Time period (1W, 1M, 1Y, ALL - mapped to backend format)
+ */
+export async function fetchPositionFees(
+  positionId: string,
+  period: '1W' | '1M' | '1Y' | 'ALL' = '1W'
+): Promise<PositionFeeChartResponse> {
+  // Map frontend period format to backend format
+  const periodMap: Record<string, string> = {
+    '1W': 'WEEK',
+    '1M': 'MONTH',
+    '1Y': 'YEAR',
+    'ALL': 'ALL',
+  };
+  const backendPeriod = periodMap[period] || 'WEEK';
+
+  try {
+    const response = await fetch(
+      `${BACKEND_URL}/position/${encodeURIComponent(positionId)}/fees?period=${backendPeriod}`,
+      {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      positionId,
+      period: backendPeriod,
+      fromTimestamp: 0,
+      toTimestamp: 0,
+      points: [],
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }

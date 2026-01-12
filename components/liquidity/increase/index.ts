@@ -22,7 +22,6 @@ export {
 export {
   IncreaseLiquidityTxContextProvider,
   useIncreaseLiquidityTxContext,
-  type IncreaseTxStep,
 } from './IncreaseLiquidityTxContext';
 
 // Components

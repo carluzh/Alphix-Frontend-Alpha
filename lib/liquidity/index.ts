@@ -66,6 +66,21 @@ export {
   type CheckZapApprovalsResponse,
 } from './hooks/approval';
 
+// Gas fee estimation hooks
+export {
+  useGasFeeEstimate,
+  useMultiStepGasFeeEstimate,
+  type GasFeeEstimateResult,
+  type UseGasFeeEstimateParams,
+} from './hooks/useGasFeeEstimate';
+
+// Transaction preparation hooks
+export {
+  usePrepareMintQuery,
+  type PrepareMintQueryParams,
+  type PrepareMintQueryResult,
+} from './hooks/usePrepareMintQuery';
+
 // =============================================================================
 // UTILITIES - Pure functions for calculations and validation
 // =============================================================================

@@ -35,7 +35,6 @@ export type {
 
 // Tooltip Components
 export { PointsTooltip, TooltipSize } from './PointsTooltip';
-export { PointsFeeStatTooltip } from './PointsFeeStatTooltip';
 
 // Display Components
 export { PointsRewardBadge } from './PointsRewardBadge';

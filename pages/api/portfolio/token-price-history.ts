@@ -11,7 +11,6 @@ import { cacheService } from '@/lib/cache/CacheService'
 // CoinGecko token ID mapping
 const COINGECKO_IDS: Record<string, string> = {
   'ETH': 'ethereum',
-  'WETH': 'ethereum',
   'aETH': 'ethereum',
   'USDC': 'usd-coin',
   'aUSDC': 'usd-coin',

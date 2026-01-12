@@ -797,8 +797,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     fromAmount,
     toAmount,
     trade.routeInfo,
-    trade.routeFees,
-    trade.routeFeesLoading,
     isConnected,
     currentChainId,
     trade.quoteLoading,

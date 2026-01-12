@@ -28,6 +28,8 @@ export interface PositionPointsData {
   pointsApr?: number;
   /** Total APR including points (mirrors totalApr) */
   totalApr?: number;
+  /** Unified Yield APR from Aave lending (for rehypo positions) */
+  unifiedYieldApr?: number;
   /** Whether position is eligible for points campaign */
   isEligible: boolean;
 }
