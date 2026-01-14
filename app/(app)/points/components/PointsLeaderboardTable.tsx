@@ -438,7 +438,7 @@ function CurrentUserRow({
             className="text-sm font-medium text-foreground"
             style={{ fontFamily: "Consolas, monospace" }}
           >
-            {points !== undefined ? formatPoints(points) : "—"}
+            {points !== undefined ? formatPoints(points) : "-"}
           </span>
         </div>
       </div>

@@ -38,7 +38,7 @@ function formatUSD(value: number): string {
 function formatTokenAmount(amount: number): string {
   if (amount === 0) return "0";
   if (amount < 0.0001) return "< 0.0001";
-  return amount.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  return amount.toLocaleString("en-US", { maximumFractionDigits: 4 });
 }
 
 /**

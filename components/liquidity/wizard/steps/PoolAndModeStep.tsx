@@ -16,6 +16,8 @@ import { useNetwork } from '@/lib/network-context';
 import { TokenStack } from '@/components/liquidity/TokenStack';
 import { APRBadge } from '@/components/liquidity/APRBadge';
 import { useAccount } from 'wagmi';
+import { useQuery } from '@tanstack/react-query';
+import { fetchAaveRates, getAaveKey } from '@/lib/aave-rates';
 import { OverviewConnectWalletBanner } from '@/app/(app)/overview/components/ConnectWalletBanner/ConnectWalletBanner';
 
 // Animation config using framer-motion's easeOut
@@ -239,7 +241,29 @@ export function PoolAndModeStep() {
     setTokens(pool.currency0.symbol, pool.currency1.symbol);
   }, [setPoolId, setTokens]);
 
-  const extraAaveApr = selectedPool ? 2.5 : undefined;
+  // Fetch Aave rates for Unified Yield display
+  const { data: aaveRatesData } = useQuery({
+    queryKey: ['aaveRates'],
+    queryFn: fetchAaveRates,
+    staleTime: 5 * 60_000, // 5 minutes
+  });
+
+  // Calculate Aave APY based on selected pool's tokens
+  const extraAaveApr = useMemo(() => {
+    if (!selectedPool || !aaveRatesData?.success) return undefined;
+
+    const key0 = getAaveKey(selectedPool.currency0.symbol);
+    const key1 = getAaveKey(selectedPool.currency1.symbol);
+
+    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
+    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
+
+    // Average if both tokens supported, otherwise use single token's APY
+    if (apy0 !== null && apy1 !== null) {
+      return (apy0 + apy1) / 2;
+    }
+    return apy0 ?? apy1 ?? undefined;
+  }, [selectedPool, aaveRatesData]);
 
   return (
     <Container>

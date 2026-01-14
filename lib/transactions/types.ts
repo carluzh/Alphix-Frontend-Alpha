@@ -36,6 +36,10 @@ export enum TransactionStepType {
   // Alphix-specific
   CreatePositionTransaction = 'CreatePositionTransaction',
   ZapSwapAndDeposit = 'ZapSwapAndDeposit',
+
+  // Zap-specific granular steps
+  SwapPermitSignature = 'SwapPermitSignature',
+  SwapTransaction = 'SwapTransaction',
 }
 
 // ============================================================================
@@ -84,12 +88,34 @@ export interface LiquidityPositionStep extends TransactionStepBase {
 }
 
 /**
+ * Swap permit signature step - Permit2 single permit for swap input token
+ */
+export interface SwapPermitSignatureStep extends TransactionStepBase {
+  type: TransactionStepType.SwapPermitSignature
+  tokenSymbol?: string
+  tokenIcon?: string
+}
+
+/**
+ * Swap transaction step - execute swap via Universal Router
+ */
+export interface SwapTransactionStep extends TransactionStepBase {
+  type: TransactionStepType.SwapTransaction
+  inputTokenSymbol: string
+  outputTokenSymbol: string
+  inputTokenIcon?: string
+  outputTokenIcon?: string
+}
+
+/**
  * Union of all step types
  */
 export type TransactionStep =
   | TokenApprovalStep
   | Permit2SignatureStep
   | LiquidityPositionStep
+  | SwapPermitSignatureStep
+  | SwapTransactionStep
 
 // ============================================================================
 // Component Props Interfaces
@@ -314,6 +340,120 @@ export function buildDecreaseLiquiditySteps(config: DecreaseLiquidityStepsConfig
       )
     )
   }
+
+  return steps
+}
+
+// ============================================================================
+// Factory Functions for Zap Steps
+// ============================================================================
+
+/**
+ * Create a swap permit signature step
+ */
+export function createSwapPermitSignatureStep(
+  tokenSymbol?: string,
+  tokenIcon?: string
+): SwapPermitSignatureStep {
+  return {
+    type: TransactionStepType.SwapPermitSignature,
+    tokenSymbol,
+    tokenIcon,
+  }
+}
+
+/**
+ * Create a swap transaction step
+ */
+export function createSwapTransactionStep(
+  inputTokenSymbol: string,
+  outputTokenSymbol: string,
+  inputTokenIcon?: string,
+  outputTokenIcon?: string
+): SwapTransactionStep {
+  return {
+    type: TransactionStepType.SwapTransaction,
+    inputTokenSymbol,
+    outputTokenSymbol,
+    inputTokenIcon,
+    outputTokenIcon,
+  }
+}
+
+// ============================================================================
+// Step Builder for Zap Liquidity Flow
+// ============================================================================
+
+export interface ZapLiquidityStepsConfig {
+  needsInputTokenApproval: boolean
+  needsSwapPermit: boolean
+  needsBatchPermit: boolean
+  inputTokenSymbol: string
+  outputTokenSymbol: string
+  inputTokenAddress: string
+  inputTokenIcon?: string
+  outputTokenIcon?: string
+  token0Symbol: string
+  token1Symbol: string
+  token0Icon?: string
+  token1Icon?: string
+}
+
+/**
+ * Build transaction steps for zap liquidity flow
+ * Full sequence:
+ * 1. Input token ERC20 approval (if needed)
+ * 2. Swap permit signature (Permit2 single permit, if needed)
+ * 3. Swap transaction (Universal Router)
+ * 4. LP batch permit signature (Permit2 batch, if needed)
+ * 5. Create position transaction (PositionManager)
+ */
+export function buildZapLiquiditySteps(config: ZapLiquidityStepsConfig): TransactionStep[] {
+  const steps: TransactionStep[] = []
+
+  // Step 1: Input token ERC20 approval (if needed)
+  if (config.needsInputTokenApproval) {
+    steps.push(
+      createTokenApprovalStep(
+        config.inputTokenSymbol,
+        config.inputTokenAddress,
+        config.inputTokenIcon
+      )
+    )
+  }
+
+  // Step 2: Swap permit signature (if needed)
+  if (config.needsSwapPermit) {
+    steps.push(
+      createSwapPermitSignatureStep(config.inputTokenSymbol, config.inputTokenIcon)
+    )
+  }
+
+  // Step 3: Swap transaction
+  steps.push(
+    createSwapTransactionStep(
+      config.inputTokenSymbol,
+      config.outputTokenSymbol,
+      config.inputTokenIcon,
+      config.outputTokenIcon
+    )
+  )
+
+  // Step 4: LP batch permit signature (if needed)
+  if (config.needsBatchPermit) {
+    steps.push(createPermit2SignatureStep())
+  }
+
+  // Step 5: Create position
+  steps.push(
+    createLiquidityStep(
+      TransactionStepType.CreatePositionTransaction,
+      config.token0Symbol,
+      config.token1Symbol,
+      config.token0Icon,
+      config.token1Icon
+    )
+  )
 
   return steps
 }

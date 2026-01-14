@@ -133,6 +133,8 @@ export function PointsTooltip({
             // Matches Alphix design system border radius
             "bg-popover border border-sidebar-border rounded-lg shadow-lg",
             "text-xs font-medium text-foreground",
+            // Prevent tooltip from capturing hover - disappears when leaving trigger
+            "pointer-events-none",
             className
           )}
           style={{

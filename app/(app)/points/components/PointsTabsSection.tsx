@@ -2,6 +2,7 @@
 
 import { memo, useRef, useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { IconClone2, IconCheck, IconChevronLeft, IconChevronRight } from "nucleo-micro-bold-essential";
 import { ReferralCodeIcon, EnterCodeIcon } from "@/components/PointsIcons";
@@ -9,6 +10,7 @@ import { PointsHistoryTable } from "./PointsHistoryTable";
 import { PointsLeaderboardTable } from "./PointsLeaderboardTable";
 import type { PointsTab } from "./Points";
 import type { PointsHistoryEntry, LeaderboardEntry } from "../hooks/usePointsPageData";
+import type { CachedRefereesData } from "@/lib/upstash-points";
 
 // Tab order for direction detection (matches Uniswap's usePortfolioTabsAnimation)
 const TAB_ORDER: PointsTab[] = ["history", "leaderboard", "referral"];
@@ -83,6 +85,14 @@ interface PointsTabsSectionProps {
   currentUserAddress?: string;
   currentUserPoints?: number;
   isLoading?: boolean;
+  // Referral data
+  myReferralCode?: string | null;
+  getOrCreateReferralCode?: () => Promise<string | null>;
+  myReferrer?: string | null;
+  myReferrerCode?: string | null;
+  referrerJoinedAt?: number | null;
+  referees?: CachedRefereesData["referees"];
+  applyReferralCode?: (code: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 /**
@@ -102,6 +112,14 @@ export const PointsTabsSection = memo(function PointsTabsSection({
   currentUserAddress,
   currentUserPoints,
   isLoading,
+  // Referral data
+  myReferralCode,
+  getOrCreateReferralCode,
+  myReferrer,
+  myReferrerCode,
+  referrerJoinedAt,
+  referees = [],
+  applyReferralCode,
 }: PointsTabsSectionProps) {
   // Track tab index for direction detection
   const currentIndex = TAB_ORDER.indexOf(activeTab);
@@ -153,7 +171,17 @@ export const PointsTabsSection = memo(function PointsTabsSection({
           />
         );
       case "referral":
-        return <ReferralContent isLoading={isLoading} />;
+        return (
+          <ReferralContent
+            isLoading={isLoading}
+            myReferralCode={myReferralCode}
+            myReferrer={myReferrer}
+            myReferrerCode={myReferrerCode}
+            referrerJoinedAt={referrerJoinedAt}
+            referees={referees}
+            applyReferralCode={applyReferralCode}
+          />
+        );
       default:
         return null;
     }
@@ -236,7 +264,7 @@ function TabNavigation({
   );
 }
 
-// Mock referred users data
+// Referred user type for the table
 interface ReferredUser {
   address: string;
   theirPoints: number;
@@ -244,113 +272,67 @@ interface ReferredUser {
   referredAt: Date;
 }
 
-const MOCK_REFERRED_USERS: ReferredUser[] = [
-  {
-    address: "0x1234567890abcdef1234567890abcdef12345678",
-    theirPoints: 12847.5632,
-    yourEarnings: 1284.76,
-    referredAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0xabcdef1234567890abcdef1234567890abcdef12",
-    theirPoints: 8421.2145,
-    yourEarnings: 842.12,
-    referredAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0x9876543210fedcba9876543210fedcba98765432",
-    theirPoints: 5632.8891,
-    yourEarnings: 563.29,
-    referredAt: new Date(Date.now() - 12 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0xfedcba9876543210fedcba9876543210fedcba98",
-    theirPoints: 3215.4420,
-    yourEarnings: 321.54,
-    referredAt: new Date(Date.now() - 21 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0x5555666677778888999900001111222233334444",
-    theirPoints: 1847.1230,
-    yourEarnings: 184.71,
-    referredAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0x6666777788889999aaaabbbbccccddddeeeeffff",
-    theirPoints: 1523.8945,
-    yourEarnings: 152.39,
-    referredAt: new Date(Date.now() - 52 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0x7777888899990000aaaabbbbccccddddeeeeffff",
-    theirPoints: 1245.6723,
-    yourEarnings: 124.57,
-    referredAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0x8888999900001111aaaabbbbccccddddeeeeffff",
-    theirPoints: 987.3456,
-    yourEarnings: 98.73,
-    referredAt: new Date(Date.now() - 68 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0x9999000011112222aaaabbbbccccddddeeeeffff",
-    theirPoints: 756.2134,
-    yourEarnings: 75.62,
-    referredAt: new Date(Date.now() - 75 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0xaaaa111122223333bbbbccccddddeeeeffff0000",
-    theirPoints: 543.8912,
-    yourEarnings: 54.39,
-    referredAt: new Date(Date.now() - 82 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0xbbbb222233334444ccccddddeeeeffff00001111",
-    theirPoints: 412.5678,
-    yourEarnings: 41.26,
-    referredAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0xcccc333344445555ddddeeeeffff000011112222",
-    theirPoints: 298.3421,
-    yourEarnings: 29.83,
-    referredAt: new Date(Date.now() - 98 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0xdddd444455556666eeeeffff00001111222233333",
-    theirPoints: 187.9045,
-    yourEarnings: 18.79,
-    referredAt: new Date(Date.now() - 105 * 24 * 60 * 60 * 1000),
-  },
-  {
-    address: "0xeeee555566667777ffff000011112222333344444",
-    theirPoints: 123.4567,
-    yourEarnings: 12.35,
-    referredAt: new Date(Date.now() - 112 * 24 * 60 * 60 * 1000),
-  },
-];
-
 const TABLE_ROW_HEIGHT = 56;
 const ITEMS_PER_PAGE = 10;
 
 /**
  * ReferralContent - Referral tab content with code sharing and referred users table
  */
-function ReferralContent({ isLoading }: { isLoading?: boolean }) {
-  const referralCode = "ALPHIX-REF-0000"; // Mock referral code
-  const discordUrl = "https://discord.gg/alphix"; // Discord server URL
+function ReferralContent({
+  isLoading,
+  myReferralCode,
+  myReferrer,
+  myReferrerCode,
+  referrerJoinedAt,
+  referees = [],
+  applyReferralCode,
+}: {
+  isLoading?: boolean;
+  myReferralCode?: string | null;
+  myReferrer?: string | null;
+  myReferrerCode?: string | null;
+  referrerJoinedAt?: number | null;
+  referees?: CachedRefereesData["referees"];
+  applyReferralCode?: (code: string) => Promise<{ success: boolean; error?: string }>;
+}) {
   const [enteredCode, setEnteredCode] = useState("");
-  const [isCodeApplied, setIsCodeApplied] = useState(false);
-  const [appliedCode, setAppliedCode] = useState<string | null>(null);
+  const [isApplying, setIsApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
-  const handleApplyCode = useCallback(() => {
-    if (enteredCode.trim()) {
-      setAppliedCode(enteredCode.trim());
-      setIsCodeApplied(true);
-      setEnteredCode("");
+  // Check if user doesn't meet requirements
+  const requirementsNotMet = myReferralCode === "REQUIREMENTS_NOT_MET";
+  const displayCode = requirementsNotMet ? null : myReferralCode;
+
+  const handleApplyCode = useCallback(async () => {
+    if (!enteredCode.trim() || !applyReferralCode || isApplying) return;
+
+    setIsApplying(true);
+    setApplyError(null);
+
+    try {
+      const result = await applyReferralCode(enteredCode.trim());
+      if (result.success) {
+        setEnteredCode("");
+        toast.success("Referral code applied");
+      } else {
+        setApplyError(result.error || "Failed to apply code");
+        toast.error(result.error || "Failed to apply code");
+      }
+    } catch {
+      setApplyError("Failed to apply code");
+      toast.error("Failed to apply code");
+    } finally {
+      setIsApplying(false);
     }
-  }, [enteredCode]);
+  }, [enteredCode, applyReferralCode, isApplying]);
+
+  // Convert referees to the format expected by ReferredUsersTable
+  const referredUsers: ReferredUser[] = referees.map((r) => ({
+    address: r.address,
+    theirPoints: r.theirPoints,
+    yourEarnings: r.yourEarnings,
+    referredAt: new Date(r.referredAt),
+  }));
 
   if (isLoading) {
     return (
@@ -402,7 +384,7 @@ function ReferralContent({ isLoading }: { isLoading?: boolean }) {
             <div
               className={cn(
                 "relative z-[1] rounded-lg",
-                "p-5 h-full",
+                "p-5 h-full flex flex-col",
                 "bg-container"
               )}
             >
@@ -414,23 +396,33 @@ function ReferralContent({ isLoading }: { isLoading?: boolean }) {
                 </span>
               </div>
 
-              {/* Copyable Code Cell */}
-              <CopyableReferralCode code={referralCode} />
-
-              {/* Request Custom Link */}
-              <div className="mt-3 flex justify-end">
-                <a
-                  href={discordUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+              {/* Code display - always show (loading, code, or requirements not met) */}
+              {displayCode ? (
+                <CopyableReferralCode code={displayCode} />
+              ) : requirementsNotMet ? (
+                <div
                   className={cn(
-                    "text-xs text-muted-foreground underline",
-                    "hover:text-foreground transition-colors"
+                    "rounded-lg border border-sidebar-border",
+                    "bg-muted/40",
+                    "px-3 py-2.5 flex items-center justify-center"
                   )}
                 >
-                  Request custom code
-                </a>
-              </div>
+                  <span className="text-sm text-muted-foreground">
+                    Minimum requirements not met
+                  </span>
+                </div>
+              ) : (
+                <div
+                  className={cn(
+                    "rounded-lg border border-sidebar-border",
+                    "bg-muted/40 animate-pulse",
+                    "px-3 py-2.5 flex items-center justify-center"
+                  )}
+                >
+                  <span className="text-sm text-muted-foreground">Loading...</span>
+                </div>
+              )}
+
             </div>
           </div>
         </div>
@@ -440,7 +432,7 @@ function ReferralContent({ isLoading }: { isLoading?: boolean }) {
           <div
             className={cn(
               "border border-sidebar-border rounded-lg",
-              "p-5 h-full",
+              "p-5 h-full flex flex-col",
               "bg-muted/20"
             )}
           >
@@ -453,25 +445,11 @@ function ReferralContent({ isLoading }: { isLoading?: boolean }) {
             </div>
 
             {/* Input or Applied State */}
-            {isCodeApplied && appliedCode ? (
-              <div
-                className={cn(
-                  "rounded-lg border border-green-500/30",
-                  "bg-green-500/10",
-                  "px-4 py-3 flex items-center justify-between gap-3"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <IconCheck className="w-4 h-4 text-green-500" />
-                  <span
-                    className="text-sm font-medium text-foreground"
-                    style={{ fontFamily: "Consolas, monospace" }}
-                  >
-                    {appliedCode}
-                  </span>
-                </div>
-                <span className="text-xs text-green-500">Applied</span>
-              </div>
+            {myReferrer && myReferrerCode ? (
+              <AppliedReferrerDisplay
+                code={myReferrerCode}
+                joinedAt={referrerJoinedAt}
+              />
             ) : (
               <div className="relative">
                 <input
@@ -479,40 +457,45 @@ function ReferralContent({ isLoading }: { isLoading?: boolean }) {
                   value={enteredCode}
                   onChange={(e) => setEnteredCode(e.target.value.toUpperCase())}
                   onKeyDown={(e) => e.key === "Enter" && handleApplyCode()}
-                  placeholder="ALPHIX-XXX-XXXX"
+                  placeholder="Enter code..."
+                  disabled={isApplying}
                   className={cn(
                     "w-full rounded-lg border border-sidebar-border",
                     "bg-muted/40 hover:bg-muted/60 focus:bg-muted/60",
-                    "px-4 py-3 text-lg font-medium text-foreground",
+                    "px-3 py-2.5 text-sm font-medium text-foreground",
                     "placeholder:text-muted-foreground/50",
-                    "outline-none focus:ring-1 focus:ring-sidebar-primary/50",
-                    "transition-colors"
+                    "outline-none focus:border-sidebar-primary/50",
+                    "transition-colors",
+                    isApplying && "opacity-50 cursor-not-allowed"
                   )}
                   style={{ fontFamily: "Consolas, monospace" }}
                 />
-                {/* Enter kbd hint */}
-                {enteredCode.trim() && (
+                {/* Enter kbd hint or loading */}
+                {enteredCode.trim() && !isApplying && (
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
                     <kbd className="px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted/60 border border-sidebar-border rounded">
                       Enter
                     </kbd>
                   </div>
                 )}
+                {isApplying && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <span className="text-xs text-muted-foreground">Applying...</span>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Helper text */}
-            <p className="mt-3 text-xs text-muted-foreground">
-              {isCodeApplied
-                ? "You're earning bonus points for your referrer!"
-                : "Your referrer earns 10% of your points - at no cost to you."}
-            </p>
+            {/* Error message */}
+            {applyError && (
+              <p className="mt-2 text-xs text-red-500">{applyError}</p>
+            )}
           </div>
         </div>
       </div>
 
       {/* Referred Users Table */}
-      <ReferredUsersTable users={MOCK_REFERRED_USERS} isLoading={false} />
+      <ReferredUsersTable users={referredUsers} isLoading={false} />
     </div>
   );
 }
@@ -536,8 +519,10 @@ function CopyableReferralCode({ code }: { code: string }) {
     try {
       await navigator.clipboard.writeText(code);
       setIsCopied(true);
+      toast.success("Referral code copied");
     } catch (err) {
       console.error("Failed to copy:", err);
+      toast.error("Failed to copy code");
     }
   }, [code]);
 
@@ -547,7 +532,7 @@ function CopyableReferralCode({ code }: { code: string }) {
         "rounded-lg border border-sidebar-border",
         "bg-muted/40 hover:bg-muted/60",
         "transition-colors cursor-pointer",
-        "px-4 py-3 flex items-center justify-between gap-3"
+        "px-3 py-2.5 flex items-center justify-between gap-3"
       )}
       onClick={handleCopy}
       onMouseEnter={() => setIsHovered(true)}
@@ -555,7 +540,7 @@ function CopyableReferralCode({ code }: { code: string }) {
     >
       <span
         className={cn(
-          "text-lg font-medium text-foreground",
+          "text-sm font-medium text-foreground",
           "transition-opacity duration-200",
           isHovered ? "opacity-80" : "opacity-100"
         )}
@@ -592,6 +577,64 @@ function CopyableReferralCode({ code }: { code: string }) {
           )}
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Calculate days remaining until 30-day cooldown expires
+ */
+function getDaysUntilChangeAllowed(joinedAtMs: number): number {
+  const COOLDOWN_DAYS = 30;
+  const now = Date.now();
+  const cooldownEndMs = joinedAtMs + COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+  const remainingMs = cooldownEndMs - now;
+  return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+}
+
+/**
+ * AppliedReferrerDisplay - Shows applied referrer code with green badge and cooldown info
+ */
+function AppliedReferrerDisplay({
+  code,
+  joinedAt,
+}: {
+  code: string;
+  joinedAt?: number | null;
+}) {
+  const daysRemaining = joinedAt ? getDaysUntilChangeAllowed(joinedAt) : null;
+  const canChange = daysRemaining !== null && daysRemaining === 0;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        className={cn(
+          "rounded-lg border border-green-500/30",
+          "bg-green-500/10",
+          "px-3 py-2.5 flex items-center justify-between gap-3"
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <IconCheck className="w-4 h-4 text-green-500" />
+          <span
+            className="text-sm font-medium text-foreground"
+            style={{ fontFamily: "Consolas, monospace" }}
+          >
+            {code}
+          </span>
+        </div>
+        <span className="text-xs text-green-500 font-medium">Applied</span>
+      </div>
+      {daysRemaining !== null && daysRemaining > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Can change in {daysRemaining} day{daysRemaining !== 1 ? "s" : ""}
+        </p>
+      )}
+      {canChange && (
+        <p className="text-xs text-muted-foreground">
+          You can now change your referrer
+        </p>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useTransition } from "react"
 import { type LucideIcon, Trash2Icon } from "lucide-react"
-import { IconPlus, IconCoins } from "nucleo-micro-bold-essential"
+import { IconPlus, IconCoins, IconCircleXmarkFilled } from "nucleo-micro-bold-essential"
 import { CustomLockIcon } from "./CustomLockIcon"
 import { usePathname, useRouter } from "next/navigation"
 import { toast } from "sonner"

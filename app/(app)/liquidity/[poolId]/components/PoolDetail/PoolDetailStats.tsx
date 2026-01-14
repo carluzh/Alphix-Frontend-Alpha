@@ -1,10 +1,12 @@
 "use client";
 
 import { memo, ReactNode, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { StatSectionBubble } from "../shared/DetailBubble";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { APRBreakdownTooltip } from "@/components/liquidity/APRBreakdownTooltip";
+import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
 import type { PoolStats } from "../../hooks";
 
 // Points campaign gives 50% APR bonus
@@ -76,11 +78,35 @@ export const PoolDetailStats = memo(function PoolDetailStats({
   const isLoading = loading || poolStats.tvlFormatted === "Loading...";
   const hasPositiveApr = poolStats.apr !== "0.00%" && poolStats.aprRaw > 0;
 
+  // Fetch Aave rates for Unified Yield display
+  const { data: aaveRatesData } = useQuery({
+    queryKey: ['aaveRates'],
+    queryFn: fetchAaveRates,
+    staleTime: 5 * 60_000, // 5 minutes
+  });
+
+  // Calculate Aave APY based on pool tokens
+  const unifiedYieldApr = useMemo(() => {
+    if (!aaveRatesData?.success || !token0Symbol || !token1Symbol) return 0;
+
+    const key0 = getAaveKey(token0Symbol);
+    const key1 = getAaveKey(token1Symbol);
+
+    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
+    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
+
+    // Average if both tokens supported, otherwise use single token's APY
+    if (apy0 !== null && apy1 !== null) {
+      return (apy0 + apy1) / 2;
+    }
+    return apy0 ?? apy1 ?? 0;
+  }, [aaveRatesData, token0Symbol, token1Symbol]);
+
   // Calculate APR values with points
   const { poolApr, pointsApr, totalApr, totalAprFormatted } = useMemo(() => {
     const rawApr = poolStats.aprRaw || 0;
     const pointsBonus = hasPointsRewards ? rawApr * POINTS_APR_MULTIPLIER : 0;
-    const total = rawApr + pointsBonus;
+    const total = rawApr + pointsBonus + unifiedYieldApr;
 
     return {
       poolApr: rawApr,
@@ -88,7 +114,7 @@ export const PoolDetailStats = memo(function PoolDetailStats({
       totalApr: total,
       totalAprFormatted: total > 0 ? `${total.toFixed(2)}%` : "0.00%",
     };
-  }, [poolStats.aprRaw, hasPointsRewards]);
+  }, [poolStats.aprRaw, hasPointsRewards, unifiedYieldApr]);
 
   // Stat card class (solid border, not dashed - the outer wrapper has the dashed border)
   const statCardClass = "flex-1 min-w-[130px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3";
@@ -175,7 +201,7 @@ export const PoolDetailStats = memo(function PoolDetailStats({
               >
                 <APRBreakdownTooltip
                   swapApr={poolApr}
-                  unifiedYieldApr={0}
+                  unifiedYieldApr={unifiedYieldApr}
                   pointsApr={pointsApr}
                   token0Symbol={token0Symbol}
                   token1Symbol={token1Symbol}

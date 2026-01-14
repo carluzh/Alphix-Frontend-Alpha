@@ -116,7 +116,7 @@ function formatAprCore(apr: Percent | null | undefined, includePercent: boolean)
   if (!isFinite(value)) return '-'
   if (value === 0) return includePercent ? '0%' : '0.00'
   const suffix = includePercent ? '%' : ''
-  if (value >= 1000) return includePercent ? `${Math.round(value)}%` : Math.round(value).toLocaleString()
+  if (value >= 1000) return includePercent ? `${Math.round(value)}%` : Math.round(value).toLocaleString("en-US")
   if (value >= 100) return `${value.toFixed(0)}${suffix}`
   if (value >= 10) return `${value.toFixed(1)}${suffix}`
   return `${value.toFixed(2)}${suffix}`
@@ -128,4 +128,55 @@ export function formatApr(apr: Percent | null | undefined): string {
 
 export function formatAprValue(apr: Percent | null | undefined): string {
   return formatAprCore(apr, false)
+}
+
+// =============================================================================
+// CONSOLIDATED APR BREAKDOWN UTILITIES
+// =============================================================================
+
+export interface APRBreakdownInput {
+  /** Swap/Pool APR from trading fees */
+  swapApr?: number | null;
+  /** Unified Yield APR (Aave lending) - only for rehypo pools */
+  unifiedYieldApr?: number | null;
+  /** Points APR bonus */
+  pointsApr?: number | null;
+}
+
+/**
+ * Calculate total APR from breakdown components.
+ * Unified Yield is only added if it exists (rehypo pools only).
+ *
+ * @param breakdown - APR components
+ * @returns Total APR as number, or null if no valid data
+ */
+export function calculateTotalApr(breakdown: APRBreakdownInput): number | null {
+  const swap = breakdown.swapApr ?? 0;
+  const unified = breakdown.unifiedYieldApr ?? 0;
+  const points = breakdown.pointsApr ?? 0;
+
+  // If all are 0 or null, return null to indicate no data
+  if (swap === 0 && unified === 0 && points === 0) {
+    if (breakdown.swapApr === null && breakdown.unifiedYieldApr === null && breakdown.pointsApr === null) {
+      return null;
+    }
+  }
+
+  return swap + unified + points;
+}
+
+/**
+ * Format total APR from breakdown for display.
+ *
+ * @param breakdown - APR components
+ * @returns Formatted APR string (e.g., "12.50%")
+ */
+export function formatTotalApr(breakdown: APRBreakdownInput): string {
+  const total = calculateTotalApr(breakdown);
+  if (total === null) return '-';
+  if (total === 0) return '0.00%';
+  if (total >= 1000) return `${(total / 1000).toFixed(2)}K%`;
+  if (total >= 100) return `${total.toFixed(0)}%`;
+  if (total >= 10) return `${total.toFixed(1)}%`;
+  return `${total.toFixed(2)}%`;
 }

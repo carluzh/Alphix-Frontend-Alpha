@@ -3,7 +3,8 @@
 import { memo } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { PoolConfig } from "../../hooks";
 
 interface PoolDetailHeaderProps {
@@ -12,8 +13,8 @@ interface PoolDetailHeaderProps {
 }
 
 /**
- * Pool detail page header with breadcrumb navigation, pool title, and token logos.
- * Adapted from Uniswap's PoolDetailsHeader pattern.
+ * Pool detail page header with breadcrumb navigation, pool title, token logos,
+ * and New Position button. Styled like Position header (larger icons, badge underneath).
  * @see interface/apps/web/src/components/Pools/PoolDetails/PoolDetailsHeader.tsx
  */
 export const PoolDetailHeader = memo(function PoolDetailHeader({
@@ -33,9 +34,12 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
           <div className="h-4 w-24 bg-muted/60 rounded animate-pulse" />
         </div>
         {/* Title skeleton */}
-        <div className="flex items-center gap-3 mt-2">
-          <div className="w-8 h-8 rounded-full bg-muted/60 animate-pulse" />
-          <div className="h-7 w-48 bg-muted/60 rounded animate-pulse" />
+        <div className="flex items-center gap-4 mt-2">
+          <div className="w-11 h-11 rounded-full bg-muted/60 animate-pulse" />
+          <div className="flex flex-col gap-2">
+            <div className="h-7 w-48 bg-muted/60 rounded animate-pulse" />
+            <div className="h-5 w-16 bg-muted/60 rounded animate-pulse" />
+          </div>
         </div>
       </div>
     );
@@ -43,7 +47,7 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Breadcrumb Navigation - no back arrow, clicking Pools navigates */}
+      {/* Breadcrumb Navigation */}
       <nav className="flex items-center gap-1.5 text-sm" aria-label="breadcrumb">
         <Link
           href="/liquidity"
@@ -57,47 +61,60 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
         </span>
       </nav>
 
-      {/* Pool Title with Logos - more spacing from breadcrumb */}
-      <div className="flex items-center gap-4 mt-1">
-        {/* Double Token Logo */}
-        <div className="relative w-14 h-8 flex-shrink-0">
-          <div className="absolute top-0 left-0 w-8 h-8 rounded-full overflow-hidden bg-background border border-sidebar-border z-10">
-            {token0?.icon && (
-              <Image
-                src={token0.icon}
-                alt={token0.symbol}
-                width={32}
-                height={32}
-                className="w-full h-full object-cover"
-              />
-            )}
+      {/* Pool Title Row: Logos + Name/Badge + New Position Button */}
+      <div className="flex items-center justify-between gap-4 mt-1">
+        <div className="flex items-center gap-4">
+          {/* Double Token Logo - Larger (44px like Position header) */}
+          <div className="relative w-[68px] h-11 flex-shrink-0">
+            <div className="absolute top-0 left-0 w-11 h-11 rounded-full overflow-hidden bg-background border border-sidebar-border z-10">
+              {token0?.icon && (
+                <Image
+                  src={token0.icon}
+                  alt={token0.symbol}
+                  width={44}
+                  height={44}
+                  className="w-full h-full object-cover"
+                />
+              )}
+            </div>
+            <div className="absolute top-0 left-6 w-11 h-11 rounded-full overflow-hidden bg-background border border-sidebar-border z-20">
+              {token1?.icon && (
+                <Image
+                  src={token1.icon}
+                  alt={token1.symbol}
+                  width={44}
+                  height={44}
+                  className="w-full h-full object-cover"
+                />
+              )}
+            </div>
           </div>
-          <div className="absolute top-0 left-5 w-8 h-8 rounded-full overflow-hidden bg-background border border-sidebar-border z-20">
-            {token1?.icon && (
-              <Image
-                src={token1.icon}
-                alt={token1.symbol}
-                width={32}
-                height={32}
-                className="w-full h-full object-cover"
-              />
+
+          {/* Pool Name and Badge - Stacked vertically (like Position header) */}
+          <div className="flex flex-col gap-1">
+            <h1 className="text-xl font-semibold" style={{ fontFamily: 'Inter, sans-serif' }}>
+              {token0?.symbol} / {token1?.symbol}
+            </h1>
+
+            {/* Pool Type Badge - Below title */}
+            {poolConfig.type && (
+              <span className="w-fit px-2 py-0.5 text-xs font-medium rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">
+                {poolConfig.type}
+              </span>
             )}
           </div>
         </div>
 
-        {/* Pool Name and Badges */}
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <h1 className="text-xl font-semibold" style={{ fontFamily: 'Inter, sans-serif' }}>
-            {token0?.symbol} / {token1?.symbol}
-          </h1>
-
-          {/* Pool Type Badge */}
-          {poolConfig.type && (
-            <span className="px-2 py-0.5 text-xs font-medium rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">
-              {poolConfig.type}
-            </span>
-          )}
-        </div>
+        {/* New Position Button */}
+        <Button
+          asChild
+          className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
+        >
+          <Link href={`/liquidity/add?pool=${poolConfig.id}&from=pool`}>
+            <Plus className="h-4 w-4" strokeWidth={2.5} />
+            New position
+          </Link>
+        </Button>
       </div>
     </div>
   );

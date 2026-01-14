@@ -25,7 +25,6 @@ import {
     PERMIT_EXPIRATION_DURATION_SECONDS,
     PERMIT_SIG_DEADLINE_DURATION_SECONDS,
 } from "../../../lib/swap-constants";
-import { PERMIT2_TYPES } from "../../../lib/liquidity-utils";
 import { AllowanceTransfer, permit2Address, PERMIT2_ADDRESS, PermitBatch } from '@uniswap/permit2-sdk';
 
 // Note: POSITION_MANAGER_ADDRESS and STATE_VIEW_ADDRESS are now fetched dynamically per-request
@@ -638,20 +637,20 @@ export default async function handler(
         const isInputToken0 = sdkInputToken.address === sortedToken0.address;
         const dependentAmount = isInputToken0 ? amount1.toString() : amount0.toString();
 
-        // Estimate gas for the transaction
+        // Only estimate gas when permit signature is provided (V4 uses SignatureTransfer)
         let gasLimit: string | undefined;
-        try {
-            const estimatedGas = await publicClient.estimateGas({
-                account: getAddress(userAddress),
-                to: POSITION_MANAGER_ADDRESS as `0x${string}`,
-                data: encodedModifyLiquiditiesCallDataViem as `0x${string}`,
-                value: transactionValue ? BigInt(transactionValue) : undefined,
-            });
-            // Add 20% buffer for safety
-            gasLimit = ((estimatedGas * 120n) / 100n).toString();
-        } catch (e) {
-            console.warn('[prepare-mint-tx] Gas estimation failed, proceeding without:', e);
-            // Don't fail the request, just proceed without gasLimit
+        if (hasBatchPermit) {
+            try {
+                const estimatedGas = await publicClient.estimateGas({
+                    account: getAddress(userAddress),
+                    to: POSITION_MANAGER_ADDRESS as `0x${string}`,
+                    data: encodedModifyLiquiditiesCallDataViem as `0x${string}`,
+                    value: transactionValue ? BigInt(transactionValue) : undefined,
+                });
+                gasLimit = ((estimatedGas * 120n) / 100n).toString();
+            } catch (e) {
+                console.warn('[prepare-mint-tx] Gas estimation failed, proceeding without:', e);
+            }
         }
 
         // Response format aligned with Uniswap Trading API CreateLPPositionResponse

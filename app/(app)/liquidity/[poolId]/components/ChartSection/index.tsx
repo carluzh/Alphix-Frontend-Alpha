@@ -19,6 +19,12 @@ import {
 import { cn } from "@/lib/utils";
 import { ChartType, chartConfig, usePDPChartState } from "./hooks";
 import type { ChartDataPoint } from "../../hooks";
+import {
+  calculatePeriodRange,
+  generateTicksForPeriod,
+  formatTickForPeriod,
+  type ChartPeriodPool,
+} from "@/lib/chart-time-utils";
 
 interface ChartSectionProps {
   chartData: ChartDataPoint[];
@@ -89,29 +95,32 @@ export const ChartSection = memo(function ChartSection({
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("1M");
   const [hoverData, setHoverData] = useState<HoverData | null>(null);
 
-  // Filter chart data based on time period
+  // Calculate period range for x-axis domain
+  const [periodFrom, periodTo] = useMemo(() => calculatePeriodRange(timePeriod as ChartPeriodPool), [timePeriod]);
+
+  // Generate ticks for x-axis based on period
+  const xAxisTicks = useMemo(() => {
+    return generateTicksForPeriod(timePeriod as ChartPeriodPool, periodFrom, periodTo);
+  }, [timePeriod, periodFrom, periodTo]);
+
+  // Transform chart data to include timestamps and filter based on time period
   const filteredChartData = useMemo(() => {
     if (chartData.length === 0) return [];
 
-    const now = new Date();
-    let daysBack = 30; // Default 1M
+    // Add timestamp to each data point for numeric x-axis
+    const dataWithTimestamps = chartData.map(d => ({
+      ...d,
+      timestamp: Math.floor(new Date(d.date).getTime() / 1000),
+    }));
 
-    switch (timePeriod) {
-      case "1W":
-        daysBack = 7;
-        break;
-      case "1M":
-        daysBack = 30;
-        break;
-      case "All":
-        return chartData; // No filtering for All time
+    // For "All" period, return all data
+    if (timePeriod === "All") {
+      return dataWithTimestamps;
     }
 
-    const cutoffDate = new Date(now);
-    cutoffDate.setDate(cutoffDate.getDate() - daysBack);
-
-    return chartData.filter(d => new Date(d.date) >= cutoffDate);
-  }, [chartData, timePeriod]);
+    // Filter data within the period range
+    return dataWithTimestamps.filter(d => d.timestamp >= periodFrom && d.timestamp <= periodTo);
+  }, [chartData, timePeriod, periodFrom, periodTo]);
 
   // Get current (latest) values and daily change from the data
   const currentValues = useMemo(() => {
@@ -172,11 +181,10 @@ export const ChartSection = memo(function ChartSection({
     tvl: currentValues.tvl,
   } : null);
 
-  // Format date for X axis
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  };
+  // Format timestamp for X axis using shared utility
+  const formatTimestamp = useCallback((timestamp: number) => {
+    return formatTickForPeriod(timestamp, timePeriod as ChartPeriodPool);
+  }, [timePeriod]);
 
   // Format USD for tooltips
   const formatUSD = (value: number) => {
@@ -263,14 +271,17 @@ export const ChartSection = memo(function ChartSection({
           >
             <CartesianGrid horizontal vertical={false} strokeDasharray="3 3" stroke="hsl(var(--sidebar-border) / 0.2)" />
             <XAxis
-              dataKey="date"
+              dataKey="timestamp"
+              type="number"
+              domain={[periodFrom, periodTo]}
+              ticks={xAxisTicks}
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={formatDate}
+              tickFormatter={formatTimestamp}
               tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-              minTickGap={40}
               padding={{ left: 0, right: CHART_DATA_PADDING }}
+              scale="time"
             />
             <YAxis
               yAxisId="left"
@@ -331,7 +342,7 @@ export const ChartSection = memo(function ChartSection({
           onMouseLeave={handleMouseLeave}
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--sidebar-border) / 0.2)" />
-          <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} minTickGap={40} padding={{ left: 0, right: CHART_DATA_PADDING }} />
+          <XAxis dataKey="timestamp" type="number" domain={[periodFrom, periodTo]} ticks={xAxisTicks} tickFormatter={formatTimestamp} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} padding={{ left: 0, right: CHART_DATA_PADDING }} scale="time" />
           <YAxis tickFormatter={formatUSD} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} width={PRICE_SCALE_WIDTH} orientation="right" />
           <ChartTooltip
             cursor={{ fill: "hsl(var(--muted) / 0.3)" }}
@@ -354,7 +365,7 @@ export const ChartSection = memo(function ChartSection({
           onMouseLeave={handleMouseLeave}
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--sidebar-border) / 0.2)" />
-          <XAxis dataKey="date" tickFormatter={formatDate} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} minTickGap={40} padding={{ left: 0, right: CHART_DATA_PADDING }} />
+          <XAxis dataKey="timestamp" type="number" domain={[periodFrom, periodTo]} ticks={xAxisTicks} tickFormatter={formatTimestamp} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} padding={{ left: 0, right: CHART_DATA_PADDING }} scale="time" />
           <YAxis tickFormatter={formatUSD} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} width={PRICE_SCALE_WIDTH} orientation="right" />
           <ChartTooltip
             cursor={{ fill: "hsl(var(--muted) / 0.3)" }}

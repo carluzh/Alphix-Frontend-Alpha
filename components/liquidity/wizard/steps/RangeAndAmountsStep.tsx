@@ -10,26 +10,26 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import Image from 'next/image';
 import { ChevronLeft } from 'lucide-react';
 import { IconCircleInfo, IconTriangleWarningFilled } from 'nucleo-micro-bold-essential';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAccount, useBalance } from 'wagmi';
-import { motion, AnimatePresence, useAnimation } from 'framer-motion';
+import { useAnimation } from 'framer-motion';
 
 import { useAddLiquidityContext } from '../AddLiquidityContext';
 import { useCreatePositionTxContext } from '../CreatePositionTxContext';
 import { Container } from '../shared/Container';
 import { RangePreset } from '../types';
-import { getPoolById, getTokenDefinitions, getToken, TokenSymbol } from '@/lib/pools-config';
+import { getPoolById, getTokenDefinitions, TokenSymbol } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
 import { getDecimalsForDenomination } from '@/lib/denomination-utils';
 import { usePercentageInput } from '@/hooks/usePercentageInput';
 import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
 import { useRangeHopCallbacks } from '@/hooks/useRangeHopCallbacks';
 import { TokenInputCard, TokenInputStyles } from '@/components/liquidity/TokenInputCard';
+import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
 import { formatCalculatedAmount } from '@/components/liquidity/liquidity-form-utils';
 import { calculateTicksFromPercentage, getFieldsDisabled, PositionField, isInvalidRange } from '@/lib/liquidity/utils/calculations';
 import { DEFAULT_TICK_SPACING } from '@/lib/liquidity/utils/validation/feeTiers';
@@ -74,24 +74,6 @@ const PRICE_STRATEGIES: PriceStrategyConfig[] = [
     description: 'Supply liquidity if price goes up',
   },
 ];
-
-// Animation config for Deposit/Zap tab content switching (matches PointsTabsSection)
-const SLIDE_DISTANCE = 20;
-const SPRING_CONFIG = {
-  type: "spring" as const,
-  damping: 75,
-  stiffness: 1000,
-  mass: 1.4,
-};
-
-// Track previous value for animation direction
-function usePrevious<T>(value: T): T | undefined {
-  const ref = useRef<T | undefined>(undefined);
-  useEffect(() => {
-    ref.current = value;
-  }, [value]);
-  return ref.current;
-}
 
 // Price Strategy button (Uniswap's DefaultPriceStrategyComponent style)
 interface PriceStrategyButtonProps {
@@ -141,60 +123,6 @@ function PriceStrategyButton({ strategy, selected, onSelect, disabled }: PriceSt
   );
 }
 
-// Token selector pill for price denomination (Uniswap pattern)
-interface TokenSelectorPillProps {
-  token0Symbol: string;
-  token1Symbol: string;
-  selectedToken: string;
-  onSelectToken: (token: string) => void;
-}
-
-function TokenSelectorPill({ token0Symbol, token1Symbol, selectedToken, onSelectToken }: TokenSelectorPillProps) {
-  const token0Icon = getToken(token0Symbol)?.icon || '/placeholder-logo.svg';
-  const token1Icon = getToken(token1Symbol)?.icon || '/placeholder-logo.svg';
-
-  return (
-    <div className="flex flex-row rounded-full border border-sidebar-border bg-surface p-1">
-      <button
-        onClick={() => onSelectToken(token0Symbol)}
-        className={cn(
-          'flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all',
-          selectedToken === token0Symbol
-            ? 'bg-sidebar-accent text-white'
-            : 'bg-transparent text-muted-foreground hover:text-white'
-        )}
-      >
-        <Image
-          src={token0Icon}
-          alt={token0Symbol}
-          width={18}
-          height={18}
-          className="rounded-full"
-        />
-        {token0Symbol}
-      </button>
-      <button
-        onClick={() => onSelectToken(token1Symbol)}
-        className={cn(
-          'flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all',
-          selectedToken === token1Symbol
-            ? 'bg-sidebar-accent text-white'
-            : 'bg-transparent text-muted-foreground hover:text-white'
-        )}
-      >
-        <Image
-          src={token1Icon}
-          alt={token1Symbol}
-          width={18}
-          height={18}
-          className="rounded-full"
-        />
-        {token1Symbol}
-      </button>
-    </div>
-  );
-}
-
 // Current price display with token selector (Uniswap pattern)
 interface CurrentPriceProps {
   price?: string;
@@ -228,11 +156,11 @@ function CurrentPriceDisplay({
           </span>
         </div>
       </div>
-      <TokenSelectorPill
+      <DenominationToggle
         token0Symbol={token0Symbol}
         token1Symbol={token1Symbol}
-        selectedToken={selectedToken}
-        onSelectToken={onSelectToken}
+        activeBase={selectedToken}
+        onToggle={onSelectToken}
       />
     </div>
   );
@@ -310,7 +238,6 @@ export function RangeAndAmountsStep() {
     setRange,
     setAmounts,
     setInputSide,
-    setZapMode,
     openReviewModal,
     goBack,
     // NEW: Get pool data from context (Uniswap pattern)
@@ -342,19 +269,6 @@ export function RangeAndAmountsStep() {
   const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
   const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
   const [chartDuration, setChartDuration] = useState<HistoryDuration>(HistoryDuration.MONTH);
-
-  // Track zap mode for animation direction (Deposit = index 0, Zap = index 1)
-  const previousZapMode = usePrevious(state.isZapMode);
-  const zapAnimationDirection = useMemo(() => {
-    if (previousZapMode === undefined) return 'fade' as const;
-    if (state.isZapMode && !previousZapMode) return 'forward' as const; // Deposit -> Zap
-    if (!state.isZapMode && previousZapMode) return 'backward' as const; // Zap -> Deposit
-    return 'fade' as const;
-  }, [state.isZapMode, previousZapMode]);
-
-  // Animation offsets based on direction
-  const zapEnterOffset = zapAnimationDirection === 'forward' ? SLIDE_DISTANCE : zapAnimationDirection === 'backward' ? -SLIDE_DISTANCE : 0;
-  const zapExitOffset = zapAnimationDirection === 'forward' ? -SLIDE_DISTANCE : zapAnimationDirection === 'backward' ? SLIDE_DISTANCE : 0;
 
   // Use isCalculating from TxContext
   const isCalculating = txIsCalculating;
@@ -560,6 +474,59 @@ export function RangeAndAmountsStep() {
     });
   }, [token0Symbol, token1Symbol, poolConfig?.type]);
 
+  // Stable no-op callback for disabled chart (rehypo mode)
+  const noopRangeChange = useCallback(() => {}, []);
+
+  // Chart range change handler - must be memoized to prevent chart reinitialization
+  const handleChartRangeChange = useCallback((newMinPrice: number, newMaxPrice: number) => {
+    setRangePreset('custom');
+
+    // Convert prices to ticks and update context
+    // When inverted, prices are in inverted form (e.g., USDC/ETH instead of ETH/USDC)
+    // We need canonical prices (token1/token0) for tick calculation
+    const tickFromPrice = (price: number) => Math.round(Math.log(price) / Math.log(1.0001));
+
+    let canonicalMinPrice: number;
+    let canonicalMaxPrice: number;
+
+    if (priceInverted) {
+      canonicalMinPrice = 1 / newMaxPrice;
+      canonicalMaxPrice = 1 / newMinPrice;
+    } else {
+      canonicalMinPrice = newMinPrice;
+      canonicalMaxPrice = newMaxPrice;
+    }
+
+    const tickLower = tickFromPrice(canonicalMinPrice);
+    const tickUpper = tickFromPrice(canonicalMaxPrice);
+
+    // Align to tick spacing
+    const tickSpacingVal = poolConfig?.tickSpacing || DEFAULT_TICK_SPACING;
+    const alignedTickLower = Math.round(tickLower / tickSpacingVal) * tickSpacingVal;
+    const alignedTickUpper = Math.round(tickUpper / tickSpacingVal) * tickSpacingVal;
+
+    // Convert aligned ticks back to canonical prices
+    const alignedPriceLower = tickToPrice(alignedTickLower);
+    const alignedPriceUpper = tickToPrice(alignedTickUpper);
+
+    // Guard: if pool not available yet, just set ticks without updating display prices
+    if (alignedPriceLower === undefined || alignedPriceUpper === undefined) {
+      setRange(alignedTickLower, alignedTickUpper);
+      return;
+    }
+
+    // Update display with aligned prices (inverted if needed)
+    if (priceInverted) {
+      setMinPrice(formatPriceForDisplay(1 / alignedPriceUpper, true));
+      setMaxPrice(formatPriceForDisplay(1 / alignedPriceLower, true));
+    } else {
+      setMinPrice(formatPriceForDisplay(alignedPriceLower, false));
+      setMaxPrice(formatPriceForDisplay(alignedPriceUpper, false));
+    }
+
+    setRange(alignedTickLower, alignedTickUpper);
+  }, [priceInverted, poolConfig?.tickSpacing, tickToPrice, formatPriceForDisplay, setRangePreset, setRange]);
+
   // Price strategy selection
   const handleSelectStrategy = useCallback((strategy: RangePreset) => {
     setRangePreset(strategy);
@@ -575,8 +542,6 @@ export function RangeAndAmountsStep() {
 
     const tickSpacingVal = poolConfig?.tickSpacing || DEFAULT_TICK_SPACING;
     const poolCurrentTick = currentTick ?? 0;
-    // Note: tickToPrice is from the hook above (uses SDK with proper decimal handling)
-    const tickFromPrice = (price: number) => Math.round(Math.log(price) / Math.log(1.0001));
 
     let tickLower: number;
     let tickUpper: number;
@@ -767,20 +732,18 @@ export function RangeAndAmountsStep() {
     setAmount0(value);
     setInputSide('token0');
     // Sync to context immediately so TxContext can calculate
-    setAmounts(value, state.isZapMode ? '' : amount1);
-  }, [setInputSide, setAmounts, state.isZapMode, amount1]);
+    setAmounts(value, amount1);
+  }, [setInputSide, setAmounts, amount1]);
 
   const handleAmount1Change = useCallback((value: string) => {
     setAmount1(value);
     setInputSide('token1');
     // Sync to context immediately so TxContext can calculate
-    setAmounts(state.isZapMode ? '' : amount0, value);
-  }, [setInputSide, setAmounts, state.isZapMode, amount0]);
+    setAmounts(amount0, value);
+  }, [setInputSide, setAmounts, amount0]);
 
   // Sync dependent amount from TxContext to local state when calculated
   useEffect(() => {
-    // Skip sync in zap mode (no dependent amount needed)
-    if (state.isZapMode) return;
     if (!txDependentAmount || !dependentField) return;
 
     // Only update the dependent field (not the one user is typing in)
@@ -789,19 +752,7 @@ export function RangeAndAmountsStep() {
     } else if (dependentField === 'amount0' && state.inputSide === 'token1') {
       setAmount0(txDependentAmount);
     }
-  }, [txDependentAmount, dependentField, state.inputSide, state.isZapMode]);
-
-  // Handle zap mode toggle
-  const handleZapModeToggle = useCallback((enabled: boolean) => {
-    setZapMode(enabled);
-    if (enabled) {
-      if (state.inputSide === 'token0') {
-        setAmount1('');
-      } else {
-        setAmount0('');
-      }
-    }
-  }, [setZapMode, state.inputSide]);
+  }, [txDependentAmount, dependentField, state.inputSide]);
 
   // Handle review button click
   const handleReview = useCallback(() => {
@@ -848,11 +799,8 @@ export function RangeAndAmountsStep() {
   }, [selectedPreset, minPrice, maxPrice]);
 
   const hasValidAmount = useMemo(() => {
-    if (state.isZapMode) {
-      return (amount0 && parseFloat(amount0) > 0) || (amount1 && parseFloat(amount1) > 0);
-    }
     return (amount0 && parseFloat(amount0) > 0) && (amount1 && parseFloat(amount1) > 0);
-  }, [amount0, amount1, state.isZapMode]);
+  }, [amount0, amount1]);
 
   const hasInsufficientBalance = isAmount0OverBalance || isAmount1OverBalance;
   const canReview = isValidRange && hasValidAmount && !hasInsufficientBalance && !isCalculating && !inputError;
@@ -918,68 +866,16 @@ export function RangeAndAmountsStep() {
               currentPrice={chartCurrentPrice}
               currentTick={currentTick ?? undefined}
               minPrice={isRehypoMode
-                ? (poolConfig.rehypoRange?.isFullRange ? undefined : parseFloat(poolConfig.rehypoRange?.min || '0'))
+                ? (poolConfig.rehypoRange?.isFullRange ? undefined : (priceInverted ? 1 / parseFloat(poolConfig.rehypoRange?.max || '1') : parseFloat(poolConfig.rehypoRange?.min || '0')))
                 : (minPrice !== '' && minPrice !== '0' ? parseFloat(minPrice) : undefined)
               }
               maxPrice={isRehypoMode
-                ? (poolConfig.rehypoRange?.isFullRange ? undefined : parseFloat(poolConfig.rehypoRange?.max || '0'))
+                ? (poolConfig.rehypoRange?.isFullRange ? undefined : (priceInverted ? 1 / parseFloat(poolConfig.rehypoRange?.min || '1') : parseFloat(poolConfig.rehypoRange?.max || '0')))
                 : (maxPrice !== '' && maxPrice !== '∞' ? parseFloat(maxPrice) : undefined)
               }
               isFullRange={isRehypoMode ? (poolConfig.rehypoRange?.isFullRange ?? true) : selectedPreset === 'full'}
               duration={chartDuration}
-              onRangeChange={isRehypoMode ? () => {} : (newMinPrice, newMaxPrice) => {
-              setRangePreset('custom');
-
-              // Convert prices to ticks and update context
-              // When inverted, prices are in inverted form (e.g., USDC/ETH instead of ETH/USDC)
-              // We need canonical prices (token1/token0) for tick calculation
-              // Canonical price = 1.0001^tick => tick = log(price) / log(1.0001)
-              const tickFromPrice = (price: number) => Math.round(Math.log(price) / Math.log(1.0001));
-
-              // When inverted: lower display price = higher canonical price, so swap min/max
-              // Also convert inverted prices back to canonical: canonical = 1/inverted
-              let canonicalMinPrice: number;
-              let canonicalMaxPrice: number;
-
-              if (priceInverted) {
-                // Inverted: newMinPrice is the lower inverted price (higher canonical)
-                // newMaxPrice is the higher inverted price (lower canonical)
-                canonicalMinPrice = 1 / newMaxPrice; // Lower canonical = 1/higher inverted
-                canonicalMaxPrice = 1 / newMinPrice; // Higher canonical = 1/lower inverted
-              } else {
-                canonicalMinPrice = newMinPrice;
-                canonicalMaxPrice = newMaxPrice;
-              }
-
-              const tickLower = tickFromPrice(canonicalMinPrice);
-              const tickUpper = tickFromPrice(canonicalMaxPrice);
-
-              // Align to tick spacing
-              const tickSpacingVal = poolConfig?.tickSpacing || DEFAULT_TICK_SPACING;
-              const alignedTickLower = Math.round(tickLower / tickSpacingVal) * tickSpacingVal;
-              const alignedTickUpper = Math.round(tickUpper / tickSpacingVal) * tickSpacingVal;
-
-              // Convert aligned ticks back to canonical prices
-              const alignedPriceLower = tickToPrice(alignedTickLower);
-              const alignedPriceUpper = tickToPrice(alignedTickUpper);
-
-              // Guard: if pool not available yet, just set ticks without updating display prices
-              if (alignedPriceLower === undefined || alignedPriceUpper === undefined) {
-                setRange(alignedTickLower, alignedTickUpper);
-                return;
-              }
-
-              // Update display with aligned prices (inverted if needed)
-              if (priceInverted) {
-                setMinPrice(formatPriceForDisplay(1 / alignedPriceUpper, true));
-                setMaxPrice(formatPriceForDisplay(1 / alignedPriceLower, true));
-              } else {
-                setMinPrice(formatPriceForDisplay(alignedPriceLower, false));
-                setMaxPrice(formatPriceForDisplay(alignedPriceUpper, false));
-              }
-
-              setRange(alignedTickLower, alignedTickUpper);
-            }}
+              onRangeChange={isRehypoMode ? noopRangeChange : handleChartRangeChange}
             />
             {/* Action buttons below chart */}
             {!isRehypoMode && (
@@ -1008,7 +904,7 @@ export function RangeAndAmountsStep() {
             <RangeInput
               label="Min"
               percentFromCurrent={isRehypoMode ? '—' : minPricePercent}
-              value={isRehypoMode ? (poolConfig.rehypoRange?.min || '0') : minPrice}
+              value={isRehypoMode ? (priceInverted ? formatPriceForDisplay(1 / parseFloat(poolConfig.rehypoRange?.max || '1'), true) : (poolConfig.rehypoRange?.min || '0')) : minPrice}
               onChange={handleMinPriceChange}
               onIncrement={incrementMinPrice}
               onDecrement={decrementMinPrice}
@@ -1018,7 +914,7 @@ export function RangeAndAmountsStep() {
             <RangeInput
               label="Max"
               percentFromCurrent={isRehypoMode ? '—' : maxPricePercent}
-              value={isRehypoMode ? (poolConfig.rehypoRange?.max || '∞') : maxPrice}
+              value={isRehypoMode ? (priceInverted ? formatPriceForDisplay(1 / parseFloat(poolConfig.rehypoRange?.min || '1'), true) : (poolConfig.rehypoRange?.max || '∞')) : maxPrice}
               onChange={handleMaxPriceChange}
               onIncrement={incrementMaxPrice}
               onDecrement={decrementMaxPrice}
@@ -1071,110 +967,42 @@ export function RangeAndAmountsStep() {
           </p>
         </div>
 
-        {/* Deposit Mode Tabs */}
-        <div className="flex flex-row gap-4 border-b border-sidebar-border">
-          <button
-            onClick={() => handleZapModeToggle(false)}
-            className={cn(
-              "relative pb-3 text-sm font-medium transition-colors",
-              !state.isZapMode
-                ? "text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            Deposit
-            <span className={cn(
-              "absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-all duration-200",
-              !state.isZapMode ? "bg-foreground opacity-100" : "bg-transparent opacity-0"
-            )} />
-          </button>
-          <button
-            onClick={() => handleZapModeToggle(true)}
-            className={cn(
-              "relative pb-3 text-sm font-medium transition-colors",
-              state.isZapMode
-                ? "text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            Zap
-            <span className={cn(
-              "absolute bottom-0 left-0 right-0 h-0.5 rounded-full transition-all duration-200",
-              state.isZapMode ? "bg-foreground opacity-100" : "bg-transparent opacity-0"
-            )} />
-          </button>
-        </div>
+        {/* Token inputs */}
+        <div className="flex flex-col gap-3">
+          <TokenInputCard
+            id="wizard-amount0"
+            tokenSymbol={poolConfig.currency0.symbol}
+            value={amount0}
+            onChange={handleAmount0Change}
+            label="Add"
+            maxAmount={token0BalanceData?.formatted || "0"}
+            usdPrice={token0USDPrice || 0}
+            formatUsdAmount={formatCalculatedAmount}
+            isOverBalance={isAmount0OverBalance}
+            isLoading={amount0Loading}
+            animationControls={wiggleControls0}
+            onPercentageClick={(percentage) => handleToken0Percentage(percentage)}
+            disabled={deposit0Disabled}
+          />
 
-        {/* Token inputs with animated content switching */}
-        {/* Padding compensates for gradient border's -1px inset, negative margin restores layout */}
-        <div className="relative overflow-hidden -mx-px px-px -my-px py-px">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={state.isZapMode ? 'zap' : 'deposit'}
-              initial={{ x: zapEnterOffset, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: zapExitOffset, opacity: 0 }}
-              transition={SPRING_CONFIG}
-              className="flex flex-col gap-3"
-            >
-              {state.isZapMode ? (
-                /* Zap mode - single token input with switchable token */
-                <TokenInputCard
-                  id="wizard-amount-zap"
-                  tokenSymbol={state.inputSide === 'token0' ? poolConfig.currency0.symbol : poolConfig.currency1.symbol}
-                  value={state.inputSide === 'token0' ? amount0 : amount1}
-                  onChange={state.inputSide === 'token0' ? handleAmount0Change : handleAmount1Change}
-                  label="Add"
-                  maxAmount={(state.inputSide === 'token0' ? token0BalanceData?.formatted : token1BalanceData?.formatted) || "0"}
-                  usdPrice={(state.inputSide === 'token0' ? token0USDPrice : token1USDPrice) || 0}
-                  formatUsdAmount={formatCalculatedAmount}
-                  isOverBalance={state.inputSide === 'token0' ? isAmount0OverBalance : isAmount1OverBalance}
-                  isLoading={amount0Loading}
-                  animationControls={wiggleControls0}
-                  onPercentageClick={(percentage) => state.inputSide === 'token0' ? handleToken0Percentage(percentage) : handleToken1Percentage(percentage)}
-                  onTokenClick={() => setInputSide(state.inputSide === 'token0' ? 'token1' : 'token0')}
-                />
-              ) : (
-                /* Standard deposit mode - two token inputs */
-                <>
-                  <TokenInputCard
-                    id="wizard-amount0"
-                    tokenSymbol={poolConfig.currency0.symbol}
-                    value={amount0}
-                    onChange={handleAmount0Change}
-                    label="Add"
-                    maxAmount={token0BalanceData?.formatted || "0"}
-                    usdPrice={token0USDPrice || 0}
-                    formatUsdAmount={formatCalculatedAmount}
-                    isOverBalance={isAmount0OverBalance}
-                    isLoading={amount0Loading}
-                    animationControls={wiggleControls0}
-                    onPercentageClick={(percentage) => handleToken0Percentage(percentage)}
-                    disabled={deposit0Disabled}
-                  />
-
-                  {/* Token 1 Input */}
-                  {!deposit1Disabled && (
-                    <TokenInputCard
-                      id="wizard-amount1"
-                      tokenSymbol={poolConfig.currency1.symbol}
-                      value={amount1}
-                      onChange={handleAmount1Change}
-                      label="Add"
-                      maxAmount={token1BalanceData?.formatted || "0"}
-                      usdPrice={token1USDPrice || 0}
-                      formatUsdAmount={formatCalculatedAmount}
-                      isOverBalance={isAmount1OverBalance}
-                      isLoading={amount1Loading}
-                      animationControls={wiggleControls1}
-                      onPercentageClick={(percentage) => handleToken1Percentage(percentage)}
-                      disabled={deposit1Disabled}
-                    />
-                  )}
-                </>
-              )}
-            </motion.div>
-          </AnimatePresence>
+          {/* Token 1 Input */}
+          {!deposit1Disabled && (
+            <TokenInputCard
+              id="wizard-amount1"
+              tokenSymbol={poolConfig.currency1.symbol}
+              value={amount1}
+              onChange={handleAmount1Change}
+              label="Add"
+              maxAmount={token1BalanceData?.formatted || "0"}
+              usdPrice={token1USDPrice || 0}
+              formatUsdAmount={formatCalculatedAmount}
+              isOverBalance={isAmount1OverBalance}
+              isLoading={amount1Loading}
+              animationControls={wiggleControls1}
+              onPercentageClick={(percentage) => handleToken1Percentage(percentage)}
+              disabled={deposit1Disabled}
+            />
+          )}
         </div>
 
         {/* Insufficient balance warning */}

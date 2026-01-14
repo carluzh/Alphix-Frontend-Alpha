@@ -9,6 +9,43 @@
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
 /**
+ * Convert position ID to full 66-character hex format expected by backend.
+ *
+ * Backend expects: 0x00000000000000000000000000000000000000000000000000000000000e054b
+ * Frontend may pass: decimal string "913739", short hex "e054b", or partial hex "0xe054b"
+ *
+ * @param positionId - Position ID in any format (decimal, short hex, or full hex)
+ * @returns Full 66-char hex string (0x + 64 hex chars)
+ */
+function toFullHexPositionId(positionId: string): string {
+  // If already 66-char hex, return as-is (lowercase for consistency)
+  if (positionId.startsWith('0x') && positionId.length === 66) {
+    return positionId.toLowerCase();
+  }
+
+  // Convert to BigInt (handles decimal strings and hex formats)
+  let value: bigint;
+  try {
+    if (positionId.startsWith('0x')) {
+      value = BigInt(positionId);
+    } else if (/^\d+$/.test(positionId)) {
+      // Pure decimal string
+      value = BigInt(positionId);
+    } else {
+      // Assume hex without 0x prefix
+      value = BigInt('0x' + positionId);
+    }
+  } catch {
+    // If conversion fails, return original (will likely fail at API level)
+    console.warn('[toFullHexPositionId] Failed to convert:', positionId);
+    return positionId;
+  }
+
+  // Convert to 66-char hex (0x + 64 hex chars, zero-padded)
+  return '0x' + value.toString(16).padStart(64, '0');
+}
+
+/**
  * Chart point from backend
  */
 export interface PortfolioChartPoint {
@@ -211,17 +248,20 @@ export async function fetchPositionFees(
   period: '1W' | '1M' | '1Y' | 'ALL' = '1W'
 ): Promise<PositionFeeChartResponse> {
   // Map frontend period format to backend format
-  const periodMap: Record<string, string> = {
+  const periodMap: Record<string, 'DAY' | 'WEEK' | 'MONTH'> = {
     '1W': 'WEEK',
     '1M': 'MONTH',
-    '1Y': 'YEAR',
-    'ALL': 'ALL',
+    '1Y': 'MONTH',
+    'ALL': 'MONTH',
   };
   const backendPeriod = periodMap[period] || 'WEEK';
 
+  // Convert position ID to full 66-char hex format expected by backend
+  const fullHexPositionId = toFullHexPositionId(positionId);
+
   try {
     const response = await fetch(
-      `${BACKEND_URL}/position/${encodeURIComponent(positionId)}/fees?period=${backendPeriod}`,
+      `${BACKEND_URL}/position/${encodeURIComponent(fullHexPositionId)}/fees?period=${backendPeriod}`,
       {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
@@ -237,11 +277,76 @@ export async function fetchPositionFees(
   } catch (error) {
     return {
       success: false,
-      positionId,
+      positionId: fullHexPositionId,
       period: backendPeriod,
       fromTimestamp: 0,
       toTimestamp: 0,
       points: [],
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Position APR response
+ */
+export interface PositionAprResponse {
+  success: boolean;
+  positionId: string;
+  /** 7d-avg APR as percentage (e.g., 1.826 = 1.826%) */
+  apr7d: number | null;
+  /** Formatted APR for display (e.g., "1.83%") */
+  apr7dPercent: string | null;
+  /** Number of snapshots used */
+  dataPoints: number;
+  /** In-range periods count */
+  inRangeDataPoints: number;
+  /** Actual coverage in days (may be < 7 for new positions) */
+  daysCovered: number;
+  /** Most recent snapshot value */
+  latestValueUsd: number | null;
+  error?: string;
+}
+
+/**
+ * Fetch position-specific 7-day average APR
+ *
+ * Uses backend's hourly snapshots to calculate accurate position APR.
+ * Returns daysCovered < 7 for positions younger than 7 days.
+ *
+ * @param positionId - Position token ID
+ */
+export async function fetchPositionApr(
+  positionId: string
+): Promise<PositionAprResponse> {
+  // Convert position ID to full 66-char hex format expected by backend
+  const fullHexPositionId = toFullHexPositionId(positionId);
+
+  try {
+    const response = await fetch(
+      `${BACKEND_URL}/position/${encodeURIComponent(fullHexPositionId)}/apr`,
+      {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      positionId: fullHexPositionId,
+      apr7d: null,
+      apr7dPercent: null,
+      dataPoints: 0,
+      inRangeDataPoints: 0,
+      daysCovered: 0,
+      latestValueUsd: null,
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }

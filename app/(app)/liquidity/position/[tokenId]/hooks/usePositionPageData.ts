@@ -11,6 +11,9 @@ import { getAllPools, getToken, type PoolConfig, type TokenConfig } from "@/lib/
 import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 import { usePoolPriceChartData } from "@/lib/chart/hooks/usePoolPriceChartData";
 import { HistoryDuration } from "@/lib/chart/types";
+import { useNetwork } from "@/lib/network-context";
+import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
+import { fetchPositionApr } from "@/lib/backend-client";
 
 // ============================================================================
 // Types
@@ -152,6 +155,7 @@ async function fetchPoolState(poolId: string): Promise<PoolStateData | null> {
 
 export function usePositionPageData(tokenId: string): PositionPageData {
   const { address, chainId = 8453 } = useAccount();
+  const { networkMode } = useNetwork();
   const [priceInverted, setPriceInverted] = useState(false);
   const [chartDuration, setChartDuration] = useState<ChartDuration>("1M");
   const [denominationBase, setDenominationBase] = useState(true);
@@ -363,11 +367,71 @@ export function usePositionPageData(tokenId: string): PositionPageData {
     };
   }, [position, pool, poolConfig, priceInverted]);
 
-  // APR data (placeholder - integrate with actual APR calculations)
-  // TODO: Fetch actual APR from API
-  const poolApr = 10.0; // Placeholder
-  const aaveApr = lpType === "rehypo" ? 2.5 : null;
+  // Fetch pool APR from pools batch endpoint (fallback for pool-wide APR)
+  const { data: poolStatsData } = useQuery({
+    queryKey: ["poolStats", poolConfig?.subgraphId, networkMode],
+    queryFn: async () => {
+      const resp = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      const pools = Array.isArray(data?.pools) ? data.pools : [];
+      const poolIdLc = (poolConfig?.subgraphId || "").toLowerCase();
+      const match = pools.find((p: { poolId?: string }) =>
+        String(p.poolId || "").toLowerCase() === poolIdLc
+      );
+      return match ? { apr: Number(match.apr) || 0 } : null;
+    },
+    enabled: !!poolConfig?.subgraphId,
+    staleTime: 60_000, // Cache for 1 minute
+  });
+
+  // Fetch position-specific 7d APR from backend (primary source for position APR)
+  const { data: backendAprData } = useQuery({
+    queryKey: ["positionApr", tokenId],
+    queryFn: () => fetchPositionApr(tokenId),
+    enabled: !!tokenId,
+    staleTime: 5 * 60_000, // 5 minutes
+  });
+
+  // APR data - prefer backend position-specific APR, fallback to pool APR
+  const poolApr = useMemo(() => {
+    // Use backend position APR if available and has data
+    if (backendAprData?.success && backendAprData.apr7d !== null && backendAprData.dataPoints > 0) {
+      return backendAprData.apr7d; // Already a percentage value (e.g., 1.826 = 1.826%)
+    }
+    // Fallback to pool-wide APR
+    return poolStatsData?.apr ?? null;
+  }, [backendAprData, poolStatsData]);
+
+  // Fetch Aave APY for rehypo positions
+  const { data: aaveRatesData } = useQuery({
+    queryKey: ["aaveRates"],
+    queryFn: fetchAaveRates,
+    enabled: lpType === "rehypo",
+    staleTime: 5 * 60_000, // 5 minutes - matches backend cache
+  });
+
+  // Calculate Aave APY based on position tokens
+  const aaveApr = useMemo(() => {
+    if (lpType !== "rehypo" || !aaveRatesData?.success || !poolConfig) return null;
+
+    const token0Symbol = poolConfig.currency0.symbol;
+    const token1Symbol = poolConfig.currency1.symbol;
+    const key0 = getAaveKey(token0Symbol);
+    const key1 = getAaveKey(token1Symbol);
+
+    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
+    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
+
+    // Average if both tokens supported, otherwise use single token's APY
+    if (apy0 !== null && apy1 !== null) {
+      return (apy0 + apy1) / 2;
+    }
+    return apy0 ?? apy1 ?? null;
+  }, [lpType, aaveRatesData, poolConfig]);
+
   const totalApr = useMemo(() => {
+    if (poolApr === null) return null;
     return poolApr + (aaveApr || 0);
   }, [poolApr, aaveApr]);
 

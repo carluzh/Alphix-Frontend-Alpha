@@ -36,7 +36,6 @@ export interface WizardState {
   amount0: string;
   amount1: string;
   inputSide: 'token0' | 'token1';
-  isZapMode: boolean;
 
   // Review modal state
   isReviewModalOpen: boolean;
@@ -82,7 +81,6 @@ export interface WizardUrlState {
   tu?: string;  // tickUpper
   a0?: string;  // amount0
   a1?: string;  // amount1
-  zap?: string; // isZapMode
 }
 
 // Step configuration - 2 steps only
@@ -119,7 +117,6 @@ export const DEFAULT_WIZARD_STATE: WizardState = {
   amount0: '',
   amount1: '',
   inputSide: 'token0',
-  isZapMode: false,
   isReviewModalOpen: false,
   estimatedApr: null,
 };

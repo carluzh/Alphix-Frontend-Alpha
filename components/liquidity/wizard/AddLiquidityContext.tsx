@@ -128,7 +128,6 @@ interface AddLiquidityContextType {
   setRangePreset: (preset: RangePreset) => void;
   setAmounts: (amount0: string, amount1: string) => void;
   setInputSide: (side: 'token0' | 'token1') => void;
-  setZapMode: (enabled: boolean) => void;
 
   // Reset functions
   reset: () => void;
@@ -340,10 +339,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     setState(prev => ({ ...prev, inputSide: side }));
   }, []);
 
-  const setZapMode = useCallback((enabled: boolean) => {
-    setState(prev => ({ ...prev, isZapMode: enabled }));
-  }, []);
-
   // Reset functions
   const reset = useCallback(() => {
     setState(DEFAULT_WIZARD_STATE);
@@ -384,7 +379,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     if (state.tickUpper !== null) params.set('tu', state.tickUpper.toString());
     if (state.amount0) params.set('a0', state.amount0);
     if (state.amount1) params.set('a1', state.amount1);
-    if (state.isZapMode) params.set('zap', 'true');
 
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }, [router, pathname, state]);
@@ -446,7 +440,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     setRangePreset,
     setAmounts,
     setInputSide,
-    setZapMode,
 
     // Reset functions
     reset,

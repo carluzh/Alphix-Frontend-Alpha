@@ -40,8 +40,8 @@ interface APRBreakdownTooltipProps extends APRBreakdownData {
 // =============================================================================
 
 function formatPercent(value: number | undefined): string {
-  if (value === undefined || value === null) return "—";
-  if (!Number.isFinite(value)) return "—";
+  if (value === undefined || value === null) return "-";
+  if (!Number.isFinite(value)) return "-";
   if (value === 0) return "0.00%";
   if (value >= 1000) return `${(value / 1000).toFixed(2)}K%`;
   return `${value.toFixed(2)}%`;
@@ -186,8 +186,8 @@ export function APRBreakdownTooltip({
       {/* Points Row - always visible */}
       <TooltipRow
         icon={<PointsIcon className="w-3.5 h-3.5 text-primary" />}
-        label="Points"
-        value={formatPercent(pointsApr)}
+        label="+ Points"
+        value=""
         variant="points"
       />
     </div>

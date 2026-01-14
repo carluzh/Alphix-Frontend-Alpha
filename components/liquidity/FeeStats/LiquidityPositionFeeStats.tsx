@@ -64,6 +64,7 @@ export function LiquidityPositionFeeStats({
   apr,
   formattedApr,
   isAprFallback,
+  unifiedYieldApr,
 
   // Points campaign
   pointsData,
@@ -155,7 +156,7 @@ export function LiquidityPositionFeeStats({
           poolApr={apr}
           pointsApr={pointsData.pointsApr}
           totalApr={pointsData.totalApr}
-          unifiedYieldApr={pointsData.unifiedYieldApr}
+          unifiedYieldApr={unifiedYieldApr ?? pointsData.unifiedYieldApr}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
         />
@@ -165,7 +166,7 @@ export function LiquidityPositionFeeStats({
           isFallback={isAprFallback}
           isLoading={isLoadingApr}
           swapApr={apr}
-          unifiedYieldApr={0}
+          unifiedYieldApr={unifiedYieldApr ?? 0}
           pointsApr={0}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}

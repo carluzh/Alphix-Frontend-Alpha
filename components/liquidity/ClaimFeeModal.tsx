@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import Image from 'next/image';
 import { ExternalLink } from 'lucide-react';
-import { IconXmark } from 'nucleo-micro-bold-essential';
+import { IconXmark, IconBadgeCheck2 } from 'nucleo-micro-bold-essential';
 import { Button } from '@/components/ui/button';
 import { getToken } from '@/lib/pools-config';
 import { useDecreaseLiquidity } from '@/lib/liquidity/hooks';
@@ -204,7 +204,7 @@ export function ClaimFeeModal({
               disabled={isCollecting}
               className="h-6 w-6 -mr-1 text-muted-foreground hover:text-foreground"
             >
-              <X className="h-4 w-4" />
+              <IconXmark className="h-4 w-4" />
             </Button>
           </div>
 

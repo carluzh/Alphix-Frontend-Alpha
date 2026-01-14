@@ -12,6 +12,7 @@ import {
   LineType,
 } from "lightweight-charts";
 import { cn } from "@/lib/utils";
+import { calculatePeriodRange, formatTickForPeriod } from "@/lib/chart-time-utils";
 import { LiveDotRenderer, ChartModelWithLiveDot } from "./LiveDotRenderer";
 import { CustomHoverMarker } from "./CustomHoverMarker";
 import { ChartHeader } from "./ChartHeader";
@@ -19,10 +20,7 @@ import { DeltaArrow, DeltaText, calculateDelta } from "./Delta";
 import { TimeFrameSelector } from "./TimeFrameSelector";
 import { PatternOverlay } from "./PatternOverlay";
 import { ChartSkeleton } from "./ChartSkeleton";
-import {
-  useOverviewChartData,
-  type ChartPeriod,
-} from "../../hooks/useOverviewChartData";
+import { type ChartPeriod } from "../../hooks/useOverviewChartData";
 import { usePositionsChartData } from "../../hooks/usePositionsChartData";
 
 const CHART_HEIGHT = 300;
@@ -45,7 +43,6 @@ const COLORS = {
   background: "#131313",
   surface3: "#2D2D2D",
   positions: "#f45502",
-  balance: "#6b7280",
 };
 
 function formatPercent(value: number): string {
@@ -63,16 +60,7 @@ function formatDollarChange(value: number): string {
 
 function createTickFormatter(period: ChartPeriod) {
   return (time: UTCTimestamp): string => {
-    const date = new Date(time * 1000);
-    switch (period) {
-      case "DAY":
-        return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-      case "WEEK":
-        return date.toLocaleDateString("en-US", { weekday: "short" });
-      case "MONTH":
-      default:
-        return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    }
+    return formatTickForPeriod(time as number, period);
   };
 }
 
@@ -113,41 +101,23 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const positionsSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
-  const balanceSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const positionsModelRef = useRef<ChartModelWrapper | null>(null);
-  const balanceModelRef = useRef<ChartModelWrapper | null>(null);
-  const balanceDataRef = useRef<ChartDataPoint[]>([]);
   const positionsDataRef = useRef<ChartDataPoint[]>([]);
 
   const [selectedPeriod, setSelectedPeriod] = useState<ChartPeriod>("DAY");
   const [hoverTime, setHoverTime] = useState<UTCTimestamp | undefined>();
   const [hoverPositionsValue, setHoverPositionsValue] = useState<number | undefined>();
-  const [hoverBalanceValue, setHoverBalanceValue] = useState<number | undefined>();
   const [hoverPositionsCoords, setHoverPositionsCoords] = useState<{ x: number; y: number } | null>(null);
-  const [hoverBalanceCoords, setHoverBalanceCoords] = useState<{ x: number; y: number } | null>(null);
   const [isChartReady, setIsChartReady] = useState(false);
-  const [showBalance, setShowBalance] = useState(true);
-  const [showPositions, setShowPositions] = useState(true);
-
-  const { data: historicalData, isLoading, isError } = useOverviewChartData({
-    address,
-    period: selectedPeriod,
-    enabled: isConnected && !!address,
-  });
 
   // Fetch historical position values from backend
   // Backend returns stored snapshots, frontend adds "live now" point
-  const { data: positionsHistoricalData, isLoading: isLoadingPositions } = usePositionsChartData({
+  const { data: positionsHistoricalData, isLoading: isLoadingPositions, fromTimestamp, toTimestamp } = usePositionsChartData({
     address,
     period: selectedPeriod,
     currentTotalValue: currentPositionsValue,
     enabled: isConnected && !!address,
   });
-
-  const chartData = useMemo((): ChartDataPoint[] => {
-    if (!historicalData || historicalData.length === 0) return [];
-    return historicalData.map((p) => ({ time: p.timestamp as UTCTimestamp, value: p.value }));
-  }, [historicalData]);
 
   const positionsChartData = useMemo((): ChartDataPoint[] => {
     if (!positionsHistoricalData || positionsHistoricalData.length === 0) return [];
@@ -155,27 +125,16 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
   }, [positionsHistoricalData]);
 
   const hasPositionsData = positionsChartData.length > 0;
-  const hasBalanceData = chartData.length > 0;
-  const currentBalanceValue = hasBalanceData ? chartData[chartData.length - 1].value : 0;
   const latestPositionsValue = hasPositionsData ? positionsChartData[positionsChartData.length - 1].value : 0;
 
-  // Show loading state until all data sources have finished loading:
-  // - Parent loading: positions data not yet available from parent component
-  // - Balance loading: balance chart data is loading
-  // - Positions loading: positions data is loading
-  const showSkeleton = isParentLoading || isLoading || isLoadingPositions;
+  // Show loading state until positions data has finished loading
+  const showSkeleton = isParentLoading || isLoadingPositions;
 
-  // Create stable dataKey based on actual data + visibility state (for dot repositioning on filter)
-  const balanceDataKey = useMemo(() => {
-    if (chartData.length === 0) return undefined;
-    // Include visibility states so dots reposition when filters change
-    return `${showBalance}-${showPositions}-${JSON.stringify(chartData[chartData.length - 1])}`;
-  }, [chartData, showBalance, showPositions]);
-
+  // Create stable dataKey based on actual data (for dot repositioning)
   const positionsDataKey = useMemo(() => {
     if (positionsChartData.length === 0) return undefined;
-    return `${showBalance}-${showPositions}-${JSON.stringify(positionsChartData[positionsChartData.length - 1])}`;
-  }, [positionsChartData, showBalance, showPositions]);
+    return JSON.stringify(positionsChartData[positionsChartData.length - 1]);
+  }, [positionsChartData]);
 
   // Create chart only once on mount
   useEffect(() => {
@@ -222,16 +181,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
     });
     positionsSeriesRef.current = positionsSeries;
 
-    const balanceSeries = chart.addAreaSeries({
-      lineColor: COLORS.balance, lineWidth: 2, lineType: LineType.Curved,
-      topColor: "transparent", bottomColor: "transparent",
-      crosshairMarkerRadius: 0, priceLineVisible: false, lastValueVisible: false,
-      autoscaleInfoProvider,
-    });
-    balanceSeriesRef.current = balanceSeries;
-
     positionsModelRef.current = new ChartModelWrapper(chart, positionsSeries, []);
-    balanceModelRef.current = new ChartModelWrapper(chart, balanceSeries, []);
 
     chart.subscribeCrosshairMove((param) => {
       if (param.time && param.point) {
@@ -239,14 +189,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
         setHoverTime(time);
 
         const xCoord = chart.timeScale().timeToCoordinate(time);
-        if (xCoord === null) { setHoverPositionsCoords(null); setHoverBalanceCoords(null); return; }
-
-        const balValue = interpolateValueAtTime(balanceDataRef.current, time);
-        setHoverBalanceValue(balValue);
-        if (balValue !== undefined) {
-          const y = balanceSeries.priceToCoordinate(balValue);
-          setHoverBalanceCoords(y !== null ? { x: xCoord, y } : null);
-        } else { setHoverBalanceCoords(null); }
+        if (xCoord === null) { setHoverPositionsCoords(null); return; }
 
         const posValue = interpolateValueAtTime(positionsDataRef.current, time);
         setHoverPositionsValue(posValue);
@@ -257,9 +200,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
       } else {
         setHoverTime(undefined);
         setHoverPositionsValue(undefined);
-        setHoverBalanceValue(undefined);
         setHoverPositionsCoords(null);
-        setHoverBalanceCoords(null);
       }
     });
 
@@ -278,9 +219,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
       chart.remove();
       chartRef.current = null;
       positionsSeriesRef.current = null;
-      balanceSeriesRef.current = null;
       positionsModelRef.current = null;
-      balanceModelRef.current = null;
       setIsChartReady(false);
     };
   }, []); // Only run once on mount
@@ -296,45 +235,29 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
   useEffect(() => {
     if (!chartRef.current) return;
 
-    // Don't set data while skeleton is showing - wait for both sources to finish loading
-    // This prevents one line appearing while the other is still loading
+    // Don't set data while skeleton is showing
     if (showSkeleton) {
-      // Clear any existing data while loading
-      if (balanceSeriesRef.current) balanceSeriesRef.current.setData([]);
       if (positionsSeriesRef.current) positionsSeriesRef.current.setData([]);
       return;
     }
 
-    balanceDataRef.current = chartData;
     positionsDataRef.current = positionsChartData;
-
-    if (balanceSeriesRef.current) {
-      balanceSeriesRef.current.setData(chartData);
-      balanceSeriesRef.current.applyOptions({ lineType: chartData.length < 20 ? LineType.WithSteps : LineType.Curved });
-      balanceModelRef.current?.updateData(chartData);
-    }
 
     if (positionsSeriesRef.current) {
       positionsSeriesRef.current.setData(positionsChartData);
       positionsModelRef.current?.updateData(positionsChartData);
     }
 
-    chartRef.current.timeScale().fitContent();
-  }, [chartData, positionsChartData, showSkeleton]);
-
-  // Toggle series visibility and refit chart
-  useEffect(() => {
-    if (balanceSeriesRef.current) {
-      balanceSeriesRef.current.applyOptions({ visible: showBalance });
-    }
-    if (positionsSeriesRef.current) {
-      positionsSeriesRef.current.applyOptions({ visible: showPositions });
-    }
-    // Refit chart after visibility change so dots reposition correctly
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent();
-    }
-  }, [showBalance, showPositions]);
+    // Calculate visible range from selected period (frontend-calculated)
+    // This ensures the chart always shows the full selected timeframe (1D, 1W, 1M)
+    // regardless of how much actual data exists. Data will appear where it exists,
+    // and empty areas will remain empty (not stretched).
+    const [periodFrom, periodTo] = calculatePeriodRange(selectedPeriod);
+    chartRef.current.timeScale().setVisibleRange({
+      from: periodFrom as UTCTimestamp,
+      to: periodTo as UTCTimestamp,
+    });
+  }, [positionsChartData, showSkeleton, selectedPeriod]);
 
   // Hide price scale (y-axis) during skeleton loading to prevent "sticking"
   useEffect(() => {
@@ -344,48 +267,13 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
     });
   }, [showSkeleton]);
 
-  // Toggle behavior:
-  // - Both visible, click one → hide it
-  // - One hidden, click hidden → show it (both visible)
-  // - One hidden, click visible → show hidden (both visible)
-  const toggleBalance = () => {
-    if (!showBalance) {
-      // Balance is hidden - show it
-      setShowBalance(true);
-    } else if (showPositions) {
-      // Both visible - hide Balance
-      setShowBalance(false);
-    } else {
-      // Balance visible, Positions hidden - show Positions
-      setShowPositions(true);
-    }
-  };
-
-  const togglePositions = () => {
-    if (!showPositions) {
-      // Positions is hidden - show it
-      setShowPositions(true);
-    } else if (showBalance) {
-      // Both visible - hide Positions
-      setShowPositions(false);
-    } else {
-      // Positions visible, Balance hidden - show Balance
-      setShowBalance(true);
-    }
-  };
-
   const isHovering = hoverTime !== undefined;
 
-  // Only include visible series in values (Issue #2)
-  const displayPositionsValue = showPositions ? (isHovering ? (hoverPositionsValue ?? 0) : latestPositionsValue) : 0;
-  const displayBalanceValue = showBalance ? (isHovering ? (hoverBalanceValue ?? 0) : currentBalanceValue) : 0;
-  const displayTotalValue = displayPositionsValue + displayBalanceValue;
-
-  const positionsStartValue = showPositions ? (positionsChartData[0]?.value ?? 0) : 0;
-  const balanceStartValue = showBalance ? (chartData[0]?.value ?? 0) : 0;
-  const totalStartValue = positionsStartValue + balanceStartValue;
-  const delta = calculateDelta(totalStartValue, displayTotalValue);
-  const dollarChange = displayTotalValue - totalStartValue;
+  // Display values - positions only
+  const displayValue = isHovering ? (hoverPositionsValue ?? 0) : latestPositionsValue;
+  const startValue = positionsChartData[0]?.value ?? 0;
+  const delta = calculateDelta(startValue, displayValue);
+  const dollarChange = displayValue - startValue;
 
   return (
     <div className={cn("flex flex-col gap-4 flex-1 min-w-0", className)}>
@@ -393,7 +281,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
         {/* Only show header after skeleton is gone - ChartSkeleton has its own header placeholder */}
         {!showSkeleton && (
           <ChartHeader
-            value={displayTotalValue}
+            value={displayValue}
             time={hoverTime}
             additionalFields={
               <div className="flex items-center gap-1.5">
@@ -413,54 +301,17 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
           </div>
         )}
 
-        {/* Live pulsating dots at line ends - only show after skeleton is gone */}
-        {!showSkeleton && isChartReady && !isHovering && hasBalanceData && showBalance && balanceModelRef.current && chartContainerRef.current && (
-          <LiveDotRenderer chartModel={balanceModelRef.current} isHovering={false} chartContainer={chartContainerRef.current} overrideColor={COLORS.balance} dataKey={balanceDataKey} />
-        )}
-        {!showSkeleton && isChartReady && !isHovering && hasPositionsData && showPositions && positionsModelRef.current && chartContainerRef.current && (
+        {/* Live pulsating dot at line end - only show after skeleton is gone */}
+        {!showSkeleton && isChartReady && !isHovering && hasPositionsData && positionsModelRef.current && chartContainerRef.current && (
           <LiveDotRenderer chartModel={positionsModelRef.current} isHovering={false} chartContainer={chartContainerRef.current} overrideColor={COLORS.positions} dataKey={positionsDataKey} />
         )}
-        {/* Hover markers */}
-        {isHovering && showPositions && hoverPositionsCoords && <CustomHoverMarker coordinates={hoverPositionsCoords} lineColor={COLORS.positions} />}
-        {isHovering && showBalance && hoverBalanceCoords && <CustomHoverMarker coordinates={hoverBalanceCoords} lineColor={COLORS.balance} />}
+        {/* Hover marker */}
+        {isHovering && hoverPositionsCoords && <CustomHoverMarker coordinates={hoverPositionsCoords} lineColor={COLORS.positions} />}
       </div>
 
-      {/* Bottom row: TimeFrame selector + Series toggles */}
-      <div className="flex items-center justify-between">
+      {/* Bottom row: TimeFrame selector only */}
+      <div className="flex items-center">
         <TimeFrameSelector selectedPeriod={selectedPeriod} onSelectPeriod={setSelectedPeriod} />
-
-        {!showSkeleton && (hasBalanceData || hasPositionsData) && (
-          <div className="flex items-center gap-3 text-xs">
-            {hasBalanceData && (
-              <button
-                onClick={toggleBalance}
-                className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
-              >
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: showBalance ? COLORS.balance : "#555" }}
-                />
-                <span className={showBalance ? "text-muted-foreground" : "text-muted-foreground/50 line-through"}>
-                  Balance
-                </span>
-              </button>
-            )}
-            {hasPositionsData && (
-              <button
-                onClick={togglePositions}
-                className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
-              >
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: showPositions ? COLORS.positions : "#555" }}
-                />
-                <span className={showPositions ? "text-muted-foreground" : "text-muted-foreground/50 line-through"}>
-                  Positions
-                </span>
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

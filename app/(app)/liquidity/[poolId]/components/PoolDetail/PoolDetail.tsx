@@ -3,14 +3,12 @@
 import { memo, useState, useCallback, useEffect, useRef, useMemo, Suspense } from "react";
 import { useAccount } from "wagmi";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { createLazy } from "@/lib/lazyWithRetry";
 import { parseSubgraphPosition, type SubgraphPosition, type PositionInfo } from "@/lib/uniswap/liquidity";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
+import { useQuery } from "@tanstack/react-query";
+import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
 
 import { PoolDetailHeader } from "./PoolDetailHeader";
 import { PoolDetailStats } from "./PoolDetailStats";
@@ -122,9 +120,36 @@ export const PoolDetail = memo(function PoolDetail({
   getUsdPriceForSymbol,
   calculatePositionUsd,
 }: PoolDetailProps) {
-  const isMobile = useIsMobile();
   const router = useRouter();
   const { chainId } = useAccount();
+
+  // Fetch Aave rates for Unified Yield display
+  const { data: aaveRatesData } = useQuery({
+    queryKey: ['aaveRates'],
+    queryFn: fetchAaveRates,
+    staleTime: 5 * 60_000, // 5 minutes
+  });
+
+  // Calculate Aave APY based on pool tokens
+  const aaveApr = useMemo(() => {
+    if (!poolConfig || !aaveRatesData?.success) return undefined;
+
+    const token0Symbol = poolConfig.tokens[0]?.symbol;
+    const token1Symbol = poolConfig.tokens[1]?.symbol;
+    if (!token0Symbol || !token1Symbol) return undefined;
+
+    const key0 = getAaveKey(token0Symbol);
+    const key1 = getAaveKey(token1Symbol);
+
+    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
+    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
+
+    // Average if both tokens supported, otherwise use single token's APY
+    if (apy0 !== null && apy1 !== null) {
+      return (apy0 + apy1) / 2;
+    }
+    return apy0 ?? apy1 ?? undefined;
+  }, [poolConfig, aaveRatesData]);
 
   // Window width for responsive chart
   const [windowWidth, setWindowWidth] = useState<number>(
@@ -288,14 +313,14 @@ export const PoolDetail = memo(function PoolDetail({
   }
 
   return (
-    <div className="flex flex-col gap-6 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto pb-20 min-[1200px]:pb-6">
+    <div className="flex flex-col gap-6 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto pb-6">
+      {/* Header - spans full width like Position page */}
+      <PoolDetailHeader poolConfig={poolConfig} />
+
       {/* Two-column layout on desktop - matches Overview page ratios */}
       <div className="flex flex-col min-[1200px]:flex-row gap-10">
-        {/* Left Column: Header, Stats, Chart, Positions */}
-        <div className="flex-1 flex flex-col gap-6 min-w-0 max-w-[720px]">
-          {/* Header */}
-          <PoolDetailHeader poolConfig={poolConfig} />
-
+        {/* Left Column: Stats, Chart, Positions */}
+        <div className="flex-1 flex flex-col gap-6 min-w-0">
           {/* Stats */}
           <PoolDetailStats
             poolStats={poolStats}
@@ -335,48 +360,9 @@ export const PoolDetail = memo(function PoolDetail({
             <PoolDetailSidebar
               poolConfig={poolConfig}
               poolApr={poolStats.aprRaw}
+              aaveApr={aaveApr}
             />
           </div>
-        </div>
-      </div>
-
-      {/* Desktop medium screens + Mobile: Fixed Add Liquidity Buttons */}
-      <div className={cn(
-        "fixed z-40",
-        isMobile
-          ? "bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur-sm border-t border-sidebar-border"
-          : "bottom-6 right-6 min-[1200px]:hidden"
-      )}>
-        <div className={cn(
-          "flex gap-2",
-          isMobile ? "flex-col" : "flex-row"
-        )}>
-          {/* Unified Yield - Primary */}
-          <Button
-            asChild
-            className={cn(
-              "font-semibold bg-[#141414] border border-[#9896FF]/50 hover:border-[#9896FF] text-white",
-              isMobile ? "h-12 text-base" : "h-10 px-4"
-            )}
-          >
-            <Link href={`/liquidity/add?pool=${poolConfig.id}&mode=rehypo&from=pool`}>
-              Unified Yield
-            </Link>
-          </Button>
-
-          {/* Custom Range - Secondary */}
-          <Button
-            asChild
-            variant="outline"
-            className={cn(
-              "font-medium border-sidebar-border hover:bg-sidebar-accent/50",
-              isMobile ? "h-10" : "h-10 px-3"
-            )}
-          >
-            <Link href={`/liquidity/add?pool=${poolConfig.id}&mode=concentrated&from=pool`}>
-              Custom Range
-            </Link>
-          </Button>
         </div>
       </div>
 

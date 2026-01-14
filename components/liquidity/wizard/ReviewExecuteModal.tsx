@@ -554,8 +554,8 @@ export function ReviewExecuteModal() {
     return context as ValidatedLiquidityTxContext;
   }, [pool, address, chainId, networkMode, state, txInfo, calculatedData]);
 
-  // Handle confirm - use Uniswap step executor
-  const handleConfirm = useCallback(async () => {
+  // Handle confirm
+  const handleNormalConfirm = useCallback(async () => {
     if (!pool || !address) return;
 
     setView('executing');
@@ -597,12 +597,14 @@ export function ReviewExecuteModal() {
       await executor.execute(context);
     } catch (err: any) {
       console.error('[ReviewExecuteModal] Transaction error:', err);
-      // Error handling is done in onFailure callback
       setIsExecuting(false);
       setView('review');
       setError(err?.message || 'Transaction failed');
     }
-  }, [pool, fetchAndBuildContext, executor]);
+  }, [pool, address, fetchAndBuildContext, executor, calculatedData, txInfo, state, chainId]);
+
+  // Handle confirm - just call the normal flow
+  const handleConfirm = handleNormalConfirm;
 
   // Clear error and retry
   const handleRetry = useCallback(() => {
@@ -745,7 +747,7 @@ export function ReviewExecuteModal() {
                     usdValue={usdValues?.TOKEN0 || '0.00'}
                   />
                 )}
-                {!state.isZapMode && state.amount1 && parseFloat(state.amount1) > 0 && (
+                {state.amount1 && parseFloat(state.amount1) > 0 && (
                   <TokenInfoRow
                     symbol={pool.currency1.symbol}
                     icon={token1Config?.icon}

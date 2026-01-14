@@ -37,6 +37,10 @@ interface UsePositionsChartDataResult {
   error: Error | null;
   refetch: () => void;
   isSSEConnected: boolean;
+  /** Start timestamp of the visible range (from backend) */
+  fromTimestamp: number | undefined;
+  /** End timestamp of the visible range (from backend) */
+  toTimestamp: number | undefined;
 }
 
 /**
@@ -57,19 +61,29 @@ export function usePositionsChartData({
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
 
+  // Store time range from backend response
+  const timeRangeRef = useRef<{ from: number; to: number } | null>(null);
+
   const query = useQuery({
     queryKey,
     queryFn: async (): Promise<PositionsChartPoint[]> => {
       if (!address) {
+        timeRangeRef.current = null;
         return [];
       }
 
       const response = await fetchPositionsChart(address, period);
 
       if (!response.success) {
-        console.warn("[usePositionsChartData] Backend error:", response.error);
+        timeRangeRef.current = null;
         return [];
       }
+
+      // Store the time range from backend
+      timeRangeRef.current = {
+        from: response.fromTimestamp,
+        to: response.toTimestamp,
+      };
 
       return response.points.map((point) => ({
         timestamp: point.timestamp,
@@ -77,7 +91,9 @@ export function usePositionsChartData({
       }));
     },
     enabled: enabled && !!address,
-    staleTime: 5 * 60 * 1000, // 5 minutes - data considered fresh
+    staleTime: 0, // Always refetch when period changes
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
     retry: 2,
     retryDelay: 1000,
   });
@@ -159,5 +175,7 @@ export function usePositionsChartData({
     error: query.error,
     refetch: query.refetch,
     isSSEConnected: isConnected,
+    fromTimestamp: timeRangeRef.current?.from,
+    toTimestamp: timeRangeRef.current?.to,
   };
 }

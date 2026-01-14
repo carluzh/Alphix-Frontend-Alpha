@@ -48,7 +48,7 @@ const BASE_CSP: Record<string, string[]> = {
     "https://raw.githubusercontent.com",
     // Alphix-specific
     "https://*.satsuma-prod.com", "https://subgraph.satsuma-prod.com",
-    "https://*.supabase.co",
+    "https://*.supabase.co", "https://*.upstash.io",
     // Uniswap APIs (for potential future integration)
     "https://*.uniswap.org",
     // AlphixBackend API

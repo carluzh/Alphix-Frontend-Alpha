@@ -27,7 +27,7 @@ interface CreateLiquidityTxContextType {
   isDepositSuccess: boolean;
 
   // Actions
-  handleApprove: (tokenSymbol: TokenSymbol, exactAmount?: string) => Promise<`0x${string}`>;
+  handleApprove: (tokenSymbol: TokenSymbol, exactAmount?: string) => Promise<void>;
   handleDeposit: () => Promise<void>;
   handleZapSwapAndDeposit: () => Promise<void>;
   refetchApprovals: () => void;

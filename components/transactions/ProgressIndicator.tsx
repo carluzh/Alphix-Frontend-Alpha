@@ -19,6 +19,8 @@ import {
   CurrentStepState,
   TokenApprovalStep,
   LiquidityPositionStep,
+  SwapPermitSignatureStep,
+  SwapTransactionStep,
 } from '@/lib/transactions/types'
 
 interface ProgressIndicatorProps {
@@ -143,29 +145,53 @@ function getStepTitle(step: TransactionStep, status: StepStatus): string {
       return titles[status]
     }
 
+    case TransactionStepType.SwapPermitSignature: {
+      const tokenSymbol = (step as SwapPermitSignatureStep).tokenSymbol
+      const titles: Record<StepStatus, string> = {
+        [StepStatus.Preview]: tokenSymbol ? `Sign ${tokenSymbol} permit` : 'Sign swap permit',
+        [StepStatus.Active]: 'Sign in wallet',
+        [StepStatus.InProgress]: 'Signing...',
+        [StepStatus.Complete]: 'Permit signed',
+      }
+      return titles[status]
+    }
+
+    case TransactionStepType.SwapTransaction: {
+      const inputSymbol = (step as SwapTransactionStep).inputTokenSymbol
+      const titles: Record<StepStatus, string> = {
+        [StepStatus.Preview]: `Swap ${inputSymbol}`,
+        [StepStatus.Active]: 'Confirm in wallet',
+        [StepStatus.InProgress]: 'Swapping...',
+        [StepStatus.Complete]: 'Swap complete',
+      }
+      return titles[status]
+    }
+
     default:
       return 'Transaction'
   }
 }
 
 /**
- * Get step icon info
+ * Get step icon info - only for approval/permit steps where showing the token makes sense
+ * For transaction steps (Create, Increase, Swap, etc.), show step number instead
  */
 function getStepIcon(step: TransactionStep): { icon?: string; symbol?: string } {
   switch (step.type) {
+    // Only show token icon for approval steps - makes sense to show what's being approved
     case TransactionStepType.TokenApprovalTransaction:
       return {
         icon: (step as TokenApprovalStep).tokenIcon,
         symbol: (step as TokenApprovalStep).tokenSymbol,
       }
-    case TransactionStepType.CreatePositionTransaction:
-    case TransactionStepType.IncreasePositionTransaction:
-    case TransactionStepType.DecreasePositionTransaction:
-    case TransactionStepType.ZapSwapAndDeposit:
+    // Permit signature - show token being permitted
+    case TransactionStepType.SwapPermitSignature:
       return {
-        icon: (step as LiquidityPositionStep).token0Icon,
-        symbol: (step as LiquidityPositionStep).token0Symbol,
+        icon: (step as SwapPermitSignatureStep).tokenIcon,
+        symbol: (step as SwapPermitSignatureStep).tokenSymbol,
       }
+    // For all other transaction steps, don't show a token icon - just use step number
+    // (CreatePosition, IncreasePosition, DecreasePosition, Swap, etc.)
     default:
       return {}
   }

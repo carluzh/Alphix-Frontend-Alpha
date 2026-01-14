@@ -15,6 +15,9 @@ import { calculateRealizedApr, formatApr } from '@/lib/apr';
 import { Percent } from '@uniswap/sdk-core';
 import { ArrowUpRight } from 'lucide-react';
 import { type PositionPointsData } from '@/types';
+import { useQuery } from '@tanstack/react-query';
+import { fetchAaveRates, getAaveKey } from '@/lib/aave-rates';
+import { fetchPositionApr } from '@/lib/backend-client';
 import {
     StatusIndicatorCircle,
     getPositionStatusLabel,
@@ -90,6 +93,39 @@ export function PositionCardCompact({
     const token1Address = token1.isNative ? '0x0000000000000000000000000000000000000000' : (token1 as any).address;
 
     const { currentPrice, poolAPR, isLoadingPrices, isLoadingPoolStates } = poolContext;
+
+    // Fetch Aave rates for Unified Yield display
+    const { data: aaveRatesData } = useQuery({
+        queryKey: ['aaveRates'],
+        queryFn: fetchAaveRates,
+        staleTime: 5 * 60_000, // 5 minutes
+    });
+
+    // Fetch position-specific 7d APR from backend
+    const positionId = position.tokenId?.toString();
+    const { data: backendAprData, isLoading: isLoadingBackendApr } = useQuery({
+        queryKey: ['positionApr', positionId],
+        queryFn: () => fetchPositionApr(positionId!),
+        enabled: !!positionId && position.status !== PositionStatus.CLOSED,
+        staleTime: 5 * 60_000, // 5 minutes
+    });
+
+    // Calculate Aave APY based on position tokens
+    const unifiedYieldApr = useMemo(() => {
+        if (!aaveRatesData?.success) return undefined;
+
+        const key0 = getAaveKey(token0Symbol);
+        const key1 = getAaveKey(token1Symbol);
+
+        const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
+        const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
+
+        // Average if both tokens supported, otherwise use single token's APY
+        if (apy0 !== null && apy1 !== null) {
+            return (apy0 + apy1) / 2;
+        }
+        return apy0 ?? apy1 ?? undefined;
+    }, [aaveRatesData, token0Symbol, token1Symbol]);
 
     // Get USD values for fees using Uniswap's routing-based pricing
     // This fixes the bug where tokens not in priceMap returned $0
@@ -193,20 +229,37 @@ export function PositionCardCompact({
 
     const isInRange = position.status === PositionStatus.IN_RANGE;
 
-    // Calculate APR
-    const { formattedAPR, isFallback: isAPRFallback, isLoading: isLoadingAPR } = useMemo(() => {
-        if (isLoadingPrices || valueUSD <= 0) {
-            return { formattedAPR: '-', isFallback: false, isLoading: true };
+    // Calculate APR - prefer backend 7d APR, fallback to local calculation
+    const { formattedAPR, rawSwapApr, isFallback: isAPRFallback, isLoading: isLoadingAPR } = useMemo(() => {
+        // Still loading
+        if (isLoadingPrices || isLoadingBackendApr) {
+            return { formattedAPR: '-', rawSwapApr: undefined, isFallback: false, isLoading: true };
+        }
+
+        if (valueUSD <= 0) {
+            return { formattedAPR: '-', rawSwapApr: undefined, isFallback: false, isLoading: false };
         }
 
         if (position.status === PositionStatus.CLOSED) {
-            return { formattedAPR: '0%', isFallback: false, isLoading: false };
+            return { formattedAPR: '0%', rawSwapApr: 0, isFallback: false, isLoading: false };
         }
 
         if (position.status === PositionStatus.OUT_OF_RANGE && !isFullRange) {
-            return { formattedAPR: '0%', isFallback: false, isLoading: false };
+            return { formattedAPR: '0%', rawSwapApr: 0, isFallback: false, isLoading: false };
         }
 
+        // Use backend APR if available and has data
+        if (backendAprData?.success && backendAprData.apr7d !== null && backendAprData.dataPoints > 0) {
+            // apr7d is already a percentage value (e.g., 1.826 = 1.826%)
+            return {
+                formattedAPR: backendAprData.apr7dPercent ?? `${backendAprData.apr7d.toFixed(2)}%`,
+                rawSwapApr: backendAprData.apr7d,
+                isFallback: false,
+                isLoading: false,
+            };
+        }
+
+        // Fallback to local calculation
         const nowTimestamp = Math.floor(Date.now() / 1000);
         const positionTimestamp = lastTimestamp || blockTimestamp || nowTimestamp;
         const durationDays = (nowTimestamp - positionTimestamp) / 86400;
@@ -216,8 +269,20 @@ export function PositionCardCompact({
             : null;
 
         const result = calculateRealizedApr(feesUSD, valueUSD, durationDays, fallbackApr);
-        return { formattedAPR: formatApr(result.apr), isFallback: result.isFallback, isLoading: false };
-    }, [feesUSD, valueUSD, lastTimestamp, blockTimestamp, poolAPR, isLoadingPrices, position.status, isFullRange]);
+
+        // Extract raw APR value for tooltip breakdown
+        let aprValue: number | undefined = undefined;
+        if (result.apr) {
+            aprValue = parseFloat(result.apr.toFixed(2));
+        }
+
+        return {
+            formattedAPR: formatApr(result.apr),
+            rawSwapApr: aprValue,
+            isFallback: result.isFallback,
+            isLoading: false,
+        };
+    }, [feesUSD, valueUSD, lastTimestamp, blockTimestamp, poolAPR, isLoadingPrices, isLoadingBackendApr, position.status, isFullRange, backendAprData]);
 
     // Status display
     const statusText = getPositionStatusLabel(positionStatusString, isFullRange);
@@ -306,9 +371,10 @@ export function PositionCardCompact({
             <LiquidityPositionFeeStats
                 formattedUsdValue={formattedUsdValue}
                 formattedUsdFees={formattedUsdFees}
-                apr={poolAPR ?? undefined}
+                apr={rawSwapApr}
                 formattedApr={formattedAPR}
                 isAprFallback={isAPRFallback}
+                unifiedYieldApr={unifiedYieldApr}
                 pointsData={pointsData}
                 token0Symbol={token0Symbol}
                 token1Symbol={token1Symbol}

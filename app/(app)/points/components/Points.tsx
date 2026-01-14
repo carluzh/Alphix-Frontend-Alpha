@@ -8,9 +8,7 @@ import { PointsStatsPanel } from "./PointsStatsPanel";
 import { PointsTabsSection } from "./PointsTabsSection";
 import { SeasonTimelineBanner } from "./SeasonTimelineBanner";
 import type { PointsHistoryEntry, LeaderboardEntry } from "../hooks/usePointsPageData";
-
-// Season 0 start date (mock - set to recent past so there's time remaining)
-const SEASON_0_START = new Date("2025-12-01T00:00:00Z");
+import type { CachedRefereesData } from "@/lib/upstash-points";
 
 // Constants
 const POINTS_RIGHT_COLUMN_WIDTH = 380;
@@ -29,7 +27,20 @@ interface PointsProps {
   pointsHistory: PointsHistoryEntry[];
   leaderboardData: LeaderboardEntry[];
   accountAddress?: string;
+  seasonStartDate?: Date;
   isLoading?: boolean;
+  // Referral stats
+  totalReferees?: number;
+  totalReferredTvlUsd?: number;
+  totalReferredVolumeUsd?: number;
+  // Referral data
+  myReferralCode?: string | null;
+  getOrCreateReferralCode?: () => Promise<string | null>;
+  myReferrer?: string | null;
+  myReferrerCode?: string | null;
+  referrerJoinedAt?: number | null;
+  referees?: CachedRefereesData["referees"];
+  applyReferralCode?: (code: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 /**
@@ -54,7 +65,18 @@ export const Points = memo(function Points({
   pointsHistory,
   leaderboardData,
   accountAddress,
+  seasonStartDate,
   isLoading,
+  totalReferees = 0,
+  totalReferredTvlUsd = 0,
+  totalReferredVolumeUsd = 0,
+  myReferralCode,
+  getOrCreateReferralCode,
+  myReferrer,
+  myReferrerCode,
+  referrerJoinedAt,
+  referees = [],
+  applyReferralCode,
 }: PointsProps) {
   // Track which tab is active - affects the right panel stats
   const [activeTab, setActiveTab] = useState<PointsTab>("history");
@@ -75,7 +97,7 @@ export const Points = memo(function Points({
           SEASON TIMELINE: Full-width progress banner
           ================================================================ */}
       <SeasonTimelineBanner
-        seasonStartDate={SEASON_0_START}
+        seasonStartDate={seasonStartDate || new Date("2026-01-22T00:00:00Z")}
         seasonDurationDays={90}
         pointsPerWeek={100000}
         isLoading={isLoading}
@@ -123,6 +145,9 @@ export const Points = memo(function Points({
             liquidityPoints={liquidityPoints}
             referralPoints={referralPoints}
             isLoading={isLoading}
+            totalReferees={totalReferees}
+            totalReferredTvlUsd={totalReferredTvlUsd}
+            totalReferredVolumeUsd={totalReferredVolumeUsd}
           />
         </div>
       </div>
@@ -140,6 +165,14 @@ export const Points = memo(function Points({
         currentUserAddress={accountAddress}
         currentUserPoints={totalPoints}
         isLoading={isLoading}
+        // Referral data
+        myReferralCode={myReferralCode}
+        getOrCreateReferralCode={getOrCreateReferralCode}
+        myReferrer={myReferrer}
+        myReferrerCode={myReferrerCode}
+        referrerJoinedAt={referrerJoinedAt}
+        referees={referees}
+        applyReferralCode={applyReferralCode}
       />
     </div>
   );

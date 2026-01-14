@@ -33,7 +33,7 @@ function formatUSD(value: number): string {
 function formatTokenAmount(amount: number, decimals: number = 6): string {
   if (amount === 0) return "0";
   if (amount < 0.000001) return "< 0.000001";
-  return amount.toLocaleString(undefined, { maximumFractionDigits: decimals });
+  return amount.toLocaleString("en-US", { maximumFractionDigits: decimals });
 }
 
 function TokenRow({ token, index }: { token: TokenBalance; index: number }) {

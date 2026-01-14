@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useAccount } from "wagmi";
 import { useUserPositions, useAllPrices } from "@/components/data/hooks";
 import { getTokenDefinitions } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useOverview } from "./useOverviewData";
 import { useWalletBalances } from "./useWalletBalances";
+import { fetchUserPoints, DEFAULT_USER_POINTS, type CachedUserPoints } from "@/lib/upstash-points";
 
 /**
  * useOverviewPageData - Aggregates all data needed for overview pages
@@ -61,9 +62,45 @@ export function useOverviewPageData() {
     setPositionsRefresh,
   });
 
+  // Points data (fetched from Upstash)
+  const [pointsData, setPointsData] = useState<CachedUserPoints>(DEFAULT_USER_POINTS);
+  const [isLoadingPoints, setIsLoadingPoints] = useState(false);
+
+  useEffect(() => {
+    if (!isConnected || !accountAddress) {
+      setPointsData(DEFAULT_USER_POINTS);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingPoints(true);
+
+    fetchUserPoints(accountAddress)
+      .then((data) => {
+        if (!cancelled) {
+          setPointsData(data ?? DEFAULT_USER_POINTS);
+        }
+      })
+      .catch((err) => {
+        console.error("[useOverviewPageData] Error fetching points:", err);
+        if (!cancelled) {
+          setPointsData(DEFAULT_USER_POINTS);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingPoints(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, accountAddress]);
+
   // Overall loading state
   const isLoading =
-    isLoadingPositions || isLoadingWalletBalances || !readiness.core;
+    isLoadingPositions || isLoadingWalletBalances || isLoadingPoints || !readiness.core;
 
   return {
     // Connection state
@@ -78,9 +115,15 @@ export function useOverviewPageData() {
     priceChange24hPctMap: overviewData.priceChange24hPctMap,
     aprByPoolId,
 
+    // Points data
+    totalPoints: pointsData.totalPoints,
+    dailyPoints: pointsData.dailyRate,
+    leaderboardPosition: pointsData.leaderboardPosition,
+
     // Loading states
     isLoading,
     isLoadingWalletBalances,
     isLoadingPositions,
+    isLoadingPoints,
   };
 }

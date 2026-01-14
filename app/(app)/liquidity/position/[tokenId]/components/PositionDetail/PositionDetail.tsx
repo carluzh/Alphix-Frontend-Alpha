@@ -2,6 +2,7 @@
 
 import { memo, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Image from "next/image";
 import { ArrowLeft, Plus, Minus } from "lucide-react";
 import { PointsIcon } from "@/components/PointsIcons";
@@ -269,10 +270,10 @@ function PositionHeader({
         <span className="text-sm">Back to Overview</span>
       </button>
 
-      {/* Title Row with Actions - matches two-column layout widths */}
-      <div className="flex flex-col min-[1200px]:flex-row min-[1200px]:gap-10 gap-4">
-        {/* Left side - title (matches left column max-width) */}
-        <div className="flex items-center gap-3 flex-1 min-w-0 max-w-[720px]">
+      {/* Title Row with Actions - spans full width */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        {/* Left side - title */}
+        <div className="flex items-center gap-3">
           {/* Token Pair Icons */}
           <div className="flex -space-x-3">
             <Image
@@ -293,9 +294,12 @@ function PositionHeader({
 
           {/* Token Pair Name and Status */}
           <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold">
+            <Link
+              href={`/liquidity/${poolConfig.id}`}
+              className="text-2xl font-semibold hover:text-muted-foreground transition-colors"
+            >
               {poolConfig.currency0.symbol} / {poolConfig.currency1.symbol}
-            </h1>
+            </Link>
             <div className="flex items-center gap-2">
               <StatusIndicator isInRange={isInRange} />
               {lpType === "rehypo" && <UnifiedYieldBadge />}
@@ -303,9 +307,9 @@ function PositionHeader({
           </div>
         </div>
 
-        {/* Right side - Action Buttons (matches right column width) */}
+        {/* Right side - Action Buttons */}
         {isOwner && (
-          <div className="hidden sm:flex items-center gap-2 w-full min-[1200px]:w-[380px] flex-shrink-0 min-[1200px]:justify-end">
+          <div className="hidden sm:flex items-center gap-2 flex-shrink-0">
             {/* Add Liquidity - Pattern style */}
             <button
               onClick={onAddLiquidity}
@@ -379,7 +383,7 @@ function PriceRangeSection({
               ? priceInverted
                 ? currentPrice.invert().toSignificant(6)
                 : currentPrice.toSignificant(6)
-              : "—"}
+              : "-"}
           </div>
           <div className="text-xs text-muted-foreground">{priceLabel}</div>
         </div>
@@ -431,7 +435,7 @@ function PositionValueSection({
       <div className="flex flex-col gap-2">
         <span className="text-sm text-muted-foreground">Position Value</span>
         <span className="text-3xl font-semibold tabular-nums transition-all">
-          {displayValue !== null ? `$${formatNumber(displayValue, { max: 2 })}` : "—"}
+          {displayValue !== null ? `$${formatNumber(displayValue, { max: 2 })}` : "-"}
         </span>
       </div>
 
@@ -510,7 +514,7 @@ function EarningsSection({
       <div className="flex flex-col gap-2">
         <span className="text-sm text-muted-foreground">Uncollected Fees</span>
         <span className="text-3xl font-semibold tabular-nums transition-all">
-          {displayValue !== null ? `$${formatNumber(displayValue, { max: 2 })}` : "—"}
+          {displayValue !== null ? `$${formatNumber(displayValue, { max: 2 })}` : "-"}
         </span>
       </div>
 
@@ -607,7 +611,7 @@ function APRSection({
         >
           <span className="text-xs text-muted-foreground">Swap APR</span>
           <span className="text-xs font-mono text-foreground">
-            {poolApr !== null ? `${formatNumber(poolApr, { max: 2 })}%` : "—"}
+            {poolApr !== null ? `${formatNumber(poolApr, { max: 2 })}%` : "-"}
           </span>
         </div>
 
@@ -622,7 +626,7 @@ function APRSection({
           >
             <span className="text-xs text-muted-foreground">Unified Yield</span>
             <span className="text-xs font-mono text-foreground">
-              {aaveApr !== null ? `${formatNumber(aaveApr, { max: 2 })}%` : "—"}
+              {aaveApr !== null ? `${formatNumber(aaveApr, { max: 2 })}%` : "-"}
             </span>
           </div>
         )}
@@ -636,11 +640,9 @@ function APRSection({
           onClick={() => handleRowClick("points")}
         >
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground">+</span>
             <PointsIcon className="w-3.5 h-3.5 text-muted-foreground" />
             Points
-          </span>
-          <span className="text-xs font-mono text-foreground">
-            {pointsEarned !== undefined ? `${formatNumber(pointsEarned, { max: 0 })} pts` : "—"}
           </span>
         </div>
 
@@ -651,7 +653,7 @@ function APRSection({
         <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors">
           <span className="text-xs font-medium text-foreground">Total APR</span>
           <span className="text-xs font-mono font-medium text-foreground">
-            {totalApr !== null ? `~${formatNumber(totalApr, { max: 2 })}%` : "—"}
+            {totalApr !== null ? `~${formatNumber(totalApr, { max: 2 })}%` : "-"}
           </span>
         </div>
       </div>
@@ -755,6 +757,7 @@ export const PositionDetail = memo(function PositionDetail({
   const [feeChartPeriod, setFeeChartPeriod] = useState<ChartPeriod>("1W");
 
   // Fee chart data - pass current uncollected fees for "live now" point
+  // Include token symbols and lpType for Aave historical rate fetching (rehypo positions)
   const {
     data: feeChartData,
     isLoading: isLoadingFeeChart,
@@ -764,6 +767,9 @@ export const PositionDetail = memo(function PositionDetail({
     period: feeChartPeriod,
     currentFeesUsd: totalFeesValue ?? undefined,
     enabled: chartTab === "yield" && !!tokenId,
+    token0Symbol: poolConfig?.currency0?.symbol,
+    token1Symbol: poolConfig?.currency1?.symbol,
+    isRehypo: lpType === "rehypo",
   });
 
   // Convert position data to ProcessedPosition format for modals
@@ -865,7 +871,7 @@ export const PositionDetail = memo(function PositionDetail({
       {/* Two-column layout - matches PoolDetail pattern */}
       <div className="flex flex-col min-[1200px]:flex-row gap-10">
         {/* Left Column: Chart & Price Range */}
-        <div className="flex-1 flex flex-col gap-6 min-w-0 max-w-[720px]">
+        <div className="flex-1 flex flex-col gap-6 min-w-0">
           {/* Chart Tabs + Denomination Toggle */}
           <div className="flex flex-row items-center justify-between">
             <div className="flex flex-row items-center gap-1">

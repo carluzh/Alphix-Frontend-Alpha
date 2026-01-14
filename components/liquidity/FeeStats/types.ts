@@ -63,6 +63,8 @@ export interface LiquidityPositionFeeStatsProps extends LiquidityPositionMinMaxR
   formattedApr?: string;
   /** Whether APR is fallback/estimated value (show dimmed) */
   isAprFallback?: boolean;
+  /** Unified Yield APR from Aave lending (for rehypo positions) */
+  unifiedYieldApr?: number;
 
   // Points campaign data (mirrors lpIncentiveRewardApr pattern)
   /** Points data when campaign active */

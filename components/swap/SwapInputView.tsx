@@ -9,6 +9,7 @@ import {
   ChevronsRight,
   ChevronDown as ChevronDownIcon,
 } from "lucide-react";
+import { IconTriangleWarningFilled } from "nucleo-micro-bold-essential";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

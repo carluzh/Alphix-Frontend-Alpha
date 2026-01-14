@@ -59,8 +59,8 @@ function formatCompact(value: number): string {
  * Format leaderboard position
  */
 function formatPosition(position: number | null | undefined): string {
-  if (position === null || position === undefined || position <= 0) return "—";
-  return `#${position.toLocaleString()}`;
+  if (position === null || position === undefined || position <= 0) return "-";
+  return `#${position.toLocaleString("en-US")}`;
 }
 
 /**

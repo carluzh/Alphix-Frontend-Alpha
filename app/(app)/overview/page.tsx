@@ -18,7 +18,11 @@ export default function OverviewPage() {
     walletBalances,
     activePositions,
     priceMap,
+    aprByPoolId,
     isLoading,
+    totalPoints,
+    dailyPoints,
+    leaderboardPosition,
   } = useOverviewPageData();
 
   return (
@@ -27,7 +31,11 @@ export default function OverviewPage() {
       walletBalances={walletBalances}
       activePositions={activePositions}
       priceMap={priceMap}
+      aprByPoolId={aprByPoolId}
       isLoading={isLoading}
+      totalPoints={totalPoints}
+      dailyPoints={dailyPoints}
+      leaderboardPosition={leaderboardPosition}
     />
   );
 }

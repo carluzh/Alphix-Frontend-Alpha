@@ -456,7 +456,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       
       // Show liquidity increased success toast with transaction link
       toast.success("Liquidity Increased", {
-        icon: React.createElement(BadgeCheck, { className: "h-4 w-4 text-green-500" }),
+        icon: React.createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
         description: `Liquidity added to existing position successfully`,
         action: hash ? {
           label: "View Transaction",

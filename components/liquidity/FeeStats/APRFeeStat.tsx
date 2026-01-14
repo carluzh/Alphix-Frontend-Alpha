@@ -19,7 +19,7 @@
 
 "use client"
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { FeeStat, FeeStatLoader } from './FeeStat';
 import { PointsTooltip, TooltipSize } from '../PointsCampaign/PointsTooltip';
@@ -27,11 +27,23 @@ import { APRBreakdownTooltip } from '../APRBreakdownTooltip';
 import type { APRFeeStatProps } from './types';
 
 /**
+ * Format APR value for display
+ */
+function formatAprDisplay(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-';
+  if (value === 0) return '0.00%';
+  if (value >= 1000) return `${(value / 1000).toFixed(2)}K%`;
+  if (value >= 100) return `${value.toFixed(0)}%`;
+  if (value >= 10) return `${value.toFixed(1)}%`;
+  return `${value.toFixed(2)}%`;
+}
+
+/**
  * APR fee stat component.
- * Displays formatted APR with unified breakdown tooltip on hover.
+ * Displays total APR (Swap + Unified Yield) with unified breakdown tooltip on hover.
  *
  * Design:
- * - Shows APR value with dotted underline indicating hover for more info
+ * - Shows total APR (Swap + Unified) with dotted underline indicating hover for more info
  * - Hover shows unified breakdown: Swap APR + Unified Yield + Points
  */
 export function APRFeeStat({
@@ -49,6 +61,21 @@ export function APRFeeStat({
     return <FeeStatLoader />;
   }
 
+  // Calculate total APR for display (Swap + Unified Yield)
+  // Points are shown in tooltip but not included in main display
+  const displayApr = useMemo(() => {
+    const swap = swapApr ?? 0;
+    const unified = unifiedYieldApr ?? 0;
+    const total = swap + unified;
+
+    // If we have no data at all, use the pre-formatted value as fallback
+    if (swap === 0 && unified === 0 && formattedApr && formattedApr !== '-') {
+      return formattedApr;
+    }
+
+    return formatAprDisplay(total);
+  }, [swapApr, unifiedYieldApr, formattedApr]);
+
   const content = (
     <FeeStat>
       {/* APR value with dotted underline to indicate hover for more info */}
@@ -56,7 +83,7 @@ export function APRFeeStat({
         "text-sm font-medium font-mono underline decoration-dotted decoration-muted-foreground/50 underline-offset-2",
         isFallback && "text-white/50"
       )}>
-        {formattedApr}
+        {displayApr}
       </span>
       {/* Label */}
       <span className="text-xs text-muted-foreground">

@@ -3,6 +3,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAccount } from "wagmi";
 import * as Sentry from "@sentry/nextjs";
+import {
+  fetchUserPoints as fetchUserPointsFromUpstash,
+  fetchUserHistory,
+  fetchLeaderboard as fetchLeaderboardFromUpstash,
+  fetchGlobalStats as fetchGlobalStatsFromUpstash,
+  DEFAULT_USER_POINTS,
+  DEFAULT_GLOBAL_STATS,
+} from "@/lib/upstash-points";
 
 /**
  * Points history entry
@@ -49,6 +57,9 @@ interface UserPointsData {
  */
 interface GlobalStatsData {
   totalParticipants: number;
+  currentSeason: number;
+  currentWeek: number;
+  seasonStartDate: number; // Unix timestamp in ms
 }
 
 /**
@@ -73,6 +84,10 @@ export interface UsePointsPageDataReturn {
   dailyRate: number;
   leaderboardPosition: number | null;
   totalParticipants: number;
+  // Season data
+  currentSeason: number;
+  currentWeek: number;
+  seasonStartDate: Date;
   // Points breakdown
   volumePoints: number;
   liquidityPoints: number;
@@ -86,99 +101,95 @@ export interface UsePointsPageDataReturn {
   loadingStates: LoadingStates;
 }
 
-// Time constants for mock data
-const DAY_MS = 24 * 60 * 60 * 1000;
-const WEEK_MS = 7 * DAY_MS;
-const SEASON_START = new Date(2024, 9, 3, 2, 0, 0, 0).getTime(); // Oct 3, 2024, 02:00
-
 /**
- * Mock data generators - Replace with actual API calls
+ * Fetch user points from Upstash and transform to internal format
  */
 async function fetchUserPoints(address: string): Promise<UserPointsData> {
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  const data = await fetchUserPointsFromUpstash(address);
+  if (!data) {
+    return {
+      totalPoints: DEFAULT_USER_POINTS.totalPoints,
+      dailyRate: DEFAULT_USER_POINTS.dailyRate,
+      leaderboardPosition: DEFAULT_USER_POINTS.leaderboardPosition,
+      volumePoints: DEFAULT_USER_POINTS.volumePoints,
+      liquidityPoints: DEFAULT_USER_POINTS.liquidityPoints,
+      referralPoints: DEFAULT_USER_POINTS.referralPoints,
+      recentPointsEarned: DEFAULT_USER_POINTS.recentPointsEarned,
+    };
+  }
   return {
-    totalPoints: 1022.7923,
-    dailyRate: 45.32,
-    leaderboardPosition: 127,
-    volumePoints: 125.45,
-    liquidityPoints: 872.34,
-    referralPoints: 25.0,
-    recentPointsEarned: 317.65,
+    totalPoints: data.totalPoints,
+    dailyRate: data.dailyRate,
+    leaderboardPosition: data.leaderboardPosition,
+    volumePoints: data.volumePoints,
+    liquidityPoints: data.liquidityPoints,
+    referralPoints: data.referralPoints,
+    recentPointsEarned: data.recentPointsEarned,
   };
 }
 
+/**
+ * Fetch global stats from Upstash
+ */
 async function fetchGlobalStats(): Promise<GlobalStatsData> {
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  return { totalParticipants: 2847 };
-}
-
-async function fetchPointsHistory(_address: string): Promise<PointsHistoryEntry[]> {
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  return [
-    { id: "1", type: "weekly_drop", points: 317.65, season: 0, week: 8, startDate: SEASON_START + 7 * WEEK_MS, endDate: SEASON_START + 8 * WEEK_MS },
-    { id: "2", type: "weekly_drop", points: 284.12, season: 0, week: 7, startDate: SEASON_START + 6 * WEEK_MS, endDate: SEASON_START + 7 * WEEK_MS },
-    { id: "3", type: "weekly_drop", points: 198.45, season: 0, week: 6, startDate: SEASON_START + 5 * WEEK_MS, endDate: SEASON_START + 6 * WEEK_MS },
-    { id: "4", type: "referral", points: 25.0, referralCount: 2, timestamp: SEASON_START + 5 * WEEK_MS + 3 * DAY_MS },
-    { id: "5", type: "weekly_drop", points: 156.78, season: 0, week: 5, startDate: SEASON_START + 4 * WEEK_MS, endDate: SEASON_START + 5 * WEEK_MS },
-    { id: "6", type: "weekly_drop", points: 12.45, season: 0, week: 4, startDate: SEASON_START + 3 * WEEK_MS, endDate: SEASON_START + 4 * WEEK_MS },
-    { id: "7", type: "weekly_drop", points: 3.28, season: 0, week: 3, startDate: SEASON_START + 2 * WEEK_MS, endDate: SEASON_START + 3 * WEEK_MS },
-    { id: "8", type: "weekly_drop", points: 1.89, season: 0, week: 2, startDate: SEASON_START + 1 * WEEK_MS, endDate: SEASON_START + 2 * WEEK_MS },
-    { id: "9", type: "weekly_drop", points: 0.54, season: 0, week: 1, startDate: SEASON_START, endDate: SEASON_START + 1 * WEEK_MS },
-    { id: "10", type: "referral", points: 15.0, referralCount: 1, timestamp: SEASON_START + 2 * WEEK_MS + 1 * DAY_MS },
-    { id: "11", type: "weekly_drop", points: 412.33, season: 0, week: 9, startDate: SEASON_START + 8 * WEEK_MS, endDate: SEASON_START + 9 * WEEK_MS },
-    { id: "12", type: "weekly_drop", points: 523.87, season: 0, week: 10, startDate: SEASON_START + 9 * WEEK_MS, endDate: SEASON_START + 10 * WEEK_MS },
-    { id: "13", type: "referral", points: 8.5, referralCount: 1, timestamp: SEASON_START + 9 * WEEK_MS + 2 * DAY_MS },
-    { id: "14", type: "weekly_drop", points: 678.21, season: 0, week: 11, startDate: SEASON_START + 10 * WEEK_MS, endDate: SEASON_START + 11 * WEEK_MS },
-    { id: "15", type: "weekly_drop", points: 445.99, season: 0, week: 12, startDate: SEASON_START + 11 * WEEK_MS, endDate: SEASON_START + 12 * WEEK_MS },
-  ];
-}
-
-async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
-  await new Promise((resolve) => setTimeout(resolve, 120));
-  return [
-    { rank: 1, address: "0x1234567890abcdef1234567890abcdef12345678", points: 15847.32 },
-    { rank: 2, address: "0xabcdef1234567890abcdef1234567890abcdef12", points: 12453.18 },
-    { rank: 3, address: "0x9876543210fedcba9876543210fedcba98765432", points: 9821.45 },
-    { rank: 4, address: "0xfedcba9876543210fedcba9876543210fedcba98", points: 7654.21 },
-    { rank: 5, address: "0x5555555555555555555555555555555555555555", points: 6432.89 },
-    { rank: 6, address: "0x6666666666666666666666666666666666666666", points: 5218.67 },
-    { rank: 7, address: "0x7777777777777777777777777777777777777777", points: 4102.33 },
-    { rank: 8, address: "0x8888888888888888888888888888888888888888", points: 3567.91 },
-    { rank: 9, address: "0x9999999999999999999999999999999999999999", points: 2845.12 },
-    { rank: 10, address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", points: 2134.78 },
-    { rank: 11, address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", points: 1987.45 },
-    { rank: 12, address: "0xcccccccccccccccccccccccccccccccccccccccc", points: 1856.23 },
-    { rank: 13, address: "0xdddddddddddddddddddddddddddddddddddddddd", points: 1723.67 },
-    { rank: 14, address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", points: 1598.34 },
-    { rank: 15, address: "0xffffffffffffffffffffffffffffffffffffffff", points: 1456.89 },
-    { rank: 16, address: "0x1111222233334444555566667777888899990000", points: 1345.12 },
-    { rank: 17, address: "0x2222333344445555666677778888999900001111", points: 1234.56 },
-    { rank: 18, address: "0x3333444455556666777788889999000011112222", points: 1123.78 },
-    { rank: 19, address: "0x4444555566667777888899990000111122223333", points: 1098.45 },
-    { rank: 20, address: "0x5556667778889990001112223334445556667778", points: 1067.23 },
-    { rank: 21, address: "0x6667778889990001112223334445556667778889", points: 1045.67 },
-    { rank: 22, address: "0x7778889990001112223334445556667778889990", points: 1023.89 },
-    { rank: 23, address: "0x8889990001112223334445556667778889990001", points: 998.34 },
-    { rank: 24, address: "0x9990001112223334445556667778889990001112", points: 967.12 },
-  ];
+  const data = await fetchGlobalStatsFromUpstash();
+  return {
+    totalParticipants: data?.totalParticipants ?? DEFAULT_GLOBAL_STATS.totalParticipants,
+    currentSeason: data?.currentSeason ?? DEFAULT_GLOBAL_STATS.currentSeason,
+    currentWeek: data?.currentWeek ?? DEFAULT_GLOBAL_STATS.currentWeek,
+    seasonStartDate: data?.seasonStartDate ?? DEFAULT_GLOBAL_STATS.seasonStartDate,
+  };
 }
 
 /**
- * Default empty states
+ * Fetch points history from Upstash and transform to internal format
  */
-const DEFAULT_USER_POINTS: UserPointsData = {
-  totalPoints: 0,
-  dailyRate: 0,
-  leaderboardPosition: null,
-  volumePoints: 0,
-  liquidityPoints: 0,
-  referralPoints: 0,
-  recentPointsEarned: 0,
+async function fetchPointsHistory(address: string): Promise<PointsHistoryEntry[]> {
+  const data = await fetchUserHistory(address);
+  return data.map((entry) => ({
+    id: entry.id,
+    type: entry.type,
+    points: entry.points,
+    season: entry.season,
+    week: entry.week,
+    startDate: entry.startDate,
+    endDate: entry.endDate,
+    referralCount: entry.referralCount,
+    // For referral entries, use startDate as timestamp
+    timestamp: entry.type === "referral" ? entry.startDate : undefined,
+  }));
+}
+
+/**
+ * Fetch leaderboard from Upstash
+ */
+async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
+  const data = await fetchLeaderboardFromUpstash();
+  return data.map((entry) => ({
+    rank: entry.rank,
+    address: entry.address,
+    points: entry.points,
+  }));
+}
+
+/**
+ * Default empty states (using constants from upstash-points)
+ */
+const EMPTY_USER_POINTS: UserPointsData = {
+  totalPoints: DEFAULT_USER_POINTS.totalPoints,
+  dailyRate: DEFAULT_USER_POINTS.dailyRate,
+  leaderboardPosition: DEFAULT_USER_POINTS.leaderboardPosition,
+  volumePoints: DEFAULT_USER_POINTS.volumePoints,
+  liquidityPoints: DEFAULT_USER_POINTS.liquidityPoints,
+  referralPoints: DEFAULT_USER_POINTS.referralPoints,
+  recentPointsEarned: DEFAULT_USER_POINTS.recentPointsEarned,
 };
 
-const DEFAULT_GLOBAL_STATS: GlobalStatsData = {
-  totalParticipants: 0,
+const EMPTY_GLOBAL_STATS: GlobalStatsData = {
+  totalParticipants: DEFAULT_GLOBAL_STATS.totalParticipants,
+  currentSeason: DEFAULT_GLOBAL_STATS.currentSeason,
+  currentWeek: DEFAULT_GLOBAL_STATS.currentWeek,
+  seasonStartDate: DEFAULT_GLOBAL_STATS.seasonStartDate,
 };
 
 /**
@@ -194,8 +205,8 @@ export function usePointsPageData(): UsePointsPageDataReturn {
   const { address: accountAddress, isConnected } = useAccount();
 
   // Separate state for each data category (Uniswap pattern)
-  const [userPoints, setUserPoints] = useState<UserPointsData>(DEFAULT_USER_POINTS);
-  const [globalStats, setGlobalStats] = useState<GlobalStatsData>(DEFAULT_GLOBAL_STATS);
+  const [userPoints, setUserPoints] = useState<UserPointsData>(EMPTY_USER_POINTS);
+  const [globalStats, setGlobalStats] = useState<GlobalStatsData>(EMPTY_GLOBAL_STATS);
   const [pointsHistory, setPointsHistory] = useState<PointsHistoryEntry[]>([]);
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
 
@@ -223,7 +234,7 @@ export function usePointsPageData(): UsePointsPageDataReturn {
 
       // Reset user-specific data when disconnected
       if (!fetchingUserData) {
-        setUserPoints(DEFAULT_USER_POINTS);
+        setUserPoints(EMPTY_USER_POINTS);
         setPointsHistory([]);
       }
 
@@ -324,6 +335,11 @@ export function usePointsPageData(): UsePointsPageDataReturn {
     dailyRate: userPoints.dailyRate,
     leaderboardPosition: userPoints.leaderboardPosition,
     totalParticipants: globalStats.totalParticipants,
+
+    // Season data
+    currentSeason: globalStats.currentSeason,
+    currentWeek: globalStats.currentWeek,
+    seasonStartDate: new Date(globalStats.seasonStartDate),
 
     // Points breakdown
     volumePoints: userPoints.volumePoints,

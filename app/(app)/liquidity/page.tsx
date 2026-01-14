@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 
 import * as React from "react";
 import { ColumnDef, RowData, Row } from "@tanstack/react-table";
+import { useQuery } from "@tanstack/react-query";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefetchOnHover } from "@/hooks/usePrefetchOnHover";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
@@ -31,6 +32,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TickMath } from '@uniswap/v3-sdk';
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 import { APRBadge } from "@/components/liquidity/APRBadge";
+import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
 
 const DEFAULT_TICK_SPACING = 60;
 
@@ -117,6 +119,30 @@ export default function LiquidityPage() {
 
   const initialPools = useMemo(() => generatePoolsFromConfig(), [networkMode]);
   const [poolsData, setPoolsData] = useState<Pool[]>([]);
+
+  // Fetch Aave rates for Unified Yield display
+  const { data: aaveRatesData } = useQuery({
+    queryKey: ['aaveRates'],
+    queryFn: fetchAaveRates,
+    staleTime: 5 * 60_000, // 5 minutes
+  });
+
+  // Calculate Aave APY for a pool based on its token symbols
+  const getPoolAaveApy = useCallback((token0Symbol: string, token1Symbol: string): number | undefined => {
+    if (!aaveRatesData?.success) return undefined;
+
+    const key0 = getAaveKey(token0Symbol);
+    const key1 = getAaveKey(token1Symbol);
+
+    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
+    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
+
+    // Average if both tokens supported, otherwise use single token's APY
+    if (apy0 !== null && apy1 !== null) {
+      return (apy0 + apy1) / 2;
+    }
+    return apy0 ?? apy1 ?? undefined;
+  }, [aaveRatesData]);
 
   useEffect(() => {
     setPoolsData(initialPools);
@@ -570,11 +596,12 @@ export default function LiquidityPage() {
         const isAprCalculated = pool.apr !== undefined && pool.apr !== "Loading..." && pool.apr !== "N/A";
         const aprValue = isAprCalculated ? parseFloat(pool.apr.replace(/[~%K]/g, '')) : undefined;
         const tokens = pool.tokens || [];
+        const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '');
 
         return (
           <Cell justifyContent="flex-end">
             <APRBadge
-              breakdown={{ poolApr: aprValue }}
+              breakdown={{ poolApr: aprValue, lendingApr }}
               token0Symbol={tokens[0]?.symbol}
               token1Symbol={tokens[1]?.symbol}
               isLoading={!isAprCalculated}
@@ -583,7 +610,7 @@ export default function LiquidityPage() {
         );
       },
     },
-  ], [sortMethod, sortAscending]);
+  ], [sortMethod, sortAscending, getPoolAaveApy]);
 
   const poolAggregates = React.useMemo(() => {
     let totalTVL = 0;

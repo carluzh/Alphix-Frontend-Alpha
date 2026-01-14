@@ -7,7 +7,7 @@ import Link from "next/link"
 import {
   HelpCircleIcon,
 } from "lucide-react"
-import { IconHouse6Fill, IconStorage, IconChart, IconArrowsBoldOppositeDirection, IconSavedItems, IconCoins } from "nucleo-micro-bold-essential"
+import { IconHouse6Fill, IconStorage, IconArrowsBoldOppositeDirection, IconSavedItems, IconCoins } from "nucleo-micro-bold-essential"
 import { NavMain, type NavMainItem } from "./nav-main"
 import { AccountStatus } from "./AccountStatus"
 import { ConnectWalletButton } from "./ConnectWalletButton"
@@ -55,12 +55,6 @@ const baseNavItems: NavMainItem[] = [
     title: "Points",
     url: "/points",
     icon: PointsIcon,
-  },
-  {
-    title: "Analytics",
-    url: "/analytics",
-    icon: IconChart,
-    disabled: true,
   },
 ];
 
@@ -233,7 +227,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
             >
               Links
             </div>
-            <SidebarMenu className="mt-1 flex flex-col gap-0 px-2.5">
+            <SidebarMenu className="mt-1 flex flex-col gap-0 px-2.5 pb-3">
                 <SidebarMenuItem className="list-none">
                   <SidebarMenuButton
                     asChild

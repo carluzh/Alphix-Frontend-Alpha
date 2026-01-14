@@ -68,10 +68,6 @@ export interface CreatePositionTxInfo {
   tickUpper: number;
   /** Calculated liquidity value */
   liquidity: string;
-  /** Whether this is a zap transaction */
-  isZapMode: boolean;
-  /** Input token for zap mode */
-  zapInputToken?: 'token0' | 'token1';
 }
 
 /**
@@ -140,7 +136,6 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     tickLower,
     tickUpper,
     inputSide,
-    isZapMode,
   } = state;
 
   // Get pool config for token symbols
@@ -157,7 +152,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   const { price: token1USDPrice } = useTokenUSDPrice(token1Symbol || null);
 
   // Get slippage settings
-  const { currentSlippage } = useUserSlippageTolerance();
+  const { currentSlippage, updateAutoSlippage } = useUserSlippageTolerance();
   const slippageToleranceBps = Math.round(currentSlippage * 100);
 
   // Transaction error state
@@ -262,7 +257,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     isLoading: isCheckingApprovals,
     refetch: refetchApprovals,
   } = useCheckMintApprovals(approvalCheckParams, {
-    enabled: !!approvalCheckParams && !isZapMode,
+    enabled: !!approvalCheckParams,
     staleTime: 5000,
   });
 
@@ -292,7 +287,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
       slippageBps: slippageToleranceBps,
     },
     {
-      enabled: !!calculatedData && !isZapMode && !transactionError,
+      enabled: !!calculatedData && !transactionError,
       refetchInterval: 10000, // Refresh every 10 seconds
       staleTime: 5000,
     }
@@ -367,10 +362,8 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
       tickLower: calculatedData.finalTickLower,
       tickUpper: calculatedData.finalTickUpper,
       liquidity: calculatedData.liquidity,
-      isZapMode,
-      zapInputToken: isZapMode ? (inputSide === 'token0' ? 'token0' : 'token1') : undefined,
     };
-  }, [calculatedData, token0Symbol, token1Symbol, approvalData, isZapMode, inputSide]);
+  }, [calculatedData, token0Symbol, token1Symbol, approvalData]);
 
   // ==========================================================================
   // CONTEXT VALUE

@@ -42,6 +42,8 @@ function getActionLabel(stepType: TransactionStepType): string {
     [TransactionStepType.TokenRevocationTransaction]: 'Revoke',
     [TransactionStepType.Permit2Signature]: 'Sign',
     [TransactionStepType.Permit2Transaction]: 'Permit',
+    [TransactionStepType.SwapPermitSignature]: 'Sign swap',
+    [TransactionStepType.SwapTransaction]: 'Swap',
   }
   return actionLabels[stepType] || 'Confirm'
 }

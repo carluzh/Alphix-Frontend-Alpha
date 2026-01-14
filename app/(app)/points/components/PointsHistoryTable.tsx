@@ -29,7 +29,7 @@ function formatShortDate(timestamp: number): string {
  * Format date range for weekly drops
  */
 function formatDateRange(startDate?: number, endDate?: number): string {
-  if (!startDate || !endDate) return "—";
+  if (!startDate || !endDate) return "-";
   return `${formatShortDate(startDate)} - ${formatShortDate(endDate)}`;
 }
 
@@ -201,7 +201,7 @@ function HistoryRow({ entry }: { entry: PointsHistoryEntry }) {
     ? formatDateRange(entry.startDate, entry.endDate)
     : entry.timestamp
       ? formatShortDate(entry.timestamp)
-      : "—";
+      : "-";
 
   return (
     <div

@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { calculateTotalApr, formatTotalApr } from "@/lib/apr";
 import { PointsTooltip, TooltipSize } from "./PointsCampaign/PointsTooltip";
 import { APRBreakdownTooltip } from "./APRBreakdownTooltip";
 
@@ -24,20 +25,29 @@ export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, t
     return <div className={cn("h-7 w-[72px] bg-muted/60 rounded animate-pulse", className)} />;
   }
 
+  // Use consolidated APR calculation
   const totalApr = breakdown
-    ? (breakdown.poolApr ?? 0) + (breakdown.pointsApr ?? 0) + (breakdown.lendingApr ?? 0)
-    : apr;
+    ? calculateTotalApr({
+        swapApr: breakdown.poolApr,
+        unifiedYieldApr: breakdown.lendingApr,
+        pointsApr: breakdown.pointsApr,
+      })
+    : apr ?? null;
 
-  if (totalApr === undefined || totalApr === null) {
+  if (totalApr === null) {
     return (
       <div className={cn("inline-flex items-center justify-center h-7 w-[72px] rounded text-sm font-semibold font-mono bg-muted/40 text-muted-foreground", className)}>
-        —
+        -
       </div>
     );
   }
 
   const isZeroApr = totalApr === 0;
-  const formattedApr = totalApr < 1000 ? `${totalApr.toFixed(2)}%` : `${(totalApr / 1000).toFixed(2)}K%`;
+  const formattedApr = formatTotalApr({
+    swapApr: breakdown?.poolApr ?? totalApr,
+    unifiedYieldApr: breakdown?.lendingApr,
+    pointsApr: breakdown?.pointsApr,
+  });
 
   const badge = (
     <div className={cn(

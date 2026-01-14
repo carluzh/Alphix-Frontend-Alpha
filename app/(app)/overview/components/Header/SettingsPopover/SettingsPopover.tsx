@@ -9,7 +9,7 @@
 
 import { memo, useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { IconXmark, IconArrowLeft } from "nucleo-micro-bold-essential";
+import { IconXmark } from "nucleo-micro-bold-essential";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -286,17 +286,9 @@ function SettingsPanel({
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-sidebar-border/60 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onClose}
-            className="p-1 hover:opacity-60 transition-opacity"
-          >
-            <IconArrowLeft className="h-5 w-5 text-foreground" />
-          </button>
-          <span className="text-base font-medium text-foreground">
-            Settings
-          </span>
-        </div>
+        <span className="text-base font-medium text-foreground">
+          Settings
+        </span>
         <button
           onClick={onClose}
           className="p-1 hover:opacity-60 transition-opacity"
@@ -308,25 +300,13 @@ function SettingsPanel({
       {/* Scrollable Content */}
       <div className="flex-1 overflow-y-auto px-4 py-4">
         <div className="flex flex-col gap-6">
-          {/* Network Section */}
-          <div className="flex flex-col gap-2">
-            <SectionTitle>Network</SectionTitle>
-            <SettingsRow title="Testnet mode">
-              <Switch
-                checked={testnetMode}
-                onCheckedChange={handleNetworkToggle}
-                disabled={isNetworkSwitching}
-              />
-            </SettingsRow>
-          </div>
-
           {/* Trading Section */}
           <div className="flex flex-col gap-2">
             <SectionTitle>Trading</SectionTitle>
 
-            {/* Slippage Tolerance */}
-            <div className="flex flex-col gap-2 py-2">
-              <span className="text-sm text-foreground">Slippage tolerance</span>
+            {/* Slippage */}
+            <div className="flex items-center justify-between py-2">
+              <span className="text-sm text-foreground">Slippage</span>
               <div
                 ref={containerRef}
                 className="relative inline-flex items-center h-9 rounded-lg border border-sidebar-border/60 bg-background w-fit"
@@ -410,6 +390,18 @@ function SettingsPanel({
                   <SelectItem value="infinite">Infinite</SelectItem>
                 </SelectContent>
               </Select>
+            </SettingsRow>
+          </div>
+
+          {/* Network Section */}
+          <div className="flex flex-col gap-2">
+            <SectionTitle>Network</SectionTitle>
+            <SettingsRow title="Testnet mode">
+              <Switch
+                checked={testnetMode}
+                onCheckedChange={handleNetworkToggle}
+                disabled={isNetworkSwitching}
+              />
             </SettingsRow>
           </div>
         </div>

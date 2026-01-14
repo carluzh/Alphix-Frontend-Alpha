@@ -52,7 +52,9 @@ interface OverviewProps {
   walletBalances: TokenBalance[];
   activePositions: Position[];
   priceMap: Record<string, number>;
+  aprByPoolId?: Record<string, string>;
   isLoading?: boolean;
+  totalPoints?: number;
   dailyPoints?: number;
   leaderboardPosition?: number | null;
 }
@@ -62,18 +64,6 @@ const OVERVIEW_RIGHT_COLUMN_WIDTH = 380;
 const MAX_POOLS_ROWS = 5;
 const MAX_TOKENS_ROWS = 8;
 
-/**
- * Mock pointsData for demonstration of LP Incentive Rewards Badge.
- * TODO: Remove when real points data is integrated from backend.
- *
- * When pointsData.pointsApr > 0, the PointsFeeStat component will display:
- * - Pool APR + Points Badge with tooltip showing APR breakdown
- */
-const MOCK_POINTS_DATA = {
-  pointsApr: 8.5,
-  totalApr: 15.2,
-  isEligible: true,
-};
 
 /**
  * Overview
@@ -90,7 +80,9 @@ export const Overview = memo(function Overview({
   walletBalances,
   activePositions,
   priceMap,
+  aprByPoolId,
   isLoading,
+  totalPoints,
   dailyPoints,
   leaderboardPosition,
 }: OverviewProps) {
@@ -129,8 +121,10 @@ export const Overview = memo(function Overview({
 
 
   // Convert positions to PositionInfo[] - mirrors Uniswap's pattern
+  // Sort by USD value descending before taking top positions
   const positions = useMemo(() => {
-    return activePositions.slice(0, MAX_POOLS_ROWS).map((pos) => {
+    // First convert all positions to get their values
+    const positionsWithValue = activePositions.map((pos) => {
       const subgraphPos: SubgraphPosition = {
         positionId: pos.positionId,
         owner: pos.owner || "",
@@ -158,25 +152,55 @@ export const Overview = memo(function Overview({
       const token0Decimals = tokenDefinitions?.[pos.token0.symbol]?.decimals ?? 18;
       const token1Decimals = tokenDefinitions?.[pos.token1.symbol]?.decimals ?? 18;
 
-      return parseSubgraphPosition(subgraphPos, { chainId, token0Decimals, token1Decimals });
-    }).filter(isPositionInfo);
-  }, [activePositions, chainId, tokenDefinitions]);
+      const positionInfo = parseSubgraphPosition(subgraphPos, { chainId, token0Decimals, token1Decimals });
+
+      // Calculate USD value for sorting
+      let usdValue = 0;
+      if (positionInfo) {
+        const amt0 = parseFloat(positionInfo.currency0Amount.toExact());
+        const amt1 = parseFloat(positionInfo.currency1Amount.toExact());
+        const symbol0 = positionInfo.currency0Amount.currency.symbol;
+        const symbol1 = positionInfo.currency1Amount.currency.symbol;
+        const price0 = getUsdPriceForSymbol(symbol0);
+        const price1 = getUsdPriceForSymbol(symbol1);
+        usdValue = amt0 * price0 + amt1 * price1;
+      }
+
+      return { positionInfo, usdValue };
+    });
+
+    // Sort by USD value descending, then take top MAX_POOLS_ROWS
+    return positionsWithValue
+      .filter((p): p is { positionInfo: PositionInfo; usdValue: number } => p.positionInfo !== undefined)
+      .sort((a, b) => b.usdValue - a.usdValue)
+      .slice(0, MAX_POOLS_ROWS)
+      .map(p => p.positionInfo);
+  }, [activePositions, chainId, tokenDefinitions, getUsdPriceForSymbol]);
 
   // Calculate total positions value for the chart's "live now" point
   const totalPositionsValue = useMemo(() => {
     return positions.reduce((sum, pos) => sum + getPositionValueUSD(pos), 0);
   }, [positions, getPositionValueUSD]);
 
-  // Default pool context for overview display
-  const defaultPoolContext = useMemo(
-    () => ({
-      currentPrice: null,
-      currentPoolTick: null,
-      poolAPR: null,
-      isLoadingPrices: isLoading ?? false,
-      isLoadingPoolStates: false,
-    }),
-    [isLoading]
+  // Get pool context for a position (with APR from aprByPoolId)
+  const getPoolContext = useCallback(
+    (poolId: string) => {
+      // Parse APR string (e.g., "12.34%" or "N/A") to number
+      const aprString = aprByPoolId?.[poolId.toLowerCase()];
+      let poolAPR: number | null = null;
+      if (aprString && aprString !== "N/A") {
+        const parsed = parseFloat(aprString.replace('%', ''));
+        if (!isNaN(parsed)) poolAPR = parsed;
+      }
+      return {
+        currentPrice: null,
+        currentPoolTick: null,
+        poolAPR,
+        isLoadingPrices: isLoading ?? false,
+        isLoadingPoolStates: false,
+      };
+    },
+    [aprByPoolId, isLoading]
   );
 
   return (
@@ -209,7 +233,7 @@ export const Overview = memo(function Overview({
           style={{ width: OVERVIEW_RIGHT_COLUMN_WIDTH }}
         >
           <PointsRewardsCard
-            totalPoints={1847.2391}
+            totalPoints={totalPoints}
             isLoading={isLoading}
           />
           <OverviewStatsTiles
@@ -238,8 +262,8 @@ export const Overview = memo(function Overview({
           "items-start"
         )}
       >
-        {/* POOLS - Left (grows, max 720px) */}
-        <div className="flex-1 min-w-0 flex flex-col max-w-[720px]">
+        {/* POOLS - Left (grows to fill space) */}
+        <div className="flex-1 min-w-0 flex flex-col">
           <div className="flex flex-col gap-3">
             <TableSectionHeader
               title="Your Positions"
@@ -278,9 +302,8 @@ export const Overview = memo(function Overview({
                       position={position}
                       valueUSD={getPositionValueUSD(position)}
                       onClick={() => position.tokenId && handlePositionClick(position.tokenId)}
-                      poolContext={defaultPoolContext}
+                      poolContext={getPoolContext(position.poolId || '')}
                       showMenuButton={false}
-                      pointsData={MOCK_POINTS_DATA}
                     />
                   ))}
                 </div>

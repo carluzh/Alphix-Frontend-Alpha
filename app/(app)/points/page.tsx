@@ -2,6 +2,7 @@
 
 import { Points } from "./components/Points";
 import { usePointsPageData } from "./hooks/usePointsPageData";
+import { useReferralData } from "./hooks/useReferralData";
 
 /**
  * Points Page
@@ -10,7 +11,7 @@ import { usePointsPageData } from "./hooks/usePointsPageData";
  * Shows the Points dashboard with:
  * - Points Inventory hero card (balance + daily rate)
  * - Dynamic stats panel (changes based on selected tab)
- * - Tabbed section: History | Leaderboard
+ * - Tabbed section: History | Leaderboard | Referral
  */
 export default function PointsPage() {
   const {
@@ -18,6 +19,7 @@ export default function PointsPage() {
     dailyRate,
     leaderboardPosition,
     totalParticipants,
+    seasonStartDate,
     volumePoints,
     liquidityPoints,
     referralPoints,
@@ -27,6 +29,26 @@ export default function PointsPage() {
     accountAddress,
     isLoading,
   } = usePointsPageData();
+
+  const {
+    // Stats
+    totalReferees,
+    totalReferredTvlUsd,
+    totalReferredVolumeUsd,
+    // My code
+    myCode,
+    getOrCreateReferralCode,
+    // My referrer
+    myReferrer,
+    myReferrerCode,
+    joinedAt,
+    // Referees list
+    referees,
+    // Actions
+    applyReferralCode,
+    // State
+    isLoading: isReferralLoading,
+  } = useReferralData();
 
   return (
     <Points
@@ -41,7 +63,20 @@ export default function PointsPage() {
       pointsHistory={pointsHistory}
       leaderboardData={leaderboardData}
       accountAddress={accountAddress}
-      isLoading={isLoading}
+      seasonStartDate={seasonStartDate}
+      isLoading={isLoading || isReferralLoading}
+      // Referral stats
+      totalReferees={totalReferees}
+      totalReferredTvlUsd={totalReferredTvlUsd}
+      totalReferredVolumeUsd={totalReferredVolumeUsd}
+      // Referral data
+      myReferralCode={myCode}
+      getOrCreateReferralCode={getOrCreateReferralCode}
+      myReferrer={myReferrer}
+      myReferrerCode={myReferrerCode}
+      referrerJoinedAt={joinedAt}
+      referees={referees}
+      applyReferralCode={applyReferralCode}
     />
   );
 }

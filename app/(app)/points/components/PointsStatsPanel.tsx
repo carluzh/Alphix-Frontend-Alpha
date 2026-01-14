@@ -39,14 +39,18 @@ interface PointsStatsPanelProps {
   liquidityPoints?: number;
   referralPoints?: number;
   isLoading?: boolean;
+  // Referral stats
+  totalReferees?: number;
+  totalReferredTvlUsd?: number;
+  totalReferredVolumeUsd?: number;
 }
 
 /**
  * Format position with # prefix
  */
 function formatPosition(position: number | null): string {
-  if (position === null || position <= 0) return "—";
-  return `#${position.toLocaleString()}`;
+  if (position === null || position <= 0) return "-";
+  return `#${position.toLocaleString("en-US")}`;
 }
 
 /**
@@ -59,7 +63,7 @@ function formatCompact(value: number): string {
   if (value >= 1_000) {
     return `${(value / 1_000).toFixed(1)}K`;
   }
-  return value.toLocaleString();
+  return value.toLocaleString("en-US");
 }
 
 /**
@@ -82,6 +86,9 @@ export const PointsStatsPanel = memo(function PointsStatsPanel({
   liquidityPoints = 0,
   referralPoints = 0,
   isLoading = false,
+  totalReferees = 0,
+  totalReferredTvlUsd = 0,
+  totalReferredVolumeUsd = 0,
 }: PointsStatsPanelProps) {
   const isMobile = useIsMobile();
 
@@ -112,6 +119,9 @@ export const PointsStatsPanel = memo(function PointsStatsPanel({
       return (
         <ReferralStatsPanel
           referralPoints={referralPoints}
+          totalReferees={totalReferees}
+          totalReferredTvlUsd={totalReferredTvlUsd}
+          totalReferredVolumeUsd={totalReferredVolumeUsd}
           isLoading={isLoading}
           isMobile={isMobile}
         />
@@ -421,7 +431,7 @@ function LeaderboardStatsPanel({
             <StatRow
               icon={<PercentileIcon className="w-4 h-4 text-muted-foreground" />}
               label="Percentile"
-              value={percentile ? `${percentile}%` : "—"}
+              value={percentile ? `${percentile}%` : "-"}
               isLoading={isLoading}
               isMobile={isMobile}
             />
@@ -449,14 +459,33 @@ function LeaderboardStatsPanel({
 }
 
 /**
+ * Format USD value compactly
+ */
+function formatUsdCompact(value: number): string {
+  if (value >= 1_000_000) {
+    return `$${(value / 1_000_000).toFixed(1)}M`;
+  }
+  if (value >= 1_000) {
+    return `$${(value / 1_000).toFixed(1)}K`;
+  }
+  return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+}
+
+/**
  * Referral Stats Panel - Shows when Referral tab is active
  */
 function ReferralStatsPanel({
   referralPoints,
+  totalReferees,
+  totalReferredTvlUsd,
+  totalReferredVolumeUsd,
   isLoading,
   isMobile,
 }: {
   referralPoints: number;
+  totalReferees: number;
+  totalReferredTvlUsd: number;
+  totalReferredVolumeUsd: number;
   isLoading?: boolean;
   isMobile: boolean;
 }) {
@@ -492,7 +521,7 @@ function ReferralStatsPanel({
             <StatRow
               icon={<UsersIcon className="w-4 h-4 text-muted-foreground" />}
               label="Total Referrals"
-              value="0"
+              value={formatCompact(totalReferees)}
               isLoading={isLoading}
               isMobile={isMobile}
             />
@@ -527,7 +556,7 @@ function ReferralStatsPanel({
                 {isLoading ? (
                   <span className="inline-block bg-muted/60 rounded h-4 w-14" />
                 ) : (
-                  "$0"
+                  formatUsdCompact(totalReferredTvlUsd)
                 )}
               </div>
             </div>
@@ -545,7 +574,7 @@ function ReferralStatsPanel({
                 {isLoading ? (
                   <span className="inline-block bg-muted/60 rounded h-4 w-14" />
                 ) : (
-                  "$0"
+                  formatUsdCompact(totalReferredVolumeUsd)
                 )}
               </div>
             </div>

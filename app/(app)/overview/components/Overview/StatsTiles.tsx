@@ -23,11 +23,8 @@ function formatPoints(value: number): string {
  * Format leaderboard position with ordinal suffix
  */
 function formatPosition(position: number | null): string {
-  if (position === null || position <= 0) return "—";
-  const suffixes = ["th", "st", "nd", "rd"];
-  const v = position % 100;
-  const suffix = suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0];
-  return `#${position.toLocaleString()}`;
+  if (position === null || position <= 0) return "-";
+  return `#${position.toLocaleString("en-US")}`;
 }
 
 /**
@@ -44,11 +41,11 @@ function formatPosition(position: number | null): string {
  * - Right: "Leaderboard" + position in points campaign
  */
 export const OverviewStatsTiles = memo(function OverviewStatsTiles({
-  dailyPoints = 23.4872,
-  leaderboardPosition = 1247,
+  dailyPoints,
+  leaderboardPosition,
   isLoading = false,
 }: OverviewStatsTilesProps) {
-  const EM_DASH = "—";
+  const DASH = "-";
 
   return (
     <div
@@ -75,8 +72,10 @@ export const OverviewStatsTiles = memo(function OverviewStatsTiles({
           >
             {isLoading ? (
               <span className="inline-block bg-muted/60 rounded h-5 w-16" />
-            ) : (
+            ) : dailyPoints !== undefined && dailyPoints > 0 ? (
               formatPoints(dailyPoints)
+            ) : (
+              DASH
             )}
           </div>
         </div>
@@ -94,10 +93,10 @@ export const OverviewStatsTiles = memo(function OverviewStatsTiles({
           >
             {isLoading ? (
               <span className="inline-block bg-muted/60 rounded h-5 w-12" />
-            ) : leaderboardPosition !== null ? (
+            ) : leaderboardPosition !== null && leaderboardPosition !== undefined ? (
               formatPosition(leaderboardPosition)
             ) : (
-              EM_DASH
+              DASH
             )}
           </div>
         </div>

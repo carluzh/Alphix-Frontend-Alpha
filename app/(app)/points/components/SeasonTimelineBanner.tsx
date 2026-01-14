@@ -3,6 +3,13 @@
 import { memo, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { SeasonIcon } from "@/components/PointsIcons";
+import { IconCircleInfo } from "nucleo-micro-bold-essential";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // Time constants (inspired by Uniswap's utilities/src/time/time.ts)
 const ONE_MINUTE_MS = 60 * 1000;
@@ -71,27 +78,34 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
     seasonRemainingMs,
     weekRemainingMs,
     isSeasonActive,
+    isBeforeSeason,
+    daysUntilStart,
   } = useMemo(() => {
     const now = new Date();
     const seasonEnd = new Date(seasonStartDate);
     seasonEnd.setDate(seasonEnd.getDate() + seasonDurationDays);
 
+    // Check if we're before season start
+    const beforeSeason = now < seasonStartDate;
+    const msUntilStart = seasonStartDate.getTime() - now.getTime();
+    const daysUntil = Math.ceil(msUntilStart / ONE_DAY_MS);
+
     const totalMs = seasonDurationDays * ONE_DAY_MS;
     const elapsedMs = Math.max(0, now.getTime() - seasonStartDate.getTime());
-    const seasonProg = Math.min(100, (elapsedMs / totalMs) * 100);
+    const seasonProg = beforeSeason ? 0 : Math.min(100, (elapsedMs / totalMs) * 100);
 
-    // Calculate current week (1-indexed)
+    // Calculate current week (0-indexed before start, 1-indexed after)
     const elapsedDays = elapsedMs / ONE_DAY_MS;
-    const week = Math.floor(elapsedDays / 7) + 1;
+    const week = beforeSeason ? 0 : Math.floor(elapsedDays / 7) + 1;
     const weeks = Math.ceil(seasonDurationDays / 7);
 
     // Week progress (0-100% within current week)
     const msIntoWeek = elapsedMs % (7 * ONE_DAY_MS);
-    const weekProg = (msIntoWeek / (7 * ONE_DAY_MS)) * 100;
+    const weekProg = beforeSeason ? 0 : (msIntoWeek / (7 * ONE_DAY_MS)) * 100;
 
     // Time remaining calculations
     const seasonRemMs = Math.max(0, seasonEnd.getTime() - now.getTime());
-    const weekRemMs = Math.max(0, (7 * ONE_DAY_MS) - msIntoWeek);
+    const weekRemMs = beforeSeason ? 0 : Math.max(0, (7 * ONE_DAY_MS) - msIntoWeek);
 
     // Season is active if we're between start and end
     const isActive = now >= seasonStartDate && now <= seasonEnd;
@@ -104,6 +118,8 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
       seasonRemainingMs: seasonRemMs,
       weekRemainingMs: weekRemMs,
       isSeasonActive: isActive,
+      isBeforeSeason: beforeSeason,
+      daysUntilStart: daysUntil,
     };
   }, [seasonStartDate, seasonDurationDays]);
 
@@ -160,9 +176,19 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
               <SeasonIcon className="w-3 h-3 text-white/70" />
             </div>
           </div>
-          <div className="text-xs text-muted-foreground">
-            <span className="text-sidebar-primary font-bold">{formatPoints(pointsPerWeek)}</span> pts/week
-          </div>
+          <TooltipProvider delayDuration={0}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="text-xs text-muted-foreground flex items-center gap-1 cursor-default">
+                  <span className="text-sidebar-primary font-bold">{formatPoints(pointsPerWeek)}</span> pts/week
+                  <IconCircleInfo className="w-3 h-3 text-muted-foreground/60" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-[220px]">
+                <p className="text-xs">Distributed every Thursday at 02:00 UTC</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
 
         {/* Progress bars with muted backdrop */}
@@ -172,7 +198,11 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
             <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground">Season Progress</span>
               <span className="text-foreground font-medium" style={{ fontFamily: "Consolas, monospace" }}>
-                {formatSeasonRemaining(seasonRemainingMs)}
+                {isBeforeSeason ? (
+                  <span className="text-sidebar-primary">starting in {daysUntilStart}d</span>
+                ) : (
+                  formatSeasonRemaining(seasonRemainingMs)
+                )}
               </span>
             </div>
             <SeasonProgressBar progress={seasonProgress} />
@@ -186,7 +216,11 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
                 <span className="text-foreground font-medium">S0W{currentWeek}</span>
               </span>
               <span className="text-foreground font-medium" style={{ fontFamily: "Consolas, monospace" }}>
-                {formatWeekRemaining(weekRemainingMs)}
+                {isBeforeSeason ? (
+                  <span className="text-muted-foreground">—</span>
+                ) : (
+                  formatWeekRemaining(weekRemainingMs)
+                )}
               </span>
             </div>
             <WeekProgressBar progress={weekProgress} />

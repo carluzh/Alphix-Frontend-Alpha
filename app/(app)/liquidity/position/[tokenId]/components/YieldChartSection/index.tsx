@@ -15,6 +15,12 @@ import {
   ChartTooltip,
 } from "@/components/ui/chart";
 import { cn } from "@/lib/utils";
+import {
+  calculatePeriodRange,
+  generateTicksForPeriod,
+  formatTickForPeriod,
+  type ChartPeriodPosition,
+} from "@/lib/chart-time-utils";
 
 // ============================================================================
 // Types
@@ -27,6 +33,10 @@ interface ChartDataPoint {
   feesUsd: number;
   accumulatedFeesUsd: number;
   apr: number;
+  /** Aave APY (for rehypo positions) */
+  aaveApy?: number;
+  /** Combined APR (swap APR + Aave APY) - use this for display */
+  totalApr?: number;
 }
 
 interface YieldChartSectionProps {
@@ -44,6 +54,8 @@ interface HoverData {
   feesUsd: number;
   accumulatedFeesUsd: number;
   apr: number;
+  /** Combined APR for display (swap + Aave) */
+  totalApr: number;
 }
 
 // ============================================================================
@@ -53,7 +65,10 @@ interface HoverData {
 const CHART_HEIGHT_PX = 380;
 
 const CHART_COLORS = {
-  apr: "#e85102", // Alphix orange for APR (matches Fee chart)
+  apr: "#e85102", // Alphix orange for Swap APR
+  aaveApy: "#9896FF", // Aave purple for Unified Yield
+  feesUsd: "hsl(var(--chart-3))", // Current unclaimed fees
+  accumulatedFeesUsd: "hsl(var(--chart-2))", // Total accumulated fees
 };
 
 // Dot pattern for chart background
@@ -70,7 +85,11 @@ const CHART_DATA_PADDING = 10;
 
 // Chart config for Recharts
 const chartConfig: ChartConfig = {
-  apr: { label: "APR", color: CHART_COLORS.apr },
+  totalApr: { label: "Total APR", color: CHART_COLORS.apr },
+  apr: { label: "Swap APR", color: CHART_COLORS.apr },
+  aaveApy: { label: "Unified Yield", color: CHART_COLORS.aaveApy },
+  feesUsd: { label: "Unclaimed", color: CHART_COLORS.feesUsd },
+  accumulatedFeesUsd: { label: "Total Fees", color: CHART_COLORS.accumulatedFeesUsd },
 };
 
 // ============================================================================
@@ -102,10 +121,6 @@ function formatAprAxis(value: number): string {
   return `${value.toFixed(2)}%`;
 }
 
-function formatDate(timestamp: number): string {
-  const date = new Date(timestamp * 1000);
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
 
 // ============================================================================
 // Sub-Components
@@ -270,6 +285,37 @@ export const YieldChartSection = memo(function YieldChartSection({
 }: YieldChartSectionProps) {
   const [hoverData, setHoverData] = useState<HoverData | null>(null);
 
+  // Calculate period range for x-axis domain
+  const [periodFrom, periodTo] = useMemo(() => calculatePeriodRange(timePeriod as ChartPeriodPosition), [timePeriod]);
+
+  // Generate ticks for x-axis based on period
+  const xAxisTicks = useMemo(() => {
+    return generateTicksForPeriod(timePeriod as ChartPeriodPosition, periodFrom, periodTo);
+  }, [timePeriod, periodFrom, periodTo]);
+
+  // Format tick based on current period
+  const formatTimestamp = useCallback((timestamp: number) => {
+    return formatTickForPeriod(timestamp, timePeriod as ChartPeriodPosition);
+  }, [timePeriod]);
+
+  // Filter chart data to the selected period and normalize totalApr
+  const filteredChartData = useMemo(() => {
+    if (chartData.length === 0) return [];
+
+    // Normalize data to ensure totalApr is always defined (fallback to apr)
+    const normalizePoint = (d: ChartDataPoint) => ({
+      ...d,
+      totalApr: d.totalApr ?? d.apr, // Use totalApr if available, otherwise use apr
+    });
+
+    // For ALL period, show all data
+    if (timePeriod === "ALL") return chartData.map(normalizePoint);
+    // Filter data within period range
+    return chartData
+      .filter(d => d.timestamp >= periodFrom && d.timestamp <= periodTo)
+      .map(normalizePoint);
+  }, [chartData, timePeriod, periodFrom, periodTo]);
+
   // Handle mouse events
   const handleMouseMove = useCallback(
     (data: { activePayload?: Array<{ payload: ChartDataPoint }> }) => {
@@ -280,6 +326,7 @@ export const YieldChartSection = memo(function YieldChartSection({
           feesUsd: point.feesUsd,
           accumulatedFeesUsd: point.accumulatedFeesUsd,
           apr: point.apr,
+          totalApr: point.totalApr ?? point.apr, // Use totalApr if available, fallback to apr
         });
       }
     },
@@ -290,46 +337,66 @@ export const YieldChartSection = memo(function YieldChartSection({
     setHoverData(null);
   }, []);
 
-  // Calculate domain and values
-  const { aprDomain, latestValues, aprDelta } = useMemo(() => {
-    if (chartData.length === 0) {
+  // Calculate domains and values for dual Y-axis chart
+  // Use totalApr (swap + Aave) for display and domain calculations
+  const { aprDomain, feeDomain, latestValues, aprDelta } = useMemo(() => {
+    if (filteredChartData.length === 0) {
       return {
         aprDomain: [0, 100] as [number, number],
+        feeDomain: [0, 1] as [number, number],
         latestValues: {
           feesUsd: currentFees ?? 0,
           accumulatedFeesUsd: 0,
           apr: 0,
+          totalApr: 0,
         },
         aprDelta: 0,
       };
     }
 
-    // Calculate APR domain
-    const aprs = chartData.map((d) => d.apr).filter((a) => a >= 0);
+    // Calculate APR domain using apr and aaveApy (for visible right Y-axis)
+    // Include both lines in domain calculation for proper Y-axis scaling
+    const aprs = filteredChartData.flatMap((d) => [
+      d.apr ?? 0,
+      d.aaveApy ?? 0,
+    ]).filter((a) => a >= 0);
     const minApr = aprs.length > 0 ? Math.min(...aprs) : 0;
     const maxApr = aprs.length > 0 ? Math.max(...aprs) : 100;
     const aprPadding = (maxApr - minApr) * 0.1 || maxApr * 0.1 || 10;
 
-    // Get latest values
-    const latest = chartData[chartData.length - 1];
-    const first = chartData[0];
+    // Calculate fee domain (for hidden left Y-axis)
+    const fees = filteredChartData.flatMap((d) => [d.feesUsd ?? 0, d.accumulatedFeesUsd ?? 0]).filter(Boolean);
+    const minFee = fees.length > 0 ? Math.min(...fees) : 0;
+    const maxFee = fees.length > 0 ? Math.max(...fees) : 1;
+    const feePadding = (maxFee - minFee) * 0.1 || maxFee * 0.1 || 0.1;
 
-    // Calculate delta from first to latest
-    const aprDelta = first.apr !== 0 ? ((latest.apr - first.apr) / first.apr) * 100 : 0;
+    // Get latest values
+    const latest = filteredChartData[filteredChartData.length - 1];
+    const first = filteredChartData[0];
+
+    // Calculate delta from first to latest using totalApr
+    const firstTotalApr = first.totalApr ?? first.apr;
+    const latestTotalApr = latest.totalApr ?? latest.apr;
+    const aprDelta = firstTotalApr !== 0 ? ((latestTotalApr - firstTotalApr) / firstTotalApr) * 100 : 0;
 
     return {
       aprDomain: [
         Math.max(0, minApr - aprPadding),
         maxApr + aprPadding,
       ] as [number, number],
+      feeDomain: [
+        Math.max(0, minFee - feePadding),
+        maxFee + feePadding,
+      ] as [number, number],
       latestValues: {
         feesUsd: latest.feesUsd,
         accumulatedFeesUsd: latest.accumulatedFeesUsd,
         apr: latest.apr,
+        totalApr: latest.totalApr ?? latest.apr,
       },
       aprDelta,
     };
-  }, [chartData, currentFees]);
+  }, [filteredChartData, currentFees]);
 
   // Display values (hover or current)
   const displayValues = hoverData ?? latestValues;
@@ -339,7 +406,7 @@ export const YieldChartSection = memo(function YieldChartSection({
   const dotPattern = `radial-gradient(circle, ${DOT_PATTERN.color} ${DOT_PATTERN.size}, transparent ${DOT_PATTERN.size})`;
 
   // No data state - show structure with current values (even if 0)
-  const hasNoData = !isLoading && chartData.length === 0;
+  const hasNoData = !isLoading && filteredChartData.length === 0;
 
   // Loading skeleton
   if (isLoading) {
@@ -373,7 +440,7 @@ export const YieldChartSection = memo(function YieldChartSection({
     );
   }
 
-  const dataLength = chartData.length;
+  const dataLength = filteredChartData.length;
 
   return (
     <div className="flex flex-col gap-4">
@@ -397,9 +464,12 @@ export const YieldChartSection = memo(function YieldChartSection({
         {/* Chart header callout (matches ChartHeader.tsx pattern) */}
         <div className="flex flex-row absolute w-full gap-2 items-start z-10">
           <div className="flex flex-col gap-1 p-3 pointer-events-none bg-background rounded-xl">
-            <span className="text-3xl font-semibold text-foreground tabular-nums truncate">
-              {formatApr(displayValues.apr)}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-3xl font-semibold text-foreground tabular-nums truncate">
+                {formatApr(displayValues.totalApr)}
+              </span>
+              <DeltaDisplay delta={aprDelta} />
+            </div>
             <div className="flex flex-row gap-2 truncate items-center text-xs">
               {isHovering ? (
                 <>
@@ -410,11 +480,13 @@ export const YieldChartSection = memo(function YieldChartSection({
                     Total: <span className="text-foreground tabular-nums">{formatUsd(displayValues.accumulatedFeesUsd)}</span>
                   </span>
                   <span className="text-muted-foreground">
-                    {formatDate(hoverData.timestamp)}
+                    {formatTimestamp(hoverData.timestamp)}
                   </span>
                 </>
               ) : (
-                <DeltaDisplay delta={aprDelta} />
+                <span className="text-muted-foreground">
+                  Unclaimed: <span className="text-foreground tabular-nums">{formatUsd(latestValues.feesUsd)}</span>
+                </span>
               )}
             </div>
           </div>
@@ -431,7 +503,7 @@ export const YieldChartSection = memo(function YieldChartSection({
         <ChartContainer config={chartConfig} className="w-full h-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
-              data={chartData}
+              data={filteredChartData}
               margin={{ top: 96, right: 0, bottom: 0, left: 0 }}
               onMouseMove={handleMouseMove}
               onMouseLeave={handleMouseLeave}
@@ -444,17 +516,32 @@ export const YieldChartSection = memo(function YieldChartSection({
               />
               <XAxis
                 dataKey="timestamp"
+                type="number"
+                domain={[periodFrom, periodTo]}
+                ticks={xAxisTicks}
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
-                tickFormatter={formatDate}
+                tickFormatter={formatTimestamp}
                 tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                minTickGap={40}
                 padding={{ left: 0, right: CHART_DATA_PADDING }}
+                scale="time"
               />
 
-              {/* Single Y-axis on right for APR */}
+              {/* Hidden left Y-axis for fee values (USD) */}
               <YAxis
+                yAxisId="left"
+                tickLine={false}
+                axisLine={false}
+                width={0}
+                domain={feeDomain}
+                tick={false}
+                hide
+              />
+
+              {/* Visible right Y-axis for APR (%) */}
+              <YAxis
+                yAxisId="right"
                 orientation="right"
                 tickLine={false}
                 axisLine={false}
@@ -473,8 +560,43 @@ export const YieldChartSection = memo(function YieldChartSection({
                 content={() => null}
               />
 
-              {/* APR line with pulsating dot */}
+              {/* Accumulated fees line (hidden Y-axis) - dashed line */}
               <Line
+                yAxisId="left"
+                type="monotone"
+                dataKey="accumulatedFeesUsd"
+                strokeWidth={2}
+                stroke={CHART_COLORS.accumulatedFeesUsd}
+                strokeDasharray="5 5"
+                dot={false}
+                isAnimationActive={false}
+              />
+
+              {/* Current unclaimed fees line (hidden Y-axis) */}
+              <Line
+                yAxisId="left"
+                type="monotone"
+                dataKey="feesUsd"
+                strokeWidth={2}
+                stroke={CHART_COLORS.feesUsd}
+                dot={false}
+                isAnimationActive={false}
+              />
+
+              {/* SVG Gradient definitions for Unified Yield line */}
+              <defs>
+                <linearGradient id="unifiedYieldGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#AAA8FF" />
+                  <stop offset="25%" stopColor="#BDBBFF" />
+                  <stop offset="50%" stopColor="#9896FF" />
+                  <stop offset="75%" stopColor="#BDBBFF" />
+                  <stop offset="100%" stopColor="#AAA8FF" />
+                </linearGradient>
+              </defs>
+
+              {/* Swap APR line - orange (visible Y-axis) */}
+              <Line
+                yAxisId="right"
                 type="monotone"
                 dataKey="apr"
                 strokeWidth={2}
@@ -488,6 +610,25 @@ export const YieldChartSection = memo(function YieldChartSection({
                     isHovering={isHovering}
                   />
                 )}
+              />
+
+              {/* Unified Yield (Aave APY) line - purple gradient (visible Y-axis) */}
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="aaveApy"
+                strokeWidth={2}
+                stroke="url(#unifiedYieldGradient)"
+                isAnimationActive={false}
+                dot={(props) => (
+                  <LastPointPulsatingDot
+                    {...props}
+                    dataLength={dataLength}
+                    color={CHART_COLORS.aaveApy}
+                    isHovering={isHovering}
+                  />
+                )}
+                connectNulls={false}
               />
             </LineChart>
           </ResponsiveContainer>

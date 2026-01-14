@@ -8,11 +8,15 @@
  * - Frontend adds the "live now" point using current uncollected fees
  * - Accumulated fees computed from delta vs last point
  * - APR uses last known value (lags 1 point)
+ *
+ * For rehypo positions, also fetches Aave historical rates and merges them
+ * to show combined APR (swap APR + Aave APY).
  */
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { fetchPositionFees } from "@/lib/backend-client";
+import { fetchPositionAaveHistory } from "@/lib/aave-rates";
 
 export type ChartPeriod = "1W" | "1M" | "1Y" | "ALL";
 
@@ -21,6 +25,10 @@ export interface FeeChartPoint {
   feesUsd: number;
   accumulatedFeesUsd: number;
   apr: number;
+  /** Aave APY (for rehypo positions) */
+  aaveApy?: number;
+  /** Combined APR (swap APR + Aave APY) */
+  totalApr?: number;
 }
 
 interface UsePositionFeeChartDataParams {
@@ -29,6 +37,11 @@ interface UsePositionFeeChartDataParams {
   /** Current uncollected fees in USD (for "live now" point) */
   currentFeesUsd?: number;
   enabled?: boolean;
+  /** Token symbols for Aave rate lookup (rehypo positions) */
+  token0Symbol?: string;
+  token1Symbol?: string;
+  /** Whether this is a rehypo position (enables Aave rate fetching) */
+  isRehypo?: boolean;
 }
 
 interface UsePositionFeeChartDataResult {
@@ -48,9 +61,13 @@ export function usePositionFeeChartData({
   period,
   currentFeesUsd,
   enabled = true,
+  token0Symbol,
+  token1Symbol,
+  isRehypo = false,
 }: UsePositionFeeChartDataParams): UsePositionFeeChartDataResult {
   const queryKey = ["position-fee-chart", positionId, period];
 
+  // Fetch position fee history
   const query = useQuery({
     queryKey,
     queryFn: async (): Promise<FeeChartPoint[]> => {
@@ -73,15 +90,72 @@ export function usePositionFeeChartData({
     retryDelay: 1000,
   });
 
-  // Add "live now" point using frontend's current uncollected fees
-  // Only adds if we have historical data as baseline (otherwise accumulated fees would be wrong)
-  const dataWithLivePoint = useMemo(() => {
+  // Fetch Aave historical rates for rehypo positions
+  const aaveQuery = useQuery({
+    queryKey: ["aave-history", token0Symbol, token1Symbol, period],
+    queryFn: async () => {
+      if (!token0Symbol || !token1Symbol) return null;
+      return fetchPositionAaveHistory(token0Symbol, token1Symbol, period);
+    },
+    enabled: enabled && isRehypo && !!token0Symbol && !!token1Symbol,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  // Merge fee data with Aave historical rates (for rehypo positions)
+  const mergedData = useMemo(() => {
     const historicalData = query.data;
     if (!historicalData) return undefined;
 
+    // If no Aave data or not rehypo, return fee data as-is
+    const aaveData = aaveQuery.data;
+    if (!aaveData?.success || !aaveData.points.length) {
+      return historicalData.map(point => ({
+        ...point,
+        aaveApy: undefined,
+        totalApr: point.apr,
+      }));
+    }
+
+    // Create a map of Aave APY by timestamp for quick lookup
+    const aaveByTimestamp = new Map<number, number>();
+    for (const p of aaveData.points) {
+      aaveByTimestamp.set(p.timestamp, p.apy);
+    }
+
+    // Merge: for each fee point, find the closest Aave point
+    return historicalData.map(feePoint => {
+      // Find exact match first
+      let aaveApy = aaveByTimestamp.get(feePoint.timestamp);
+
+      // If no exact match, find closest Aave point within 1 hour
+      if (aaveApy === undefined) {
+        const oneHour = 3600;
+        let closestDiff = Infinity;
+        for (const [ts, apy] of aaveByTimestamp) {
+          const diff = Math.abs(ts - feePoint.timestamp);
+          if (diff < closestDiff && diff <= oneHour) {
+            closestDiff = diff;
+            aaveApy = apy;
+          }
+        }
+      }
+
+      return {
+        ...feePoint,
+        aaveApy,
+        totalApr: feePoint.apr + (aaveApy ?? 0),
+      };
+    });
+  }, [query.data, aaveQuery.data]);
+
+  // Add "live now" point using frontend's current uncollected fees
+  // Only adds if we have historical data as baseline (otherwise accumulated fees would be wrong)
+  const dataWithLivePoint = useMemo(() => {
+    if (!mergedData) return undefined;
+
     // Need at least one historical point as baseline for accumulated fees
-    const lastPoint = historicalData[historicalData.length - 1];
-    if (!lastPoint) return historicalData;
+    const lastPoint = mergedData[mergedData.length - 1];
+    if (!lastPoint) return mergedData;
 
     // If we have current fee data, add "now" point
     if (currentFeesUsd !== undefined && currentFeesUsd >= 0) {
@@ -95,28 +169,31 @@ export function usePositionFeeChartData({
           ? lastPoint.accumulatedFeesUsd + delta
           : lastPoint.accumulatedFeesUsd;
 
-        // APR uses last known value (lags by 1 point)
+        // APR and Aave APY use last known values (lag by 1 point)
         const apr = lastPoint.apr;
+        const aaveApy = lastPoint.aaveApy;
 
         return [
-          ...historicalData,
+          ...mergedData,
           {
             timestamp: now,
             feesUsd: currentFeesUsd,
             accumulatedFeesUsd,
             apr,
+            aaveApy,
+            totalApr: apr + (aaveApy ?? 0),
           },
         ];
       }
     }
 
-    return historicalData;
-  }, [query.data, currentFeesUsd]);
+    return mergedData;
+  }, [mergedData, currentFeesUsd]);
 
   return {
     data: dataWithLivePoint,
-    isLoading: query.isLoading,
-    isPending: query.isPending,
+    isLoading: query.isLoading || aaveQuery.isLoading,
+    isPending: query.isPending || aaveQuery.isPending,
     isError: query.isError,
     error: query.error,
     refetch: query.refetch,
