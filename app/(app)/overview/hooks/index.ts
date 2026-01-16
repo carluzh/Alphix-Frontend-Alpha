@@ -19,9 +19,7 @@ export {
   type CompositionSegment,
 } from "./OverviewContext";
 
-export { useOverviewModals } from "./useOverviewModals";
 export { useWalletBalances } from "./useWalletBalances";
-export { useFaucet } from "./useFaucet";
 export { useShouldHeaderBeCompact } from "./useShouldHeaderBeCompact";
 export { useOverviewPageData } from "./useOverviewPageData";
 

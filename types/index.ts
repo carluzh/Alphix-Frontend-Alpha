@@ -24,58 +24,6 @@ export interface Pool {
  */
 export type PositionStatus = 'IN_RANGE' | 'OUT_OF_RANGE' | 'CLOSED';
 
-/**
- * Derive position status from position state
- */
-export function getPositionStatus(
-  isInRange: boolean,
-  liquidityRaw?: string
-): PositionStatus {
-  // Check if position is closed (no liquidity)
-  if (!liquidityRaw || liquidityRaw === '0') {
-    return 'CLOSED';
-  }
-
-  return isInRange ? 'IN_RANGE' : 'OUT_OF_RANGE';
-}
-
-/**
- * Standard position token info
- */
-export interface PositionTokenInfo {
-  address: string;
-  symbol: string;
-  amount: string;
-  usdValue?: number;
-}
-
-/**
- * Processed position type - standardized across the app
- *
- * Mirrors Uniswap's PositionInfo from:
- * - interface/apps/web/src/components/Liquidity/types.ts (BasePositionInfo)
- * - interface/apps/web/src/components/Liquidity/utils/parseFromRest.ts (parseRestPosition)
- */
-export interface ProcessedPosition {
-  positionId: string;
-  owner: string;
-  poolId: string;
-  token0: PositionTokenInfo;
-  token1: PositionTokenInfo;
-  tickLower: number;
-  tickUpper: number;
-  isInRange: boolean;
-  ageSeconds: number;
-  blockTimestamp: number;
-  liquidityRaw?: string;
-  status?: PositionStatus;
-
-  // Fee fields - mirrors Uniswap's token0UncollectedFees/token1UncollectedFees
-  // @see interface/apps/web/src/components/Liquidity/types.ts (lines 48-49)
-  token0UncollectedFees?: string;
-  token1UncollectedFees?: string;
-}
-
 // =============================================================================
 // POINTS CAMPAIGN TYPES
 // Mirrors Uniswap's LP Incentives from:

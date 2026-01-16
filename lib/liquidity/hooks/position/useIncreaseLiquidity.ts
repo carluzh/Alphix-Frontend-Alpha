@@ -147,8 +147,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
       const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
       if (!symC0 || !symC1) throw new Error('Token symbols not found for pool currencies');
-      const defC0 = getToken(symC0)!;
-      const defC1 = getToken(symC1)!;
+      const defC0 = getToken(symC0, networkMode)!;
+      const defC1 = getToken(symC1, networkMode)!;
       const isNativeC0 = getAddress(details.poolKey.currency0) === '0x0000000000000000000000000000000000000000';
       const currency0 = isNativeC0 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC0.address), defC0.decimals, defC0.symbol);
       const currency1 = new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);

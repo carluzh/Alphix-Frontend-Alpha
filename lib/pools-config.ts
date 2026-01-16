@@ -150,10 +150,6 @@ export function getEnabledPools(networkModeOverride?: NetworkMode): PoolConfig[]
   return getPoolsConfig(networkModeOverride).pools.filter(pool => pool.enabled);
 }
 
-export function getFeaturedPools(networkModeOverride?: NetworkMode): PoolConfig[] {
-  return getPoolsConfig(networkModeOverride).pools.filter(pool => pool.featured && pool.enabled);
-}
-
 export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverride?: NetworkMode): PoolConfig | null {
   const config = getPoolsConfig(networkModeOverride);
   // Find all pools that match the unordered pair of symbols
@@ -264,11 +260,6 @@ export function createCanonicalPoolKey(tokenA: Token, tokenB: Token, pool: PoolC
 export function getPoolSubgraphId(poolId: string, networkModeOverride?: NetworkMode): string | null {
   const pool = getPoolById(poolId, networkModeOverride);
   return pool?.subgraphId || null;
-}
-
-// Get contract addresses
-export function getContracts(networkModeOverride?: NetworkMode): ContractsConfig {
-  return getPoolsConfig(networkModeOverride).contracts;
 }
 
 export function getQuoterAddress(networkModeOverride?: NetworkMode): Address {

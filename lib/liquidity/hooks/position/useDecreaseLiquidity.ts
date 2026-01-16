@@ -214,8 +214,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
           const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
           if (!symC0 || !symC1) throw new Error('Token definitions not found for pool currencies');
-          const defC0 = getToken(symC0);
-          const defC1 = getToken(symC1);
+          const defC0 = getToken(symC0, networkMode);
+          const defC1 = getToken(symC1, networkMode);
           if (!defC0 || !defC1) throw new Error('Token configs missing for pool currencies');
           const t0 = new Token(chainId, getAddress(details.poolKey.currency0), defC0.decimals, defC0.symbol);
           const t1 = new Token(chainId, getAddress(details.poolKey.currency1), defC1.decimals, defC1.symbol);
@@ -883,8 +883,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         const token0Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
         const token1Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
         if (!token0Sym || !token1Sym) throw new Error('Token symbols not found');
-        const token0Def = getToken(token0Sym);
-        const token1Def = getToken(token1Sym);
+        const token0Def = getToken(token0Sym, networkMode);
+        const token1Def = getToken(token1Sym, networkMode);
         if (!token0Def || !token1Def) throw new Error('Token definitions missing');
 
         const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol);

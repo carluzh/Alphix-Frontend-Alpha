@@ -1,6 +1,7 @@
-import { createPublicClient, http, custom, type PublicClient, type Chain } from 'viem';
-import { activeChain, baseSepolia, baseMainnet, isMainnet } from './wagmiConfig';
-import { type NetworkMode } from './network-mode';
+import { createPublicClient, custom, type PublicClient, type Chain } from 'viem';
+// Import from chains.ts (no WalletConnect dependencies) instead of wagmiConfig.ts
+import { baseSepolia, baseMainnet } from './chains';
+import { type NetworkMode, getStoredNetworkMode } from './network-mode';
 import { AppRpcClient } from './rpc/AppRpcClient';
 
 // Network-specific RPC endpoints
@@ -13,6 +14,15 @@ const MAINNET_RPC_URLS = [
   "https://mainnet.base.org",
   "https://base.drpc.org",
 ];
+
+// Determine network mode for the default public client
+// Server-side: use env var default
+// Client-side: check localStorage
+const defaultNetworkMode = typeof window === 'undefined'
+  ? (process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet')
+  : getStoredNetworkMode();
+const isMainnet = defaultNetworkMode === 'mainnet';
+const activeChain = isMainnet ? baseMainnet : baseSepolia;
 
 function getRpcUrlsForNetwork(networkMode: NetworkMode): string[] {
   const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;

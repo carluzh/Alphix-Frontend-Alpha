@@ -30,7 +30,7 @@ const nextConfig = {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_GIT_COMMIT: gitCommitHash,
   },
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     config.resolve = config.resolve || {};
     config.resolve.alias = config.resolve.alias || {};
     // SDK deduplication - identical to Uniswap vite.config.mts dedupe
@@ -38,6 +38,25 @@ const nextConfig = {
     sdkDedupe.forEach(pkg => { config.resolve.alias[pkg] = require.resolve(pkg); });
     config.resolve.alias['@react-native-async-storage/async-storage'] = false;
     config.ignoreWarnings = [{ module: /@whatwg-node\/fetch/ }];
+
+    // Fix WalletConnect ESM/CommonJS interop issues in serverless functions
+    // These packages use CommonJS but get imported as ESM, causing named export errors
+    if (isServer) {
+      const walletConnectExternals = [
+        '@walletconnect/logger',
+        '@walletconnect/core',
+        '@walletconnect/sign-client',
+        '@walletconnect/ethereum-provider',
+        '@walletconnect/universal-provider',
+        'pino',
+        'pino-pretty',
+      ];
+      config.externals = config.externals || [];
+      if (Array.isArray(config.externals)) {
+        config.externals.push(...walletConnectExternals);
+      }
+    }
+
     return config;
   },
   typescript: {

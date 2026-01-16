@@ -23,9 +23,11 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# IDE / Editor
+# IDE / Editor / AI
 .idea/
 .vscode/*
+.claude/
+.cursor/
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
@@ -51,13 +53,19 @@ coverage/
 # Cache
 .cache/
 .turbo/
+.eslintcache
+playwright/.cache/
 
-# Misc
+# Temp/backup files
 *.local
 *.swp
 *.swo
+*.tmp
+*.bak
 
-# External repos (submodules have their own .git)
+# Alternative package manager locks (using npm)
+yarn.lock
+pnpm-lock.yaml
+
+# External repos
 interface/
-.vercel
-.env*.local

@@ -60,8 +60,5 @@ export { SSEProvider, useSSEContext } from './SSEProvider';
 // Hooks
 export { usePositionSnapshots } from './hooks/usePositionSnapshots';
 
-// API utilities
-export { getStreamStats } from './api';
-
 // Core hook (for advanced use cases)
 export { useSSE } from './useSSE';
