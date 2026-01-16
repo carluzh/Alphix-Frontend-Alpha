@@ -18,14 +18,6 @@ export {
   type RangeDisplayResult,
 } from './useRangeDisplay';
 
-export {
-  useZapQuote,
-  type UseZapQuoteParams,
-  type UseZapQuoteResult,
-  type ZapQuoteData,
-  type ZapTransactionData,
-  type FetchZapQuoteParams,
-} from './useZapQuote';
 
 // Re-export from lib for backwards compatibility
 export {

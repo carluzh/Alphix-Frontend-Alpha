@@ -27,7 +27,7 @@ import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useIncreaseLiquidity, type IncreasePositionData, useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
-import { batchQuotePrices } from "@/lib/quote-prices";
+import { batchQuotePrices } from "@/lib/swap/quote-prices";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TickMath } from '@uniswap/v3-sdk';
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";

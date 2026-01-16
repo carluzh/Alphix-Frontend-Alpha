@@ -18,8 +18,8 @@ type IconConfig =
 const modularityIcons: IconConfig[] = [
   { type: 'censored', iconName: 'SlidersVertical' },
   { type: 'censored', iconName: 'Handshake' },
-  { type: 'revealed', image: '/landing/FeatureIcons/dynamic.png', alt: 'Dynamic', size: 'lg' },
-  { type: 'revealed', image: '/landing/FeatureIcons/refresh.png', alt: 'Refresh' },
+  { type: 'revealed', image: '/landing/feature-icons/dynamic.png', alt: 'Dynamic', size: 'lg' },
+  { type: 'revealed', image: '/landing/feature-icons/refresh.png', alt: 'Refresh' },
   { type: 'censored', iconName: 'Repeat' },
   { type: 'censored', iconName: 'BetweenVerticalStart' },
   { type: 'censored', iconName: 'FileStack' },
@@ -191,7 +191,7 @@ export const PageContent = () => {
             <button className="group relative rounded-md border border-sidebar-border bg-button px-8 py-2.5 text-sm font-semibold text-foreground hover:bg-accent hover:brightness-110 hover:border-white/30 transition-all overflow-hidden">
               <span
                 className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0"
-                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
               />
               <span className="relative z-10">Learn More</span>
             </button>

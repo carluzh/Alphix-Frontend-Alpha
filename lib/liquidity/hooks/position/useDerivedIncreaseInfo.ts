@@ -136,7 +136,7 @@ export function useDerivedIncreaseInfo(
       }
 
       // Use liquidity math for precise calculation
-      const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+      const { calculateLiquidityParameters } = await import('@/lib/liquidity/liquidity-math');
       const result = await calculateLiquidityParameters({
         token0Symbol,
         token1Symbol,

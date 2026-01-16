@@ -11,13 +11,13 @@ import {
   DEFAULT_SWAP_SLIPPAGE,
   MAX_AUTO_SLIPPAGE_TOLERANCE,
   MAX_CUSTOM_SLIPPAGE_TOLERANCE,
-} from '@/lib/slippage-constants';
+} from '@/lib/slippage/slippage-constants';
 import {
   validateUserSlippageTolerance,
   getSlippageWarningMessage,
   isSlippageCritical,
   shouldShowSlippageWarning,
-} from '@/lib/slippage-validation';
+} from '@/lib/slippage/slippage-validation';
 
 /**
  * Hook for managing user slippage tolerance with persistence

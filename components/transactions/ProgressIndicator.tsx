@@ -18,9 +18,6 @@ import {
   StepStatus,
   CurrentStepState,
   TokenApprovalStep,
-  LiquidityPositionStep,
-  SwapPermitSignatureStep,
-  SwapTransactionStep,
 } from '@/lib/transactions/types'
 
 interface ProgressIndicatorProps {
@@ -115,16 +112,6 @@ function getStepTitle(step: TransactionStep, status: StepStatus): string {
       return titles[status]
     }
 
-    case TransactionStepType.ZapSwapAndDeposit: {
-      const titles: Record<StepStatus, string> = {
-        [StepStatus.Preview]: 'Swap & deposit',
-        [StepStatus.Active]: 'Confirm in wallet',
-        [StepStatus.InProgress]: 'Processing...',
-        [StepStatus.Complete]: 'Complete',
-      }
-      return titles[status]
-    }
-
     case TransactionStepType.DecreasePositionTransaction: {
       const titles: Record<StepStatus, string> = {
         [StepStatus.Preview]: 'Remove liquidity',
@@ -145,28 +132,6 @@ function getStepTitle(step: TransactionStep, status: StepStatus): string {
       return titles[status]
     }
 
-    case TransactionStepType.SwapPermitSignature: {
-      const tokenSymbol = (step as SwapPermitSignatureStep).tokenSymbol
-      const titles: Record<StepStatus, string> = {
-        [StepStatus.Preview]: tokenSymbol ? `Sign ${tokenSymbol} permit` : 'Sign swap permit',
-        [StepStatus.Active]: 'Sign in wallet',
-        [StepStatus.InProgress]: 'Signing...',
-        [StepStatus.Complete]: 'Permit signed',
-      }
-      return titles[status]
-    }
-
-    case TransactionStepType.SwapTransaction: {
-      const inputSymbol = (step as SwapTransactionStep).inputTokenSymbol
-      const titles: Record<StepStatus, string> = {
-        [StepStatus.Preview]: `Swap ${inputSymbol}`,
-        [StepStatus.Active]: 'Confirm in wallet',
-        [StepStatus.InProgress]: 'Swapping...',
-        [StepStatus.Complete]: 'Swap complete',
-      }
-      return titles[status]
-    }
-
     default:
       return 'Transaction'
   }
@@ -174,7 +139,7 @@ function getStepTitle(step: TransactionStep, status: StepStatus): string {
 
 /**
  * Get step icon info - only for approval/permit steps where showing the token makes sense
- * For transaction steps (Create, Increase, Swap, etc.), show step number instead
+ * For transaction steps (Create, Increase, etc.), show step number instead
  */
 function getStepIcon(step: TransactionStep): { icon?: string; symbol?: string } {
   switch (step.type) {
@@ -184,14 +149,8 @@ function getStepIcon(step: TransactionStep): { icon?: string; symbol?: string } 
         icon: (step as TokenApprovalStep).tokenIcon,
         symbol: (step as TokenApprovalStep).tokenSymbol,
       }
-    // Permit signature - show token being permitted
-    case TransactionStepType.SwapPermitSignature:
-      return {
-        icon: (step as SwapPermitSignatureStep).tokenIcon,
-        symbol: (step as SwapPermitSignatureStep).tokenSymbol,
-      }
     // For all other transaction steps, don't show a token icon - just use step number
-    // (CreatePosition, IncreasePosition, DecreasePosition, Swap, etc.)
+    // (CreatePosition, IncreasePosition, DecreasePosition, etc.)
     default:
       return {}
   }

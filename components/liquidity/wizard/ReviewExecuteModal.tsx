@@ -26,7 +26,7 @@ import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useCreatePositionTxContext } from './CreatePositionTxContext';
 import { getPoolById, getAllTokens, getToken, type TokenSymbol } from '@/lib/pools-config';
 import { PositionRangeChart } from '@/components/liquidity/PositionRangeChart/PositionRangeChart';
-import { PositionStatus } from '@uniswap/client-data-api/dist/data/v1/poolTypes_pb';
+import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 import { useNetwork } from '@/lib/network-context';
 import { getStoredUserSettings } from '@/hooks/useUserSettings';

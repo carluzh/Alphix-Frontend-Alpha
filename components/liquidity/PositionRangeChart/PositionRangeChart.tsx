@@ -15,7 +15,7 @@ import {
   CrosshairMode,
   UTCTimestamp,
 } from 'lightweight-charts'
-import { PositionStatus } from '@uniswap/client-data-api/dist/data/v1/poolTypes_pb'
+import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types'
 import { cn } from '@/lib/utils'
 import { usePoolPriceChartData, HistoryDuration, DataQuality, type PriceChartData } from '@/lib/chart'
 import { BandsIndicator } from '@/lib/chart/BandsIndicator/bands-indicator'

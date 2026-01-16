@@ -19,7 +19,7 @@ import type { Address } from "viem"
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
 import { useUserSlippageTolerance } from "@/hooks/useSlippage";
-import { getAutoSlippage } from "@/lib/slippage-api";
+import { getAutoSlippage } from "@/lib/slippage/slippage-api";
 import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
 
 import {
@@ -41,7 +41,7 @@ import { formatTokenDisplayAmount } from "@/lib/utils"
 // Chart Import
 import { DynamicFeeChartPreview } from "../dynamic-fee-chart-preview";
 // Deprecated cache functions removed - dynamic fee fetching happens directly via API
-import { SwapRoute } from "@/lib/routing-engine";
+import { SwapRoute } from "@/lib/swap/routing-engine";
 
 // Import the new view components
 import { SwapInputView } from './SwapInputView';

@@ -127,8 +127,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
   const hasPositionsData = positionsChartData.length > 0;
   const latestPositionsValue = hasPositionsData ? positionsChartData[positionsChartData.length - 1].value : 0;
 
-  // Show loading state until positions data has finished loading
-  const showSkeleton = isParentLoading || isLoadingPositions;
+  const showSkeleton = isParentLoading || isLoadingPositions || !isConnected;
 
   // Create stable dataKey based on actual data (for dot repositioning)
   const positionsDataKey = useMemo(() => {
@@ -159,16 +158,37 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
 
     chartRef.current = chart;
 
-    // Uniswap pattern: use autoscaleInfoProvider to enforce minimum $0 visible range
-    // This prevents negative values from showing without modifying the data
+    // Enforce minimum visible range so tiny movements don't look like huge swings
+    // Example: 0.01% change shouldn't fill the entire chart height
+    const MIN_RANGE_PERCENT = 5; // Minimum 5% range visible (±2.5% from center)
+
     const autoscaleInfoProvider = (original: () => { priceRange: { minValue: number; maxValue: number } } | null) => {
       const res = original();
       if (!res) return res;
+
+      const { minValue, maxValue } = res.priceRange;
+      const center = (minValue + maxValue) / 2;
+      const currentRange = maxValue - minValue;
+      const minRange = center * (MIN_RANGE_PERCENT / 100);
+
+      // If actual range is smaller than minimum, expand symmetrically around center
+      if (currentRange < minRange && center > 0) {
+        const halfMinRange = minRange / 2;
+        return {
+          ...res,
+          priceRange: {
+            minValue: Math.max(0, center - halfMinRange),
+            maxValue: center + halfMinRange,
+          },
+        };
+      }
+
+      // Otherwise just enforce $0 floor
       return {
         ...res,
         priceRange: {
-          minValue: Math.max(0, res.priceRange.minValue),
-          maxValue: res.priceRange.maxValue,
+          minValue: Math.max(0, minValue),
+          maxValue: maxValue,
         },
       };
     };
@@ -252,11 +272,14 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
     // This ensures the chart always shows the full selected timeframe (1D, 1W, 1M)
     // regardless of how much actual data exists. Data will appear where it exists,
     // and empty areas will remain empty (not stretched).
-    const [periodFrom, periodTo] = calculatePeriodRange(selectedPeriod);
-    chartRef.current.timeScale().setVisibleRange({
-      from: periodFrom as UTCTimestamp,
-      to: periodTo as UTCTimestamp,
-    });
+    // Only set range if chart has data - lightweight-charts throws "Value is null" on empty charts
+    if (positionsChartData.length > 0) {
+      const [periodFrom, periodTo] = calculatePeriodRange(selectedPeriod);
+      chartRef.current.timeScale().setVisibleRange({
+        from: periodFrom as UTCTimestamp,
+        to: periodTo as UTCTimestamp,
+      });
+    }
   }, [positionsChartData, showSkeleton, selectedPeriod]);
 
   // Hide price scale (y-axis) during skeleton loading to prevent "sticking"

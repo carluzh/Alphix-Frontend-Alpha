@@ -1,6 +1,5 @@
-import { createPublicClient, http, fallback, custom, type PublicClient, type Chain } from 'viem';
+import { createPublicClient, http, custom, type PublicClient, type Chain } from 'viem';
 import { activeChain, baseSepolia, baseMainnet, isMainnet } from './wagmiConfig';
-import { executeRPCCall, executeRPCBatch } from './rpcClient';
 import { type NetworkMode } from './network-mode';
 import { AppRpcClient } from './rpc/AppRpcClient';
 
@@ -45,40 +44,6 @@ const RPC_URLS = [
 if (RPC_URLS.length === 0) {
     throw new Error("No RPC URLs are defined. Please set NEXT_PUBLIC_RPC_URL or RPC_URL environment variable.");
 }
-
-// Custom rate-limited transport
-const rateLimitedTransport = custom({
-  async request({ method, params }) {
-    let lastError: Error | undefined;
-
-    for (const rpcUrl of RPC_URLS) {
-      try {
-        return await executeRPCCall(rpcUrl, {
-          method,
-          params: params as any[],
-        }, {
-          timeout: 10000,
-          maxRetries: 1,
-        });
-      } catch (error) {
-        lastError = error as Error;
-        console.warn(`[RPC] ${rpcUrl} failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        continue;
-      }
-    }
-
-    throw lastError || new Error('All RPC endpoints failed');
-  },
-});
-
-// Fallback transport for comparison (original implementation)
-const fallbackTransport = fallback(
-  RPC_URLS.map(url => http(url, {
-    timeout: 12000, // 12s per endpoint
-    retryCount: 1,  // minimal retries to avoid long cascades
-    retryDelay: 800  // short delay
-  }))
-);
 
 // AppRpcClient transport with exponential backoff (Uniswap pattern)
 // This uses the Controller pattern from Uniswap's AppJsonRpcProvider

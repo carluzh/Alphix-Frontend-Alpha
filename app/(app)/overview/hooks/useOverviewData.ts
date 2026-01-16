@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAccount } from "wagmi";
 import { getAllPools } from "@/lib/pools-config";
-import { batchQuotePrices } from "@/lib/quote-prices";
+import { batchQuotePrices } from "@/lib/swap/quote-prices";
 
 export interface TokenBalance {
   symbol: string;

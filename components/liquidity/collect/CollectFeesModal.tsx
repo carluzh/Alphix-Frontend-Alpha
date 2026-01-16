@@ -586,7 +586,7 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                   style={
                     !hasFees
                       ? {
-                          backgroundImage: "url(/pattern_wide.svg)",
+                          backgroundImage: "url(/patterns/button-wide.svg)",
                           backgroundSize: "cover",
                           backgroundPosition: "center",
                         }

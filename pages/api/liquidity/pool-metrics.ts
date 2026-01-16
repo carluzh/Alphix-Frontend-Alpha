@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId, getStateViewAddress, getPoolById, getNetworkModeFromRequest } from '../../../lib/pools-config';
 import { getSubgraphUrlForPool, isDaiPool, isMainnetSubgraphMode, getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '@/lib/cache/CacheService';
-import { poolKeys } from '@/lib/redis-keys';
+import { poolKeys } from '@/lib/cache/redis-keys';
 import { createNetworkClient } from '../../../lib/viemClient';
 import { parseAbi, type Hex } from 'viem';
 

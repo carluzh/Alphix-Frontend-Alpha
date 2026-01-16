@@ -366,7 +366,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
             <div className="animate-pulse">
               <Image
-                src="/LogoIconWhite.svg"
+                src="/logos/alphix-icon-white.svg"
                 alt="Loading"
                 width={24}
                 height={24}
@@ -430,7 +430,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
             <div className="animate-pulse">
               <Image
-                src="/LogoIconWhite.svg"
+                src="/logos/alphix-icon-white.svg"
                 alt="Loading"
                 width={24}
                 height={24}
@@ -517,7 +517,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
               <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
                 <div className="animate-pulse">
                   <Image 
-                    src="/LogoIconWhite.svg" 
+                    src="/logos/alphix-icon-white.svg" 
                     alt="Loading" 
                     width={24} 
                     height={24} 

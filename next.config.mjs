@@ -69,10 +69,16 @@ const nextConfig = {
 
 // Wrap with bundle analyzer, then Sentry
 export default withSentryConfig(withBundleAnalyzer(nextConfig), {
-  // Minimal Sentry build options
-  silent: true, // Suppress Sentry build logs
-  hideSourceMaps: true, // Don't expose source maps publicly
+  silent: true,
+  hideSourceMaps: true,
 
-  // Disable automatic instrumentation (we only want error capture)
-  disableLogger: true,
+  // Webpack-level Sentry options (new API)
+  webpack: {
+    // Edge runtime doesn't allow eval()/new Function() - platform limitation, not a bug
+    // Sentry's middleware instrumentation relies on dynamic code generation internally
+    autoInstrumentMiddleware: false,
+    treeshake: {
+      removeDebugLogging: true,
+    },
+  },
 });

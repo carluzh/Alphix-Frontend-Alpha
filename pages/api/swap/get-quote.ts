@@ -32,10 +32,10 @@ import {
   getPoolById
 } from '../../../lib/pools-config';
 import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
-import { V4QuoterAbi, EMPTY_BYTES } from '../../../lib/swap-constants';
+import { V4QuoterAbi, EMPTY_BYTES } from '@/lib/swap/swap-constants';
 import { getRpcUrlForNetwork } from '../../../lib/viemClient';
 import { ethers } from 'ethers';
-import { findBestRoute, SwapRoute, routeToString } from '../../../lib/routing-engine';
+import { findBestRoute, SwapRoute, routeToString } from '@/lib/swap/routing-engine';
 
 /**
  * Create an ethers provider that skips network detection entirely.

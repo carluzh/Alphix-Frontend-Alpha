@@ -6,9 +6,6 @@
  */
 
 import type { TransactionsState } from './slice'
+import type { RootState } from './redux-store'
 
-export interface RootState {
-  transactions: TransactionsState
-}
-
-export const selectTransactions = (state: RootState): TransactionsState => state.transactions
+export const selectTransactions = (state: RootState): TransactionsState => state.transactions ?? {}

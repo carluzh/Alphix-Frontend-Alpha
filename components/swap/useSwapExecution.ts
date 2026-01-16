@@ -7,7 +7,7 @@ import { IconBadgeCheck2, IconCircleXmarkFilled, IconCircleInfo } from "nucleo-m
 
 import { invalidateAfterTx } from "@/lib/invalidation"
 import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings"
-import { PERMIT2_ADDRESS, UniversalRouterAbi, Erc20AbiDefinition } from "@/lib/swap-constants"
+import { PERMIT2_ADDRESS, UniversalRouterAbi, Erc20AbiDefinition } from "@/lib/swap/swap-constants"
 import { getExplorerTxUrl, activeChainId } from "@/lib/wagmiConfig"
 import { useTransactionAdder, TransactionType, TradeType, type ExactInputSwapTransactionInfo, type ExactOutputSwapTransactionInfo, type ApproveTransactionInfo } from "@/lib/transactions"
 

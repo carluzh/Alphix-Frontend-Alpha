@@ -317,7 +317,7 @@ function PositionHeader({
             >
               <span
                 className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0"
-                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
               />
               <span className="relative z-10">Add liquidity</span>
             </button>
@@ -328,7 +328,7 @@ function PositionHeader({
             >
               <span
                 className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0"
-                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
               />
               <span className="relative z-10">Remove liquidity</span>
             </button>

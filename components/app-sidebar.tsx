@@ -176,8 +176,7 @@ export function AppSidebar({ variant = "floating", onBetaClick, ...props }: AppS
             >
               <div className="flex items-center w-full justify-between">
                 <Link href="/" className="flex items-center">
-                  <Image src="/Logo Type (white).svg" alt="Alphix Logo" width={112} height={24} priority className="dark:block hidden" />
-                  <Image src="/Logo Type (black).svg" alt="Alphix Logo" width={112} height={24} priority className="block dark:hidden" />
+                  <Image src="/logos/alphix-type-white.svg" alt="Alphix Logo" width={112} height={24} priority />
                 </Link>
                 <div>
                   {/* Show 'Beta' by default; on hover/glow swap to version text (desktop only) */}

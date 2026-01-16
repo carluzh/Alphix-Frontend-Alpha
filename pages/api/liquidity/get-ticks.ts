@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId, getNetworkModeFromRequest } from '../../../lib/pools-config';
 import { getUniswapV4SubgraphUrl, getSubgraphUrlForPool } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '@/lib/cache/CacheService';
-import { poolKeys } from '@/lib/redis-keys';
+import { poolKeys } from '@/lib/cache/redis-keys';
 
 // Cache TTL configuration (in seconds)
 const CACHE_TTL = { fresh: 300, stale: 3600 }; // 5min fresh, 1hr stale

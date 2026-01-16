@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { getAddress, formatUnits } from "viem";
+import { getAddress } from "viem";
 import { getToken, getTokenDefinitions, type TokenSymbol, type NetworkMode } from "./pools-config";
 
 export function cn(...inputs: ClassValue[]) {
@@ -61,7 +61,7 @@ export const getTokenIcon = (symbol?: string, networkMode: NetworkMode = 'mainne
   return "/placeholder-logo.svg";
 };
 
-export const DEFAULT_TOKEN_COLOR = "#6B7280";
+const DEFAULT_TOKEN_COLOR = "#6B7280";
 
 export const getTokenColor = (symbol?: string, networkMode: NetworkMode = 'mainnet'): string => {
   if (!symbol) return DEFAULT_TOKEN_COLOR;
@@ -108,17 +108,3 @@ export const getTokenSymbolByAddress = (address: string, networkMode: NetworkMod
   return null;
 };
 
-// Fee display utility for uncollected fees
-export const formatUncollectedFee = (feeAmount: string, tokenSymbol: TokenSymbol, networkMode: NetworkMode = 'mainnet') => {
-  try {
-    const tokenDefinitions = getTokenDefinitions(networkMode);
-    const decimals = tokenDefinitions[tokenSymbol]?.decimals ?? 18;
-    const amount = parseFloat(formatUnits(BigInt(feeAmount), decimals));
-
-    if (!Number.isFinite(amount) || amount <= 0) return null;
-
-    return amount > 0 && amount < 0.001 ? '< 0.001' : amount.toFixed(6);
-  } catch {
-    return null;
-  }
-};

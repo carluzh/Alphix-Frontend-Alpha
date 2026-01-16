@@ -101,14 +101,14 @@ For Tailwind integration, use `border-sidebar-border` which references `--sideba
 // Pattern: bg-button + standard border + pattern overlay
 <button 
   className="border border-sidebar-border bg-button px-3 text-sm hover:brightness-110 hover:border-white/30"
-  style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover' }}
+  style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover' }}
 >
   Cancel
 </button>
 ```
 **Pattern variations**:
-- `/pattern.svg` - For square/small buttons
-- `/pattern_wide.svg` - For rectangular/wide buttons
+- `/patterns/button-default.svg` - For square/small buttons
+- `/patterns/button-wide.svg` - For rectangular/wide buttons
 
 **Hover behavior**:
 - `brightness-110` - Slightly brighter
@@ -250,7 +250,7 @@ import { cn } from "@/lib/utils";
 </Badge>
 ```
 **Styling**: Uses primary button colors for emphasis
-**Pattern overlay**: Often includes `/pattern.svg` background
+**Pattern overlay**: Often includes `/patterns/button-default.svg` background
 
 ---
 
@@ -264,7 +264,7 @@ import { cn } from "@/lib/utils";
 
 // Spinner with icon
 <div className="animate-pulse">
-  <Image src="/LogoIconWhite.svg" className="opacity-60" />
+  <Image src="/logos/alphix-icon-white.svg" className="opacity-60" />
 </div>
 ```
 
@@ -531,7 +531,7 @@ style={{ backgroundColor: 'var(--hover-bg)' }}
 ```tsx
 // Pattern backgrounds are inline styles (acceptable)
 style={{ 
-  backgroundImage: 'url(/pattern.svg)', 
+  backgroundImage: 'url(/patterns/button-default.svg)', 
   backgroundSize: 'cover', 
   backgroundPosition: 'center' 
 }}

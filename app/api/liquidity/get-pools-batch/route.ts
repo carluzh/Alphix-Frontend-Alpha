@@ -5,13 +5,13 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress, getNetworkModeFromRequest } from '@/lib/pools-config';
-import { batchQuotePrices, calculateTotalUSD } from '@/lib/quote-prices';
+import { batchQuotePrices, calculateTotalUSD } from '@/lib/swap/quote-prices';
 import { formatUnits, parseAbi } from 'viem';
 import { getUniswapV4SubgraphUrl, isDaiPool, isMainnetSubgraphMode } from '@/lib/subgraph-url-helper';
 import { createNetworkClient } from '@/lib/viemClient';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
 import { cacheService } from '@/lib/cache/CacheService';
-import { poolKeys } from '@/lib/redis-keys';
+import { poolKeys } from '@/lib/cache/redis-keys';
 import type { NetworkMode } from '@/lib/network-mode';
 
 // Combined query: pools (TVL) + poolHourDatas (24h volume) + poolDayDatas (7d yield) in single request

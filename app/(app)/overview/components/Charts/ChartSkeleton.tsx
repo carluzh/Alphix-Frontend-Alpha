@@ -103,7 +103,7 @@ function ChartLoadingLogo({ height }: { height: number }) {
   return (
     <g transform={`translate(0, ${logoCenterY})`}>
       <image
-        href="/LogoIconWhite.svg"
+        href="/logos/alphix-icon-white.svg"
         x="46.5%"
         y="-16"
         width="32"

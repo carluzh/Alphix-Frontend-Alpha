@@ -8,7 +8,7 @@ import { IconClone2, IconCheck, IconPowerOff, IconHouse3 } from "nucleo-micro-bo
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
 import { Input } from "@/components/ui/input"
 import { motion, AnimatePresence } from "framer-motion"
-import { DeterministicAvatar } from "@/lib/avatar"
+import { DeterministicAvatar } from "@/lib/icons/avatar"
 import { cn } from "@/lib/utils"
 
 // Account Status component
@@ -169,7 +169,7 @@ export function AccountStatus() {
                  <Button
                    onClick={() => disconnect()}
                    className="w-full cursor-pointer justify-start py-1.5 rounded-lg border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] hover:bg-accent hover:brightness-110 hover:border-white/30 text-white/75 transition-all duration-200 overflow-hidden"
-                   style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                   style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
                  >
                    <div className="flex items-center w-full">
                      <IconPowerOff width={16} height={16} className="text-white/75" />

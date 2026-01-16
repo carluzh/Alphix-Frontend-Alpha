@@ -16,7 +16,7 @@ import type { Address, Hex } from 'viem';
 import { maxUint256, getAddress } from 'viem';
 import type { TokenSymbol } from '@/lib/pools-config';
 import { getToken, getPositionManagerAddress } from '@/lib/pools-config';
-import { PERMIT2_ADDRESS, PERMIT2_DOMAIN_NAME, PERMIT_EXPIRATION_DURATION_SECONDS } from '@/lib/swap-constants';
+import { PERMIT2_ADDRESS, PERMIT2_DOMAIN_NAME, PERMIT_EXPIRATION_DURATION_SECONDS } from '@/lib/swap/swap-constants';
 import type { NetworkMode } from '@/lib/network-mode';
 
 import {

@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   SLIPPAGE_STORAGE_KEY,
   SLIPPAGE_AUTO_FLAG_KEY,
-} from '@/lib/slippage-constants';
+} from '@/lib/slippage/slippage-constants';
 
 // Additional storage keys for deadline and approval mode
 const DEADLINE_STORAGE_KEY = 'alphix:user-deadline';

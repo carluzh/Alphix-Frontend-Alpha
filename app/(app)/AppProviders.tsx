@@ -3,7 +3,6 @@
 import type React from "react"
 import { useEffect } from "react"
 import AppKitProvider from '@/components/AppKitProvider'
-import { ThemeProvider } from "@/components/theme-provider"
 import { NetworkProvider, type NetworkMode } from "@/lib/network-context"
 import { Toaster } from "@/components/ui/sonner"
 import { Analytics } from '@vercel/analytics/react'
@@ -41,26 +40,19 @@ export default function AppProviders({
   }, [])
 
   return (
-    <ThemeProvider
-      attribute="class"
-      defaultTheme="dark"
-      enableSystem
-      disableTransitionOnChange
-    >
-      <NetworkProvider initialNetworkMode={initialNetworkMode}>
-        <AppKitProvider cookies={cookieString}>
-          <SSEProvider>
-            <ErrorBoundary>
-              <SidebarProvider>
-                {children}
-              </SidebarProvider>
-            </ErrorBoundary>
-          </SSEProvider>
-        </AppKitProvider>
-        <Toaster position="top-right" />
-        <Analytics />
-        <SpeedInsights />
-      </NetworkProvider>
-    </ThemeProvider>
+    <NetworkProvider initialNetworkMode={initialNetworkMode}>
+      <AppKitProvider cookies={cookieString}>
+        <SSEProvider>
+          <ErrorBoundary>
+            <SidebarProvider>
+              {children}
+            </SidebarProvider>
+          </ErrorBoundary>
+        </SSEProvider>
+      </AppKitProvider>
+      <Toaster position="top-right" />
+      <Analytics />
+      <SpeedInsights />
+    </NetworkProvider>
   )
 }

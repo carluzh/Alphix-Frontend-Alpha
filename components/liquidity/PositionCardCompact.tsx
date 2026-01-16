@@ -6,7 +6,7 @@ import { TokenStack } from "./TokenStack";
 import { getPoolById } from '@/lib/pools-config';
 import { isFullRangePosition } from '@/lib/liquidity/hooks/range';
 import { usePriceOrdering, useGetRangeDisplay, type PositionInfo } from '@/lib/uniswap/liquidity';
-import { PositionStatus } from '@uniswap/client-data-api/dist/data/v1/poolTypes_pb';
+import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
 import { useNetwork } from '@/lib/network-context';
 import { cn } from "@/lib/utils";
 import { PositionRangeChart } from './PositionRangeChart';
@@ -306,7 +306,7 @@ export function PositionCardCompact({
         >
             {isOptimisticallyUpdating && (
                 <div className="absolute inset-0 bg-muted/20 backdrop-blur-sm rounded-lg flex items-center justify-center z-10">
-                    <Image src="/LogoIconWhite.svg" alt="Updating..." width={24} height={24} className="animate-pulse opacity-75" />
+                    <Image src="/logos/alphix-icon-white.svg" alt="Updating..." width={24} height={24} className="animate-pulse opacity-75" />
                 </div>
             )}
 

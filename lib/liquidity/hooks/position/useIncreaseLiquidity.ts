@@ -4,12 +4,12 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSignType
 import { toast } from 'sonner';
 import { V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import { Token, Ether, CurrencyAmount, Percent } from '@uniswap/sdk-core';
-import { V4_POSITION_MANAGER_ADDRESS, V4_POSITION_MANAGER_ABI, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap-constants';
+import { V4_POSITION_MANAGER_ADDRESS, V4_POSITION_MANAGER_ABI, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
 import { getToken, TokenSymbol, getTokenSymbolByAddress } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
 import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, encodeAbiParameters, keccak256 } from 'viem';
-import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
+import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity/liquidity-utils';
 import { invalidateAfterTx } from '@/lib/invalidation';
 import { IconBadgeCheck2, IconCircleXmarkFilled, IconCircleInfo } from 'nucleo-micro-bold-essential';
 import JSBI from 'jsbi';
@@ -490,7 +490,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           const amt1 = parseFloat(increaseAmountsRef.current?.amount1 || '0');
           let tvlDelta = 0;
           if (amt0 || amt1) {
-            const { getTokenPrice } = await import('@/lib/quote-prices');
+            const { getTokenPrice } = await import('@/lib/swap/quote-prices');
             const [p0, p1] = await Promise.all([getTokenPrice(posData.token0Symbol), getTokenPrice(posData.token1Symbol)]);
             tvlDelta = (p0 ? amt0 * p0 : 0) + (p1 ? amt1 * p1 : 0);
           }

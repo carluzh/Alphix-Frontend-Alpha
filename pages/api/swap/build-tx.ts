@@ -18,9 +18,9 @@ import {
     getToken,
     NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
-import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '../../../lib/swap-constants';
+import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
 import { getUniversalRouterAddress, getStateViewAddress } from '../../../lib/pools-config';
-import { findBestRoute, SwapRoute, routeToString } from '../../../lib/routing-engine';
+import { findBestRoute, SwapRoute, routeToString } from '@/lib/swap/routing-engine';
 import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
 import { ethers } from 'ethers';
 

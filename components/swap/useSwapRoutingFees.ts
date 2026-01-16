@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { TokenSymbol } from "@/lib/pools-config"
-import type { SwapRoute } from "@/lib/routing-engine"
-import { findBestRoute } from "@/lib/routing-engine"
+import type { SwapRoute } from "@/lib/swap/routing-engine"
+import { findBestRoute } from "@/lib/swap/routing-engine"
 
 type RouteInfo = {
   path: string[]

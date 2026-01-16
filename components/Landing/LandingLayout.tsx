@@ -57,7 +57,7 @@ const LandingPageNavigation = () => {
         <div className="flex items-center gap-5 md:gap-6">
           <Link href="/" className="flex items-center justify-center ml-1">
             <Image
-              src="/LogoIconWhite.svg"
+              src="/logos/alphix-icon-white.svg"
               alt="Alphix"
               width={28}
               height={28}
@@ -117,7 +117,7 @@ const LandingPageFooter = () => {
           <div className="flex flex-col justify-between h-[280px] md:h-[320px] py-8 md:py-10 px-4 md:px-12">
             <div className="flex flex-row justify-between items-start">
               <Image
-                src="/LogoIconWhite.svg"
+                src="/logos/alphix-icon-white.svg"
                 alt="Alphix Logo"
                 width={32}
                 height={32}

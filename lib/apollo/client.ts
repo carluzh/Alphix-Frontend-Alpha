@@ -36,17 +36,17 @@ function getGraphQLEndpoint(): string {
 const httpLink = new HttpLink({
   uri: getGraphQLEndpoint(),
   credentials: 'same-origin',
-})
-
-export const apolloClient = new ApolloClient({
-  connectToDevTools: process.env.NODE_ENV === 'development',
-  // Link chain: error handling -> REST fallback -> GraphQL endpoint
-  link: from([getErrorLink(), httpLink]),
   headers: {
     'Content-Type': 'application/json',
     Origin: typeof window !== 'undefined' ? window.location.origin : 'https://app.alphix.io',
   },
+})
+
+export const apolloClient = new ApolloClient({
+  // Link chain: error handling -> REST fallback -> GraphQL endpoint
+  link: from([getErrorLink(), httpLink]),
   cache: setupSharedApolloCache(),
+  devtools: { enabled: process.env.NODE_ENV === 'development' },
   defaultOptions: {
     watchQuery: {
       fetchPolicy: 'cache-and-network',

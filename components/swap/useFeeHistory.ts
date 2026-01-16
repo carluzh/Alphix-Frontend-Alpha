@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { getPoolByTokens } from "@/lib/pools-config"
-import type { SwapRoute } from "@/lib/routing-engine"
+import type { SwapRoute } from "@/lib/swap/routing-engine"
 
 export type FeeHistoryPoint = {
   timeLabel: string

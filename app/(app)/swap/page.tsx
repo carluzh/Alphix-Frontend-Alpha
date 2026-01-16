@@ -3,7 +3,7 @@
 import { SwapInterface } from "@/components/swap/swap-interface"
 import type { Metadata } from 'next'
 import React, { useState, useCallback } from "react";
-import { SwapRoute } from "@/lib/routing-engine";
+import { SwapRoute } from "@/lib/swap/routing-engine";
 
 export default function Page() {
   const [currentRoute, setCurrentRoute] = useState<SwapRoute | null>(null);

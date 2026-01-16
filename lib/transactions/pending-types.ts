@@ -17,7 +17,6 @@ export enum PendingTransactionType {
 
   // Swap operations
   Swap = 'SWAP',
-  ZapSwap = 'ZAP_SWAP',
 
   // Approval operations
   Approve = 'APPROVE',
@@ -74,7 +73,7 @@ export interface PendingTransactionDetails {
   /** TVL delta for optimistic updates */
   tvlDelta?: number;
 
-  /** Volume delta for optimistic updates (zap/swap) */
+  /** Volume delta for optimistic updates (swap) */
   volumeDelta?: number;
 
   /** Block number when confirmed */

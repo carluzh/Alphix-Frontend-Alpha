@@ -82,7 +82,7 @@ export function LiquidityChartSkeleton({
         {/* Centered logo with pulse animation */}
         <g transform={`translate(0, ${height / 2})`}>
           <image
-            href="/LogoIconWhite.svg"
+            href="/logos/alphix-icon-white.svg"
             x="40%"
             y="-16"
             width="32"

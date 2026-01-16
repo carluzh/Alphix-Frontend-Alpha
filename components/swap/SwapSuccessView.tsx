@@ -74,7 +74,7 @@ export function SwapSuccessView({
           animate={{ scale: 1 }}
           transition={{ type: "spring", stiffness: 300, damping: 20 }}
           style={{
-            backgroundImage: 'url(/pattern_wide.svg)',
+            backgroundImage: 'url(/patterns/button-wide.svg)',
             backgroundSize: 'cover',
             backgroundPosition: 'center'
           }}
@@ -99,7 +99,7 @@ export function SwapSuccessView({
         variant="outline"
         className="w-full relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
         onClick={handleChangeButton}
-        style={{ backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+        style={{ backgroundImage: 'url(/patterns/button-wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
       >
         Swap again
       </Button>

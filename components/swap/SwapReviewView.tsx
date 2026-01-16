@@ -249,7 +249,7 @@ export function SwapReviewView({
                   damping: 20,
                 }}
                 style={{
-                  backgroundImage: 'url(/pattern_wide.svg)',
+                  backgroundImage: 'url(/patterns/button-wide.svg)',
                   backgroundSize: 'cover',
                   backgroundPosition: 'center'
                 }}
@@ -310,7 +310,7 @@ export function SwapReviewView({
           className="relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
           onClick={handleChangeButton}
           disabled={isSwapping}
-          style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+          style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
         >
           Change
         </Button>
@@ -329,7 +329,7 @@ export function SwapReviewView({
           disabled={trade.quoteLoading || !canProceed || !(swapProgressState === "needs_approval" || swapProgressState === "needs_signature" || swapProgressState === "ready_to_swap")}
           aria-busy={trade.quoteLoading}
           style={trade.quoteLoading || !canProceed || !(swapProgressState === "needs_approval" || swapProgressState === "needs_signature" || swapProgressState === "ready_to_swap")
-            ? { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }
+            ? { backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }
             : undefined
           }
         >

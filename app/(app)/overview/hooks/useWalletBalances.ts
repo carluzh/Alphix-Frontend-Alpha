@@ -13,7 +13,7 @@ import { useMemo, useEffect, useState, useCallback } from "react";
 import { formatUnits as viemFormatUnits, erc20Abi } from "viem";
 import { useBalance, useReadContracts } from "wagmi";
 import { getAllTokens, NATIVE_TOKEN_ADDRESS, type NetworkMode } from "@/lib/pools-config";
-import { batchQuotePrices } from "@/lib/quote-prices";
+import { batchQuotePrices } from "@/lib/swap/quote-prices";
 import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from "@/lib/network-mode";
 
 interface TokenBalance {

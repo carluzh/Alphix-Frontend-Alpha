@@ -17,7 +17,7 @@ import {
 } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useAccount } from 'wagmi';
-import { batchQuotePrices } from '@/lib/quote-prices';
+import { batchQuotePrices } from '@/lib/swap/quote-prices';
 import { useNetwork } from '@/lib/network-context';
 import { readContracts, getBalance } from '@wagmi/core';
 import { erc20Abi, formatUnits } from 'viem';

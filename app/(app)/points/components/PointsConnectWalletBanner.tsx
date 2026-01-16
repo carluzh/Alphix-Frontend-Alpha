@@ -15,7 +15,7 @@ export function PointsConnectWalletBanner() {
       <div
         className="absolute inset-0 bg-center bg-repeat opacity-60"
         style={{
-          backgroundImage: "url(/pattern.svg)",
+          backgroundImage: "url(/patterns/button-default.svg)",
           backgroundSize: "auto",
         }}
       />

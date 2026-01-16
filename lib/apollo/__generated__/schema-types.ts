@@ -36,15 +36,6 @@ export type Amount = IAmount & {
   value: Scalars['Float']['output'];
 };
 
-export type BuildSwapTxInput = {
-  amountIn: Scalars['String']['input'];
-  amountOutMin: Scalars['String']['input'];
-  deadline: Scalars['Int']['input'];
-  recipient: Scalars['String']['input'];
-  tokenIn: Scalars['String']['input'];
-  tokenOut: Scalars['String']['input'];
-};
-
 export type Chain =
   | 'BASE'
   | 'BASE_SEPOLIA';
@@ -82,13 +73,7 @@ export type IContract = {
 
 export type Mutation = {
   __typename?: 'Mutation';
-  buildSwapTransaction?: Maybe<SwapTransaction>;
-};
-
-
-export type MutationBuildSwapTransactionArgs = {
-  chain: Chain;
-  input: BuildSwapTxInput;
+  _placeholder?: Maybe<Scalars['String']['output']>;
 };
 
 export type Pool = {
@@ -212,7 +197,6 @@ export type Query = {
   pools: Array<Pool>;
   position?: Maybe<Position>;
   positionFees?: Maybe<FeeItem>;
-  swapQuote?: Maybe<SwapQuote>;
   token?: Maybe<Token>;
   tokenPrices: AllTokenPrices;
   userPositions: Array<Position>;
@@ -271,12 +255,6 @@ export type QueryPositionFeesArgs = {
 };
 
 
-export type QuerySwapQuoteArgs = {
-  chain: Chain;
-  input: SwapQuoteInput;
-};
-
-
 export type QueryTokenArgs = {
   address?: InputMaybe<Scalars['String']['input']>;
   chain: Chain;
@@ -291,32 +269,6 @@ export type QueryTokenPricesArgs = {
 export type QueryUserPositionsArgs = {
   chain: Chain;
   owner: Scalars['String']['input'];
-};
-
-export type SwapQuote = {
-  __typename?: 'SwapQuote';
-  amountIn: Scalars['String']['output'];
-  amountOut: Scalars['String']['output'];
-  fees: Array<Scalars['Int']['output']>;
-  minimumReceived?: Maybe<Scalars['String']['output']>;
-  path: Array<Scalars['String']['output']>;
-  priceImpact?: Maybe<Scalars['Float']['output']>;
-};
-
-export type SwapQuoteInput = {
-  amount: Scalars['String']['input'];
-  exactIn: Scalars['Boolean']['input'];
-  slippageTolerance?: InputMaybe<Scalars['Float']['input']>;
-  tokenIn: Scalars['String']['input'];
-  tokenOut: Scalars['String']['input'];
-};
-
-export type SwapTransaction = {
-  __typename?: 'SwapTransaction';
-  data: Scalars['String']['output'];
-  gasLimit?: Maybe<Scalars['String']['output']>;
-  to: Scalars['String']['output'];
-  value: Scalars['String']['output'];
 };
 
 export type TicksInput = {

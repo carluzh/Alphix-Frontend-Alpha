@@ -59,12 +59,6 @@ export {
   isFullRangePosition,
 } from './hooks/range';
 
-// Zap approvals (re-export from hooks/approval)
-export {
-  useCheckZapApprovals,
-  type CheckZapApprovalsParams,
-  type CheckZapApprovalsResponse,
-} from './hooks/approval';
 
 // Gas fee estimation hooks
 export {

@@ -1,5 +1,5 @@
 // Identical pattern to Uniswap functions/utils/cache.ts (adapted for Redis)
-import { redis } from '@/lib/redis'
+import { redis } from '@/lib/cache/redis'
 
 export interface Data {
   title: string

@@ -5,9 +5,6 @@ export type FlowStep =
   | 'idle'
   | 'approving_token0'
   | 'approving_token1'
-  | 'approving_zap_tokens'
-  | 'approving_input'
-  | 'approving_output'
   | 'signing_permit'
   | 'executing';
 
@@ -38,7 +35,7 @@ export interface UseTransactionFlowProps {
 export interface UseTransactionFlowReturn {
   state: TransactionFlowState;
   actions: TransactionFlowActions;
-  getNextStep: (approvalData: any, isZapMode?: boolean) => FlowStep | null;
+  getNextStep: (approvalData: any) => FlowStep | null;
   canProceed: () => boolean;
   isFlowActive: () => boolean;
 }
@@ -114,18 +111,8 @@ export function useTransactionFlow(props?: UseTransactionFlowProps): UseTransact
     },
   }), [onStepComplete]);
 
-  const getNextStep = useCallback((approvalData: any, isZapMode?: boolean): FlowStep | null => {
+  const getNextStep = useCallback((approvalData: any): FlowStep | null => {
     if (!approvalData) return null;
-
-    if (isZapMode) {
-      if (state.completedSteps.has('approving_zap_tokens')) {
-        return state.completedSteps.has('executing') ? null : 'executing';
-      }
-      if (approvalData.needsInputTokenERC20Approval || approvalData.needsOutputTokenERC20Approval) {
-        return 'approving_zap_tokens';
-      }
-      return state.completedSteps.has('executing') ? null : 'executing';
-    }
 
     // Regular flow
     if (approvalData.needsToken0ERC20Approval && !state.completedSteps.has('approving_token0')) {
@@ -169,58 +156,10 @@ export function generateStepperSteps(
   approvalData: any,
   token0Symbol?: TokenSymbol,
   token1Symbol?: TokenSymbol,
-  isZapMode?: boolean,
+  _isZapMode?: boolean, // Kept for backwards compatibility but ignored
   tokenDefinitions?: TokenDefinitions,
 ) {
   const steps: any[] = [];
-
-  if (isZapMode) {
-    // Zap mode: Approvals → Swap → Create Position
-    if (!approvalData) {
-      steps.push({ id: 'approvals', label: 'Token Approvals', status: 'loading' as const });
-    } else {
-      const needsInput = Boolean(approvalData.needsInputTokenERC20Approval);
-      const needsOutput = Boolean(approvalData.needsOutputTokenERC20Approval);
-      const totalNeeded = (needsInput ? 1 : 0) + (needsOutput ? 1 : 0);
-      const batchComplete = flowState.completedSteps.has('approving_zap_tokens');
-
-      let completed = 0;
-      if (batchComplete) {
-        completed = totalNeeded;
-      } else {
-        if (!needsInput || flowState.completedSteps.has('approving_input')) completed++;
-        if (!needsOutput || flowState.completedSteps.has('approving_output')) completed++;
-      }
-
-      const allComplete = batchComplete || (!needsInput && !needsOutput);
-      const isWorking = flowState.currentStep === 'approving_zap_tokens';
-
-      steps.push({
-        id: 'approvals',
-        label: 'Token Approvals',
-        status: allComplete ? 'completed' as const : isWorking ? 'loading' as const : 'pending' as const,
-        ...(totalNeeded > 0 ? { count: { completed, total: totalNeeded } } : {}),
-      });
-    }
-
-    const zapCompleted = flowState.completedSteps.has('executing');
-    const isExecuting = flowState.currentStep === 'executing';
-    const txSubmitted = isExecuting && flowState.isLocked;
-
-    steps.push({
-      id: 'swap',
-      label: 'Swap Token',
-      status: zapCompleted ? 'completed' as const : txSubmitted ? 'completed' as const : isExecuting ? 'loading' as const : 'pending' as const,
-    });
-
-    steps.push({
-      id: 'position',
-      label: 'Create Position',
-      status: zapCompleted ? 'completed' as const : txSubmitted ? 'loading' as const : 'pending' as const,
-    });
-
-    return steps;
-  }
 
   // Regular mode: Approvals → Permit → Deposit
   const needsToken0 = approvalData?.needsToken0ERC20Approval;

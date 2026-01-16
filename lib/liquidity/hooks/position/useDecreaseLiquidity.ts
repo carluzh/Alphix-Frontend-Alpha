@@ -7,12 +7,12 @@ import { toast } from 'sonner';
 import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import { TickMath } from '@uniswap/v3-sdk';
 import { Token, Percent } from '@uniswap/sdk-core';
-import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap-constants';
+import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap/swap-constants';
 import { getToken, TokenSymbol, getTokenSymbolByAddress, getTokenDefinitions } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
 import { baseSepolia, getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, encodeAbiParameters, keccak256, formatUnits } from 'viem';
-import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
+import { getPositionDetails, getPoolState } from '@/lib/liquidity/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
 import { invalidateAfterTx } from '@/lib/invalidation';
 import JSBI from 'jsbi';
@@ -482,7 +482,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
                   ? { amount: adjustedPositionData.decreaseAmount1, symbol: adjustedPositionData.token1Symbol }
                   : null;
               if (!inputSide) throw new Error('No non-zero decrease amount specified');
-              const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+              const { calculateLiquidityParameters } = await import('@/lib/liquidity/liquidity-math');
               const result = await calculateLiquidityParameters({
                 token0Symbol: adjustedPositionData.token0Symbol,
                 token1Symbol: adjustedPositionData.token1Symbol,

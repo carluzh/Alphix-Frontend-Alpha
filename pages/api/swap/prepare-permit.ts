@@ -8,11 +8,10 @@ import {
     AVERAGE_L2_BLOCK_TIME_MS,
     MaxAllowanceTransferAmount,
     getPermit2Domain,
-} from '../../../lib/swap-constants';
-import { TokenSymbol, getNetworkModeFromRequest } from '../../../lib/pools-config';
+    Erc20AbiDefinition,
+} from '@/lib/swap/swap-constants';
+import { TokenSymbol, getNetworkModeFromRequest, getUniversalRouterAddress } from '../../../lib/pools-config';
 import { iallowance_transfer_abi } from '../../../lib/abis/IAllowanceTransfer_abi';
-import { getUniversalRouterAddress } from '../../../lib/pools-config';
-import { Erc20AbiDefinition } from '../../../lib/swap-constants';
 import { PERMIT_TYPES } from '../../../lib/permit-types';
 
 // Ensure this matches the structure viem expects for signTypedData

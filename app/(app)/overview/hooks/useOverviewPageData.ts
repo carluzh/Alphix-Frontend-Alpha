@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useAccount } from "wagmi";
-import { useUserPositions, useAllPrices } from "@/components/data/hooks";
+import { useUserPositions, useAllPrices } from "@/lib/apollo/hooks";
 import { getTokenDefinitions } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useOverview } from "./useOverviewData";

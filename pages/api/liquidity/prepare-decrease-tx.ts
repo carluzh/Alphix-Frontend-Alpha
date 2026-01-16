@@ -14,11 +14,11 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { V4_POSITION_MANAGER_ABI } from "@/lib/swap-constants";
+import { V4_POSITION_MANAGER_ABI } from "@/lib/swap/swap-constants";
 import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getNetworkModeFromRequest, getTokenSymbolByAddress } from "@/lib/pools-config";
 import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
 import { createNetworkClient } from "@/lib/viemClient";
-import { getPositionDetails, getPoolState } from "@/lib/liquidity-utils";
+import { getPositionDetails, getPoolState } from "@/lib/liquidity/liquidity-utils";
 import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
 import {
   isAddress,

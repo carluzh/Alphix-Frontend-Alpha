@@ -5,20 +5,20 @@ import { useAccount, useEnsName, useEnsAvatar } from "wagmi";
 import { mainnet } from "wagmi/chains";
 import { cn } from "@/lib/utils";
 import { IconClone2, IconCheck } from "nucleo-micro-bold-essential";
-import { DeterministicAvatar } from "@/lib/avatar";
+import { DeterministicAvatar } from "@/lib/icons/avatar";
 
 /**
  * Fallback wallet icons for connectors without native icons
  * Based on interface/apps/web/src/components/Web3Provider/constants.ts
  */
 const WALLET_ICONS: Record<string, string> = {
-  "io.metamask": "/images/wallets/metamask-icon.svg",
-  metaMask: "/images/wallets/metamask-icon.svg",
-  metamask: "/images/wallets/metamask-icon.svg",
-  walletConnect: "/images/wallets/walletconnect-icon.svg",
-  coinbaseWallet: "/images/wallets/coinbase-icon.svg",
-  coinbaseWalletSDK: "/images/wallets/coinbase-icon.svg",
-  phantom: "/images/wallets/phantom-icon.png",
+  "io.metamask": "/wallets/metamask-icon.svg",
+  metaMask: "/wallets/metamask-icon.svg",
+  metamask: "/wallets/metamask-icon.svg",
+  walletConnect: "/wallets/walletconnect-icon.svg",
+  coinbaseWallet: "/wallets/coinbase-icon.svg",
+  coinbaseWalletSDK: "/wallets/coinbase-icon.svg",
+  phantom: "/wallets/phantom-icon.png",
 };
 
 /**

@@ -63,9 +63,6 @@ export {
   type CheckMintApprovalsParams,
   type CheckIncreaseApprovalsParams,
   type LegacyApprovalResponse,
-  useCheckZapApprovals,
-  type CheckZapApprovalsParams,
-  type CheckZapApprovalsResponse,
 } from './approval'
 
 // Range utilities (minimal - most deleted, use SDK directly)

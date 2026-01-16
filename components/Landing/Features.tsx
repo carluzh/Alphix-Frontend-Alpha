@@ -18,7 +18,7 @@ const UniswapFoundationCard = () => {
       >
       <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/4 pointer-events-none">
         <Image
-          src="/uniswap-logo.svg"
+          src="/landing/uniswap-logo.svg"
           alt=""
           width={280}
           height={280}
@@ -30,7 +30,7 @@ const UniswapFoundationCard = () => {
       <div className="flex h-full flex-col gap-y-6 relative z-10">
         <div className="flex items-center gap-x-2">
           <Image
-            src="/uniswap-logo.svg"
+            src="/landing/uniswap-logo.svg"
             alt="Uniswap"
             width={28}
             height={28}
@@ -90,7 +90,7 @@ const BaseChainCard = () => {
         <div
           className="absolute inset-0 pointer-events-none opacity-[0.15] transition-opacity duration-300 group-hover:opacity-[0.6]"
           style={{
-            backgroundImage: 'url(/base_back.webp)',
+            backgroundImage: 'url(/landing/base-background.webp)',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
           }}
@@ -98,7 +98,7 @@ const BaseChainCard = () => {
         <div className="flex h-full flex-col gap-y-6 relative z-10">
           <div className="flex items-center relative">
             <Image
-              src="/base-lockup-white.svg"
+              src="/landing/base-lockup-white.svg"
               alt="Base"
               width={85}
               height={22}
@@ -107,7 +107,7 @@ const BaseChainCard = () => {
               unoptimized
             />
             <Image
-              src="/base-lockup-white.svg"
+              src="/landing/base-lockup-white.svg"
               alt=""
               width={85}
               height={22}

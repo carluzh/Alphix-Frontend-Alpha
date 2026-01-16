@@ -37,26 +37,11 @@ export default function PoolDetailPage() {
     // Prices
     priceMap,
     isLoadingPrices,
-    // Denomination
-    effectiveDenominationBase,
-    denominationBaseOverride,
-    handleDenominationToggle,
     // Token definitions
     tokenDefinitions,
     // Tick utilities
-    sdkMinTick,
-    sdkMaxTick,
     convertTickToPrice,
-    // Callbacks
-    refreshPositions,
-    refreshAfterLiquidityAdded,
-    refreshAfterMutation,
-    updatePositionOptimistically,
-    removePositionOptimistically,
-    clearOptimisticFees,
-    clearAllOptimisticStates,
     // USD calculations
-    getUsdPriceForSymbol,
     calculatePositionUsd,
   } = usePoolDetailPageData(poolId);
 
@@ -73,21 +58,8 @@ export default function PoolDetailPage() {
       optimisticallyClearedFees={optimisticallyClearedFees}
       priceMap={priceMap}
       isLoadingPrices={isLoadingPrices}
-      effectiveDenominationBase={effectiveDenominationBase}
-      denominationBaseOverride={denominationBaseOverride}
-      handleDenominationToggle={handleDenominationToggle}
       tokenDefinitions={tokenDefinitions}
-      sdkMinTick={sdkMinTick}
-      sdkMaxTick={sdkMaxTick}
       convertTickToPrice={convertTickToPrice}
-      refreshPositions={refreshPositions}
-      refreshAfterLiquidityAdded={refreshAfterLiquidityAdded}
-      refreshAfterMutation={refreshAfterMutation}
-      updatePositionOptimistically={updatePositionOptimistically}
-      removePositionOptimistically={removePositionOptimistically}
-      clearOptimisticFees={clearOptimisticFees}
-      clearAllOptimisticStates={clearAllOptimisticStates}
-      getUsdPriceForSymbol={getUsdPriceForSymbol}
       calculatePositionUsd={calculatePositionUsd}
     />
   );

@@ -27,7 +27,7 @@ export const Hero = ({
       </div>
       <div className="hero-animate in-view hero-logo relative z-10">
         <Image
-          src="/LogoIconWhite.svg"
+          src="/logos/alphix-icon-white.svg"
           alt="Alphix Logo"
           width={80}
           height={80}

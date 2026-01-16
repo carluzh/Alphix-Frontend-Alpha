@@ -1,5 +1,5 @@
 import { type NetworkMode, getAllTokenSymbols } from '@/lib/pools-config'
-import { batchQuotePrices } from '@/lib/quote-prices'
+import { batchQuotePrices } from '@/lib/swap/quote-prices'
 import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '@/lib/network-mode'
 
 /**

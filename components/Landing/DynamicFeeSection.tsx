@@ -457,7 +457,7 @@ export const DynamicFeeSection = () => {
             <button className="group relative flex flex-row items-center gap-x-2 rounded-md border border-sidebar-border bg-button px-8 py-2.5 text-sm font-semibold text-foreground hover:bg-accent hover:brightness-110 hover:border-white/30 transition-all overflow-hidden">
               <span
                 className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0"
-                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
               />
               <span className="relative z-10">Learn More</span>
               <ArrowUpRight className="relative z-10 h-4 w-4" />

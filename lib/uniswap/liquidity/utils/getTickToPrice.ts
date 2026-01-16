@@ -14,7 +14,8 @@ export function getTickToPrice({
   if (!baseToken || !quoteToken || typeof tick !== 'number') {
     return undefined
   }
-  return tickToPrice(baseToken, quoteToken, tick)
+  // Type assertion needed due to v3-sdk bundling its own sdk-core version
+  return tickToPrice(baseToken, quoteToken, tick) as unknown as Price<Token, Token>
 }
 
 export function getV4TickToPrice({

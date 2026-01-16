@@ -138,7 +138,7 @@ export const PointsInventoryCard = memo(function PointsInventoryCard({
             "opacity-60 group-hover:opacity-40"
           )}
           style={{
-            backgroundImage: "url(/pattern.svg)",
+            backgroundImage: "url(/patterns/button-default.svg)",
             backgroundSize: "auto",
           }}
         />

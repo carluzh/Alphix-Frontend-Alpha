@@ -1,9 +1,8 @@
 "use client";
 
-import { memo, useState, useCallback, useEffect, useRef, useMemo, Suspense } from "react";
+import { memo, useState, useCallback, useEffect, useMemo } from "react";
 import { useAccount } from "wagmi";
 import { useRouter } from "next/navigation";
-import { createLazy } from "@/lib/lazyWithRetry";
 import { parseSubgraphPosition, type SubgraphPosition, type PositionInfo } from "@/lib/uniswap/liquidity";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
@@ -21,13 +20,6 @@ import type {
   PoolStateData,
   ChartDataPoint,
 } from "../../hooks";
-
-// Lazy load heavy modals
-const PositionDetailsModal = createLazy(() =>
-  import("@/components/liquidity/PositionDetailsModal").then((m) => ({
-    default: m.PositionDetailsModal,
-  }))
-);
 
 export interface PoolDetailProps {
   // Pool data
@@ -49,17 +41,10 @@ export interface PoolDetailProps {
   priceMap: Record<string, number>;
   isLoadingPrices: boolean;
 
-  // Denomination
-  effectiveDenominationBase: string;
-  denominationBaseOverride: string | null;
-  handleDenominationToggle: (newBase: string) => void;
-
   // Token definitions
   tokenDefinitions: Record<string, { address: string; decimals: number; symbol: string }>;
 
   // Tick utilities
-  sdkMinTick: number;
-  sdkMaxTick: number;
   convertTickToPrice: (
     tick: number,
     currentPoolTick: number | null,
@@ -69,21 +54,7 @@ export interface PoolDetailProps {
     token1Symbol: string
   ) => string;
 
-  // Callbacks
-  refreshPositions: () => Promise<void>;
-  refreshAfterLiquidityAdded: (options?: {
-    token0Symbol?: string;
-    token1Symbol?: string;
-    txInfo?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number; volumeDelta?: number };
-  }) => Promise<void>;
-  refreshAfterMutation: (info?: { txHash?: `0x${string}`; tvlDelta?: number }) => Promise<void>;
-  updatePositionOptimistically: (positionId: string, updates: Partial<ProcessedPosition>) => void;
-  removePositionOptimistically: (positionId: string) => void;
-  clearOptimisticFees: (positionId: string) => void;
-  clearAllOptimisticStates: () => void;
-
   // USD calculations
-  getUsdPriceForSymbol: (symbol?: string) => number;
   calculatePositionUsd: (position: ProcessedPosition) => number;
 }
 
@@ -103,21 +74,8 @@ export const PoolDetail = memo(function PoolDetail({
   optimisticallyClearedFees,
   priceMap,
   isLoadingPrices,
-  effectiveDenominationBase,
-  denominationBaseOverride,
-  handleDenominationToggle,
   tokenDefinitions,
-  sdkMinTick,
-  sdkMaxTick,
   convertTickToPrice,
-  refreshPositions,
-  refreshAfterLiquidityAdded,
-  refreshAfterMutation,
-  updatePositionOptimistically,
-  removePositionOptimistically,
-  clearOptimisticFees,
-  clearAllOptimisticStates,
-  getUsdPriceForSymbol,
   calculatePositionUsd,
 }: PoolDetailProps) {
   const router = useRouter();
@@ -164,15 +122,6 @@ export const PoolDetail = memo(function PoolDetail({
       return () => window.removeEventListener("resize", handleResize);
     }
   }, []);
-
-  // =========================================================================
-  // LOCAL UI STATE (modals, selections)
-  // =========================================================================
-  const [selectedPositionForDetails, setSelectedPositionForDetails] = useState<ProcessedPosition | null>(null);
-  const [isPositionDetailsModalOpen, setIsPositionDetailsModalOpen] = useState(false);
-
-  // Guard ref for preventing duplicate handlers
-  const pendingActionRef = useRef<null | { type: "increase" | "decrease" | "withdraw" | "burn" | "collect" | "compound" }>(null);
 
   // =========================================================================
   // POSITION INFO CONVERSION
@@ -261,43 +210,6 @@ export const PoolDetail = memo(function PoolDetail({
     router.push(`/liquidity/position/${position.positionId}`);
   }, [router]);
 
-  const handleLiquidityDecreased = useCallback(
-    (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => {
-      if (!info?.txHash || !selectedPositionForDetails) return;
-
-      if (info?.isFullBurn) {
-        removePositionOptimistically(selectedPositionForDetails.positionId);
-      } else {
-        updatePositionOptimistically(selectedPositionForDetails.positionId, { isOptimisticallyUpdating: true });
-        clearOptimisticFees(selectedPositionForDetails.positionId);
-      }
-
-      pendingActionRef.current = null;
-      refreshAfterMutation(info);
-    },
-    [selectedPositionForDetails, updatePositionOptimistically, removePositionOptimistically, clearOptimisticFees, refreshAfterMutation]
-  );
-
-  // =========================================================================
-  // HELPERS
-  // =========================================================================
-  const formatTokenDisplayAmount = useCallback((amount: string) => {
-    const num = parseFloat(amount);
-    if (isNaN(num)) return amount;
-    if (num === 0) return "0";
-    if (num > 0 && num < 0.000001) return "< 0.000001";
-    return num.toFixed(6);
-  }, []);
-
-  // =========================================================================
-  // COMPUTED VALUES
-  // =========================================================================
-  const selectedPositionInfo = useMemo(() => {
-    if (!selectedPositionForDetails) return null;
-    const feeData = getFeesForPosition(selectedPositionForDetails.positionId, selectedPositionForDetails);
-    return getPositionInfo(selectedPositionForDetails, feeData ?? undefined);
-  }, [selectedPositionForDetails, getFeesForPosition, getPositionInfo]);
-
   const token0Symbol = poolConfig?.tokens?.[0]?.symbol || "";
   const token1Symbol = poolConfig?.tokens?.[1]?.symbol || "";
 
@@ -365,30 +277,6 @@ export const PoolDetail = memo(function PoolDetail({
           </div>
         </div>
       </div>
-
-      {/* Position Details Modal */}
-      <Suspense fallback={null}>
-        {isPositionDetailsModalOpen && selectedPositionForDetails && selectedPositionInfo && (
-          <PositionDetailsModal
-            isOpen={isPositionDetailsModalOpen}
-            onClose={() => {
-              setIsPositionDetailsModalOpen(false);
-              setSelectedPositionForDetails(null);
-            }}
-            position={selectedPositionInfo}
-            valueUSD={calculatePositionUsd(selectedPositionForDetails)}
-            formatTokenDisplayAmount={formatTokenDisplayAmount}
-            onRefreshPosition={refreshPositions}
-            currentPrice={poolState.currentPrice}
-            currentPoolTick={poolState.currentPoolTick}
-            onLiquidityDecreased={(info) => {
-              pendingActionRef.current = { type: "decrease" };
-              handleLiquidityDecreased(info);
-            }}
-          />
-        )}
-      </Suspense>
-
     </div>
   );
 });

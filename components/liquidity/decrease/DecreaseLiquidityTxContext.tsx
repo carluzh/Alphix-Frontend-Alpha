@@ -17,7 +17,7 @@ import { useAccount } from "wagmi";
 import { formatUnits, type Address } from "viem";
 import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
-import { useAllPrices } from "@/components/data/hooks";
+import { useAllPrices } from "@/lib/apollo/hooks";
 import { getTokenSymbolByAddress, debounce } from "@/lib/utils";
 import { useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
 import { getStoredUserSettings } from "@/hooks/useUserSettings";
@@ -140,7 +140,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         return;
       }
 
-      const { calculateLiquidityParameters } = await import("@/lib/liquidity-math");
+      const { calculateLiquidityParameters } = await import("@/lib/liquidity/liquidity-math");
       const result = await calculateLiquidityParameters({
         token0Symbol,
         token1Symbol,

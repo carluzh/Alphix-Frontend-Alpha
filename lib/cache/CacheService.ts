@@ -10,7 +10,7 @@
  * This does NOT rebuild the caching system - it wraps existing proven code.
  */
 
-import { redis, getCachedDataWithStale, setCachedData, deleteCachedData, invalidateCachedData, CachedDataWrapper } from '@/lib/redis'
+import { redis, getCachedDataWithStale, setCachedData, deleteCachedData, invalidateCachedData, CachedDataWrapper } from '@/lib/cache/redis'
 import type { TTLConfig, CacheOptions, CacheResult, CacheApiResult } from './types'
 
 export class CacheService {

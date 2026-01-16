@@ -12,8 +12,8 @@ import { getAddress, type Hex, parseUnits, formatUnits, encodeAbiParameters, kec
 import JSBI from 'jsbi';
 
 import { getToken, getTokenSymbolByAddress, getTokenDefinitions, type TokenSymbol } from '@/lib/pools-config';
-import { getPositionDetails, getPoolState } from '@/lib/liquidity-utils';
-import { EMPTY_BYTES } from '@/lib/swap-constants';
+import { getPositionDetails, getPoolState } from '@/lib/liquidity/liquidity-utils';
+import { EMPTY_BYTES } from '@/lib/swap/swap-constants';
 import type { NetworkMode } from '@/lib/network-mode';
 
 import { parseTokenIdFromPosition } from './buildIncreaseTx';

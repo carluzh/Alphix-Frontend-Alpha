@@ -523,7 +523,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
         style={
           isDisabled && !isExecuting
             ? {
-                backgroundImage: "url(/pattern_wide.svg)",
+                backgroundImage: "url(/patterns/button-wide.svg)",
                 backgroundSize: "cover",
                 backgroundPosition: "center",
               }

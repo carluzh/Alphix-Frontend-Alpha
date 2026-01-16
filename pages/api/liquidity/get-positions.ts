@@ -5,7 +5,7 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, type Address, type Hex, encodeAbiParameters, keccak256, parseAbi } from "viem";
 import { getTokenSymbolByAddress, getToken as getTokenConfig, getChainId, getNetworkModeFromRequest, getPositionManagerAddress, getStateViewAddress, type NetworkMode } from "../../../lib/pools-config";
-import { getPositionDetails, getPoolState, decodePositionInfo, calculateUnclaimedFeesV4 } from "../../../lib/liquidity-utils";
+import { getPositionDetails, getPoolState, decodePositionInfo, calculateUnclaimedFeesV4 } from "@/lib/liquidity/liquidity-utils";
 import { getAlphixSubgraphUrl, getDaiSubgraphUrl, isMainnetSubgraphMode } from "../../../lib/subgraph-url-helper";
 import { STATE_VIEW_ABI } from "../../../lib/abis/state_view_abi";
 import { createNetworkClient } from "../../../lib/viemClient";

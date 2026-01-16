@@ -125,7 +125,7 @@ export const FaucetButton = ({
   const className = canClaim
     ? `px-2 py-1 text-xs rounded-md border border-sidebar-primary bg-button-primary text-sidebar-primary transition-colors ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover-button-primary'}`
     : `px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-muted-foreground transition-colors ${disabled || last < 0 ? 'opacity-70 cursor-not-allowed' : 'hover:bg-muted/60'}`;
-  const style = canClaim ? undefined : { backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
+  const style = canClaim ? undefined : { backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } as React.CSSProperties;
 
   return (
     <button type="button" onClick={handleClick} className={className} style={style} disabled={disabled || last < 0}>
@@ -276,7 +276,7 @@ export const BalancesPanel = (props: BalancesPanelProps) => {
         <button
           type="button"
           className="px-2 py-1 text-xs rounded-md border border-sidebar-border bg-button text-foreground brightness-110"
-          style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+          style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
         >
           Balances
         </button>

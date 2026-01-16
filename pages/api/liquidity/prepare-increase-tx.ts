@@ -21,7 +21,7 @@ import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, 
 import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
 import { iallowance_transfer_abi } from "@/lib/abis/IAllowanceTransfer_abi";
 import { createNetworkClient } from "@/lib/viemClient";
-import { getPositionDetails, getPoolState } from "@/lib/liquidity-utils";
+import { getPositionDetails, getPoolState } from "@/lib/liquidity/liquidity-utils";
 import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
 import {
   isAddress,
@@ -36,7 +36,7 @@ import {
 import {
   PERMIT_EXPIRATION_DURATION_SECONDS,
   PERMIT_SIG_DEADLINE_DURATION_SECONDS,
-} from "@/lib/swap-constants";
+} from "@/lib/swap/swap-constants";
 import { AllowanceTransfer, permit2Address, PERMIT2_ADDRESS, PermitBatch } from '@uniswap/permit2-sdk';
 
 const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";

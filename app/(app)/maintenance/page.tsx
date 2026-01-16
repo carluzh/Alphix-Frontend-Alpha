@@ -30,7 +30,7 @@ export default function MaintenancePage() {
       {/* Background logo */}
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-0" aria-hidden="true">
         <img
-          src="/LogoIconWhite.svg"
+          src="/logos/alphix-icon-white.svg"
           alt="Alphix Logo Background"
           style={{
             width: '75vw',
@@ -51,7 +51,7 @@ export default function MaintenancePage() {
         {/* Logo and Badge */}
         <div className="flex justify-center items-center gap-3">
           <img
-            src="/Logo Type (white).svg"
+            src="/logos/alphix-type-white.svg"
             alt="Alphix"
             className="h-6 cursor-pointer"
             onClick={() => router.push('/')}
@@ -78,7 +78,7 @@ export default function MaintenancePage() {
                 size="sm"
                 className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
                 asChild
-                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
               >
                 <a href="https://discord.gg/NTXRarFbTr" target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-2">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline">
@@ -92,7 +92,7 @@ export default function MaintenancePage() {
                 size="sm"
                 className="relative border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-xs font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 text-white/75"
                 asChild
-                style={{ backgroundImage: 'url(/pattern.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
               >
                 <a href="https://x.com/AlphixFi" target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-2">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { TokenSymbol } from '@/lib/pools-config';
-import { getQuotePrice } from '@/lib/quote-prices';
+import { getQuotePrice } from '@/lib/swap/quote-prices';
 import useIsWindowVisible from '@/hooks/useIsWindowVisible';
 
 const POLL_INTERVAL_MS = 30 * 1000; // Poll every 30 seconds

@@ -446,7 +446,7 @@ function UnifiedYieldCard({
         <span
           className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0 pointer-events-none"
           style={{
-            backgroundImage: 'url(/pattern.svg)',
+            backgroundImage: 'url(/patterns/button-default.svg)',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             opacity: 0.6,
@@ -503,7 +503,7 @@ export function CustomRangeCardV3({ poolId }: { poolId: string }) {
       <span
         className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0 pointer-events-none"
         style={{
-          backgroundImage: 'url(/pattern.svg)',
+          backgroundImage: 'url(/patterns/button-default.svg)',
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           opacity: 0.4,
@@ -564,7 +564,7 @@ export function UnifiedYieldCardV3B({
       <span
         className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0 pointer-events-none"
         style={{
-          backgroundImage: 'url(/pattern.svg)',
+          backgroundImage: 'url(/patterns/button-default.svg)',
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           opacity: 0.5,
@@ -638,7 +638,7 @@ export function UnifiedYieldCardV3C({
       <span
         className="absolute inset-0 transition-opacity duration-300 group-hover:opacity-20 pointer-events-none"
         style={{
-          backgroundImage: 'url(/pattern.svg)',
+          backgroundImage: 'url(/patterns/button-default.svg)',
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           opacity: 0.8,
@@ -880,7 +880,7 @@ export function UnifiedYieldCardV3D({
       <span
         className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0 pointer-events-none"
         style={{
-          backgroundImage: 'url(/pattern.svg)',
+          backgroundImage: 'url(/patterns/button-default.svg)',
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           opacity: 0.25,

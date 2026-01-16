@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useAccount } from "wagmi";
 import { useNetwork } from "@/lib/network-context";
-import { usePoolState, useAllPrices } from "@/components/data/hooks";
+import { usePoolState, useAllPrices } from "@/lib/apollo/hooks";
 import { getPoolById, getToken, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { SafeStorage } from "@/lib/safe-storage";
 import { getOptimalBaseToken } from "@/lib/denomination-utils";

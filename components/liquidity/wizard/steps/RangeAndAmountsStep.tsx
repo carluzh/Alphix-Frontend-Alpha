@@ -1024,7 +1024,7 @@ export function RangeAndAmountsStep() {
             ? "relative border border-sidebar-border bg-button text-sm font-medium transition-all duration-200 overflow-hidden !opacity-100 text-white/75"
             : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
         )}
-        style={!canReview ? { backgroundImage: 'url(/pattern_wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+        style={!canReview ? { backgroundImage: 'url(/patterns/button-wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
       >
         Review
       </Button>

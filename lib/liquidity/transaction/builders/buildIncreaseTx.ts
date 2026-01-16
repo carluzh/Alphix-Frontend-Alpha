@@ -11,9 +11,9 @@ import { getAddress, type Hex, parseUnits, encodeAbiParameters, keccak256 } from
 import JSBI from 'jsbi';
 
 import { getToken, getTokenSymbolByAddress, type TokenSymbol } from '@/lib/pools-config';
-import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity-utils';
+import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity/liquidity-utils';
 import type { NetworkMode } from '@/lib/network-mode';
-import { DEFAULT_LP_SLIPPAGE } from '@/lib/slippage-constants';
+import { DEFAULT_LP_SLIPPAGE } from '@/lib/slippage/slippage-constants';
 
 // =============================================================================
 // TYPES

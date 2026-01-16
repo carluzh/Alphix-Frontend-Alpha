@@ -153,7 +153,7 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
       <div
         className="absolute inset-0 bg-center bg-repeat opacity-40 pointer-events-none"
         style={{
-          backgroundImage: "url(/pattern.svg)",
+          backgroundImage: "url(/patterns/button-default.svg)",
           backgroundSize: "auto",
         }}
       />

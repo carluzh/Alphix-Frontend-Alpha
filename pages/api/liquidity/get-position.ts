@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { parseAbi, encodeAbiParameters, keccak256 } from 'viem';
-import { getPositionDetails, calculateUnclaimedFeesV4 } from '@/lib/liquidity-utils';
+import { getPositionDetails, calculateUnclaimedFeesV4 } from '@/lib/liquidity/liquidity-utils';
 import { getNetworkModeFromRequest, getPositionManagerAddress, getStateViewAddress } from '@/lib/pools-config';
 import { createNetworkClient } from '@/lib/viemClient';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';

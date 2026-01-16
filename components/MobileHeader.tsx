@@ -5,7 +5,6 @@ import { IconMenu } from "nucleo-micro-bold-essential";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ReactSVG } from "react-svg";
-import { useTheme } from "next-themes";
 import Link from "next/link";
 
 const HEADER_HEIGHT = "h-14";
@@ -13,7 +12,6 @@ const HEADER_HEIGHT = "h-14";
 export function MobileHeader() {
   const { toggleSidebar } = useSidebar();
   const isMobile = useIsMobile();
-  const { resolvedTheme } = useTheme();
 
   // Don't render until we know the mobile state to avoid hydration issues
   if (isMobile === undefined || !isMobile) {
@@ -38,12 +36,12 @@ export function MobileHeader() {
       <div className="flex-1 flex justify-center">
         <Link href="/" aria-label="Go to home page">
           <ReactSVG
-            src="/LogoIconWhite.svg"
+            src="/logos/alphix-icon-white.svg"
             className="h-6 w-6"
             beforeInjection={(svg) => {
               const paths = svg.querySelectorAll('path');
               paths.forEach(path => {
-                path.setAttribute('fill', resolvedTheme === 'dark' ? 'white' : 'black');
+                path.setAttribute('fill', 'white');
               });
             }}
           />

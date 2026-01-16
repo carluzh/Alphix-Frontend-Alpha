@@ -10,7 +10,7 @@ import { useReadContract } from 'wagmi';
 import { parseUnits, getAddress, type Address } from 'viem';
 import type { TokenSymbol } from '@/lib/pools-config';
 import { getTokenDefinitions, getPositionManagerAddress, NATIVE_TOKEN_ADDRESS } from '@/lib/pools-config';
-import { PERMIT2_ADDRESS } from '@/lib/swap-constants';
+import { PERMIT2_ADDRESS } from '@/lib/swap/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { iallowance_transfer_abi } from '@/lib/abis/IAllowanceTransfer_abi';
 import { useNetwork } from '@/lib/network-context';

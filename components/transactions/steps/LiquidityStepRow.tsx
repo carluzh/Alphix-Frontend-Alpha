@@ -36,14 +36,11 @@ function getActionLabel(stepType: TransactionStepType): string {
     [TransactionStepType.IncreasePositionTransactionAsync]: 'Add liquidity',
     [TransactionStepType.DecreasePositionTransaction]: 'Remove liquidity',
     [TransactionStepType.CollectFeesTransactionStep]: 'Collect fees',
-    [TransactionStepType.ZapSwapAndDeposit]: 'Swap & deposit',
     // These won't be used but needed for type completeness
     [TransactionStepType.TokenApprovalTransaction]: 'Approve',
     [TransactionStepType.TokenRevocationTransaction]: 'Revoke',
     [TransactionStepType.Permit2Signature]: 'Sign',
     [TransactionStepType.Permit2Transaction]: 'Permit',
-    [TransactionStepType.SwapPermitSignature]: 'Sign swap',
-    [TransactionStepType.SwapTransaction]: 'Swap',
   }
   return actionLabels[stepType] || 'Confirm'
 }

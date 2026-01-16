@@ -1,7 +1,7 @@
 'use client'
 
 import { ReactElement } from 'react'
-import { Icons } from '@/lib/unicon-svgs'
+import { Icons } from '@/lib/icons/unicon-svgs'
 
 interface AnimatedEmblemProps {
   children: ReactElement

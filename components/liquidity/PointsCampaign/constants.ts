@@ -11,7 +11,7 @@
  * Points campaign reward icon path.
  * Uses Alphix logo instead of UNI token like Uniswap.
  */
-export const POINTS_CAMPAIGN_ICON = '/LogoIconWhite.svg';
+export const POINTS_CAMPAIGN_ICON = '/logos/alphix-icon-white.svg';
 
 /**
  * Points campaign display name.

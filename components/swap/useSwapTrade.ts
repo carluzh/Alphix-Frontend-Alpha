@@ -1,12 +1,12 @@
 import { useEffect, useMemo } from "react"
 import { formatUnits, parseUnits } from "viem"
 
-import { getAutoSlippage } from "@/lib/slippage-api"
+import { getAutoSlippage } from "@/lib/slippage/slippage-api"
 
 import type { Token } from "./swap-interface"
 import { useSwapQuote } from "./useSwapQuote"
 import { useSwapRoutingFees } from "./useSwapRoutingFees"
-import type { SwapRoute } from "@/lib/routing-engine"
+import type { SwapRoute } from "@/lib/swap/routing-engine"
 
 export type FeeDetail = {
   name: string

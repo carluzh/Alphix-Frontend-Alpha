@@ -4,7 +4,7 @@ import React from 'react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useSlippageValidation } from '@/hooks/useSlippage';
-import { MAX_CUSTOM_SLIPPAGE_TOLERANCE } from '@/lib/slippage-constants';
+import { MAX_CUSTOM_SLIPPAGE_TOLERANCE } from '@/lib/slippage/slippage-constants';
 
 interface SlippageControlProps {
   currentSlippage: number;

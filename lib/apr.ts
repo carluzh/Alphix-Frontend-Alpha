@@ -5,7 +5,7 @@
 import { Percent } from '@uniswap/sdk-core'
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk'
 import JSBI from 'jsbi'
-import { batchQuotePrices } from './quote-prices'
+import { batchQuotePrices } from '@/lib/swap/quote-prices'
 
 export interface PoolMetrics {
   totalFeesToken0: number

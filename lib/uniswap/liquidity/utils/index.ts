@@ -1,9 +1,4 @@
 export {
-  getV4SDKPoolFromRestPool,
-  parseRestPosition,
-} from './parseFromRest'
-
-export {
   getTickToPrice,
   getV4TickToPrice,
 } from './getTickToPrice'

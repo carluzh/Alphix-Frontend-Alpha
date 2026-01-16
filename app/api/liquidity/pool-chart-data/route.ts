@@ -5,9 +5,9 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getPoolSubgraphId, getAllPools, type NetworkMode } from '@/lib/pools-config';
 import { getUniswapV4SubgraphUrl, isDaiPool, getDaiSubgraphUrl } from '@/lib/subgraph-url-helper';
-import { setCachedData, getCachedDataWithStale } from '@/lib/redis';
-import { poolKeys } from '@/lib/redis-keys';
-import { batchQuotePrices } from '@/lib/quote-prices';
+import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
+import { poolKeys } from '@/lib/cache/redis-keys';
+import { batchQuotePrices } from '@/lib/swap/quote-prices';
 
 interface ChartDataPoint {
   date: string;

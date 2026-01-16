@@ -8,7 +8,7 @@
  */
 
 import { Currency, CurrencyAmount, NativeCurrency, Token } from '@uniswap/sdk-core'
-import { PositionStatus, ProtocolVersion } from '@uniswap/client-data-api/dist/data/v1/poolTypes_pb'
+import { PositionStatus, ProtocolVersion } from '../pool-types'
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk'
 import { V3PositionInfo, type PositionInfo } from '../types'
 import { DYNAMIC_FEE_DATA, FeeData } from '../Create/types'

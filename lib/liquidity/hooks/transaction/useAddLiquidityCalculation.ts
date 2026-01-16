@@ -169,7 +169,7 @@ export function useAddLiquidityCalculation(
           };
         } else {
           // Use liquidity math for in-range positions
-          const { calculateLiquidityParameters } = await import('@/lib/liquidity-math');
+          const { calculateLiquidityParameters } = await import('@/lib/liquidity/liquidity-math');
           result = await calculateLiquidityParameters({
             token0Symbol,
             token1Symbol,

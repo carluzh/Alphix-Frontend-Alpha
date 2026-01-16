@@ -79,7 +79,7 @@ export function PointsRewardsCard({
             isCardHovered ? "opacity-40" : "opacity-60"
           )}
           style={{
-            backgroundImage: "url(/pattern.svg)",
+            backgroundImage: "url(/patterns/button-default.svg)",
             backgroundSize: "auto",
           }}
         />

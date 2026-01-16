@@ -24,7 +24,7 @@ import {
 import {
     PERMIT_EXPIRATION_DURATION_SECONDS,
     PERMIT_SIG_DEADLINE_DURATION_SECONDS,
-} from "../../../lib/swap-constants";
+} from "@/lib/swap/swap-constants";
 import { AllowanceTransfer, permit2Address, PERMIT2_ADDRESS, PermitBatch } from '@uniswap/permit2-sdk';
 
 // Note: POSITION_MANAGER_ADDRESS and STATE_VIEW_ADDRESS are now fetched dynamically per-request

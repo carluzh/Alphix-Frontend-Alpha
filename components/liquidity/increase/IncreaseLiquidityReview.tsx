@@ -465,7 +465,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
           disabled={isExecuting || isLoading}
           className="relative border border-sidebar-border bg-button px-3 text-sm font-medium hover:brightness-110 hover:border-white/30 text-white/75 disabled:opacity-50"
           style={{
-            backgroundImage: "url(/pattern.svg)",
+            backgroundImage: "url(/patterns/button-default.svg)",
             backgroundSize: "cover",
             backgroundPosition: "center",
           }}

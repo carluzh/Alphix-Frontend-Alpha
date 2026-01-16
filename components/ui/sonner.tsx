@@ -1,13 +1,11 @@
 "use client"
 
-import { useTheme } from "next-themes"
 import { Toaster as Sonner } from "sonner"
 import { IconBadgeCheck2, IconCircleXmarkFilled, IconCircleInfo, IconCircleWarning } from "nucleo-micro-bold-essential"
 
 type ToasterProps = React.ComponentProps<typeof Sonner>
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
 
   return (
     <>
@@ -192,7 +190,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         }
       `}</style>
       <Sonner
-        theme={theme as ToasterProps["theme"]}
+        theme="dark"
         className="toaster group"
         closeButton
         dir="auto"
