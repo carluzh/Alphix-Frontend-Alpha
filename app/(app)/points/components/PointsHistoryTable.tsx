@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useState, useMemo } from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { PointsIcon } from "@/components/PointsIcons";
 import { IconChevronLeft, IconChevronRight } from "nucleo-micro-bold-essential";
@@ -262,7 +263,10 @@ function EmptyState() {
         No points history yet
       </h3>
       <p className="text-sm text-muted-foreground text-center max-w-sm">
-        Start earning points by providing liquidity in Unified Pools.
+        Start earning points by providing liquidity in{" "}
+        <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
+          Unified Pools
+        </Link>.
         Your earning history will appear here.
       </p>
     </div>

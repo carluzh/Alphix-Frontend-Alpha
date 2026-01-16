@@ -945,10 +945,10 @@ function YieldBreakdownSection({
           </span>
         </div>
         <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors">
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="text-xs text-muted-foreground">+</span>
-            <PointsIcon className="w-3.5 h-3.5 text-muted-foreground" />
-            Points
+          <span className="text-xs text-muted-foreground">+</span>
+          <span className="flex items-center gap-1.5">
+            <PointsIcon className="w-3.5 h-3.5 text-foreground" />
+            <span className="text-xs font-mono text-foreground">Points</span>
           </span>
         </div>
         <div className="border-t border-sidebar-border/40 mx-2 my-1" />

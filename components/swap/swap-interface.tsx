@@ -38,8 +38,9 @@ import { swapStore, useSwapStore } from "./swapStore"
 import { Card, CardContent } from "@/components/ui/card"
 import { formatTokenDisplayAmount } from "@/lib/utils"
 
-// Chart Import
-import { DynamicFeeChartPreview } from "../dynamic-fee-chart-preview";
+// Chart Import (dynamic for bundle optimization)
+import dynamic from "next/dynamic";
+const DynamicFeeChartPreview = dynamic(() => import("../dynamic-fee-chart-preview").then(mod => mod.DynamicFeeChartPreview), { ssr: false });
 // Deprecated cache functions removed - dynamic fee fetching happens directly via API
 import { SwapRoute } from "@/lib/swap/routing-engine";
 

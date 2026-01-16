@@ -43,11 +43,12 @@ const YIELD_SOURCE = {
   bgPurple: '/aave/purple-rings.png',
 };
 
-function PoolCard({ pool, selected, onSelect, apr, aprLoading }: {
+function PoolCard({ pool, selected, onSelect, apr, lendingApr, aprLoading }: {
   pool: PoolConfig;
   selected: boolean;
   onSelect: () => void;
   apr?: number;
+  lendingApr?: number;
   aprLoading?: boolean;
 }) {
   return (
@@ -63,7 +64,7 @@ function PoolCard({ pool, selected, onSelect, apr, aprLoading }: {
         {pool.currency0.symbol} / {pool.currency1.symbol}
       </span>
       <APRBadge
-        breakdown={{ poolApr: apr }}
+        breakdown={{ poolApr: apr, lendingApr }}
         token0Symbol={pool.currency0.symbol}
         token1Symbol={pool.currency1.symbol}
         isLoading={aprLoading}
@@ -177,7 +178,7 @@ function LPModeSection({ mode, onSelectMode, extraAaveApr }: { mode: LPMode; onS
         <div className="flex flex-row items-center justify-between gap-4">
           <p className="text-sm text-muted-foreground">Select how you want to provide liquidity</p>
           <a
-            href="https://docs.alphix.io/rehypothecation"
+            href="https://alphix.gitbook.io/docs/"
             target="_blank"
             rel="noopener noreferrer"
             className={cn("bg-muted/20 border border-sidebar-border/40 rounded-lg px-3 py-1.5 cursor-pointer shrink-0 transition-all duration-150", isCtaHovered && "bg-muted/30")}
@@ -248,22 +249,32 @@ export function PoolAndModeStep() {
     staleTime: 5 * 60_000, // 5 minutes
   });
 
-  // Calculate Aave APY based on selected pool's tokens
-  const extraAaveApr = useMemo(() => {
-    if (!selectedPool || !aaveRatesData?.success) return undefined;
+  // Calculate Aave APY for all pools
+  const poolAaveAprs = useMemo(() => {
+    if (!aaveRatesData?.success) return {};
 
-    const key0 = getAaveKey(selectedPool.currency0.symbol);
-    const key1 = getAaveKey(selectedPool.currency1.symbol);
+    const aprs: Record<string, number> = {};
+    pools.forEach(pool => {
+      const key0 = getAaveKey(pool.currency0.symbol);
+      const key1 = getAaveKey(pool.currency1.symbol);
 
-    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
-    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
+      const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
+      const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
 
-    // Average if both tokens supported, otherwise use single token's APY
-    if (apy0 !== null && apy1 !== null) {
-      return (apy0 + apy1) / 2;
-    }
-    return apy0 ?? apy1 ?? undefined;
-  }, [selectedPool, aaveRatesData]);
+      // Average if both tokens supported, otherwise use single token's APY
+      if (apy0 !== null && apy1 !== null) {
+        aprs[pool.id] = (apy0 + apy1) / 2;
+      } else if (apy0 !== null) {
+        aprs[pool.id] = apy0;
+      } else if (apy1 !== null) {
+        aprs[pool.id] = apy1;
+      }
+    });
+    return aprs;
+  }, [pools, aaveRatesData]);
+
+  // Get Aave APR for the selected pool (for the strategy section)
+  const extraAaveApr = selectedPool ? poolAaveAprs[selectedPool.id] : undefined;
 
   return (
     <Container>
@@ -285,6 +296,7 @@ export function PoolAndModeStep() {
               selected={state.poolId === pool.id}
               onSelect={() => handleSelectPool(pool)}
               apr={poolAprs[pool.id]}
+              lendingApr={poolAaveAprs[pool.id]}
               aprLoading={aprsLoading}
             />
           ))}

@@ -1,5 +1,6 @@
 import { createSchema, createYoga } from 'graphql-yoga'
 import { cookies } from 'next/headers'
+import { checkRateLimit } from '@/lib/api/ratelimit'
 
 // Import resolvers and schema as string (works in serverless)
 import { resolvers } from './resolvers'
@@ -53,4 +54,10 @@ const { handleRequest } = createYoga({
   },
 })
 
-export { handleRequest as GET, handleRequest as POST }
+async function rateLimitedHandler(request: Request) {
+  const rateLimited = await checkRateLimit(request)
+  if (rateLimited) return rateLimited
+  return handleRequest(request)
+}
+
+export { rateLimitedHandler as GET, rateLimitedHandler as POST }

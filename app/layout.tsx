@@ -10,15 +10,55 @@ const inter = Inter({
   variable: "--font-inter",
 })
 
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://alphix.fi'
+
 export const metadata: Metadata = {
+  metadataBase: new URL(baseUrl),
   title: {
-    default: 'Alphix',
-    template: 'Alphix | %s',
+    default: 'Alphix | Building Smarter Onchain Markets',
+    template: '%s | Alphix',
   },
-  description: 'Alphix: Unifying Liquidity on Base. Enhancing DeFi capital efficiency with our dynamic fee hook. Built on Uniswap V4 for security and optimal performance. Explore Unified Pools today!',
+  description: 'Alphix is a liquidity protocol on Base with dynamic fee hooks and unified liquidity through rehypothecation. Maximize capital efficiency with smarter onchain markets.',
+  keywords: ['Base DEX', 'Base liquidity', 'DeFi on Base', 'liquidity protocol', 'dynamic fees', 'rehypothecation', 'unified liquidity', 'Alphix'],
+  authors: [{ name: 'Alphix' }],
+  creator: 'Alphix',
   icons: {
     icon: '/favicon.png',
     apple: '/favicon.png',
+  },
+  openGraph: {
+    type: 'website',
+    locale: 'en_US',
+    url: baseUrl,
+    siteName: 'Alphix',
+    title: 'Alphix | Building Smarter Onchain Markets',
+    description: 'Liquidity protocol on Base with dynamic fee hooks and unified liquidity through rehypothecation. Maximize capital efficiency.',
+    images: [
+      {
+        url: '/og-image.jpeg',
+        width: 1200,
+        height: 630,
+        alt: 'Alphix - Building Smarter Onchain Markets',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Alphix | Building Smarter Onchain Markets',
+    description: 'Liquidity protocol on Base. Dynamic fees. Unified liquidity through rehypothecation.',
+    images: ['/og-image.jpeg'],
+    creator: '@alphixfi',
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-video-preview': -1,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+    },
   },
 }
 

@@ -92,7 +92,7 @@ export function checkApprovalAmount(
   data: string,
   step: TokenApprovalTransactionStep | TokenRevocationTransactionStep,
 ): { isInsufficient: boolean; approvedAmount: string } {
-  const requiredAmount = BigInt(`0x${parseInt(step.amount, 10).toString(16)}`);
+  const requiredAmount = BigInt(step.amount);
   const submitted = parseERC20ApproveCalldata(data);
   const approvedAmount = submitted.amount.toString(10);
 

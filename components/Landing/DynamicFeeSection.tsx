@@ -430,8 +430,8 @@ export const DynamicFeeSection = () => {
     >
       {/* Left Side - Text Content */}
       <div className="flex w-full flex-1 flex-col gap-y-8 p-6 md:p-12">
-        <span className="w-fit rounded-md bg-green-950/70 px-2.5 py-1 text-xs font-medium text-green-500 transition-colors hover:bg-green-950/50">
-          Live Now
+        <span className="w-fit rounded-md bg-green-950/70 px-2.5 py-1 text-xs font-medium text-green-500">
+          Live
         </span>
         <h3 className="text-3xl font-semibold leading-tight text-balance md:text-4xl">
           Pricing Fees Correctly

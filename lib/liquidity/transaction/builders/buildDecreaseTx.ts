@@ -504,13 +504,10 @@ export async function buildDecreaseLiquidityTx(
       const token0Decimals = tokenDefinitions[token0Symbol]?.decimals || 18;
       const token1Decimals = tokenDefinitions[token1Symbol]?.decimals || 18;
 
-      const fee0Amount = formatUnits(BigInt(feesForWithdraw.amount0 || '0'), token0Decimals);
-      const fee1Amount = formatUnits(BigInt(feesForWithdraw.amount1 || '0'), token1Decimals);
-
       const currentDecrease0Raw = safeParseUnits(params.decreaseAmount0 || '0', token0Decimals);
       const currentDecrease1Raw = safeParseUnits(params.decreaseAmount1 || '0', token1Decimals);
-      const fee0Raw = safeParseUnits(fee0Amount, token0Decimals);
-      const fee1Raw = safeParseUnits(fee1Amount, token1Decimals);
+      const fee0Raw = safeParseUnits(feesForWithdraw.amount0 || '0', token0Decimals);
+      const fee1Raw = safeParseUnits(feesForWithdraw.amount1 || '0', token1Decimals);
 
       const totalDecrease0Raw = currentDecrease0Raw + fee0Raw;
       const totalDecrease1Raw = currentDecrease1Raw + fee1Raw;

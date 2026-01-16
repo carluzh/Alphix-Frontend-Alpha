@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Plus } from "lucide-react";
+import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { PointsRewardsCard } from "./PointsRewardsCard";
 import { OverviewStatsTiles } from "./StatsTiles";
-import { PortfolioChart } from "../Charts/PortfolioChart";
+
+const PortfolioChart = dynamic(() => import("../Charts/PortfolioChart").then(mod => mod.PortfolioChart), { ssr: false });
 import { PositionCardCompact, PositionCardCompactLoader } from "@/components/liquidity/PositionCardCompact";
 import { MiniTokensTable } from "./MiniTokensTable";
 import { Separator } from "../shared/Separator";

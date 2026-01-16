@@ -15,9 +15,12 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { formatNumber } from "@/lib/format";
 import type { PoolConfig } from "@/lib/pools-config";
 import type { LPType, ChartDuration, PositionInfo, PoolStateData } from "../../hooks";
+import dynamic from "next/dynamic";
 import { usePositionFeeChartData, type ChartPeriod } from "../../hooks";
-import { PriceChartSection, type TimePeriod } from "../PriceChartSection";
-import { YieldChartSection } from "../YieldChartSection";
+import type { TimePeriod } from "../PriceChartSection";
+
+const PriceChartSection = dynamic(() => import("../PriceChartSection").then(mod => mod.PriceChartSection), { ssr: false });
+const YieldChartSection = dynamic(() => import("../YieldChartSection").then(mod => mod.YieldChartSection), { ssr: false });
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import { IncreaseLiquidityModal } from "@/components/liquidity/increase/IncreaseLiquidityModal";
 import { DecreaseLiquidityModal } from "@/components/liquidity/decrease/DecreaseLiquidityModal";
@@ -558,7 +561,7 @@ function EarningsSection({
 /**
  * Yield info callout content
  */
-const YIELD_INFO: Record<string, { title: string; description: string }> = {
+const YIELD_INFO: Record<string, { title: string; description: React.ReactNode }> = {
   swap: {
     title: "Swap APR",
     description: "Earned from trading fees when swaps occur through your position's price range. The APR varies based on trading volume and your position's concentration.",
@@ -569,7 +572,15 @@ const YIELD_INFO: Record<string, { title: string; description: string }> = {
   },
   points: {
     title: "Points",
-    description: "Total points earned by this position while providing liquidity. Points can be redeemed for rewards in the future.",
+    description: (
+      <>
+        This position earns points continuously while providing liquidity. Points are distributed every Thursday at 02:00 UTC.{" "}
+        <Link href="/points" className="underline hover:text-foreground transition-colors">
+          Visit the Points page
+        </Link>{" "}
+        for more details.
+      </>
+    ),
   },
 };
 
@@ -631,7 +642,7 @@ function APRSection({
           </div>
         )}
 
-        {/* Points - Standard style like other rows */}
+        {/* Points - + left muted, Icon+Points right white */}
         <div
           className={cn(
             "flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors cursor-pointer",
@@ -639,10 +650,10 @@ function APRSection({
           )}
           onClick={() => handleRowClick("points")}
         >
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="text-xs text-muted-foreground">+</span>
-            <PointsIcon className="w-3.5 h-3.5 text-muted-foreground" />
-            Points
+          <span className="text-xs text-muted-foreground">+</span>
+          <span className="flex items-center gap-1.5">
+            <PointsIcon className="w-3.5 h-3.5 text-foreground" />
+            <span className="text-xs font-mono text-foreground">Points</span>
           </span>
         </div>
 

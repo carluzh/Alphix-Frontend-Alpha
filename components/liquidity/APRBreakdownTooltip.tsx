@@ -99,7 +99,7 @@ interface TooltipRowProps {
   label: string;
   value: string;
   /** Highlight style for special rows */
-  variant?: "default" | "unified" | "points";
+  variant?: "default" | "unified";
 }
 
 /**
@@ -108,22 +108,19 @@ interface TooltipRowProps {
 function TooltipRow({ icon, label, value, variant = "default" }: TooltipRowProps) {
   const rowClasses = cn(
     "flex items-center justify-between px-2.5 py-1.5 gap-3",
-    variant === "unified" && "bg-[#9896FF]/15 rounded-lg mx-1 mt-1",
-    variant === "points" && "bg-primary/10 rounded-lg mx-1 mt-1"
+    variant === "unified" && "bg-[#9896FF]/15 rounded-lg mx-1 mt-1"
   );
 
   const labelClasses = cn(
     "text-xs",
     variant === "default" && "text-muted-foreground",
-    variant === "unified" && "text-[#B8B6FF]",
-    variant === "points" && "text-primary"
+    variant === "unified" && "text-[#B8B6FF]"
   );
 
   const valueClasses = cn(
     "text-xs flex-shrink-0 font-mono",
     variant === "default" && "text-foreground",
-    variant === "unified" && "text-[#B8B6FF]",
-    variant === "points" && "text-primary"
+    variant === "unified" && "text-[#B8B6FF]"
   );
 
   return (
@@ -183,13 +180,14 @@ export function APRBreakdownTooltip({
         variant="unified"
       />
 
-      {/* Points Row - always visible */}
-      <TooltipRow
-        icon={<PointsIcon className="w-3.5 h-3.5 text-primary" />}
-        label="+ Points"
-        value=""
-        variant="points"
-      />
+      {/* Points Row - + left muted, Icon+Points right white */}
+      <div className="flex items-center justify-between px-2.5 py-1.5 gap-3 bg-primary/10 rounded-lg mx-1 mt-1">
+        <span className="text-xs text-muted-foreground">+</span>
+        <div className="flex items-center gap-1.5">
+          <PointsIcon className="w-3.5 h-3.5 text-foreground" />
+          <span className="text-xs text-foreground font-mono">Points</span>
+        </div>
+      </div>
     </div>
   );
 }

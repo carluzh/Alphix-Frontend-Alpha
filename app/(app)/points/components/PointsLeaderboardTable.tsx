@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useState, useMemo, useCallback, useEffect } from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { IconAward, IconChevronLeft, IconChevronRight, IconClone2, IconCheck } from "nucleo-micro-bold-essential";
 import type { LeaderboardEntry } from "../hooks/usePointsPageData";
@@ -459,7 +460,10 @@ function EmptyState() {
         Leaderboard coming soon
       </h3>
       <p className="text-sm text-muted-foreground text-center max-w-sm">
-        The points leaderboard will be available once more users start earning points.
+        The points leaderboard will be available once more users{" "}
+        <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
+          start earning points
+        </Link>.
         Be among the first to climb the ranks!
       </p>
     </div>

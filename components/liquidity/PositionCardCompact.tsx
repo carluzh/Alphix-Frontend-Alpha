@@ -8,9 +8,11 @@ import { isFullRangePosition } from '@/lib/liquidity/hooks/range';
 import { usePriceOrdering, useGetRangeDisplay, type PositionInfo } from '@/lib/uniswap/liquidity';
 import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
 import { useNetwork } from '@/lib/network-context';
+import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
-import { PositionRangeChart } from './PositionRangeChart';
 import { getOptimalBaseToken } from '@/lib/denomination-utils';
+
+const PositionRangeChart = dynamic(() => import('./PositionRangeChart').then(mod => mod.PositionRangeChart), { ssr: false });
 import { calculateRealizedApr, formatApr } from '@/lib/apr';
 import { Percent } from '@uniswap/sdk-core';
 import { ArrowUpRight } from 'lucide-react';

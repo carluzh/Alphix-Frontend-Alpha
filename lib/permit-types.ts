@@ -107,7 +107,7 @@ function getPermitCacheKey(userAddress: string, chainId: number, token0: string,
 export function cacheSignedPermit(permit: CachedPermit): void {
   try {
     const key = getPermitCacheKey(permit.userAddress, permit.chainId, permit.token0Symbol, permit.token1Symbol)
-    localStorage.setItem(key, JSON.stringify(permit))
+    sessionStorage.setItem(key, JSON.stringify(permit))
   } catch {}
 }
 
@@ -122,7 +122,7 @@ export function getCachedPermit(
 ): CachedPermit | null {
   try {
     const key = getPermitCacheKey(userAddress, chainId, token0Symbol, token1Symbol)
-    const cached = localStorage.getItem(key)
+    const cached = sessionStorage.getItem(key)
     if (!cached) return null
     const permit = JSON.parse(cached) as CachedPermit
     if (permit.tickLower !== tickLower || permit.tickUpper !== tickUpper) return null
@@ -137,7 +137,7 @@ export function getCachedPermit(
 export function clearCachedPermit(userAddress: string, chainId: number, token0Symbol: string, token1Symbol: string): void {
   try {
     const key = getPermitCacheKey(userAddress, chainId, token0Symbol, token1Symbol)
-    localStorage.removeItem(key)
+    sessionStorage.removeItem(key)
   } catch {}
 }
 
@@ -168,7 +168,7 @@ export function getOrCreateFlowState(
 ): TransactionFlowState {
   try {
     const key = getFlowCacheKey(userAddress, chainId, token0Symbol, token1Symbol, tickLower, tickUpper)
-    const cached = localStorage.getItem(key)
+    const cached = sessionStorage.getItem(key)
     if (cached) {
       const state = JSON.parse(cached) as TransactionFlowState
       if (Date.now() - state.startedAt < 2 * 60 * 60 * 1000) return state // 2 hour expiry
@@ -189,7 +189,7 @@ export function getOrCreateFlowState(
 
   try {
     const key = getFlowCacheKey(userAddress, chainId, token0Symbol, token1Symbol, tickLower, tickUpper)
-    localStorage.setItem(key, JSON.stringify(state))
+    sessionStorage.setItem(key, JSON.stringify(state))
   } catch {}
 
   return state
@@ -198,15 +198,15 @@ export function getOrCreateFlowState(
 // C4: Update flow step
 export function updateFlowStepComplete(flowId: string, stepKey: string, data: { txHash?: string; timestamp: number } | CachedPermit): void {
   try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i)
       if (key?.startsWith('flow_')) {
-        const cached = localStorage.getItem(key)
+        const cached = sessionStorage.getItem(key)
         if (cached) {
           const state = JSON.parse(cached) as TransactionFlowState
           if (state.flowId === flowId) {
             state.completedSteps[stepKey] = 'signature' in data ? { timestamp: data.timestamp } : data
-            localStorage.setItem(key, JSON.stringify(state))
+            sessionStorage.setItem(key, JSON.stringify(state))
             return
           }
         }
@@ -218,16 +218,16 @@ export function updateFlowStepComplete(flowId: string, stepKey: string, data: { 
 // C4: Mark flow as failed
 export function markFlowFailed(flowId: string, reason: string): void {
   try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i)
       if (key?.startsWith('flow_')) {
-        const cached = localStorage.getItem(key)
+        const cached = sessionStorage.getItem(key)
         if (cached) {
           const state = JSON.parse(cached) as TransactionFlowState
           if (state.flowId === flowId) {
             state.failedAt = Date.now()
             state.failureReason = reason
-            localStorage.setItem(key, JSON.stringify(state))
+            sessionStorage.setItem(key, JSON.stringify(state))
             return
           }
         }
@@ -239,14 +239,14 @@ export function markFlowFailed(flowId: string, reason: string): void {
 // C4: Clear flow state
 export function clearFlowState(flowId: string): void {
   try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i)
       if (key?.startsWith('flow_')) {
-        const cached = localStorage.getItem(key)
+        const cached = sessionStorage.getItem(key)
         if (cached) {
           const state = JSON.parse(cached) as TransactionFlowState
           if (state.flowId === flowId) {
-            localStorage.removeItem(key)
+            sessionStorage.removeItem(key)
             return
           }
         }
@@ -272,30 +272,33 @@ export async function attemptFlowRecovery(
 ): Promise<FlowRecoveryData | null> {
   const key = getFlowCacheKey(userAddress, chainId, token0Symbol, token1Symbol, tickLower, tickUpper)
   try {
-    const cached = localStorage.getItem(key)
+    const cached = sessionStorage.getItem(key)
     if (!cached) return null
 
     const state = JSON.parse(cached) as TransactionFlowState
     if (Date.now() - state.startedAt > 2 * 60 * 60 * 1000) {
-      localStorage.removeItem(key)
+      sessionStorage.removeItem(key)
       return null
     }
 
-    // Check if approvals are still valid on-chain
-    const [allowance0, allowance1] = await Promise.all([
+    // Check if approvals are still valid on-chain (Permit2 allowance: owner, token, spender)
+    const permit2Abi = [{ inputs: [{ name: 'owner', type: 'address' }, { name: 'token', type: 'address' }, { name: 'spender', type: 'address' }], name: 'allowance', outputs: [{ name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' }], stateMutability: 'view', type: 'function' }] as const
+    const [result0, result1] = await Promise.all([
       publicClient.readContract({
         address: PERMIT2_ADDRESS as Address,
-        abi: [{ inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], name: 'allowance', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' }] as const,
+        abi: permit2Abi,
         functionName: 'allowance',
-        args: [userAddress, spender as Address],
-      }).catch(() => 0n),
+        args: [userAddress, token0Address as Address, spender as Address],
+      }).catch(() => [0n, 0, 0n] as const),
       publicClient.readContract({
         address: PERMIT2_ADDRESS as Address,
-        abi: [{ inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }], name: 'allowance', outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view', type: 'function' }] as const,
+        abi: permit2Abi,
         functionName: 'allowance',
-        args: [userAddress, spender as Address],
-      }).catch(() => 0n),
+        args: [userAddress, token1Address as Address, spender as Address],
+      }).catch(() => [0n, 0, 0n] as const),
     ])
+    const allowance0 = result0[0]
+    const allowance1 = result1[0]
 
     const skipToken0Approval = !!state.completedSteps['token0Approval'] && allowance0 >= amount0Required
     const skipToken1Approval = !!state.completedSteps['token1Approval'] && allowance1 >= amount1Required

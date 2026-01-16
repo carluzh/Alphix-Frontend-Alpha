@@ -139,15 +139,11 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           const token0Decimals = tokenDefinitions[positionData.token0Symbol]?.decimals || 18;
           const token1Decimals = tokenDefinitions[positionData.token1Symbol]?.decimals || 18;
 
-          // Convert fee amounts to display units (no rounding)
-          const fee0Amount = formatUnits(BigInt(positionData.feesForWithdraw.amount0 || '0'), token0Decimals);
-          const fee1Amount = formatUnits(BigInt(positionData.feesForWithdraw.amount1 || '0'), token1Decimals);
-
-          // Convert current decrease amounts to BigInt for precise addition
+          // Convert current decrease amounts and fee amounts to BigInt for precise addition
           const currentDecrease0Raw = safeParseUnits(positionData.decreaseAmount0 || '0', token0Decimals);
           const currentDecrease1Raw = safeParseUnits(positionData.decreaseAmount1 || '0', token1Decimals);
-          const fee0Raw = safeParseUnits(fee0Amount, token0Decimals);
-          const fee1Raw = safeParseUnits(fee1Amount, token1Decimals);
+          const fee0Raw = safeParseUnits(positionData.feesForWithdraw.amount0 || '0', token0Decimals);
+          const fee1Raw = safeParseUnits(positionData.feesForWithdraw.amount1 || '0', token1Decimals);
 
           // Add fees to decrease amounts - ensure NO ROUNDING by working in raw units
           const totalDecrease0Raw = currentDecrease0Raw + fee0Raw;

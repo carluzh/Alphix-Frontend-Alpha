@@ -3,6 +3,7 @@ export const preferredRegion = 'auto';
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { checkRateLimit } from '@/lib/api/ratelimit';
 import { getPoolSubgraphId, getAllPools, type NetworkMode } from '@/lib/pools-config';
 import { getUniswapV4SubgraphUrl, isDaiPool, getDaiSubgraphUrl } from '@/lib/subgraph-url-helper';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
@@ -36,6 +37,7 @@ interface ChartDataResponse {
 async function computeChartData(poolId: string, days: number, networkMode: NetworkMode, baseUrl: string): Promise<ChartDataResponse> {
   try {
     const subgraphId = (getPoolSubgraphId(poolId, networkMode) || poolId).toLowerCase();
+    if (!/^0x[a-f0-9]+$/i.test(subgraphId)) throw new Error('Invalid pool ID format');
 
     // Use Uniswap V4 subgraph for Pool/PoolHourData queries (volume, TVL)
     // Fee events are handled by the /api/liquidity/get-historical-dynamic-fees endpoint
@@ -253,6 +255,9 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
 }
 
 export async function GET(request: Request) {
+  const rateLimited = await checkRateLimit(request)
+  if (rateLimited) return rateLimited
+
   try {
     const requestUrl = new URL(request.url);
     const baseUrl = requestUrl.origin;

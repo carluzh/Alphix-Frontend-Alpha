@@ -2,6 +2,7 @@
 
 import { memo, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -450,8 +451,11 @@ function LeaderboardStatsPanel({
         )}
       >
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Rankings update every Thursday as Points are distributed.
-          Provide more liquidity to climb the leaderboard.
+          Rankings update every Thursday as Points are distributed.{" "}
+          <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
+            Provide more liquidity
+          </Link>{" "}
+          to climb the leaderboard.
         </p>
       </div>
     </div>

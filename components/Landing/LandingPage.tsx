@@ -217,15 +217,18 @@ export const PageContent = () => {
           ]}
           image="/landing/example.webp"
           reverse
-          badge={{ text: 'In Development', variant: 'muted' }}
+          badge={{ text: 'Live', variant: 'active' }}
           cta1={
-            <button
-              disabled
-              className="flex flex-row items-center gap-x-2 rounded-md bg-accent/50 px-6 py-2.5 text-sm font-semibold text-muted-foreground cursor-default"
-            >
-              Learn More
-              <ArrowUpRight className="h-4 w-4" />
-            </button>
+            <Link href="https://alphix.gitbook.io/docs/" target="_blank">
+              <button className="group relative flex flex-row items-center gap-x-2 rounded-md border border-sidebar-border bg-button px-8 py-2.5 text-sm font-semibold text-foreground hover:bg-accent hover:brightness-110 hover:border-white/30 transition-all overflow-hidden">
+                <span
+                  className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0"
+                  style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                />
+                <span className="relative z-10">Learn More</span>
+                <ArrowUpRight className="relative z-10 h-4 w-4" />
+              </button>
+            </Link>
           }
         />
 

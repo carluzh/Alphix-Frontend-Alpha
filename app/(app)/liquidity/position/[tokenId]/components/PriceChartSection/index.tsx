@@ -9,6 +9,7 @@ import {
   YAxis,
   ResponsiveContainer,
   ReferenceArea,
+  ReferenceLine,
 } from "recharts";
 import {
   ChartConfig,
@@ -52,8 +53,8 @@ const CHART_HEIGHT_PX = 380;
 
 const CHART_COLORS = {
   priceLine: "#f45502", // Alphix orange - primary color for price line
-  rangeArea: "rgba(255, 255, 255, 0.05)", // Grey range field
-  rangeBorder: "rgba(255, 255, 255, 0.15)", // Subtle border for range
+  rangeArea: "rgba(255, 255, 255, 0.03)", // Subtle range fill
+  rangeLine: "rgba(255, 255, 255, 0.35)", // Dashed boundary lines
 };
 
 // Dot pattern for chart background
@@ -453,14 +454,30 @@ export const PriceChartSection = memo(function PriceChartSection({
                 orientation="right"
               />
 
-              {/* Range area - grey filled region between min and max range */}
+              {/* Range visualization - subtle fill with dashed top/bottom boundaries */}
               {minRangePrice !== undefined && maxRangePrice !== undefined && (
                 <ReferenceArea
                   y1={minRangePrice}
                   y2={maxRangePrice}
                   fill={CHART_COLORS.rangeArea}
-                  stroke={CHART_COLORS.rangeBorder}
-                  strokeWidth={1}
+                  fillOpacity={1}
+                  stroke="none"
+                />
+              )}
+              {minRangePrice !== undefined && (
+                <ReferenceLine
+                  y={minRangePrice}
+                  stroke={CHART_COLORS.rangeLine}
+                  strokeDasharray="4 4"
+                  strokeWidth={1.5}
+                />
+              )}
+              {maxRangePrice !== undefined && (
+                <ReferenceLine
+                  y={maxRangePrice}
+                  stroke={CHART_COLORS.rangeLine}
+                  strokeDasharray="4 4"
+                  strokeWidth={1.5}
                 />
               )}
 
@@ -479,8 +496,9 @@ export const PriceChartSection = memo(function PriceChartSection({
                 strokeWidth={2}
                 stroke={CHART_COLORS.priceLine}
                 isAnimationActive={false}
-                dot={(props) => (
+                dot={({ key, ...props }) => (
                   <LastPointPulsatingDot
+                    key={key}
                     {...props}
                     dataLength={dataLength}
                     color={CHART_COLORS.priceLine}

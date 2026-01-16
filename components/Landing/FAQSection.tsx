@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { IconPlus, IconMinus } from 'nucleo-micro-bold-essential'
 
 const FAQItem = ({
@@ -11,7 +12,7 @@ const FAQItem = ({
   onToggle,
 }: {
   question: string
-  answer: string
+  answer: React.ReactNode
   number: string
   isOpen: boolean
   onToggle: () => void
@@ -54,18 +55,32 @@ const FAQItem = ({
   )
 }
 
-const faqItems = [
+const faqItems: { number: string; question: string; answer: React.ReactNode }[] = [
   {
     number: '01',
     question: 'What is Alphix?',
-    answer:
-      'Alphix is a DeFi protocol built on Uniswap V4 that introduces Unified Pools. By stacking multiple features into a single pool, we eliminate liquidity fragmentation and create more efficient markets. Think dynamic fees, liquidity rehypothecation, and other innovations, all coexisting without splitting liquidity.',
+    answer: (
+      <>
+        Alphix is a DeFi protocol built on Uniswap V4 that introduces{' '}
+        <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
+          Unified Pools
+        </Link>
+        . By stacking multiple features into a single pool, we eliminate liquidity fragmentation and create more efficient markets. Think dynamic fees, liquidity rehypothecation, and other innovations, all coexisting without splitting liquidity.
+      </>
+    ),
   },
   {
     number: '02',
     question: 'What problem does Alphix solve?',
-    answer:
-      'The main barrier to hook adoption is fragmentation. Every new feature typically requires its own pool, splitting liquidity and volume. Alphix solves this with Unified Pools that combine multiple features into one, enabling us to compete with larger incumbents despite their liquidity depth advantages.',
+    answer: (
+      <>
+        The main barrier to hook adoption is fragmentation. Every new feature typically requires its own pool, splitting liquidity and volume. Alphix solves this with{' '}
+        <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
+          Unified Pools
+        </Link>{' '}
+        that combine multiple features into one, enabling us to compete with larger incumbents despite their liquidity depth advantages.
+      </>
+    ),
   },
   {
     number: '03',
@@ -88,8 +103,19 @@ const faqItems = [
   {
     number: '06',
     question: 'How can I provide liquidity or trade?',
-    answer:
-      'You can provide liquidity directly through our app by depositing tokens into Unified Pools. For trading, you can swap directly on Alphix or through aggregators like KyberSwap and 1inch once integrated.',
+    answer: (
+      <>
+        You can{' '}
+        <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
+          provide liquidity
+        </Link>{' '}
+        directly through our app by depositing tokens into Unified Pools. For trading, you can{' '}
+        <Link href="/swap" className="underline hover:text-foreground transition-colors">
+          swap directly on Alphix
+        </Link>{' '}
+        or through aggregators like KyberSwap and 1inch once integrated.
+      </>
+    ),
   },
 ]
 

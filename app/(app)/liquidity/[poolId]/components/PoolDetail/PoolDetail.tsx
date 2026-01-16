@@ -9,11 +9,13 @@ import type { TokenSymbol } from "@/lib/pools-config";
 import { useQuery } from "@tanstack/react-query";
 import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
 
+import dynamic from "next/dynamic";
 import { PoolDetailHeader } from "./PoolDetailHeader";
 import { PoolDetailStats } from "./PoolDetailStats";
 import { PoolDetailPositions } from "./PoolDetailPositions";
 import { PoolDetailSidebar } from "./PoolDetailSidebar";
-import { ChartSection } from "../ChartSection";
+
+const ChartSection = dynamic(() => import("../ChartSection").then(mod => mod.ChartSection), { ssr: false });
 import type {
   PoolConfig,
   PoolStats,

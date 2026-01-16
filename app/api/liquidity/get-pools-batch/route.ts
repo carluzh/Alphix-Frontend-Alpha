@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
+import { checkRateLimit } from '@/lib/api/ratelimit';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress, getNetworkModeFromRequest } from '@/lib/pools-config';
 import { batchQuotePrices, calculateTotalUSD } from '@/lib/swap/quote-prices';
 import { formatUnits, parseAbi } from 'viem';
@@ -323,6 +324,9 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
 }
 
 export async function GET(request: Request) {
+  const rateLimited = await checkRateLimit(request)
+  if (rateLimited) return rateLimited
+
   try {
     const requestUrl = new URL(request.url)
     const forceRefresh = requestUrl.searchParams.has('v')

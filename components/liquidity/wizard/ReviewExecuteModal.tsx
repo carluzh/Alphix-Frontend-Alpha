@@ -24,9 +24,11 @@ import { parseUnits, type Address } from 'viem';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useCreatePositionTxContext } from './CreatePositionTxContext';
+import dynamic from 'next/dynamic';
 import { getPoolById, getAllTokens, getToken, type TokenSymbol } from '@/lib/pools-config';
-import { PositionRangeChart } from '@/components/liquidity/PositionRangeChart/PositionRangeChart';
 import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
+
+const PositionRangeChart = dynamic(() => import('@/components/liquidity/PositionRangeChart/PositionRangeChart').then(mod => mod.PositionRangeChart), { ssr: false });
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 import { useNetwork } from '@/lib/network-context';
 import { getStoredUserSettings } from '@/hooks/useUserSettings';

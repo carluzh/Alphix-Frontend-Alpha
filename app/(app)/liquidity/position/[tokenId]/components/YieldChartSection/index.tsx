@@ -15,6 +15,7 @@ import {
   ChartTooltip,
 } from "@/components/ui/chart";
 import { cn } from "@/lib/utils";
+import { DeltaArrow } from "@/app/(app)/overview/components/Charts/Delta";
 import {
   calculatePeriodRange,
   generateTicksForPeriod,
@@ -27,6 +28,9 @@ import {
 // ============================================================================
 
 export type TimePeriod = "1W" | "1M" | "1Y" | "ALL";
+
+/** Keys for chart series that can be toggled via legend */
+type SeriesKey = "apr" | "aaveApy" | "feesUsd" | "accumulatedFeesUsd";
 
 interface ChartDataPoint {
   timestamp: number;
@@ -54,7 +58,7 @@ interface HoverData {
   feesUsd: number;
   accumulatedFeesUsd: number;
   apr: number;
-  /** Combined APR for display (swap + Aave) */
+  aaveApy?: number;
   totalApr: number;
 }
 
@@ -173,6 +177,79 @@ const TimePeriodSelector = memo(function TimePeriodSelector({
 });
 
 /**
+ * Interactive chart legend for toggling series visibility
+ */
+interface ChartLegendProps {
+  visibleSeries: Set<SeriesKey>;
+  onToggle: (key: SeriesKey) => void;
+  hasAaveData: boolean;
+  disabled?: boolean;
+}
+
+interface LegendItem {
+  key: SeriesKey;
+  label: string;
+  color: string;
+  dashed?: boolean;
+}
+
+const ChartLegend = memo(function ChartLegend({
+  visibleSeries,
+  onToggle,
+  hasAaveData,
+  disabled,
+}: ChartLegendProps) {
+  const items: LegendItem[] = useMemo(() => {
+    const base: LegendItem[] = [
+      { key: "apr", label: "Swap APR", color: CHART_COLORS.apr },
+    ];
+    if (hasAaveData) {
+      base.push({ key: "aaveApy", label: "Unified Yield", color: CHART_COLORS.aaveApy });
+    }
+    base.push(
+      { key: "accumulatedFeesUsd", label: "Total Fees", color: CHART_COLORS.accumulatedFeesUsd, dashed: true },
+      { key: "feesUsd", label: "Unclaimed", color: CHART_COLORS.feesUsd }
+    );
+    return base;
+  }, [hasAaveData]);
+
+  return (
+    <div
+      className={cn(
+        "flex flex-row items-center gap-3 flex-wrap",
+        disabled && "opacity-50 pointer-events-none"
+      )}
+    >
+      {items.map(({ key, label, color, dashed }) => {
+        const isVisible = visibleSeries.has(key);
+        return (
+          <button
+            key={key}
+            onClick={() => onToggle(key)}
+            disabled={disabled}
+            className={cn(
+              "flex items-center gap-1.5 text-xs transition-opacity duration-150 cursor-pointer select-none",
+              isVisible ? "opacity-100" : "opacity-40"
+            )}
+          >
+            <span
+              className="w-3 h-0.5 rounded-full shrink-0"
+              style={{
+                backgroundColor: dashed ? "transparent" : color,
+                borderTop: dashed ? `2px dashed ${color}` : undefined,
+              }}
+            />
+            <span className={cn(isVisible ? "text-foreground" : "text-muted-foreground")}>
+              {label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+});
+
+/**
  * Pulsating dot for the last data point
  */
 interface LastPointDotProps {
@@ -253,19 +330,13 @@ function LastPointPulsatingDot({
   );
 }
 
-/**
- * Delta display component (like Uniswap's Delta.tsx)
- */
+/** Delta display with colored arrow - matches PriceChartSection style */
 function DeltaDisplay({ delta }: { delta: number }) {
-  if (!Number.isFinite(delta) || delta === 0) return null;
-
-  const isPositive = delta > 0;
-  const color = isPositive ? "text-green-500" : "text-red-500";
-  const arrow = isPositive ? "↑" : "↓";
-
+  if (!Number.isFinite(delta)) return null;
+  const color = delta === 0 ? "text-muted-foreground" : delta > 0 ? "text-green-500" : "text-red-500";
   return (
-    <span className={cn("flex items-center gap-0.5 tabular-nums", color)}>
-      <span>{arrow}</span>
+    <span className={cn("flex items-center gap-1 tabular-nums text-sm", color)}>
+      <DeltaArrow delta={delta} size={14} />
       <span>{Math.abs(delta).toFixed(2)}%</span>
     </span>
   );
@@ -274,6 +345,9 @@ function DeltaDisplay({ delta }: { delta: number }) {
 // ============================================================================
 // Main Component
 // ============================================================================
+
+/** Default visible series on mount */
+const DEFAULT_VISIBLE_SERIES: SeriesKey[] = ["apr", "aaveApy", "feesUsd", "accumulatedFeesUsd"];
 
 export const YieldChartSection = memo(function YieldChartSection({
   chartData,
@@ -284,6 +358,23 @@ export const YieldChartSection = memo(function YieldChartSection({
   onTimePeriodChange,
 }: YieldChartSectionProps) {
   const [hoverData, setHoverData] = useState<HoverData | null>(null);
+  const [visibleSeries, setVisibleSeries] = useState<Set<SeriesKey>>(
+    () => new Set(DEFAULT_VISIBLE_SERIES)
+  );
+
+  // Toggle series visibility (keeps at least one series visible)
+  const toggleSeries = useCallback((key: SeriesKey) => {
+    setVisibleSeries((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        // Don't allow hiding all series
+        if (next.size > 1) next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
 
   // Calculate period range for x-axis domain
   const [periodFrom, periodTo] = useMemo(() => calculatePeriodRange(timePeriod as ChartPeriodPosition), [timePeriod]);
@@ -326,7 +417,8 @@ export const YieldChartSection = memo(function YieldChartSection({
           feesUsd: point.feesUsd,
           accumulatedFeesUsd: point.accumulatedFeesUsd,
           apr: point.apr,
-          totalApr: point.totalApr ?? point.apr, // Use totalApr if available, fallback to apr
+          aaveApy: point.aaveApy,
+          totalApr: point.totalApr ?? point.apr,
         });
       }
     },
@@ -337,8 +429,14 @@ export const YieldChartSection = memo(function YieldChartSection({
     setHoverData(null);
   }, []);
 
+  // Check if data has Aave APY values (for legend display)
+  const hasAaveData = useMemo(() => {
+    return chartData.some((d) => d.aaveApy !== undefined && d.aaveApy > 0);
+  }, [chartData]);
+
   // Calculate domains and values for dual Y-axis chart
   // Use totalApr (swap + Aave) for display and domain calculations
+  // Only include visible series in domain calculations for proper scaling
   const { aprDomain, feeDomain, latestValues, aprDelta } = useMemo(() => {
     if (filteredChartData.length === 0) {
       return {
@@ -348,24 +446,31 @@ export const YieldChartSection = memo(function YieldChartSection({
           feesUsd: currentFees ?? 0,
           accumulatedFeesUsd: 0,
           apr: 0,
+          aaveApy: 0,
           totalApr: 0,
         },
         aprDelta: 0,
       };
     }
 
-    // Calculate APR domain using apr and aaveApy (for visible right Y-axis)
-    // Include both lines in domain calculation for proper Y-axis scaling
-    const aprs = filteredChartData.flatMap((d) => [
-      d.apr ?? 0,
-      d.aaveApy ?? 0,
-    ]).filter((a) => a >= 0);
+    // Calculate APR domain using only visible series (for right Y-axis)
+    const aprs = filteredChartData.flatMap((d) => {
+      const values: number[] = [];
+      if (visibleSeries.has("apr")) values.push(d.apr ?? 0);
+      if (visibleSeries.has("aaveApy")) values.push(d.aaveApy ?? 0);
+      return values;
+    }).filter((a) => a >= 0);
     const minApr = aprs.length > 0 ? Math.min(...aprs) : 0;
     const maxApr = aprs.length > 0 ? Math.max(...aprs) : 100;
     const aprPadding = (maxApr - minApr) * 0.1 || maxApr * 0.1 || 10;
 
-    // Calculate fee domain (for hidden left Y-axis)
-    const fees = filteredChartData.flatMap((d) => [d.feesUsd ?? 0, d.accumulatedFeesUsd ?? 0]).filter(Boolean);
+    // Calculate fee domain using only visible series (for left Y-axis)
+    const fees = filteredChartData.flatMap((d) => {
+      const values: number[] = [];
+      if (visibleSeries.has("feesUsd")) values.push(d.feesUsd ?? 0);
+      if (visibleSeries.has("accumulatedFeesUsd")) values.push(d.accumulatedFeesUsd ?? 0);
+      return values;
+    }).filter(Boolean);
     const minFee = fees.length > 0 ? Math.min(...fees) : 0;
     const maxFee = fees.length > 0 ? Math.max(...fees) : 1;
     const feePadding = (maxFee - minFee) * 0.1 || maxFee * 0.1 || 0.1;
@@ -392,15 +497,21 @@ export const YieldChartSection = memo(function YieldChartSection({
         feesUsd: latest.feesUsd,
         accumulatedFeesUsd: latest.accumulatedFeesUsd,
         apr: latest.apr,
+        aaveApy: latest.aaveApy,
         totalApr: latest.totalApr ?? latest.apr,
       },
       aprDelta,
     };
-  }, [filteredChartData, currentFees]);
+  }, [filteredChartData, currentFees, visibleSeries]);
 
   // Display values (hover or current)
   const displayValues = hoverData ?? latestValues;
   const isHovering = hoverData !== null;
+
+  // Display mode: "both" (both APRs), "single" (one APR), "fees" (no APRs)
+  const aprVisible = visibleSeries.has("apr");
+  const aaveVisible = visibleSeries.has("aaveApy") && hasAaveData;
+  const displayMode = aprVisible && aaveVisible ? "both" : aprVisible || aaveVisible ? "single" : "fees";
 
   // Dot pattern background
   const dotPattern = `radial-gradient(circle, ${DOT_PATTERN.color} ${DOT_PATTERN.size}, transparent ${DOT_PATTERN.size})`;
@@ -431,11 +542,19 @@ export const YieldChartSection = memo(function YieldChartSection({
             </div>
           </div>
         </div>
-        <TimePeriodSelector
-          period={timePeriod}
-          onPeriodChange={onTimePeriodChange}
-          disabled
-        />
+        <div className="flex flex-row items-center justify-between flex-wrap gap-2">
+          <TimePeriodSelector
+            period={timePeriod}
+            onPeriodChange={onTimePeriodChange}
+            disabled
+          />
+          <ChartLegend
+            visibleSeries={visibleSeries}
+            onToggle={toggleSeries}
+            hasAaveData={hasAaveData}
+            disabled
+          />
+        </div>
       </div>
     );
   }
@@ -461,32 +580,28 @@ export const YieldChartSection = memo(function YieldChartSection({
           }}
         />
 
-        {/* Chart header callout (matches ChartHeader.tsx pattern) */}
+        {/* Chart header - dynamic based on visible series */}
         <div className="flex flex-row absolute w-full gap-2 items-start z-10">
           <div className="flex flex-col gap-1 p-3 pointer-events-none bg-background rounded-xl">
-            <div className="flex items-center gap-2">
-              <span className="text-3xl font-semibold text-foreground tabular-nums truncate">
-                {formatApr(displayValues.totalApr)}
-              </span>
-              <DeltaDisplay delta={aprDelta} />
-            </div>
-            <div className="flex flex-row gap-2 truncate items-center text-xs">
-              {isHovering ? (
-                <>
-                  <span className="text-muted-foreground">
-                    Unclaimed: <span className="text-foreground tabular-nums">{formatUsd(displayValues.feesUsd)}</span>
-                  </span>
-                  <span className="text-muted-foreground">
-                    Total: <span className="text-foreground tabular-nums">{formatUsd(displayValues.accumulatedFeesUsd)}</span>
-                  </span>
-                  <span className="text-muted-foreground">
-                    {formatTimestamp(hoverData.timestamp)}
-                  </span>
-                </>
+            <span className="text-3xl font-semibold text-foreground tabular-nums truncate">
+              {displayMode === "fees" ? formatUsd(displayValues.accumulatedFeesUsd)
+                : formatApr(displayMode === "both" ? displayValues.totalApr
+                  : aprVisible ? displayValues.apr : (displayValues.aaveApy ?? 0))}
+            </span>
+            <div className="flex flex-row gap-2 items-center text-xs text-muted-foreground">
+              {displayMode === "both" ? (
+                isHovering ? (
+                  <>
+                    <span className="inline-flex items-center gap-1"><span className="w-2 h-0.5 rounded-full" style={{ backgroundColor: CHART_COLORS.apr }} />{formatApr(displayValues.apr)}</span>
+                    <span className="inline-flex items-center gap-1"><span className="w-2 h-0.5 rounded-full" style={{ backgroundColor: CHART_COLORS.aaveApy }} />{formatApr(displayValues.aaveApy ?? 0)}</span>
+                    <span>{formatTimestamp(hoverData!.timestamp)}</span>
+                  </>
+                ) : <DeltaDisplay delta={aprDelta} />
               ) : (
-                <span className="text-muted-foreground">
-                  Unclaimed: <span className="text-foreground tabular-nums">{formatUsd(latestValues.feesUsd)}</span>
-                </span>
+                <>
+                  <span>Unclaimed: <span className="text-foreground tabular-nums">{formatUsd(displayValues.feesUsd)}</span></span>
+                  {displayMode === "single" && <span>Total: <span className="text-foreground tabular-nums">{formatUsd(displayValues.accumulatedFeesUsd)}</span></span>}
+                </>
               )}
             </div>
           </div>
@@ -561,27 +676,31 @@ export const YieldChartSection = memo(function YieldChartSection({
               />
 
               {/* Accumulated fees line (hidden Y-axis) - dashed line */}
-              <Line
-                yAxisId="left"
-                type="monotone"
-                dataKey="accumulatedFeesUsd"
-                strokeWidth={2}
-                stroke={CHART_COLORS.accumulatedFeesUsd}
-                strokeDasharray="5 5"
-                dot={false}
-                isAnimationActive={false}
-              />
+              {visibleSeries.has("accumulatedFeesUsd") && (
+                <Line
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="accumulatedFeesUsd"
+                  strokeWidth={2}
+                  stroke={CHART_COLORS.accumulatedFeesUsd}
+                  strokeDasharray="5 5"
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              )}
 
               {/* Current unclaimed fees line (hidden Y-axis) */}
-              <Line
-                yAxisId="left"
-                type="monotone"
-                dataKey="feesUsd"
-                strokeWidth={2}
-                stroke={CHART_COLORS.feesUsd}
-                dot={false}
-                isAnimationActive={false}
-              />
+              {visibleSeries.has("feesUsd") && (
+                <Line
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="feesUsd"
+                  strokeWidth={2}
+                  stroke={CHART_COLORS.feesUsd}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              )}
 
               {/* SVG Gradient definitions for Unified Yield line */}
               <defs>
@@ -595,51 +714,64 @@ export const YieldChartSection = memo(function YieldChartSection({
               </defs>
 
               {/* Swap APR line - orange (visible Y-axis) */}
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="apr"
-                strokeWidth={2}
-                stroke={CHART_COLORS.apr}
-                isAnimationActive={false}
-                dot={(props) => (
-                  <LastPointPulsatingDot
-                    {...props}
-                    dataLength={dataLength}
-                    color={CHART_COLORS.apr}
-                    isHovering={isHovering}
-                  />
-                )}
-              />
+              {visibleSeries.has("apr") && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="apr"
+                  strokeWidth={2}
+                  stroke={CHART_COLORS.apr}
+                  isAnimationActive={false}
+                  dot={({ key, ...props }) => (
+                    <LastPointPulsatingDot
+                      key={key}
+                      {...props}
+                      dataLength={dataLength}
+                      color={CHART_COLORS.apr}
+                      isHovering={isHovering}
+                    />
+                  )}
+                />
+              )}
 
               {/* Unified Yield (Aave APY) line - purple gradient (visible Y-axis) */}
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="aaveApy"
-                strokeWidth={2}
-                stroke="url(#unifiedYieldGradient)"
-                isAnimationActive={false}
-                dot={(props) => (
-                  <LastPointPulsatingDot
-                    {...props}
-                    dataLength={dataLength}
-                    color={CHART_COLORS.aaveApy}
-                    isHovering={isHovering}
-                  />
-                )}
-                connectNulls={false}
-              />
+              {visibleSeries.has("aaveApy") && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="aaveApy"
+                  strokeWidth={2}
+                  stroke="url(#unifiedYieldGradient)"
+                  isAnimationActive={false}
+                  dot={({ key, ...props }) => (
+                    <LastPointPulsatingDot
+                      key={key}
+                      {...props}
+                      dataLength={dataLength}
+                      color={CHART_COLORS.aaveApy}
+                      isHovering={isHovering}
+                    />
+                  )}
+                  connectNulls={false}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </ChartContainer>
       </div>
 
-      {/* Time period selector at bottom (no legend) */}
-      <TimePeriodSelector
-        period={timePeriod}
-        onPeriodChange={onTimePeriodChange}
-      />
+      {/* Controls: Time Period Selector and Legend */}
+      <div className="flex flex-row items-center justify-between flex-wrap gap-2">
+        <TimePeriodSelector
+          period={timePeriod}
+          onPeriodChange={onTimePeriodChange}
+        />
+        <ChartLegend
+          visibleSeries={visibleSeries}
+          onToggle={toggleSeries}
+          hasAaveData={hasAaveData}
+        />
+      </div>
     </div>
   );
 });
