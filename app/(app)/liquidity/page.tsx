@@ -7,6 +7,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { motion, useReducedMotion } from "framer-motion";
 
 import * as React from "react";
 import { ColumnDef, RowData, Row } from "@tanstack/react-table";
@@ -37,26 +38,47 @@ import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
 const DEFAULT_TICK_SPACING = 60;
 
 /**
- * PoolRowPrefetchWrapper - Wraps pool table rows with hover prefetch
+ * PoolRowPrefetchWrapper - Wraps pool table rows with hover prefetch and stagger animation
  * Prefetches pool detail page data when user hovers over a pool row
  */
 function PoolRowPrefetchWrapper({
   poolId,
   children,
+  index = 0,
 }: {
   poolId: string;
   children: React.ReactNode;
+  index?: number;
 }) {
   const { onMouseEnter, onMouseLeave } = usePrefetchOnHover({
     prefetchRoute: `/liquidity/${poolId}`,
     prefetchData: () => prefetchService.prefetchPoolDetailData(poolId),
     delay: 150,
   });
+  const prefersReducedMotion = useReducedMotion();
+
+  if (prefersReducedMotion) {
+    return (
+      <div onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+        {children}
+      </div>
+    );
+  }
 
   return (
-    <div onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+    <motion.div
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        delay: 0.1 + index * 0.03,
+        duration: 0.3,
+        ease: [0.25, 0.1, 0.25, 1],
+      }}
+    >
       {children}
-    </div>
+    </motion.div>
   );
 }
 
@@ -630,14 +652,14 @@ export default function LiquidityPage() {
     return { totalTVL, totalVol24h, totalFees24h, isLoading };
   }, [poolsData]);
 
-  // Prefetch wrapper for pool rows - prefetches data on hover
+  // Prefetch wrapper for pool rows - prefetches data on hover with stagger animation
   const poolRowWrapper = useCallback(
     (row: Row<Pool & { link: string }>, content: React.ReactNode) => {
       const poolId = row.original?.id;
       if (!poolId) return content;
 
       return (
-        <PoolRowPrefetchWrapper poolId={poolId}>
+        <PoolRowPrefetchWrapper poolId={poolId} index={row.index}>
           {content}
         </PoolRowPrefetchWrapper>
       );

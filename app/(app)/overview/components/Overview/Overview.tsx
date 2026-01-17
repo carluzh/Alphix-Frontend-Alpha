@@ -6,6 +6,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Plus } from "lucide-react";
 import dynamic from "next/dynamic";
+import { motion, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { PointsRewardsCard } from "./PointsRewardsCard";
 import { OverviewStatsTiles } from "./StatsTiles";
@@ -205,6 +206,8 @@ export const Overview = memo(function Overview({
     [aprByPoolId, isLoading]
   );
 
+  const prefersReducedMotion = useReducedMotion();
+
   return (
     <div
       className={cn(
@@ -290,7 +293,7 @@ export const Overview = memo(function Overview({
               }
             >
               {isLoading ? (
-                // Shimmer loading state - mirrors Uniswap's LiquidityPositionCardLoader
+                // Loading state
                 <div className="flex flex-col gap-3">
                   {[...Array(3)].map((_, i) => (
                     <PositionCardCompactLoader key={i} />
@@ -298,15 +301,25 @@ export const Overview = memo(function Overview({
                 </div>
               ) : positions.length > 0 ? (
                 <div className="flex flex-col gap-3">
-                  {positions.map((position) => (
-                    <PositionCardCompact
+                  {positions.map((position, index) => (
+                    <motion.div
                       key={position.tokenId}
-                      position={position}
-                      valueUSD={getPositionValueUSD(position)}
-                      onClick={() => position.tokenId && handlePositionClick(position.tokenId)}
-                      poolContext={getPoolContext(position.poolId || '')}
-                      showMenuButton={false}
-                    />
+                      initial={prefersReducedMotion ? undefined : { opacity: 0, y: 8 }}
+                      animate={prefersReducedMotion ? undefined : { opacity: 1, y: 0 }}
+                      transition={prefersReducedMotion ? undefined : {
+                        delay: 0.3 + index * 0.05,
+                        duration: 0.3,
+                        ease: [0.25, 0.1, 0.25, 1],
+                      }}
+                    >
+                      <PositionCardCompact
+                        position={position}
+                        valueUSD={getPositionValueUSD(position)}
+                        onClick={() => position.tokenId && handlePositionClick(position.tokenId)}
+                        poolContext={getPoolContext(position.poolId || '')}
+                        showMenuButton={false}
+                      />
+                    </motion.div>
                   ))}
                 </div>
               ) : (

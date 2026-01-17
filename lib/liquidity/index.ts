@@ -49,6 +49,13 @@ export {
   type CheckMintApprovalsParams,
   type CheckIncreaseApprovalsParams,
   type LegacyApprovalResponse,
+  // Mode-aware approval hook (supports both V4 and Unified Yield)
+  useModeAwareApprovals,
+  useCheckMintApprovalsWithMode,
+  type UseModeAwareApprovalsParams,
+  type UseModeAwareApprovalsOptions,
+  type UseModeAwareApprovalsResult,
+  type ModeAwareApprovalResult,
 } from './hooks/approval';
 
 // Range hooks - Minimal SDK-based utilities
@@ -223,3 +230,38 @@ export {
   useMintActionHandlers,
   useMintDispatch,
 } from './state';
+
+// =============================================================================
+// UNIFIED YIELD - Alternative liquidity provision through Hook + ERC-4626 vault
+// =============================================================================
+
+export {
+  // Types
+  type UnifiedYieldPosition,
+  type UnifiedYieldDepositParams,
+  type UnifiedYieldDepositTxResult,
+  type UnifiedYieldApprovalStatus,
+  type UnifiedYieldApprovalParams,
+  type UnifiedYieldVaultInfo,
+  isUnifiedYieldPosition,
+  // Approval hooks
+  useUnifiedYieldApprovals,
+  useCheckUnifiedYieldApprovals,
+  type UseUnifiedYieldApprovalsParams,
+  type UseUnifiedYieldApprovalsOptions,
+  type UseUnifiedYieldApprovalsResult,
+  // Transaction building
+  buildUnifiedYieldDepositTx,
+  estimateUnifiedYieldDepositGas,
+  validateUnifiedYieldDepositParams,
+  // Position fetching
+  fetchUnifiedYieldPositions,
+  hasUnifiedYieldPositions,
+  type FetchUnifiedYieldPositionsConfig,
+  // Position adapter
+  adaptUnifiedYieldToProcessedPosition,
+  adaptAllUnifiedYieldPositions,
+  isAdaptedUnifiedYieldPosition,
+  mergePositions,
+  markAsUnifiedYield,
+} from './unified-yield';

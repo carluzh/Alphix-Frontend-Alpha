@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { IconChevronRight } from "nucleo-micro-bold-essential";
 import { cn } from "@/lib/utils";
@@ -20,12 +20,20 @@ export function PointsRewardsCard({
   const isMobile = useIsMobile();
   const [isCardHovered, setIsCardHovered] = useState(false);
   const [isCtaHovered, setIsCtaHovered] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Handle cursor-following glow
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!cardRef.current || isMobile) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    cardRef.current.style.setProperty('--mouse-x', `${x}%`);
+    cardRef.current.style.setProperty('--mouse-y', `${y}%`);
+  }, [isMobile]);
 
   const formattedPoints = useMemo(() => {
-    return totalPoints.toLocaleString("en-US", {
-      minimumFractionDigits: 4,
-      maximumFractionDigits: 4,
-    });
+    return totalPoints.toLocaleString("en-US", { maximumFractionDigits: 0 });
   }, [totalPoints]);
 
   const renderRewardsAmount = () => {
@@ -33,7 +41,7 @@ export function PointsRewardsCard({
       return (
         <div
           className={cn(
-            "rounded bg-muted/40 animate-pulse",
+            "rounded bg-muted/60 animate-pulse",
             isMobile ? "h-5 w-12" : "h-9 w-24"
           )}
         />
@@ -57,17 +65,20 @@ export function PointsRewardsCard({
       className="group cursor-pointer"
       onMouseEnter={() => setIsCardHovered(true)}
       onMouseLeave={() => setIsCardHovered(false)}
+      onMouseMove={handleMouseMove}
       onClick={() => router.push("/points")}
     >
       <div
+        ref={cardRef}
         className={cn(
           isMobile ? "h-[142px]" : "h-[192px]",
           isMobile ? "p-4" : "p-6",
           "flex flex-col justify-between",
           "bg-muted/30 border border-sidebar-border/60 rounded-lg",
           "overflow-hidden relative",
-          "transition-all duration-200 ease-out",
-          isCardHovered && "bg-muted/40 border-white/20"
+          "transition-all duration-300 ease-out",
+          !isMobile && "cursor-glow",
+          isCardHovered && "bg-muted/40 border-sidebar-primary/30"
         )}
       >
         {/* Background Pattern - fades on hover */}
@@ -95,22 +106,13 @@ export function PointsRewardsCard({
               {/* Amount */}
               {renderRewardsAmount()}
 
-              {/* Points Icon - white in top right with hover tilt */}
-              <div
-                className="transition-transform duration-200 ease-out"
-                style={{
-                  transform: isCardHovered ? 'rotate(5deg) translateZ(0)' : 'rotate(0deg) translateZ(0)',
-                  backfaceVisibility: 'hidden',
-                  perspective: '1000px',
-                }}
-              >
-                <PointsIcon
-                  className={cn(
-                    "text-white",
-                    isMobile ? "w-6 h-6" : "w-7 h-7"
-                  )}
-                />
-              </div>
+              {/* Points Icon - white in top right */}
+              <PointsIcon
+                className={cn(
+                  "text-white",
+                  isMobile ? "w-6 h-6" : "w-7 h-7"
+                )}
+              />
             </div>
 
             {/* Subtitle: Points earned */}

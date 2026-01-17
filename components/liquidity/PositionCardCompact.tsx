@@ -29,11 +29,14 @@ import { LiquidityPositionFeeStats } from './FeeStats';
 import { useUSDCValue } from '@/lib/uniswap/hooks/useUSDCPrice';
 
 /**
- * PositionCardCompactLoader - Shimmer skeleton for position cards
+ * PositionCardCompactLoader - Simple skeleton for position cards
  */
 export function PositionCardCompactLoader({ className }: { className?: string }) {
     return (
-        <div className={cn("h-[100px] rounded-lg bg-muted/40 animate-pulse", className)} />
+        <div className={cn(
+            "h-[100px] rounded-lg bg-muted/40 animate-pulse",
+            className
+        )} />
     );
 }
 

@@ -852,3 +852,113 @@ input[type=number] {
   animation: gradient-flow 8s linear infinite;
 }
 
+/* =============================================================================
+   OVERVIEW PAGE SURFACE & DEPTH SYSTEM
+   ============================================================================= */
+
+/* Surface depth - subtle inset shadows for card depth */
+.surface-depth {
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.15),
+    0 1px 2px 0 rgba(0, 0, 0, 0.1);
+}
+
+.surface-depth-hover:hover {
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.06),
+    inset 0 -1px 0 0 rgba(0, 0, 0, 0.2),
+    0 4px 12px -2px rgba(0, 0, 0, 0.25);
+}
+
+/* Glow effects for interactive elements */
+.surface-glow {
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.surface-glow:hover {
+  box-shadow:
+    0 0 0 1px rgba(244, 85, 2, 0.15),
+    0 8px 24px -8px rgba(0, 0, 0, 0.4),
+    0 0 20px -4px rgba(244, 85, 2, 0.1);
+  border-color: rgba(244, 85, 2, 0.3);
+}
+
+/* Subtle lift effect on hover */
+.card-lift {
+  transition: transform 0.25s cubic-bezier(0.25, 0.1, 0.25, 1), box-shadow 0.25s ease;
+}
+
+.card-lift:hover {
+  transform: translateY(-2px);
+}
+
+
+/* Noise texture overlay (very subtle) */
+.noise-overlay {
+  position: relative;
+}
+
+.noise-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.015;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  border-radius: inherit;
+  z-index: 1;
+}
+
+/* Cursor-following glow (requires JS to set --mouse-x, --mouse-y) */
+.cursor-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.cursor-glow::before {
+  content: '';
+  position: absolute;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.04) 0%,
+    transparent 70%
+  );
+  transform: translate(-50%, -50%);
+  left: var(--mouse-x, 50%);
+  top: var(--mouse-y, 50%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.cursor-glow:hover::before {
+  opacity: 1;
+}
+
+/* Glassmorphism card effect */
+.glass-card {
+  background: rgba(19, 19, 19, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Status glow effects */
+.status-glow-green {
+  box-shadow: 0 0 12px -2px rgba(34, 197, 94, 0.25);
+}
+
+.status-glow-amber {
+  box-shadow: 0 0 12px -2px rgba(245, 158, 11, 0.25);
+}
+
+/* Reduced motion support for new animations */
+@media (prefers-reduced-motion: reduce) {
+  .card-lift:hover {
+    transform: none;
+  }
+}
+

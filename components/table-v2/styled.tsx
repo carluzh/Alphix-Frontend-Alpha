@@ -181,7 +181,7 @@ export const HeaderRow = forwardRef<HTMLDivElement, HeaderRowProps>(
       className={cn(
         "flex flex-row items-center w-full min-w-full transition-colors duration-100 overflow-auto scrollbar-hidden",
         v2
-          ? "bg-muted/30 rounded-lg border border-sidebar-border/60"
+          ? "bg-muted/50 rounded-xl surface-depth"
           : "bg-muted border border-sidebar-border rounded-t-2xl",
         dimmed && "opacity-40",
         className

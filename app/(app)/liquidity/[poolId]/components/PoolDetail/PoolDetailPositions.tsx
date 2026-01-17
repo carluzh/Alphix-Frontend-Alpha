@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useMemo } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
 import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
@@ -58,6 +59,7 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
 }: PoolDetailPositionsProps) {
   const token0Symbol = poolConfig?.tokens?.[0]?.symbol || "";
   const token1Symbol = poolConfig?.tokens?.[1]?.symbol || "";
+  const prefersReducedMotion = useReducedMotion();
 
   const hasPositions = userPositions.length > 0 || isDerivingNewPosition;
 
@@ -133,14 +135,14 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
         )}
 
         {/* Existing positions */}
-        {userPositions.map((position) => {
+        {userPositions.map((position, index) => {
           const positionInfo = getPositionInfo(position);
           const valueUSD = calculatePositionUsd(position);
 
           // Only render if positionInfo is available (required by PositionCardCompact)
           if (!positionInfo) return null;
 
-          return (
+          const card = (
             <PositionCardCompact
               key={position.positionId}
               position={positionInfo}
@@ -152,6 +154,25 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
               lastTimestamp={position.lastTimestamp}
               isOptimisticallyUpdating={position.isOptimisticallyUpdating}
             />
+          );
+
+          if (prefersReducedMotion) {
+            return <div key={position.positionId}>{card}</div>;
+          }
+
+          return (
+            <motion.div
+              key={position.positionId}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                delay: 0.1 + index * 0.05,
+                duration: 0.3,
+                ease: [0.25, 0.1, 0.25, 1],
+              }}
+            >
+              {card}
+            </motion.div>
           );
         })}
       </div>
