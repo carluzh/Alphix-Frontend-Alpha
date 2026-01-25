@@ -1,7 +1,8 @@
 /**
- * Aave Rates Client
+ * Unified Yield Rates Client
  *
- * Client for fetching Aave lending rates from the AlphixBackend.
+ * Client for fetching lending rates from AlphixBackend.
+ * Supports both Aave (USDC, WETH, GHO) and Spark (DAI, USDS) protocols.
  * Used for Unified Yield APR display in position/pool pages.
  */
 
@@ -9,15 +10,35 @@
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
 /**
- * Token symbol to Aave key mapping
- * POC: USDT is mapped to GHO
+ * Protocol source for each token
  */
-const TOKEN_TO_AAVE_KEY: Record<string, string> = {
-  'USDC': 'USDC',
-  'WETH': 'WETH',
-  'ETH': 'WETH',
-  'USDT': 'GHO',  // POC: Treat USDT as GHO
-  'GHO': 'GHO',
+type ProtocolSource = 'aave' | 'spark';
+
+interface TokenMapping {
+  key: string;        // Backend key (e.g., 'USDC', 'DAI')
+  protocol: ProtocolSource;
+}
+
+/**
+ * Token symbol to protocol/key mapping
+ * Maps frontend token symbols to their lending protocol and backend key.
+ *
+ * Aave: USDC, WETH, GHO (via /aave/rates)
+ * Spark: DAI, USDS (via /spark/rates)
+ */
+const TOKEN_TO_PROTOCOL: Record<string, TokenMapping> = {
+  // Aave tokens
+  'USDC': { key: 'USDC', protocol: 'aave' },
+  'WETH': { key: 'WETH', protocol: 'aave' },
+  'ETH': { key: 'WETH', protocol: 'aave' },
+  'USDT': { key: 'GHO', protocol: 'aave' },  // POC: Treat USDT as GHO
+  'GHO': { key: 'GHO', protocol: 'aave' },
+  // Spark tokens
+  'DAI': { key: 'DAI', protocol: 'spark' },
+  'USDS': { key: 'USDS', protocol: 'spark' },
+  // Testnet tokens (Base Sepolia) - simulates mainnet USDS/USDC pool
+  'ATDAI': { key: 'USDS', protocol: 'spark' },  // atDAI represents USDS (Spark)
+  'ATUSDC': { key: 'USDC', protocol: 'aave' },  // atUSDC represents USDC (Aave)
 };
 
 /**
@@ -62,18 +83,26 @@ export interface AaveHistoryResponse {
 }
 
 /**
- * Get the Aave key for a token symbol
+ * Get the protocol mapping for a token symbol
  */
-export function getAaveKey(tokenSymbol: string): string | null {
+export function getTokenProtocol(tokenSymbol: string): TokenMapping | null {
   const upperSymbol = tokenSymbol.toUpperCase();
-  return TOKEN_TO_AAVE_KEY[upperSymbol] || null;
+  return TOKEN_TO_PROTOCOL[upperSymbol] || null;
 }
 
 /**
- * Check if a token is supported by Aave
+ * Get the Aave/Spark key for a token symbol (legacy compatibility)
+ */
+export function getAaveKey(tokenSymbol: string): string | null {
+  const mapping = getTokenProtocol(tokenSymbol);
+  return mapping?.key || null;
+}
+
+/**
+ * Check if a token is supported by Aave or Spark
  */
 export function isAaveSupported(tokenSymbol: string): boolean {
-  return getAaveKey(tokenSymbol) !== null;
+  return getTokenProtocol(tokenSymbol) !== null;
 }
 
 // In-memory cache for current rates (5 minute TTL)
@@ -81,7 +110,8 @@ let ratesCache: { data: AaveRatesResponse; timestamp: number } | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Fetch current Aave rates for all supported tokens
+ * Fetch current rates from both Aave and Spark protocols
+ * Combines rates into a unified response
  * Uses in-memory cache to avoid excessive API calls
  */
 export async function fetchAaveRates(): Promise<AaveRatesResponse> {
@@ -91,17 +121,51 @@ export async function fetchAaveRates(): Promise<AaveRatesResponse> {
   }
 
   try {
-    const response = await fetch(`${BACKEND_URL}/aave/rates`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
+    // Fetch from both protocols in parallel
+    const [aaveResponse, sparkResponse] = await Promise.all([
+      fetch(`${BACKEND_URL}/aave/rates`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => null),
+      fetch(`${BACKEND_URL}/spark/rates`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => null),
+    ]);
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
+    const combinedData: Record<string, AaveTokenRate> = {};
+
+    // Process Aave response
+    if (aaveResponse?.ok) {
+      const aaveData = await aaveResponse.json();
+      if (aaveData.success && aaveData.data) {
+        for (const [key, value] of Object.entries(aaveData.data)) {
+          combinedData[key] = value as AaveTokenRate;
+        }
+      }
     }
 
-    const data: AaveRatesResponse = await response.json();
+    // Process Spark response
+    if (sparkResponse?.ok) {
+      const sparkData = await sparkResponse.json();
+      if (sparkData.success && sparkData.data) {
+        for (const [key, value] of Object.entries(sparkData.data)) {
+          // Spark returns { apy, conversionRate, timestamp } - normalize to AaveTokenRate
+          const sparkRate = value as { apy: number; conversionRate?: string; timestamp: number };
+          combinedData[key] = {
+            apy: sparkRate.apy,
+            utilization: 0, // Spark doesn't return utilization
+            timestamp: sparkRate.timestamp,
+          };
+        }
+      }
+    }
+
+    const data: AaveRatesResponse = {
+      success: Object.keys(combinedData).length > 0,
+      source: 'live',
+      data: combinedData,
+    };
 
     // Update cache
     ratesCache = { data, timestamp: Date.now() };

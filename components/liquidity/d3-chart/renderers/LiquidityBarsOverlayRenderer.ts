@@ -110,11 +110,19 @@ export function createLiquidityBarsOverlayRenderer({
       const startPrice = yToPrice(startY);
       const endPrice = yToPrice(endY);
 
+      // Check for invalid prices
+      if (!isFinite(startPrice) || !isFinite(endPrice) || startPrice <= 0 || endPrice <= 0) {
+        return { constrainedMinPrice: NaN, constrainedMaxPrice: NaN };
+      }
+
       // Determine new min/max based on drag direction
       const newMinPrice = Math.min(startPrice, endPrice);
       const newMaxPrice = Math.max(startPrice, endPrice);
 
-      // Get data bounds
+      // Get data bounds - handle empty data
+      if (liquidityData.length === 0) {
+        return { constrainedMinPrice: NaN, constrainedMaxPrice: NaN };
+      }
       const allPrices = liquidityData.map((d) => d.price0);
       const dataMin = Math.min(...allPrices);
       const dataMax = Math.max(...allPrices);
@@ -145,7 +153,13 @@ export function createLiquidityBarsOverlayRenderer({
       );
 
       // Only update if we have a valid range
-      if (constrainedMaxPrice > constrainedMinPrice) {
+      if (
+        isFinite(constrainedMinPrice) &&
+        isFinite(constrainedMaxPrice) &&
+        constrainedMinPrice > 0 &&
+        constrainedMaxPrice > 0 &&
+        constrainedMaxPrice > constrainedMinPrice
+      ) {
         actions.setChartState({
           minPrice: constrainedMinPrice,
           maxPrice: constrainedMaxPrice,
@@ -153,9 +167,6 @@ export function createLiquidityBarsOverlayRenderer({
       }
 
       if (isEnd) {
-        // Notify parent of final range
-        onRangeChange(constrainedMinPrice, constrainedMaxPrice);
-
         // Clear drag state
         actions.setChartState({
           dragStartY: null,
@@ -163,6 +174,17 @@ export function createLiquidityBarsOverlayRenderer({
           dragStartTick: undefined,
           dragCurrentTick: undefined,
         });
+
+        // Only notify parent if we have valid prices
+        if (
+          constrainedMaxPrice > constrainedMinPrice &&
+          isFinite(constrainedMinPrice) &&
+          isFinite(constrainedMaxPrice) &&
+          constrainedMinPrice > 0 &&
+          constrainedMaxPrice > 0
+        ) {
+          onRangeChange(constrainedMinPrice, constrainedMaxPrice);
+        }
       }
     };
 

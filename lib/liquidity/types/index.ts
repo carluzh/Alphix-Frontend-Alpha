@@ -62,10 +62,16 @@ export {
   type IncreasePositionTransactionStepBatched,
   type DecreasePositionTransactionStep,
   type CollectFeesTransactionStep,
+  // Unified Yield step interfaces
+  type UnifiedYieldApprovalStep,
+  type UnifiedYieldDepositStep,
+  type UnifiedYieldWithdrawStep,
   // Composite step types
   type IncreaseLiquiditySteps,
   type DecreaseLiquiditySteps,
   type CollectFeesSteps,
+  type UnifiedYieldDepositSteps,
+  type UnifiedYieldWithdrawSteps,
   type TransactionStep,
   // Liquidity action (CurrencyAmount is from @uniswap/sdk-core)
   type LiquidityAction,

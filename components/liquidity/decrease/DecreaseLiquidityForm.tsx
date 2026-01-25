@@ -62,6 +62,7 @@ function mapExecutorStepsToUI(
   return executorSteps.map((step): UITransactionStep => {
     switch (step.type) {
       case "DecreasePositionTransaction":
+      case "UnifiedYieldWithdraw": // Unified Yield withdraw step
         // Only include tokens that have non-zero withdraw amounts
         return {
           type: UIStepType.DecreasePositionTransaction,
@@ -126,6 +127,7 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
     setWithdrawAmount1,
     setIsFullWithdraw,
     hasValidAmounts,
+    isUnifiedYield,
   } = useDecreaseLiquidityContext();
 
   const {
@@ -135,6 +137,8 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
     token1USDPrice,
     fetchAndBuildContext,
     clearError,
+    isUnifiedYieldPending,
+    isUnifiedYieldConfirming,
   } = useDecreaseLiquidityTxContext();
 
   const { position } = decreaseLiquidityState;
@@ -267,6 +271,8 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
     setLocalError(null);
 
     try {
+      // Unified execution path - works for both V4 and Unified Yield positions
+      // fetchAndBuildContext handles the position type internally
       const context = await fetchAndBuildContext();
       if (!context) {
         throw new Error("Failed to build transaction context");
@@ -587,7 +593,7 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
             : undefined
         }
       >
-        <span className={(isCalculating || isExecuting) ? "animate-pulse" : ""}>
+        <span className={(isCalculating || isExecuting || isUnifiedYieldPending || isUnifiedYieldConfirming) ? "animate-pulse" : ""}>
           {buttonText}
         </span>
       </Button>

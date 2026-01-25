@@ -28,11 +28,13 @@ export interface MintTxApiResponse {
   needsApproval: boolean;
   approvalType?: 'ERC20_TO_PERMIT2' | 'PERMIT2_BATCH_SIGNATURE';
 
-  // ERC20 approval data
+  // ERC20 approval data (for ERC20_TO_PERMIT2 type or when erc20ApprovalNeeded is true)
   approvalTokenAddress?: string;
   approvalTokenSymbol?: string;
   approveToAddress?: string;
   approvalAmount?: string;
+  // Flag indicating ERC20 approval to Permit2 is needed (included with PERMIT2_BATCH_SIGNATURE)
+  erc20ApprovalNeeded?: boolean;
 
   // Permit batch data
   permitBatchData?: {
@@ -139,6 +141,12 @@ export interface BuildLiquidityContextParams {
     slippageBps?: number;
     deadlineMinutes?: number;
   };
+  // Unified Yield specific fields
+  isUnifiedYield?: boolean;
+  hookAddress?: Address;
+  poolId?: string;
+  sharesToWithdraw?: bigint; // For decrease/withdraw
+  sharesToMint?: bigint; // For increase/create (deposit)
 }
 
 // =============================================================================
@@ -236,11 +244,29 @@ function buildPermitData(apiResponse: MintTxApiResponse): SignTypedDataStepField
 
 /**
  * Builds Create Position context
+ *
+ * For Unified Yield positions, includes UY-specific fields for step generation.
  */
 export function buildCreatePositionContext(
   params: BuildLiquidityContextParams,
 ): CreatePositionTxAndGasInfo {
-  const { apiResponse, token0, token1, amount0, amount1, chainId, approveToken0Request, approveToken1Request, permit, createPositionRequestArgs } = params;
+  const {
+    apiResponse,
+    token0,
+    token1,
+    amount0,
+    amount1,
+    chainId,
+    approveToken0Request,
+    approveToken1Request,
+    permit,
+    createPositionRequestArgs,
+    // Unified Yield fields
+    isUnifiedYield,
+    hookAddress,
+    poolId,
+    sharesToMint,
+  } = params;
 
   const action = buildLiquidityAction(LiquidityTransactionType.Create, token0, token1, amount0, amount1);
   const txRequest = buildTxRequest(apiResponse, chainId);
@@ -263,16 +289,39 @@ export function buildCreatePositionContext(
     // Pass request args for async step - needed to call API with signature after permit
     createPositionRequestArgs,
     sqrtRatioX96: apiResponse.sqrtRatioX96,
+    // Unified Yield specific fields
+    isUnifiedYield,
+    hookAddress,
+    poolId,
+    sharesToMint,
   };
 }
 
 /**
  * Builds Increase Position context
+ *
+ * For Unified Yield positions, includes UY-specific fields for step generation.
  */
 export function buildIncreasePositionContext(
   params: BuildLiquidityContextParams,
 ): IncreasePositionTxAndGasInfo {
-  const { apiResponse, token0, token1, amount0, amount1, chainId, approveToken0Request, approveToken1Request, permit, increasePositionRequestArgs } = params;
+  const {
+    apiResponse,
+    token0,
+    token1,
+    amount0,
+    amount1,
+    chainId,
+    approveToken0Request,
+    approveToken1Request,
+    permit,
+    increasePositionRequestArgs,
+    // Unified Yield fields
+    isUnifiedYield,
+    hookAddress,
+    poolId,
+    sharesToMint,
+  } = params;
 
   const action = buildLiquidityAction(LiquidityTransactionType.Increase, token0, token1, amount0, amount1);
   const txRequest = buildTxRequest(apiResponse, chainId);
@@ -294,16 +343,37 @@ export function buildIncreasePositionContext(
     unsigned: !!permitData && !txRequest,
     increasePositionRequestArgs,
     sqrtRatioX96: apiResponse.sqrtRatioX96,
+    // Unified Yield specific fields
+    isUnifiedYield,
+    hookAddress,
+    poolId,
+    sharesToMint,
   };
 }
 
 /**
  * Builds Decrease Position context
+ *
+ * For Unified Yield positions, includes UY-specific fields for step generation.
  */
 export function buildDecreasePositionContext(
   params: BuildLiquidityContextParams,
 ): DecreasePositionTxAndGasInfo {
-  const { apiResponse, token0, token1, amount0, amount1, chainId, approveToken0Request, approveToken1Request } = params;
+  const {
+    apiResponse,
+    token0,
+    token1,
+    amount0,
+    amount1,
+    chainId,
+    approveToken0Request,
+    approveToken1Request,
+    // Unified Yield fields
+    isUnifiedYield,
+    hookAddress,
+    poolId,
+    sharesToWithdraw,
+  } = params;
 
   const action = buildLiquidityAction(LiquidityTransactionType.Decrease, token0, token1, amount0, amount1);
   const txRequest = buildTxRequest(apiResponse, chainId);
@@ -322,6 +392,11 @@ export function buildDecreasePositionContext(
     revokeToken1Request: undefined,
     txRequest,
     sqrtRatioX96: apiResponse.sqrtRatioX96,
+    // Unified Yield specific fields
+    isUnifiedYield,
+    hookAddress,
+    poolId,
+    sharesToWithdraw,
   };
 }
 

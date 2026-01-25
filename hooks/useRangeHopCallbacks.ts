@@ -3,35 +3,23 @@
  *
  * Copied from Uniswap's useRangeHopCallbacks pattern
  * @see interface/apps/web/src/state/mint/v3/hooks.tsx
+ *
+ * Uses consolidated tick-price utilities for proper decimal handling.
  */
 
 import { useCallback, useMemo } from 'react';
+import type { Token, Currency } from '@uniswap/sdk-core';
+import { tickToPriceSmart } from '@/lib/liquidity/utils/tick-price';
 
 interface UseRangeHopCallbacksProps {
   tickLower: number | null | undefined;
   tickUpper: number | null | undefined;
   tickSpacing: number;
   poolCurrentTick?: number;
-}
-
-/**
- * Convert tick to price string (Uniswap pattern)
- * price = 1.0001^tick
- */
-function tickToPrice(tick: number, significantDigits: number = 5): string {
-  const price = Math.pow(1.0001, tick);
-
-  // Format to significant digits (similar to SDK's toSignificant)
-  if (price === 0) return '0';
-
-  const magnitude = Math.floor(Math.log10(Math.abs(price)));
-  const precision = significantDigits - 1 - magnitude;
-
-  if (precision < 0) {
-    return price.toFixed(0);
-  }
-
-  return price.toFixed(Math.min(precision, 20));
+  /** Token0 from the pool - needed for proper decimal handling */
+  token0?: Token | Currency;
+  /** Token1 from the pool - needed for proper decimal handling */
+  token1?: Token | Currency;
 }
 
 /**
@@ -43,47 +31,49 @@ export function useRangeHopCallbacks({
   tickUpper,
   tickSpacing,
   poolCurrentTick,
+  token0,
+  token1,
 }: UseRangeHopCallbacksProps) {
   const getDecrementLower = useCallback(() => {
     if (typeof tickLower === 'number') {
-      return tickToPrice(tickLower - tickSpacing);
+      return tickToPriceSmart(tickLower - tickSpacing, token0, token1);
     }
     // Use pool current tick as starting tick if we have pool but no tick input
     if (typeof poolCurrentTick === 'number') {
-      return tickToPrice(poolCurrentTick - tickSpacing);
+      return tickToPriceSmart(poolCurrentTick - tickSpacing, token0, token1);
     }
     return '';
-  }, [tickLower, tickSpacing, poolCurrentTick]);
+  }, [tickLower, tickSpacing, poolCurrentTick, token0, token1]);
 
   const getIncrementLower = useCallback(() => {
     if (typeof tickLower === 'number') {
-      return tickToPrice(tickLower + tickSpacing);
+      return tickToPriceSmart(tickLower + tickSpacing, token0, token1);
     }
     if (typeof poolCurrentTick === 'number') {
-      return tickToPrice(poolCurrentTick + tickSpacing);
+      return tickToPriceSmart(poolCurrentTick + tickSpacing, token0, token1);
     }
     return '';
-  }, [tickLower, tickSpacing, poolCurrentTick]);
+  }, [tickLower, tickSpacing, poolCurrentTick, token0, token1]);
 
   const getDecrementUpper = useCallback(() => {
     if (typeof tickUpper === 'number') {
-      return tickToPrice(tickUpper - tickSpacing);
+      return tickToPriceSmart(tickUpper - tickSpacing, token0, token1);
     }
     if (typeof poolCurrentTick === 'number') {
-      return tickToPrice(poolCurrentTick - tickSpacing);
+      return tickToPriceSmart(poolCurrentTick - tickSpacing, token0, token1);
     }
     return '';
-  }, [tickUpper, tickSpacing, poolCurrentTick]);
+  }, [tickUpper, tickSpacing, poolCurrentTick, token0, token1]);
 
   const getIncrementUpper = useCallback(() => {
     if (typeof tickUpper === 'number') {
-      return tickToPrice(tickUpper + tickSpacing);
+      return tickToPriceSmart(tickUpper + tickSpacing, token0, token1);
     }
     if (typeof poolCurrentTick === 'number') {
-      return tickToPrice(poolCurrentTick + tickSpacing);
+      return tickToPriceSmart(poolCurrentTick + tickSpacing, token0, token1);
     }
     return '';
-  }, [tickUpper, tickSpacing, poolCurrentTick]);
+  }, [tickUpper, tickSpacing, poolCurrentTick, token0, token1]);
 
   return useMemo(
     () => ({

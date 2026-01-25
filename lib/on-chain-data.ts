@@ -213,6 +213,7 @@ export async function derivePositionsFromIds(
       if (lastMod > 1e12) lastMod = Math.floor(lastMod / 1000);
 
       out.push({
+        type: 'v4' as const,
         positionId: tokenIdStr,
         poolId: positionData.poolId,
         owner: ownerAddress,

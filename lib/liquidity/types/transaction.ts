@@ -27,6 +27,10 @@ export enum TransactionStepType {
   IncreasePositionTransactionBatched = 'IncreasePositionTransactionBatched',
   DecreasePositionTransaction = 'DecreasePositionTransaction',
   CollectFeesTransactionStep = 'CollectFeesTransaction',
+  // Unified Yield step types (direct ERC20 approval to Hook, no Permit2)
+  UnifiedYieldApprovalTransaction = 'UnifiedYieldApproval',
+  UnifiedYieldDepositTransaction = 'UnifiedYieldDeposit',
+  UnifiedYieldWithdrawTransaction = 'UnifiedYieldWithdraw',
 }
 
 // =============================================================================
@@ -257,6 +261,60 @@ export interface CollectFeesTransactionStep extends OnChainTransactionFields {
 }
 
 // =============================================================================
+// UNIFIED YIELD STEP INTERFACES - Direct ERC20 approvals to Hook (no Permit2)
+// =============================================================================
+
+/**
+ * Unified Yield Approval Step - Direct ERC20 approval to Hook contract
+ * Simpler than V4's Permit2 flow - just standard approve() call
+ */
+export interface UnifiedYieldApprovalStep extends OnChainTransactionFields {
+  type: TransactionStepType.UnifiedYieldApprovalTransaction;
+  /** Token being approved */
+  tokenAddress: Address;
+  /** Token symbol for display */
+  tokenSymbol: string;
+  /** Hook contract receiving approval (spender) */
+  hookAddress: Address;
+  /** Amount to approve (in wei) */
+  amount: bigint;
+}
+
+/**
+ * Unified Yield Deposit Step - Deposit tokens into Hook for shares
+ * Hook.addReHypothecatedLiquidity(sharesToMint, maxAmount0, maxAmount1, recipient)
+ */
+export interface UnifiedYieldDepositStep extends OnChainTransactionFields {
+  type: TransactionStepType.UnifiedYieldDepositTransaction;
+  /** Hook contract address */
+  hookAddress: Address;
+  /** Pool identifier */
+  poolId: string;
+  /** Shares to mint */
+  sharesToMint: bigint;
+  /** Token amounts for display */
+  token0Symbol: string;
+  token1Symbol: string;
+}
+
+/**
+ * Unified Yield Withdraw Step - Withdraw tokens from Hook by burning shares
+ * Hook.removeReHypothecatedLiquidity(sharesToBurn, minAmount0, minAmount1, recipient)
+ */
+export interface UnifiedYieldWithdrawStep extends OnChainTransactionFields {
+  type: TransactionStepType.UnifiedYieldWithdrawTransaction;
+  /** Hook contract address */
+  hookAddress: Address;
+  /** Pool identifier */
+  poolId: string;
+  /** Shares to burn for withdrawal */
+  sharesToWithdraw: bigint;
+  /** Token symbols for display */
+  token0Symbol: string;
+  token1Symbol: string;
+}
+
+// =============================================================================
 // COMPOSITE STEP TYPES - Matches Uniswap's union types
 // =============================================================================
 
@@ -275,10 +333,19 @@ export type DecreaseLiquiditySteps =
 
 export type CollectFeesSteps = CollectFeesTransactionStep;
 
+// Unified Yield step unions
+export type UnifiedYieldDepositSteps =
+  | UnifiedYieldApprovalStep
+  | UnifiedYieldDepositStep;
+
+export type UnifiedYieldWithdrawSteps = UnifiedYieldWithdrawStep;
+
 export type TransactionStep =
   | IncreaseLiquiditySteps
   | DecreaseLiquiditySteps
-  | CollectFeesSteps;
+  | CollectFeesSteps
+  | UnifiedYieldDepositSteps
+  | UnifiedYieldWithdrawSteps;
 
 // =============================================================================
 // LIQUIDITY ACTION - Matches Uniswap's LiquidityAction
@@ -315,6 +382,11 @@ export interface IncreasePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo 
   unsigned: boolean;
   increasePositionRequestArgs: IncreaseLPPositionRequestArgs | undefined;
   sqrtRatioX96: string | undefined;
+  /** Unified Yield specific fields (optional - only for UY positions) */
+  isUnifiedYield?: boolean;
+  hookAddress?: Address;
+  poolId?: string;
+  sharesToMint?: bigint;
 }
 
 export interface CreatePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
@@ -322,11 +394,21 @@ export interface CreatePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
   unsigned: boolean;
   createPositionRequestArgs: CreateLPPositionRequestArgs | undefined;
   sqrtRatioX96: string | undefined;
+  /** Unified Yield specific fields (optional - only for UY positions) */
+  isUnifiedYield?: boolean;
+  hookAddress?: Address;
+  poolId?: string;
+  sharesToMint?: bigint;
 }
 
 export interface DecreasePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
   type: LiquidityTransactionType.Decrease;
   sqrtRatioX96: string | undefined;
+  /** Unified Yield specific fields (optional - only for UY positions) */
+  isUnifiedYield?: boolean;
+  hookAddress?: Address;
+  poolId?: string;
+  sharesToWithdraw?: bigint;
 }
 
 export interface CollectFeesTxAndGasInfo {

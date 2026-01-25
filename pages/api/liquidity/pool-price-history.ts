@@ -1,11 +1,15 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { cacheService } from '@/lib/cache/CacheService'
 import { HistoryDuration, TimestampedPoolPrice } from '@/lib/chart/types'
+import { fetchPoolPricesHistory, type NetworkMode } from '@/lib/backend-client'
 
 /**
  * Pool Price History API
  *
- * Fetches historical price data from Uniswap Gateway (primary) with CoinGecko fallback.
+ * Fetches historical price data with network-aware source selection:
+ * - Mainnet: Uniswap Gateway (primary) → Backend → CoinGecko (fallback)
+ * - Testnet: Backend (primary, only source available)
+ *
  * Returns token0Price and token1Price for flexible client-side denomination.
  *
  * @see interface/apps/web/src/hooks/usePoolPriceChartData.tsx
@@ -48,7 +52,7 @@ interface UniswapPriceHistoryResponse {
 
 interface ApiResponse {
   data: TimestampedPoolPrice[]
-  source: 'uniswap' | 'coingecko'
+  source: 'uniswap' | 'backend' | 'coingecko'
   cached?: boolean
 }
 
@@ -225,30 +229,93 @@ async function fetchCoinGeckoPriceHistory(
 }
 
 /**
- * Combined fetch with Uniswap primary, CoinGecko fallback
+ * Map HistoryDuration to backend period format
+ */
+function mapDurationToBackendPeriod(duration: HistoryDuration): 'DAY' | 'WEEK' | 'MONTH' {
+  switch (duration) {
+    case HistoryDuration.HOUR:
+    case HistoryDuration.DAY:
+      return 'DAY'
+    case HistoryDuration.WEEK:
+      return 'WEEK'
+    case HistoryDuration.MONTH:
+    case HistoryDuration.YEAR:
+      return 'MONTH'
+    default:
+      return 'WEEK'
+  }
+}
+
+/**
+ * Fetch price history from Alphix Backend
+ * Works for both mainnet and testnet
+ */
+async function fetchBackendPriceHistory(
+  poolId: string,
+  duration: HistoryDuration,
+  networkMode: NetworkMode
+): Promise<TimestampedPoolPrice[] | null> {
+  try {
+    const period = mapDurationToBackendPeriod(duration)
+    const result = await fetchPoolPricesHistory(poolId, period, networkMode)
+
+    if (!result.success || !result.points?.length) {
+      return null
+    }
+
+    // Convert to TimestampedPoolPrice format (already compatible)
+    return result.points.map((p) => ({
+      timestamp: p.timestamp,
+      token0Price: p.token0Price,
+      token1Price: p.token1Price,
+    }))
+  } catch (error) {
+    console.warn('[pool-price-history] Backend error:', error)
+    return null
+  }
+}
+
+/**
+ * Combined fetch with network-aware source selection:
+ * - Mainnet: Uniswap → Backend → CoinGecko
+ * - Testnet: Backend only (Uniswap doesn't support testnet)
  */
 async function fetchPriceHistory(
   poolId: string,
   token0: string,
   token1: string,
-  duration: HistoryDuration
-): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'coingecko' }> {
-  // Try Uniswap Gateway first
-  const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
+  duration: HistoryDuration,
+  networkMode: NetworkMode
+): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'backend' | 'coingecko' }> {
+  // Testnet: Use backend as primary (Uniswap doesn't support Base Sepolia)
+  if (networkMode === 'testnet') {
+    const backendData = await fetchBackendPriceHistory(poolId, duration, networkMode)
+    if (backendData && backendData.length >= 3) {
+      return { data: backendData, source: 'backend' }
+    }
+    return { data: [], source: 'backend' }
+  }
 
+  // Mainnet: Try Uniswap Gateway first
+  const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
   if (uniswapData && uniswapData.length >= 3) {
     return { data: uniswapData, source: 'uniswap' }
   }
 
-  // Fallback to CoinGecko
+  // Fallback to backend
+  const backendData = await fetchBackendPriceHistory(poolId, duration, networkMode)
+  if (backendData && backendData.length >= 3) {
+    return { data: backendData, source: 'backend' }
+  }
+
+  // Final fallback to CoinGecko
   console.log(`[pool-price-history] Falling back to CoinGecko for ${poolId}`)
   const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
-
   if (coingeckoData && coingeckoData.length >= 3) {
     return { data: coingeckoData, source: 'coingecko' }
   }
 
-  // Both failed
+  // All sources failed
   return { data: [], source: 'coingecko' }
 }
 
@@ -260,28 +327,42 @@ async function fetchPriceHistoryWithOptionalFallback(
   poolId: string,
   token0: string | null,
   token1: string | null,
-  duration: HistoryDuration
-): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'coingecko' }> {
-  // Try Uniswap Gateway first
-  const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
+  duration: HistoryDuration,
+  networkMode: NetworkMode
+): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'backend' | 'coingecko' }> {
+  // Testnet: Use backend as primary (Uniswap doesn't support Base Sepolia)
+  if (networkMode === 'testnet') {
+    const backendData = await fetchBackendPriceHistory(poolId, duration, networkMode)
+    if (backendData && backendData.length >= 3) {
+      return { data: backendData, source: 'backend' }
+    }
+    return { data: [], source: 'backend' }
+  }
 
+  // Mainnet: Try Uniswap Gateway first
+  const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
   if (uniswapData && uniswapData.length >= 3) {
     return { data: uniswapData, source: 'uniswap' }
   }
 
-  // Only try CoinGecko fallback if tokens are provided
+  // Fallback to backend
+  const backendData = await fetchBackendPriceHistory(poolId, duration, networkMode)
+  if (backendData && backendData.length >= 3) {
+    return { data: backendData, source: 'backend' }
+  }
+
+  // Final fallback to CoinGecko (only if tokens are provided)
   if (token0 && token1) {
     console.log(`[pool-price-history] Falling back to CoinGecko for ${poolId}`)
     const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
-
     if (coingeckoData && coingeckoData.length >= 3) {
       return { data: coingeckoData, source: 'coingecko' }
     }
   }
 
-  // Return empty - Uniswap failed and no fallback available
+  // All sources failed
   console.warn(`[pool-price-history] No data available for ${poolId}`)
-  return { data: [], source: 'uniswap' }
+  return { data: [], source: 'backend' }
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResponse | { message: string }>) {
@@ -290,11 +371,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` })
   }
 
-  const { poolId, token0, token1, duration = 'WEEK' } = req.query
+  const { poolId, token0, token1, duration = 'WEEK', network = 'mainnet' } = req.query
 
   if (!poolId || typeof poolId !== 'string') {
     return res.status(400).json({ message: 'poolId is required' })
   }
+
+  // Validate network mode
+  const networkMode: NetworkMode = network === 'testnet' ? 'testnet' : 'mainnet'
 
   // token0/token1 are optional - only needed for CoinGecko fallback
   // If not provided, skip CoinGecko fallback entirely
@@ -306,16 +390,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
   const historyDuration = (duration as HistoryDuration) || HistoryDuration.WEEK
 
-  // Cache key includes poolId, tokens (if provided), and duration to prevent cache poisoning
+  // Cache key includes poolId, tokens (if provided), duration, and network to prevent cache poisoning
   const cacheKey = hasTokens
-    ? `price-history:${poolId}:${token0}:${token1}:${historyDuration}`
-    : `price-history:${poolId}:${historyDuration}`
+    ? `price-history:${networkMode}:${poolId}:${token0}:${token1}:${historyDuration}`
+    : `price-history:${networkMode}:${poolId}:${historyDuration}`
 
   try {
     const result = await cacheService.cachedApiCall(
       cacheKey,
       CACHE_TTL,
-      () => fetchPriceHistoryWithOptionalFallback(poolId, hasTokens ? token0 as string : null, hasTokens ? token1 as string : null, historyDuration)
+      () => fetchPriceHistoryWithOptionalFallback(poolId, hasTokens ? token0 as string : null, hasTokens ? token1 as string : null, historyDuration, networkMode)
     )
 
     res.setHeader('Cache-Control', 'no-store')

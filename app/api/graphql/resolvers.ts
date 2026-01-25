@@ -1,6 +1,7 @@
 import { type NetworkMode, getAllTokenSymbols } from '@/lib/pools-config'
 import { batchQuotePrices } from '@/lib/swap/quote-prices'
 import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '@/lib/network-mode'
+import { mapPositionsToGraphQL } from '@/lib/apollo/mappers'
 
 /**
  * GraphQL Resolvers
@@ -189,7 +190,7 @@ export const resolvers = {
     ) => {
       const data = await fetchInternal(
         ctx,
-        `/api/liquidity/pool-price-history?poolId=${encodeURIComponent(args.poolId)}&duration=${args.duration}`
+        `/api/liquidity/pool-price-history?poolId=${encodeURIComponent(args.poolId)}&duration=${args.duration}&network=${ctx.networkMode}`
       )
 
       // Transform to TimestampedPoolPrice format
@@ -263,37 +264,7 @@ export const resolvers = {
         return []
       }
 
-      return data.map((pos: any) => ({
-        id: `${args.chain}:${pos.positionId}`,
-        chain: args.chain,
-        positionId: pos.positionId,
-        owner: pos.owner,
-        poolId: pos.poolId,
-        pool: null, // Would need to resolve pool data
-        token0: {
-          address: pos.token0.address,
-          symbol: pos.token0.symbol,
-          amount: pos.token0.amount,
-          rawAmount: pos.token0.rawAmount,
-        },
-        token1: {
-          address: pos.token1.address,
-          symbol: pos.token1.symbol,
-          amount: pos.token1.amount,
-          rawAmount: pos.token1.rawAmount,
-        },
-        tickLower: pos.tickLower,
-        tickUpper: pos.tickUpper,
-        liquidity: pos.liquidityRaw,
-        ageSeconds: pos.ageSeconds,
-        blockTimestamp: pos.blockTimestamp,
-        lastTimestamp: pos.lastTimestamp,
-        isInRange: pos.isInRange,
-        token0UncollectedFees: pos.token0UncollectedFees,
-        token1UncollectedFees: pos.token1UncollectedFees,
-        valueUSD: null,
-        feesUSD: null,
-      }))
+      return mapPositionsToGraphQL(data, args.chain)
     },
 
     positionFees: async (
@@ -320,7 +291,7 @@ export const resolvers = {
 
       const data = await fetchInternal(
         ctx,
-        `/api/liquidity/pool-price-history?poolId=${encodeURIComponent(parent.poolId)}&duration=${args.duration}`
+        `/api/liquidity/pool-price-history?poolId=${encodeURIComponent(parent.poolId)}&duration=${args.duration}&network=${ctx.networkMode}`
       )
 
       if (!data.data || !Array.isArray(data.data)) {

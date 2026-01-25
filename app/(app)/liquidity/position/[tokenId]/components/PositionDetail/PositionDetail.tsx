@@ -16,15 +16,66 @@ import { formatNumber } from "@/lib/format";
 import type { PoolConfig } from "@/lib/pools-config";
 import type { LPType, ChartDuration, PositionInfo, PoolStateData } from "../../hooks";
 import dynamic from "next/dynamic";
-import { usePositionFeeChartData, type ChartPeriod } from "../../hooks";
+import { usePositionFeeChartData, useUnifiedYieldChartData, type ChartPeriod } from "../../hooks";
 import type { TimePeriod } from "../PriceChartSection";
 
-const PriceChartSection = dynamic(() => import("../PriceChartSection").then(mod => mod.PriceChartSection), { ssr: false });
-const YieldChartSection = dynamic(() => import("../YieldChartSection").then(mod => mod.YieldChartSection), { ssr: false });
+// Chart skeleton for dynamic import loading - matches chart height (380px) to prevent CLS
+const CHART_HEIGHT_PX = 380;
+const PRICE_SCALE_WIDTH = 70;
+const TIME_SCALE_HEIGHT = 26;
+
+function ChartLoadingSkeleton() {
+  const dotPattern = `radial-gradient(circle, #333333 1px, transparent 1px)`;
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="relative" style={{ height: CHART_HEIGHT_PX }}>
+        <div
+          className="absolute pointer-events-none"
+          style={{
+            top: 0,
+            left: 0,
+            right: PRICE_SCALE_WIDTH,
+            bottom: TIME_SCALE_HEIGHT,
+            backgroundImage: dotPattern,
+            backgroundSize: "24px 24px",
+          }}
+        />
+        <div className="flex flex-row absolute w-full gap-2 items-start z-10">
+          <div className="flex flex-col gap-1 p-3 pointer-events-none bg-background rounded-xl">
+            <div className="h-9 w-24 bg-muted/20 animate-pulse rounded" />
+            <div className="h-4 w-32 bg-muted/10 animate-pulse rounded" />
+          </div>
+        </div>
+      </div>
+      {/* Time period selector skeleton */}
+      <div className="flex flex-row items-center gap-1 opacity-50">
+        {["1W", "1M", "1Y", "ALL"].map((opt) => (
+          <div key={opt} className="h-7 px-2.5 text-xs rounded-md bg-muted/20 text-muted-foreground">
+            {opt}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const PriceChartSection = dynamic(
+  () => import("../PriceChartSection").then(mod => mod.PriceChartSection),
+  { ssr: false, loading: () => <ChartLoadingSkeleton /> }
+);
+const YieldChartSection = dynamic(
+  () => import("../YieldChartSection").then(mod => mod.YieldChartSection),
+  { ssr: false, loading: () => <ChartLoadingSkeleton /> }
+);
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import { IncreaseLiquidityModal } from "@/components/liquidity/increase/IncreaseLiquidityModal";
 import { DecreaseLiquidityModal } from "@/components/liquidity/decrease/DecreaseLiquidityModal";
 import { CollectFeesModal } from "@/components/liquidity/collect/CollectFeesModal";
+import {
+  adaptUnifiedYieldToProcessedPosition,
+  type UnifiedYieldPosition,
+} from "@/lib/liquidity/unified-yield";
+import { useNetwork } from "@/lib/network-context";
 
 // ============================================================================
 // Types
@@ -35,6 +86,7 @@ export interface PositionDetailProps {
   // Position data
   position: V4Position | null;
   positionInfo: PositionInfo | null;
+  unifiedYieldPosition: UnifiedYieldPosition | null;
   isLoading: boolean;
   error: Error | null;
   // Pool data
@@ -155,6 +207,7 @@ function DualBar({
   token1Symbol,
   hoveredToken,
   onHover,
+  networkMode,
 }: {
   percent0: number;
   percent1: number;
@@ -162,9 +215,10 @@ function DualBar({
   token1Symbol?: string;
   hoveredToken: 0 | 1 | null;
   onHover: (token: 0 | 1 | null) => void;
+  networkMode: "mainnet" | "testnet";
 }) {
-  const color0 = getTokenColor(token0Symbol);
-  const color1 = getTokenColor(token1Symbol);
+  const color0 = getTokenColor(token0Symbol, networkMode);
+  const color1 = getTokenColor(token1Symbol, networkMode);
 
   return (
     <div className="flex h-2 w-full gap-1">
@@ -198,14 +252,16 @@ function TokenRow({
   isHovered,
   isMuted,
   onHover,
+  networkMode,
 }: {
   symbol: string;
   amount: string;
   isHovered: boolean;
   isMuted: boolean;
   onHover: (hovered: boolean) => void;
+  networkMode: "mainnet" | "testnet";
 }) {
-  const iconUrl = getTokenIcon(symbol);
+  const iconUrl = getTokenIcon(symbol, networkMode);
 
   return (
     <div
@@ -248,6 +304,7 @@ function PositionHeader({
   onAddLiquidity,
   onRemoveLiquidity,
   onCollectFees,
+  networkMode,
 }: {
   poolConfig: PoolConfig;
   lpType: LPType;
@@ -257,10 +314,11 @@ function PositionHeader({
   onAddLiquidity: () => void;
   onRemoveLiquidity: () => void;
   onCollectFees: () => void;
+  networkMode: "mainnet" | "testnet";
 }) {
   const router = useRouter();
-  const token0Icon = getTokenIcon(poolConfig.currency0.symbol);
-  const token1Icon = getTokenIcon(poolConfig.currency1.symbol);
+  const token0Icon = getTokenIcon(poolConfig.currency0.symbol, networkMode);
+  const token1Icon = getTokenIcon(poolConfig.currency1.symbol, networkMode);
 
   return (
     <div className="flex flex-col gap-4">
@@ -408,6 +466,7 @@ function PositionValueSection({
   totalPositionValue,
   token0Symbol,
   token1Symbol,
+  networkMode,
 }: {
   currency0Amount: CurrencyAmount<Currency> | null;
   currency1Amount: CurrencyAmount<Currency> | null;
@@ -416,6 +475,7 @@ function PositionValueSection({
   totalPositionValue: number | null;
   token0Symbol: string;
   token1Symbol: string;
+  networkMode: "mainnet" | "testnet";
 }) {
   const [hoveredToken, setHoveredToken] = useState<0 | 1 | null>(null);
 
@@ -451,6 +511,7 @@ function PositionValueSection({
             token1Symbol={token1Symbol}
             hoveredToken={hoveredToken}
             onHover={setHoveredToken}
+            networkMode={networkMode}
           />
 
           <div className="flex flex-col gap-0.5 -mb-3">
@@ -461,6 +522,7 @@ function PositionValueSection({
                 isHovered={hoveredToken === 0}
                 isMuted={hoveredToken === 1}
                 onHover={(h) => setHoveredToken(h ? 0 : null)}
+                networkMode={networkMode}
               />
             )}
             {currency1Amount && (
@@ -470,6 +532,7 @@ function PositionValueSection({
                 isHovered={hoveredToken === 1}
                 isMuted={hoveredToken === 0}
                 onHover={(h) => setHoveredToken(h ? 1 : null)}
+                networkMode={networkMode}
               />
             )}
           </div>
@@ -487,6 +550,7 @@ function EarningsSection({
   totalFeesValue,
   token0Symbol,
   token1Symbol,
+  networkMode,
 }: {
   fee0Amount: CurrencyAmount<Currency> | null;
   fee1Amount: CurrencyAmount<Currency> | null;
@@ -495,6 +559,7 @@ function EarningsSection({
   totalFeesValue: number | null;
   token0Symbol: string;
   token1Symbol: string;
+  networkMode: "mainnet" | "testnet";
 }) {
   const [hoveredToken, setHoveredToken] = useState<0 | 1 | null>(null);
 
@@ -530,6 +595,7 @@ function EarningsSection({
             token1Symbol={token1Symbol}
             hoveredToken={hoveredToken}
             onHover={setHoveredToken}
+            networkMode={networkMode}
           />
 
           <div className="flex flex-col gap-0.5 -mb-3">
@@ -540,6 +606,7 @@ function EarningsSection({
                 isHovered={hoveredToken === 0}
                 isMuted={hoveredToken === 1}
                 onHover={(h) => setHoveredToken(h ? 0 : null)}
+                networkMode={networkMode}
               />
             )}
             {fee1Amount && (
@@ -549,6 +616,7 @@ function EarningsSection({
                 isHovered={hoveredToken === 1}
                 isMuted={hoveredToken === 0}
                 onHover={(h) => setHoveredToken(h ? 1 : null)}
+                networkMode={networkMode}
               />
             )}
           </div>
@@ -707,6 +775,7 @@ export const PositionDetail = memo(function PositionDetail({
   tokenId,
   position,
   positionInfo,
+  unifiedYieldPosition,
   isLoading,
   error,
   poolConfig,
@@ -745,6 +814,7 @@ export const PositionDetail = memo(function PositionDetail({
 }: PositionDetailProps) {
   const isMobile = useIsMobile();
   const router = useRouter();
+  const { networkMode } = useNetwork();
 
   // Window width for responsive chart
   const [windowWidth, setWindowWidth] = useState<number>(
@@ -767,8 +837,10 @@ export const PositionDetail = memo(function PositionDetail({
   const [chartTab, setChartTab] = useState<"price" | "yield">("price");
   const [feeChartPeriod, setFeeChartPeriod] = useState<ChartPeriod>("1W");
 
-  // Fee chart data - pass current uncollected fees for "live now" point
-  // Include token symbols and lpType for Aave historical rate fetching (rehypo positions)
+  // Detect if this is a Unified Yield position
+  const isUnifiedYield = lpType === "rehypo";
+
+  // Fee chart data for V4 positions - pass current uncollected fees for "live now" point
   const {
     data: feeChartData,
     isLoading: isLoadingFeeChart,
@@ -777,15 +849,81 @@ export const PositionDetail = memo(function PositionDetail({
     positionId: tokenId,
     period: feeChartPeriod,
     currentFeesUsd: totalFeesValue ?? undefined,
-    enabled: chartTab === "yield" && !!tokenId,
+    enabled: chartTab === "yield" && !!tokenId && !isUnifiedYield,
     token0Symbol: poolConfig?.currency0?.symbol,
     token1Symbol: poolConfig?.currency1?.symbol,
-    isRehypo: lpType === "rehypo",
+    isRehypo: false, // V4 positions only
   });
 
+  // Unified Yield chart data - shows Swap APR + yield source APRs (Aave/Spark)
+  const {
+    data: uyChartData,
+    isLoading: isLoadingUyChart,
+    refetch: refetchUyChart,
+  } = useUnifiedYieldChartData({
+    poolId: poolConfig?.subgraphId,
+    period: feeChartPeriod,
+    yieldSources: poolConfig?.yieldSources,
+    token0Symbol: poolConfig?.currency0?.symbol,
+    token1Symbol: poolConfig?.currency1?.symbol,
+    enabled: chartTab === "yield" && !!poolConfig?.subgraphId && isUnifiedYield,
+  });
+
+  // Transform UY chart data to format expected by YieldChartSection
+  // Calculate weighted totalApr based on position's token value ratios
+  const transformedUyChartData = useMemo(() => {
+    if (!uyChartData) return [];
+
+    // Calculate token weights from current position USD values
+    const totalValue = (fiatValue0 ?? 0) + (fiatValue1 ?? 0);
+    const token0Weight = totalValue > 0 ? (fiatValue0 ?? 0) / totalValue : 0.5;
+    const token1Weight = totalValue > 0 ? (fiatValue1 ?? 0) / totalValue : 0.5;
+
+    // Determine which token uses which yield source
+    // DAI/USDS tokens use Spark, others (USDC, WETH, etc.) use Aave
+    const token0Symbol = poolConfig?.currency0?.symbol?.toUpperCase() ?? "";
+    const token1Symbol = poolConfig?.currency1?.symbol?.toUpperCase() ?? "";
+    const token0UsesSpark = token0Symbol.includes("DAI") || token0Symbol.includes("USDS");
+    const token1UsesSpark = token1Symbol.includes("DAI") || token1Symbol.includes("USDS");
+
+    return uyChartData.map((point) => {
+      // Calculate weighted yield based on token allocations
+      // Each token earns yield from its specific source (Spark for DAI, Aave for USDC)
+      const token0Yield = token0UsesSpark ? (point.sparkApy ?? 0) : (point.aaveApy ?? 0);
+      const token1Yield = token1UsesSpark ? (point.sparkApy ?? 0) : (point.aaveApy ?? 0);
+      const weightedYield = (token0Weight * token0Yield) + (token1Weight * token1Yield);
+      const weightedTotalApr = point.swapApr + weightedYield;
+
+      return {
+        timestamp: point.timestamp,
+        apr: point.swapApr,
+        aaveApy: point.aaveApy,
+        sparkApy: point.sparkApy,
+        feesUsd: 0, // UY positions don't show individual fees
+        accumulatedFeesUsd: 0,
+        totalApr: weightedTotalApr,
+      };
+    });
+  }, [uyChartData, fiatValue0, fiatValue1, poolConfig?.currency0?.symbol, poolConfig?.currency1?.symbol]);
+
+  // Select the appropriate chart data based on position type
+  const yieldChartData = isUnifiedYield ? transformedUyChartData : (feeChartData ?? []);
+  const isLoadingYieldChart = isUnifiedYield ? isLoadingUyChart : isLoadingFeeChart;
+  const refetchYieldChart = isUnifiedYield ? refetchUyChart : refetchFeeChart;
+
   // Convert position data to ProcessedPosition format for modals
+  // Uses the shared adapter for Unified Yield positions
   const processedPosition: ProcessedPosition | null = useMemo(() => {
-    if (!position || !poolConfig || !positionInfo) return null;
+    if (!poolConfig) return null;
+
+    // For Unified Yield positions, use the shared adapter
+    if (isUnifiedYield && unifiedYieldPosition) {
+      return adaptUnifiedYieldToProcessedPosition(unifiedYieldPosition, networkMode);
+    }
+
+    // For V4 positions, need positionInfo
+    if (!position || !positionInfo) return null;
+
     return {
       positionId: tokenId,
       owner: positionInfo.owner,
@@ -812,7 +950,7 @@ export const PositionDetail = memo(function PositionDetail({
       token0UncollectedFees: fee0Amount?.toExact() || "0",
       token1UncollectedFees: fee1Amount?.toExact() || "0",
     };
-  }, [position, poolConfig, positionInfo, tokenId, currency0Amount, currency1Amount, isInRange, fee0Amount, fee1Amount]);
+  }, [position, poolConfig, positionInfo, tokenId, currency0Amount, currency1Amount, isInRange, fee0Amount, fee1Amount, isUnifiedYield, unifiedYieldPosition, networkMode]);
 
   // Modal handlers
   const handleOpenAddModal = useCallback(() => setIsAddModalOpen(true), []);
@@ -825,8 +963,8 @@ export const PositionDetail = memo(function PositionDetail({
   // Handle modal success - refetch position data
   const handleModalSuccess = useCallback(() => {
     refetch();
-    refetchFeeChart();
-  }, [refetch, refetchFeeChart]);
+    refetchYieldChart();
+  }, [refetch, refetchYieldChart]);
 
   // Loading state
   if (isLoading) {
@@ -846,7 +984,13 @@ export const PositionDetail = memo(function PositionDetail({
   }
 
   // Not found state
-  if (!position || !poolConfig) {
+  // For Unified Yield: position is null but poolConfig should exist
+  // For V4: both position and poolConfig should exist
+  const hasValidData = isUnifiedYield
+    ? (poolConfig !== null && currency0Amount !== null)
+    : (position !== null && poolConfig !== null);
+
+  if (!hasValidData) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <h2 className="text-2xl font-semibold">Position not found</h2>
@@ -863,7 +1007,8 @@ export const PositionDetail = memo(function PositionDetail({
   const token0Symbol = poolConfig.currency0.symbol;
   const token1Symbol = poolConfig.currency1.symbol;
 
-  const hasFees = totalFeesValue !== null && totalFeesValue > 0;
+  // For Unified Yield positions, fees auto-compound so no manual collection needed
+  const hasFees = !isUnifiedYield && totalFeesValue !== null && totalFeesValue > 0;
 
   return (
     <div className="flex flex-col gap-6 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto pb-20 sm:pb-6">
@@ -877,6 +1022,7 @@ export const PositionDetail = memo(function PositionDetail({
         onAddLiquidity={handleOpenAddModal}
         onRemoveLiquidity={handleOpenRemoveModal}
         onCollectFees={handleOpenCollectModal}
+        networkMode={networkMode}
       />
 
       {/* Two-column layout - matches PoolDetail pattern */}
@@ -941,12 +1087,13 @@ export const PositionDetail = memo(function PositionDetail({
             />
           ) : (
             <YieldChartSection
-              chartData={feeChartData ?? []}
-              isLoading={isLoadingFeeChart}
+              chartData={yieldChartData}
+              isLoading={isLoadingYieldChart}
               windowWidth={windowWidth}
-              currentFees={totalFeesValue ?? undefined}
+              currentFees={isUnifiedYield ? undefined : (totalFeesValue ?? undefined)}
               timePeriod={feeChartPeriod}
               onTimePeriodChange={(period) => setFeeChartPeriod(period)}
+              isUnifiedYield={isUnifiedYield}
             />
           )}
 
@@ -974,6 +1121,7 @@ export const PositionDetail = memo(function PositionDetail({
               totalFeesValue={totalFeesValue}
               token0Symbol={token0Symbol}
               token1Symbol={token1Symbol}
+              networkMode={networkMode}
             />
           )}
 
@@ -986,6 +1134,7 @@ export const PositionDetail = memo(function PositionDetail({
             totalPositionValue={totalPositionValue}
             token0Symbol={token0Symbol}
             token1Symbol={token1Symbol}
+            networkMode={networkMode}
           />
 
           {/* APR */}

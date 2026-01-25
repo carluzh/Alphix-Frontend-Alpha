@@ -13,7 +13,9 @@ import { OverviewStatsTiles } from "./StatsTiles";
 
 const PortfolioChart = dynamic(() => import("../Charts/PortfolioChart").then(mod => mod.PortfolioChart), { ssr: false });
 import { PositionCardCompact, PositionCardCompactLoader } from "@/components/liquidity/PositionCardCompact";
+import { UnifiedYieldPositionCard } from "@/components/liquidity/UnifiedYieldPositionCard";
 import { MiniTokensTable } from "./MiniTokensTable";
+import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
 import { Separator } from "../shared/Separator";
 import { TableSectionHeader } from "../shared/TableSectionHeader";
 import { ViewAllButton } from "../shared/ViewAllButton";
@@ -45,15 +47,11 @@ interface Position {
   token1UncollectedFees?: string;
 }
 
-/** Type guard for PositionInfo */
-function isPositionInfo(p: PositionInfo | undefined): p is PositionInfo {
-  return p !== undefined;
-}
-
 interface OverviewProps {
   totalValue: number;
   walletBalances: TokenBalance[];
   activePositions: Position[];
+  unifiedYieldPositions?: UnifiedYieldPosition[];
   priceMap: Record<string, number>;
   aprByPoolId?: Record<string, string>;
   isLoading?: boolean;
@@ -64,9 +62,8 @@ interface OverviewProps {
 
 // Constants
 const OVERVIEW_RIGHT_COLUMN_WIDTH = 380;
-const MAX_POOLS_ROWS = 5;
 const MAX_TOKENS_ROWS = 8;
-
+const MAX_POSITIONS_DISPLAYED = 5;
 
 /**
  * Overview
@@ -82,6 +79,7 @@ export const Overview = memo(function Overview({
   totalValue,
   walletBalances,
   activePositions,
+  unifiedYieldPositions = [],
   priceMap,
   aprByPoolId,
   isLoading,
@@ -92,98 +90,112 @@ export const Overview = memo(function Overview({
   const router = useRouter();
   const { networkMode, chainId } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
-  const isPortfolioZero = totalValue === 0 && activePositions.length === 0;
+  const isPortfolioZero = totalValue === 0 && activePositions.length === 0 && unifiedYieldPositions.length === 0;
 
   // Navigate to position detail page
   const handlePositionClick = useCallback((tokenId: string) => {
     router.push(`/liquidity/position/${tokenId}`);
   }, [router]);
 
-  // Get USD price for a symbol from priceMap
+  // Testnet stablecoins always priced at $1
+  const STABLECOINS_USD = new Set(['USDC', 'USDT', 'DAI', 'aUSDC', 'aDAI', 'atUSDC', 'atDAI']);
+
+  // Get USD price for a symbol from priceMap (with stablecoin fallback)
   const getUsdPriceForSymbol = useCallback(
     (symbol?: string): number => {
       if (!symbol) return 0;
+      // Stablecoins are always $1
+      if (STABLECOINS_USD.has(symbol) || STABLECOINS_USD.has(symbol.toUpperCase())) return 1;
       return priceMap[symbol] || priceMap[symbol.toUpperCase()] || 0;
     },
     [priceMap]
   );
 
-  // Calculate position value USD from PositionInfo
-  const getPositionValueUSD = useCallback(
-    (position: PositionInfo): number => {
-      const amt0 = parseFloat(position.currency0Amount.toExact());
-      const amt1 = parseFloat(position.currency1Amount.toExact());
-      const symbol0 = position.currency0Amount.currency.symbol;
-      const symbol1 = position.currency1Amount.currency.symbol;
-      const price0 = getUsdPriceForSymbol(symbol0);
-      const price1 = getUsdPriceForSymbol(symbol1);
+  // Calculate USD value for Unified Yield position
+  const getUYPositionValueUSD = useCallback(
+    (position: UnifiedYieldPosition): number => {
+      const amt0 = parseFloat(position.token0Amount || '0');
+      const amt1 = parseFloat(position.token1Amount || '0');
+      const price0 = getUsdPriceForSymbol(position.token0Symbol);
+      const price1 = getUsdPriceForSymbol(position.token1Symbol);
       return amt0 * price0 + amt1 * price1;
     },
     [getUsdPriceForSymbol]
   );
 
+  // Convert V4 positions to PositionInfo with USD values
+  const v4PositionsWithValue = useMemo(() => {
+    return activePositions
+      .map((pos) => {
+        const subgraphPos: SubgraphPosition = {
+          positionId: pos.positionId,
+          owner: pos.owner || "",
+          poolId: pos.poolId,
+          token0: {
+            address: pos.token0.address || "",
+            symbol: pos.token0.symbol,
+            amount: pos.token0.amount,
+          },
+          token1: {
+            address: pos.token1.address || "",
+            symbol: pos.token1.symbol,
+            amount: pos.token1.amount,
+          },
+          tickLower: pos.tickLower ?? 0,
+          tickUpper: pos.tickUpper ?? 0,
+          liquidity: pos.liquidity || "0",
+          isInRange: pos.isInRange ?? true,
+          token0UncollectedFees: pos.token0UncollectedFees,
+          token1UncollectedFees: pos.token1UncollectedFees,
+          blockTimestamp: pos.blockTimestamp,
+          lastTimestamp: pos.lastTimestamp,
+        };
 
-  // Convert positions to PositionInfo[] - mirrors Uniswap's pattern
-  // Sort by USD value descending before taking top positions
-  const positions = useMemo(() => {
-    // First convert all positions to get their values
-    const positionsWithValue = activePositions.map((pos) => {
-      const subgraphPos: SubgraphPosition = {
-        positionId: pos.positionId,
-        owner: pos.owner || "",
-        poolId: pos.poolId,
-        token0: {
-          address: pos.token0.address || "",
-          symbol: pos.token0.symbol,
-          amount: pos.token0.amount,
-        },
-        token1: {
-          address: pos.token1.address || "",
-          symbol: pos.token1.symbol,
-          amount: pos.token1.amount,
-        },
-        tickLower: pos.tickLower ?? 0,
-        tickUpper: pos.tickUpper ?? 0,
-        liquidity: pos.liquidity || "0",
-        isInRange: pos.isInRange ?? true,
-        token0UncollectedFees: pos.token0UncollectedFees,
-        token1UncollectedFees: pos.token1UncollectedFees,
-        blockTimestamp: pos.blockTimestamp,
-        lastTimestamp: pos.lastTimestamp,
-      };
+        const token0Decimals = tokenDefinitions?.[pos.token0.symbol]?.decimals ?? 18;
+        const token1Decimals = tokenDefinitions?.[pos.token1.symbol]?.decimals ?? 18;
+        const positionInfo = parseSubgraphPosition(subgraphPos, { chainId, token0Decimals, token1Decimals });
 
-      const token0Decimals = tokenDefinitions?.[pos.token0.symbol]?.decimals ?? 18;
-      const token1Decimals = tokenDefinitions?.[pos.token1.symbol]?.decimals ?? 18;
+        if (!positionInfo) return null;
 
-      const positionInfo = parseSubgraphPosition(subgraphPos, { chainId, token0Decimals, token1Decimals });
-
-      // Calculate USD value for sorting
-      let usdValue = 0;
-      if (positionInfo) {
         const amt0 = parseFloat(positionInfo.currency0Amount.toExact());
         const amt1 = parseFloat(positionInfo.currency1Amount.toExact());
-        const symbol0 = positionInfo.currency0Amount.currency.symbol;
-        const symbol1 = positionInfo.currency1Amount.currency.symbol;
-        const price0 = getUsdPriceForSymbol(symbol0);
-        const price1 = getUsdPriceForSymbol(symbol1);
-        usdValue = amt0 * price0 + amt1 * price1;
-      }
+        const price0 = getUsdPriceForSymbol(positionInfo.currency0Amount.currency.symbol);
+        const price1 = getUsdPriceForSymbol(positionInfo.currency1Amount.currency.symbol);
 
-      return { positionInfo, usdValue };
-    });
-
-    // Sort by USD value descending, then take top MAX_POOLS_ROWS
-    return positionsWithValue
-      .filter((p): p is { positionInfo: PositionInfo; usdValue: number } => p.positionInfo !== undefined)
-      .sort((a, b) => b.usdValue - a.usdValue)
-      .slice(0, MAX_POOLS_ROWS)
-      .map(p => p.positionInfo);
+        return { position: positionInfo, usdValue: amt0 * price0 + amt1 * price1 };
+      })
+      .filter((p): p is { position: PositionInfo; usdValue: number } => p !== null);
   }, [activePositions, chainId, tokenDefinitions, getUsdPriceForSymbol]);
 
-  // Calculate total positions value for the chart's "live now" point
-  const totalPositionsValue = useMemo(() => {
-    return positions.reduce((sum, pos) => sum + getPositionValueUSD(pos), 0);
-  }, [positions, getPositionValueUSD]);
+  // Total position count for display
+  const totalPositionCount = v4PositionsWithValue.length + unifiedYieldPositions.length;
+
+  // Unified type for display positions
+  type DisplayPosition =
+    | { type: 'v4'; position: PositionInfo; usdValue: number }
+    | { type: 'uy'; position: UnifiedYieldPosition; usdValue: number };
+
+  // Combine all positions, sort by USD value descending, limit to MAX_POSITIONS_DISPLAYED
+  const { displayedPositions, hasMorePositions, totalPositionsValue } = useMemo(() => {
+    const allPositions: DisplayPosition[] = [
+      ...v4PositionsWithValue.map(p => ({ type: 'v4' as const, ...p })),
+      ...unifiedYieldPositions.map(pos => ({
+        type: 'uy' as const,
+        position: pos,
+        usdValue: getUYPositionValueUSD(pos),
+      })),
+    ];
+
+    // Sort by USD value descending
+    const sorted = allPositions.sort((a, b) => b.usdValue - a.usdValue);
+    const totalValue = sorted.reduce((sum, p) => sum + p.usdValue, 0);
+
+    return {
+      displayedPositions: sorted.slice(0, MAX_POSITIONS_DISPLAYED),
+      hasMorePositions: totalPositionCount > MAX_POSITIONS_DISPLAYED,
+      totalPositionsValue: totalValue,
+    };
+  }, [v4PositionsWithValue, unifiedYieldPositions, getUYPositionValueUSD, totalPositionCount]);
 
   // Get pool context for a position (with APR from aprByPoolId)
   const getPoolContext = useCallback(
@@ -275,8 +287,8 @@ export const Overview = memo(function Overview({
               subtitle={
                 isLoading
                   ? "Loading positions..."
-                  : activePositions.length > 0
-                    ? `${activePositions.length} open position${activePositions.length !== 1 ? "s" : ""}`
+                  : totalPositionCount > 0
+                    ? `${totalPositionCount} open position${totalPositionCount !== 1 ? "s" : ""}`
                     : "No open positions"
               }
               loading={isLoading}
@@ -299,11 +311,11 @@ export const Overview = memo(function Overview({
                     <PositionCardCompactLoader key={i} />
                   ))}
                 </div>
-              ) : positions.length > 0 ? (
+              ) : totalPositionCount > 0 ? (
                 <div className="flex flex-col gap-3">
-                  {positions.map((position, index) => (
+                  {displayedPositions.map((item, index) => (
                     <motion.div
-                      key={position.tokenId}
+                      key={item.type === 'v4' ? item.position.tokenId : item.position.id}
                       initial={prefersReducedMotion ? undefined : { opacity: 0, y: 8 }}
                       animate={prefersReducedMotion ? undefined : { opacity: 1, y: 0 }}
                       transition={prefersReducedMotion ? undefined : {
@@ -312,13 +324,25 @@ export const Overview = memo(function Overview({
                         ease: [0.25, 0.1, 0.25, 1],
                       }}
                     >
-                      <PositionCardCompact
-                        position={position}
-                        valueUSD={getPositionValueUSD(position)}
-                        onClick={() => position.tokenId && handlePositionClick(position.tokenId)}
-                        poolContext={getPoolContext(position.poolId || '')}
-                        showMenuButton={false}
-                      />
+                      {item.type === 'v4' ? (
+                        <PositionCardCompact
+                          position={item.position}
+                          valueUSD={item.usdValue}
+                          onClick={() => item.position.tokenId && handlePositionClick(item.position.tokenId)}
+                          poolContext={getPoolContext(item.position.poolId || '')}
+                          showMenuButton={false}
+                        />
+                      ) : (
+                        <UnifiedYieldPositionCard
+                          position={item.position}
+                          valueUSD={item.usdValue}
+                          onClick={() => handlePositionClick(item.position.positionId)}
+                          poolContext={{
+                            currentPrice: null,
+                            isLoadingPrices: isLoading ?? false,
+                          }}
+                        />
+                      )}
                     </motion.div>
                   ))}
                 </div>
@@ -330,7 +354,11 @@ export const Overview = memo(function Overview({
                 </div>
               )}
             </TableSectionHeader>
-            <ViewAllButton href="/liquidity" label="View all pools" />
+            {hasMorePositions ? (
+              <ViewAllButton href="/liquidity" label="View all positions" />
+            ) : (
+              <ViewAllButton href="/liquidity" label="View all pools" />
+            )}
           </div>
         </div>
 

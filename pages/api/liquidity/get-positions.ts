@@ -5,10 +5,31 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, type Address, type Hex, encodeAbiParameters, keccak256, parseAbi } from "viem";
 import { getTokenSymbolByAddress, getToken as getTokenConfig, getChainId, getNetworkModeFromRequest, getPositionManagerAddress, getStateViewAddress, type NetworkMode } from "../../../lib/pools-config";
-import { getPositionDetails, getPoolState, decodePositionInfo, calculateUnclaimedFeesV4 } from "@/lib/liquidity/liquidity-utils";
-import { getAlphixSubgraphUrl, getDaiSubgraphUrl, isMainnetSubgraphMode } from "../../../lib/subgraph-url-helper";
+import { getPositionDetails, getPoolState, calculateUnclaimedFeesV4 } from "@/lib/liquidity/liquidity-utils";
+import { getAlphixSubgraphUrl } from "../../../lib/subgraph-url-helper";
 import { STATE_VIEW_ABI } from "../../../lib/abis/state_view_abi";
 import { createNetworkClient } from "../../../lib/viemClient";
+
+/**
+ * Recursively convert BigInt values to strings for JSON serialization.
+ * JSON.stringify cannot handle BigInt natively, so we need this helper.
+ */
+function serializeBigInts<T>(obj: T): T {
+    if (obj === null || obj === undefined) return obj;
+    if (typeof obj === 'bigint') return obj.toString() as unknown as T;
+    if (Array.isArray(obj)) return obj.map(serializeBigInts) as unknown as T;
+    if (typeof obj === 'object') {
+        const result: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(obj)) {
+            result[key] = serializeBigInts(value);
+        }
+        return result as T;
+    }
+    return obj;
+}
+
+// Note: Unified Yield positions are fetched separately via fetchUnifiedYieldPositions
+// in the client layer (useOverviewPageData, usePoolPositions) for clean separation
 
 // Minimal subgraph types and query
 interface SubgraphPosition {
@@ -19,30 +40,13 @@ interface SubgraphPosition {
     liquidity: string;
     creationTimestamp: string;
     lastTimestamp: string;
-    pool?: { id: string }; // Testnet: nested pool object
-    poolId?: string; // Mainnet: direct poolId string
+    poolId: string; // Both testnet and mainnet now use poolId directly
 }
 
-// Testnet query: uses pool { id } (full subgraph with Pool entity)
-const GET_USER_HOOK_POSITIONS_QUERY_TESTNET = `
+// Both testnet and mainnet now use poolId directly (Goldsky subgraph migration)
+const GET_USER_HOOK_POSITIONS_QUERY = `
   query GetUserPositions($owner: Bytes!) {
-    hookPositions(first: 200, orderBy: id, orderDirection: desc, where: { owner: $owner }) {
-      id
-      owner
-      tickLower
-      tickUpper
-      liquidity
-      creationTimestamp
-      lastTimestamp
-      pool { id }
-    }
-  }
-`;
-
-// Mainnet query: uses poolId directly (minimal subgraph without Pool entity)
-const GET_USER_HOOK_POSITIONS_QUERY_MAINNET = `
-  query GetUserPositions($owner: Bytes!) {
-    hookPositions(first: 200, orderBy: id, orderDirection: desc, where: { owner: $owner }) {
+    hookPositions(first: 200, orderBy: id, orderDirection: desc, where: { owner: $owner, liquidity_gt: 0 }) {
       id
       owner
       tickLower
@@ -55,9 +59,9 @@ const GET_USER_HOOK_POSITIONS_QUERY_MAINNET = `
   }
 `;
 
-// Helper to get the pool ID from either schema format
+// Helper to get the pool ID from position
 function getPoolIdFromPosition(pos: SubgraphPosition): string {
-  return pos.poolId || pos.pool?.id || '';
+  return pos.poolId || '';
 }
 
 const GET_USER_LEGACY_POSITIONS_QUERY = `
@@ -81,12 +85,14 @@ interface ProcessedPositionToken {
 }
 
 /**
- * ProcessedPosition - Mirrors Uniswap's PositionInfo pattern
+ * V4ProcessedPosition - Standard V4 positions from PositionManager
  *
  * @see interface/apps/web/src/components/Liquidity/types.ts (BasePositionInfo)
  * @see interface/apps/web/src/components/Liquidity/utils/parseFromRest.ts (parseRestPosition)
  */
-export interface ProcessedPosition {
+export interface V4ProcessedPosition {
+    /** Type discriminator for union type */
+    type: 'v4';
     positionId: string;
     owner: string;
     poolId: string;
@@ -112,6 +118,27 @@ export interface ProcessedPosition {
     isOptimisticallyUpdating?: boolean; // Position has optimistic updates (show loading indicator)
 }
 
+/**
+ * @deprecated Use V4ProcessedPosition instead
+ */
+export type ProcessedPosition = V4ProcessedPosition;
+
+/**
+ * Position - V4 positions only from this API
+ *
+ * Note: Unified Yield positions are fetched separately via fetchUnifiedYieldPositions
+ * in the client layer for clean architectural separation.
+ */
+export type Position = V4ProcessedPosition;
+
+/**
+ * Type guard for V4 positions
+ * @deprecated No longer needed since this API only returns V4 positions
+ */
+export function isV4Position(position: Position): position is V4ProcessedPosition {
+    return position.type === 'v4';
+}
+
 // duplicate types/query removed
 
 // Helper to parse tokenId from composite subgraph id (last dash component hex)
@@ -124,26 +151,16 @@ function parseTokenIdFromHexId(idHex: string): bigint | null {
 
 // Removed tokenURI parsing fallback (subgraph-only discovery now; details are on-chain)
 
-async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkMode: NetworkMode): Promise<ProcessedPosition[]> {
+async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkMode: NetworkMode): Promise<Position[]> {
     // Minimal logging only; no timers/withTimeout
     const owner = getAddress(ownerAddress);
-    const isMainnet = isMainnetSubgraphMode(networkMode);
-    const hookPositionsQuery = isMainnet ? GET_USER_HOOK_POSITIONS_QUERY_MAINNET : GET_USER_HOOK_POSITIONS_QUERY_TESTNET;
+    const hookPositionsQuery = GET_USER_HOOK_POSITIONS_QUERY;
     const chainId = getChainId(networkMode);
 
     // Build list of subgraph URLs to query
-    // Mainnet: single Alphix subgraph
-    // Testnet: default + DAI subgraphs
     const subgraphUrls: string[] = [];
     const primaryUrl = getAlphixSubgraphUrl(networkMode);
     if (primaryUrl) subgraphUrls.push(primaryUrl);
-
-    if (!isMainnet) {
-        const daiUrl = getDaiSubgraphUrl(networkMode);
-        if (daiUrl && daiUrl !== primaryUrl) {
-            subgraphUrls.push(daiUrl);
-        }
-    }
 
     // Fetch from all subgraphs in parallel (Promise.allSettled pattern identical to Uniswap getPool.ts)
     const subgraphResults = await Promise.allSettled(subgraphUrls.map(async (subgraphUrl) => {
@@ -158,7 +175,7 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
             const json = await resp.json() as any;
             let raw = json?.data?.hookPositions ?? [] as SubgraphPosition[];
             // Fallback to legacy positions if hookPositions empty (testnet only)
-            if (!isMainnet && (!Array.isArray(raw) || raw.length === 0)) {
+            if (networkMode === 'testnet' && (!Array.isArray(raw) || raw.length === 0)) {
                 try {
                     const legacyController = new AbortController();
                     const legacyTimeoutId = setTimeout(() => legacyController.abort(), 10000);
@@ -167,7 +184,7 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
                     if (respLegacy.ok) {
                         const jsonLegacy = await respLegacy.json() as any;
                         const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
-                        raw = legacy.map(p => ({ id: p.id, owner: p.owner, tickLower: '0', tickUpper: '0', liquidity: '0', creationTimestamp: p.createdAtTimestamp || '0', lastTimestamp: undefined as any, pool: { id: '' } }));
+                        raw = legacy.map(p => ({ id: p.id, owner: p.owner, tickLower: '0', tickUpper: '0', liquidity: '0', creationTimestamp: p.createdAtTimestamp || '0', lastTimestamp: undefined as any, poolId: '' }));
                     }
                 } catch {}
             }
@@ -362,9 +379,15 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
                 }
 
                 // Step 4: Process positions with fetched data (including fees)
-                const processed: ProcessedPosition[] = [];
+                const processed: Position[] = [];
                 for (const { r, details } of positionsWithDetails) {
                     try {
+                        // Skip positions with zero on-chain liquidity (burned/closed)
+                        // The subgraph may have stale data, so we check on-chain liquidity
+                        if (details.liquidity <= 0n) {
+                            continue;
+                        }
+
                         // Determine poolId (handles both testnet pool.id and mainnet poolId)
                         let poolIdHex = getPoolIdFromPosition(r) as Hex;
                         if (!poolIdHex || !poolIdHex.startsWith('0x')) {
@@ -436,6 +459,7 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
                             : (r.id || '');
 
                         processed.push({
+                            type: 'v4',
                             positionId: positionIdDecimal,
                             owner: r.owner,
                             poolId: poolIdStr,
@@ -456,16 +480,18 @@ async function fetchAndProcessUserPositionsForApi(ownerAddress: string, networkM
                         console.error('get-positions: failed to process position id', r?.id, 'error:', e?.message || e);
                     }
                 }
+
                 return processed;
             }
     } catch {}
-    // If the subgraph returns nothing or fails, return empty list (no on-chain fallback)
+
+    // Return empty list if processing fails
     return [];
 }
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<ProcessedPosition[] | { message: string; count?: number; error?: any }>
+  res: NextApiResponse<Position[] | { message: string; count?: number; error?: any }>
 ) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
@@ -492,30 +518,24 @@ export default async function handler(
     // React Query on the client handles caching for user-specific requests
     const positions = await fetchAndProcessUserPositionsForApi(ownerAddress, networkMode);
 
-    return res.status(200).json(positions);
+    // Ensure all BigInt values are converted to strings before JSON serialization
+    return res.status(200).json(serializeBigInts(positions));
   } catch (error: any) {
-    console.error(`API Error in /api/liquidity/get-positions for ${ownerAddress}:`, error);
+    // Safely log error (console.error handles BigInts, but we sanitize anyway)
     const errorMessage = error instanceof Error ? error.message : "An unknown error occurred while fetching positions.";
+    console.error(`API Error in /api/liquidity/get-positions for ${ownerAddress}:`, errorMessage);
     return res.status(500).json({ message: errorMessage });
   }
 }
 
 // Extracted helper for idsOnly/countOnly to keep main handler clean
 async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreatedAt: boolean, networkMode: NetworkMode) {
-  const isMainnet = isMainnetSubgraphMode(networkMode);
-  const hookPositionsQuery = isMainnet ? GET_USER_HOOK_POSITIONS_QUERY_MAINNET : GET_USER_HOOK_POSITIONS_QUERY_TESTNET;
+  const hookPositionsQuery = GET_USER_HOOK_POSITIONS_QUERY;
 
   // Build list of subgraph URLs to query
   const subgraphUrls: string[] = [];
   const primaryUrl = getAlphixSubgraphUrl(networkMode);
   if (primaryUrl) subgraphUrls.push(primaryUrl);
-
-  if (!isMainnet) {
-    const daiUrl = getDaiSubgraphUrl(networkMode);
-    if (daiUrl && daiUrl !== primaryUrl) {
-      subgraphUrls.push(daiUrl);
-    }
-  }
 
   // Fetch from all subgraphs in parallel (Promise.allSettled pattern identical to Uniswap getPool.ts)
   const subgraphResults = await Promise.allSettled(subgraphUrls.map(async (subgraphUrl) => {
@@ -529,7 +549,7 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
       if (!resp.ok) return [];
       const json = await resp.json() as any;
       let raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
-      if (!isMainnet && (!Array.isArray(raw) || raw.length === 0)) {
+      if (networkMode === 'testnet' && (!Array.isArray(raw) || raw.length === 0)) {
         try {
           const legacyController = new AbortController();
           const legacyTimeoutId = setTimeout(() => legacyController.abort(), 10000);
@@ -538,7 +558,7 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
           if (respLegacy.ok) {
             const jsonLegacy = await respLegacy.json() as any;
             const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
-            raw = legacy.map(p => ({ id: p.id, owner: p.owner, tickLower: '0', tickUpper: '0', liquidity: '0', creationTimestamp: p.createdAtTimestamp || '0', lastTimestamp: '0', pool: { id: '' } })) as any;
+            raw = legacy.map(p => ({ id: p.id, owner: p.owner, tickLower: '0', tickUpper: '0', liquidity: '0', creationTimestamp: p.createdAtTimestamp || '0', lastTimestamp: '0', poolId: '' }));
           }
         } catch {}
       }
@@ -560,10 +580,13 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
   try {
     const raw = allRawPositions;
 
+    // Note: Unified Yield positions are fetched separately in the client layer
+    // This API only handles V4 positions for clean architectural separation
+
     if (!idsOnly) {
         return { message: 'ok', count: raw.length };
     }
-    
+
     if (withCreatedAt) {
       const list = raw.map(r => {
         const parsed = parseTokenIdFromHexId(r.id);

@@ -82,8 +82,9 @@ export const calculateRangeViewport = ({
 }
 
 /**
- * Calculates bounded panY to prevent liquidity bars from underflowing the viewport
- * @see Uniswap boundPanY.ts
+ * Calculates bounded panY with generous margins for free viewport movement.
+ * Allows scrolling beyond content edges for flexible navigation.
+ * @see Uniswap boundPanY.ts (modified for better UX)
  */
 export function boundPanY({
   panY,
@@ -101,9 +102,11 @@ export function boundPanY({
     (liquidityData.length - 1) * CHART_DIMENSIONS.LIQUIDITY_BAR_SPACING
   const totalContentHeightWithZoom = totalContentHeight * zoomLevel
 
-  // Apply bounds: content should not go below viewport bottom or above viewport top
-  const minPanY = Math.min(0, viewportHeight - totalContentHeightWithZoom)
-  const maxPanY = 0
+  // Allow generous movement beyond content bounds (2x viewport margin)
+  // This allows free scrolling while preventing the view from going completely empty
+  const margin = viewportHeight * 2
+  const minPanY = viewportHeight - totalContentHeightWithZoom - margin
+  const maxPanY = margin
 
   return Math.max(minPanY, Math.min(maxPanY, panY))
 }

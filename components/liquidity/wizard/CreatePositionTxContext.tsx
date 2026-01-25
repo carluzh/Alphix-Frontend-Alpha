@@ -30,12 +30,21 @@ import { CurrencyAmount, Currency } from '@uniswap/sdk-core';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useAddLiquidityCalculation, type CalculatedLiquidityData } from '@/lib/liquidity/hooks/transaction/useAddLiquidityCalculation';
-import { useCheckMintApprovals, usePrepareMintQuery, useGasFeeEstimate } from '@/lib/liquidity';
+import { usePrepareMintQuery, useGasFeeEstimate } from '@/lib/liquidity';
 import { getToken, getPoolById, TokenSymbol } from '@/lib/pools-config';
 import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
 import { PositionField } from '@/lib/liquidity/types';
 import { useUserSlippageTolerance } from '@/hooks/useSlippage';
 import type { Address } from 'viem';
+import { useNetwork } from '@/lib/network-context';
+
+// Unified Yield imports for 'rehypo' mode
+import { useCheckMintApprovalsWithMode } from '@/lib/liquidity/hooks/approval/useModeAwareApprovals';
+import {
+  previewDeposit,
+  type DepositPreviewResult,
+} from '@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx';
+import { usePublicClient } from 'wagmi';
 
 // =============================================================================
 // TYPES
@@ -68,6 +77,10 @@ export interface CreatePositionTxInfo {
   tickUpper: number;
   /** Calculated liquidity value */
   liquidity: string;
+  /** Shares to mint (Unified Yield only) */
+  sharesToMint?: bigint;
+  /** Whether this is a Unified Yield position */
+  isUnifiedYield?: boolean;
 }
 
 /**
@@ -106,6 +119,10 @@ interface CreatePositionTxContextType {
   usdValues: { TOKEN0: string; TOKEN1: string };
   /** Current slippage tolerance */
   slippageTolerance: number;
+  /** Unified Yield deposit preview (when mode is 'rehypo') */
+  depositPreview: DepositPreviewResult | null;
+  /** Whether this is Unified Yield mode */
+  isUnifiedYield: boolean;
 }
 
 const CreatePositionTxContext = createContext<CreatePositionTxContextType | undefined>(undefined);
@@ -116,6 +133,8 @@ const CreatePositionTxContext = createContext<CreatePositionTxContextType | unde
 
 export function CreatePositionTxContextProvider({ children }: PropsWithChildren) {
   const { address: accountAddress, chainId } = useAccount();
+  const publicClient = usePublicClient();
+  const { networkMode } = useNetwork();
 
   // Get wizard state from AddLiquidityContext
   const {
@@ -136,16 +155,27 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     tickLower,
     tickUpper,
     inputSide,
+    mode,
   } = state;
 
+  // Determine if this is Unified Yield mode
+  const isUnifiedYield = mode === 'rehypo';
+
+  // State for Unified Yield deposit preview
+  const [depositPreview, setDepositPreview] = useState<DepositPreviewResult | null>(null);
+  const [isUnifiedYieldCalculating, setIsUnifiedYieldCalculating] = useState(false);
+
   // Get pool config for token symbols
-  const poolConfig = poolId ? getPoolById(poolId) : null;
+  const poolConfig = poolId ? getPoolById(poolId, networkMode) : null;
   const token0Symbol = (poolConfig?.currency0.symbol || stateToken0Symbol) as TokenSymbol | undefined;
   const token1Symbol = (poolConfig?.currency1.symbol || stateToken1Symbol) as TokenSymbol | undefined;
 
   // Get token configs
-  const token0Config = token0Symbol ? getToken(token0Symbol) : null;
-  const token1Config = token1Symbol ? getToken(token1Symbol) : null;
+  const token0Config = token0Symbol ? getToken(token0Symbol, networkMode) : null;
+  const token1Config = token1Symbol ? getToken(token1Symbol, networkMode) : null;
+
+  // Get hook address for Unified Yield
+  const hookAddress = poolConfig?.hooks as Address | undefined;
 
   // Get USD prices
   const { price: token0USDPrice } = useTokenUSDPrice(token0Symbol || null);
@@ -223,43 +253,168 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   }, [calculationError]);
 
   // ==========================================================================
-  // APPROVAL HOOK
+  // UNIFIED YIELD PREVIEW (for 'rehypo' mode)
   // ==========================================================================
 
-  // Prepare approval check params
+  // Calculate Unified Yield deposit preview when in 'rehypo' mode
+  // IMPORTANT: Only use the user's INPUT amount (based on inputSide), never the dependent amount
+  useEffect(() => {
+    if (!isUnifiedYield || !hookAddress || !publicClient) {
+      setDepositPreview(null);
+      return;
+    }
+
+    // Determine which input the user is entering - MUST be explicitly set
+    const activeInputSide = inputSide === 'token0' ? 'token0' : inputSide === 'token1' ? 'token1' : null;
+
+    // Only calculate if we have a valid inputSide
+    if (!activeInputSide) {
+      setDepositPreview(null);
+      return;
+    }
+
+    // Use ONLY the user's input amount (the side they're typing in)
+    const inputAmount = activeInputSide === 'token0' ? amount0 : amount1;
+    const inputDecimals = activeInputSide === 'token0'
+      ? (token0Config?.decimals ?? 18)
+      : (token1Config?.decimals ?? 18);
+
+    // Only calculate if we have valid input
+    if (!inputAmount || parseFloat(inputAmount) <= 0) {
+      setDepositPreview(null);
+      return;
+    }
+
+    // Convert input amount to wei
+    const inputWei = parseUnits(inputAmount, inputDecimals);
+
+    // Skip recalculation if we already have a valid preview with the same input
+    // This prevents recalculating when the dependent amount is synced to context
+    if (depositPreview && depositPreview.inputSide === activeInputSide) {
+      const existingInputAmount = activeInputSide === 'token0'
+        ? depositPreview.amount0
+        : depositPreview.amount1;
+      if (existingInputAmount === inputWei) {
+        // Preview is still valid for the same input, no need to recalculate
+        return;
+      }
+    }
+
+    let cancelled = false;
+    setIsUnifiedYieldCalculating(true);
+
+    previewDeposit(
+      hookAddress,
+      inputWei,
+      activeInputSide,
+      token0Config?.decimals ?? 18,
+      token1Config?.decimals ?? 18,
+      18, // Share decimals (standard)
+      publicClient
+    )
+      .then((preview) => {
+        if (!cancelled && preview) {
+          setDepositPreview(preview);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn('Unified Yield preview failed:', err);
+          setDepositPreview(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsUnifiedYieldCalculating(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isUnifiedYield,
+    hookAddress,
+    publicClient,
+    inputSide,
+    amount0,
+    amount1,
+    token0Config?.decimals,
+    token1Config?.decimals,
+    depositPreview,
+  ]);
+
+  // ==========================================================================
+  // APPROVAL HOOK (single mode-aware hook for both V4 and UY)
+  // ==========================================================================
+
+  // Build unified approval params - works for both modes
   const approvalCheckParams = useMemo(() => {
-    if (!accountAddress || !chainId || !token0Symbol || !token1Symbol || !calculatedData) {
+    if (!accountAddress || !chainId || !poolId || !token0Symbol || !token1Symbol) {
       return undefined;
     }
 
-    const amount0Wei = calculatedData.amount0 || '0';
-    const amount1Wei = calculatedData.amount1 || '0';
+    // Get amounts based on mode
+    const amount0Wei = isUnifiedYield
+      ? (depositPreview?.amount0 ?? 0n)
+      : BigInt(calculatedData?.amount0 || '0');
+    const amount1Wei = isUnifiedYield
+      ? (depositPreview?.amount1 ?? 0n)
+      : BigInt(calculatedData?.amount1 || '0');
 
     // Don't check if no amounts
-    if (BigInt(amount0Wei) <= 0n && BigInt(amount1Wei) <= 0n) {
-      return undefined;
-    }
+    if (amount0Wei <= 0n && amount1Wei <= 0n) return undefined;
 
     return {
+      mode: (isUnifiedYield ? 'rehypo' : 'concentrated') as 'rehypo' | 'concentrated',
       userAddress: accountAddress,
+      poolId,
       token0Symbol,
       token1Symbol,
-      amount0: formatUnits(BigInt(amount0Wei), token0Config?.decimals || 18),
-      amount1: formatUnits(BigInt(amount1Wei), token1Config?.decimals || 18),
+      token0Address: poolConfig?.currency0.address as Address | undefined,
+      token1Address: poolConfig?.currency1.address as Address | undefined,
+      amount0: isUnifiedYield
+        ? (depositPreview?.amount0Formatted || '0')
+        : formatUnits(amount0Wei, token0Config?.decimals || 18),
+      amount1: isUnifiedYield
+        ? (depositPreview?.amount1Formatted || '0')
+        : formatUnits(amount1Wei, token1Config?.decimals || 18),
+      amount0Wei,
+      amount1Wei,
       chainId,
-      tickLower: calculatedData.finalTickLower,
-      tickUpper: calculatedData.finalTickUpper,
     };
-  }, [accountAddress, chainId, token0Symbol, token1Symbol, calculatedData, token0Config, token1Config]);
+  }, [
+    accountAddress,
+    chainId,
+    poolId,
+    token0Symbol,
+    token1Symbol,
+    poolConfig,
+    token0Config,
+    token1Config,
+    isUnifiedYield,
+    depositPreview,
+    calculatedData,
+  ]);
 
+  // Single mode-aware approval hook for both V4 and UY
   const {
-    data: approvalData,
+    data: modeAwareApprovalData,
     isLoading: isCheckingApprovals,
     refetch: refetchApprovals,
-  } = useCheckMintApprovals(approvalCheckParams, {
+  } = useCheckMintApprovalsWithMode(approvalCheckParams, {
     enabled: !!approvalCheckParams,
     staleTime: 5000,
   });
+
+  // Unified approval data format
+  const approvalData = useMemo(() => ({
+    needsToken0ERC20Approval: modeAwareApprovalData?.needsToken0ERC20Approval ?? false,
+    needsToken1ERC20Approval: modeAwareApprovalData?.needsToken1ERC20Approval ?? false,
+    needsPermit2Signature: modeAwareApprovalData?.needsPermit2Signature ?? false,
+    isUnifiedYield,
+    approvalTarget: modeAwareApprovalData?.approvalTarget ?? null,
+  }), [modeAwareApprovalData, isUnifiedYield]);
 
   // ==========================================================================
   // TRANSACTION PREPARATION HOOK (Uniswap pattern: useCreateLpPositionCalldataQuery)
@@ -328,11 +483,19 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
 
   // Formatted amounts for display
   const formattedAmounts = useMemo(() => {
+    // For Unified Yield, use preview amounts
+    if (isUnifiedYield && depositPreview) {
+      return {
+        TOKEN0: depositPreview.amount0Formatted || '0',
+        TOKEN1: depositPreview.amount1Formatted || '0',
+      };
+    }
+    // For V4 Standard, use calculated amounts
     return {
       TOKEN0: amount0 || '0',
       TOKEN1: dependentField === 'amount1' && dependentAmount ? dependentAmount : (amount1 || '0'),
     };
-  }, [amount0, amount1, dependentAmount, dependentField]);
+  }, [isUnifiedYield, depositPreview, amount0, amount1, dependentAmount, dependentField]);
 
   // USD values
   const usdValues = useMemo(() => {
@@ -350,7 +513,30 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
 
   // Transaction info
   const txInfo = useMemo((): CreatePositionTxInfo | undefined => {
-    if (!calculatedData || !token0Symbol || !token1Symbol) {
+    if (!token0Symbol || !token1Symbol) {
+      return undefined;
+    }
+
+    // Unified Yield mode
+    if (isUnifiedYield) {
+      if (!depositPreview || depositPreview.shares <= 0n) {
+        return undefined;
+      }
+      return {
+        needsToken0Approval: approvalData?.needsToken0ERC20Approval || false,
+        needsToken1Approval: approvalData?.needsToken1ERC20Approval || false,
+        amount0Wei: depositPreview.amount0.toString(),
+        amount1Wei: depositPreview.amount1.toString(),
+        tickLower: 0, // Not applicable for Unified Yield (full range managed by hook)
+        tickUpper: 0,
+        liquidity: '0', // Not applicable - Unified Yield uses shares
+        sharesToMint: depositPreview.shares,
+        isUnifiedYield: true,
+      };
+    }
+
+    // V4 Standard mode
+    if (!calculatedData) {
       return undefined;
     }
 
@@ -362,12 +548,33 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
       tickLower: calculatedData.finalTickLower,
       tickUpper: calculatedData.finalTickUpper,
       liquidity: calculatedData.liquidity,
+      isUnifiedYield: false,
     };
-  }, [calculatedData, token0Symbol, token1Symbol, approvalData]);
+  }, [isUnifiedYield, calculatedData, depositPreview, token0Symbol, token1Symbol, approvalData]);
 
   // ==========================================================================
   // CONTEXT VALUE
   // ==========================================================================
+
+  // Unified dependent amount - use deposit preview for Unified Yield
+  const effectiveDependentAmount = useMemo(() => {
+    if (isUnifiedYield && depositPreview) {
+      // Return the "other" amount based on input side
+      return depositPreview.inputSide === 'token0'
+        ? depositPreview.amount1Formatted
+        : depositPreview.amount0Formatted;
+    }
+    return dependentAmount;
+  }, [isUnifiedYield, depositPreview, dependentAmount]);
+
+  const effectiveDependentField = useMemo(() => {
+    if (isUnifiedYield && depositPreview) {
+      return depositPreview.inputSide === 'token0' ? 'amount1' : 'amount0';
+    }
+    return dependentField;
+  }, [isUnifiedYield, depositPreview, dependentField]);
+
+  const effectiveIsCalculating = isUnifiedYield ? isUnifiedYieldCalculating : isCalculating;
 
   const value = useMemo(
     (): CreatePositionTxContextType => ({
@@ -376,10 +583,10 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
       gasFeeEstimateUSD,
       transactionError,
       setTransactionError,
-      dependentAmount,
-      dependentAmountFullPrecision,
-      dependentField,
-      isCalculating,
+      dependentAmount: effectiveDependentAmount,
+      dependentAmountFullPrecision: isUnifiedYield ? effectiveDependentAmount : dependentAmountFullPrecision,
+      dependentField: effectiveDependentField,
+      isCalculating: effectiveIsCalculating,
       approvalData,
       isCheckingApprovals,
       refetchApprovals,
@@ -387,16 +594,19 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
       formattedAmounts,
       usdValues,
       slippageTolerance: currentSlippage,
+      depositPreview,
+      isUnifiedYield,
     }),
     [
       txInfo,
       calculatedData,
       gasFeeEstimateUSD,
       transactionError,
-      dependentAmount,
+      effectiveDependentAmount,
       dependentAmountFullPrecision,
-      dependentField,
-      isCalculating,
+      effectiveDependentField,
+      effectiveIsCalculating,
+      isUnifiedYield,
       approvalData,
       isCheckingApprovals,
       refetchApprovals,
@@ -404,6 +614,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
       formattedAmounts,
       usdValues,
       currentSlippage,
+      depositPreview,
     ]
   );
 

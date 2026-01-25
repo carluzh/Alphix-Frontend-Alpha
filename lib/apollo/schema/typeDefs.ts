@@ -203,6 +203,11 @@ type Position {
   # USD values
   valueUSD: Float
   feesUSD: Float
+  # Unified Yield (ReHypothecation) specific fields
+  isUnifiedYield: Boolean
+  shareBalance: String
+  shareBalanceFormatted: String
+  hookAddress: String
 }
 
 type FeeItem {

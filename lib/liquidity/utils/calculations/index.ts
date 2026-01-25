@@ -21,7 +21,6 @@ export {
   tryParseV4Tick,
   tryParsePrice,
   tryParseCurrencyAmount,
-  getV4TickToPrice,
   getFieldsDisabled,
   createMockV4Pool,
   getV4PriceRangeInfo,

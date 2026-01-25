@@ -15,6 +15,7 @@ import {
 } from '@uniswap/v3-sdk';
 import { priceToClosestTick as priceToClosestV4Tick, Pool as V4Pool } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
+import { tickToPrice } from '../tick-price';
 
 import type { PriceRangeInfo, PriceRangeState, FeeData } from '../../types';
 import { PositionField } from '../../types';
@@ -265,48 +266,6 @@ export function tryParseCurrencyAmount(
 }
 
 // =============================================================================
-// PRICE AT TICK
-// =============================================================================
-
-/**
- * Get price at a specific tick for V4 pools.
- */
-export function getV4TickToPrice({
-  baseCurrency,
-  quoteCurrency,
-  tick,
-}: {
-  baseCurrency?: Currency;
-  quoteCurrency?: Currency;
-  tick?: number;
-}): Price<Currency, Currency> | undefined {
-  if (!baseCurrency || !quoteCurrency || tick === undefined) {
-    return undefined;
-  }
-
-  try {
-    const sqrtRatioX96 = TickMath.getSqrtRatioAtTick(tick);
-    const ratioX192 = JSBI.multiply(sqrtRatioX96, sqrtRatioX96);
-
-    const Q192 = JSBI.exponentiate(JSBI.BigInt(2), JSBI.BigInt(192));
-
-    const baseAmount = CurrencyAmount.fromRawAmount(
-      baseCurrency,
-      JSBI.BigInt(10 ** baseCurrency.decimals)
-    );
-
-    const quoteAmount = JSBI.divide(
-      JSBI.multiply(ratioX192, JSBI.BigInt(10 ** quoteCurrency.decimals)),
-      Q192
-    );
-
-    return new Price(baseCurrency, quoteCurrency, baseAmount.quotient, quoteAmount);
-  } catch {
-    return undefined;
-  }
-}
-
-// =============================================================================
 // FIELD DISABLED STATE
 // =============================================================================
 
@@ -454,10 +413,10 @@ export function getV4PriceRangeInfo({
     fullRange,
   });
 
-  // Get prices at ticks
+  // Get prices at ticks using consolidated utility
   let pricesAtTicks: [Price<Currency, Currency> | undefined, Price<Currency, Currency> | undefined] = [
-    getV4TickToPrice({ baseCurrency: token0, quoteCurrency: token1, tick: lowerTick }),
-    getV4TickToPrice({ baseCurrency: token0, quoteCurrency: token1, tick: upperTick }),
+    lowerTick !== undefined ? tickToPrice(lowerTick, token0, token1) : undefined,
+    upperTick !== undefined ? tickToPrice(upperTick, token0, token1) : undefined,
   ];
 
   // Invert if needed

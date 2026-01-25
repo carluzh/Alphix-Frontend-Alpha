@@ -30,16 +30,18 @@ import {
 export type TimePeriod = "1W" | "1M" | "1Y" | "ALL";
 
 /** Keys for chart series that can be toggled via legend */
-type SeriesKey = "apr" | "aaveApy" | "feesUsd" | "accumulatedFeesUsd";
+type SeriesKey = "totalApr" | "apr" | "aaveApy" | "sparkApy" | "feesUsd" | "accumulatedFeesUsd";
 
 interface ChartDataPoint {
   timestamp: number;
   feesUsd: number;
   accumulatedFeesUsd: number;
   apr: number;
-  /** Aave APY (for rehypo positions) */
+  /** Aave APY (for Unified Yield positions using Aave) */
   aaveApy?: number;
-  /** Combined APR (swap APR + Aave APY) - use this for display */
+  /** Spark APY (for Unified Yield positions using Spark/sUSDS) */
+  sparkApy?: number;
+  /** Combined APR (swap APR + Aave APY + Spark APY) - use this for display */
   totalApr?: number;
 }
 
@@ -50,6 +52,8 @@ interface YieldChartSectionProps {
   currentFees?: number;
   timePeriod: TimePeriod;
   onTimePeriodChange: (period: TimePeriod) => void;
+  /** If true, this is a Unified Yield position - hide fee-related items */
+  isUnifiedYield?: boolean;
 }
 
 // Hover state for chart values
@@ -59,6 +63,7 @@ interface HoverData {
   accumulatedFeesUsd: number;
   apr: number;
   aaveApy?: number;
+  sparkApy?: number;
   totalApr: number;
 }
 
@@ -69,8 +74,11 @@ interface HoverData {
 const CHART_HEIGHT_PX = 380;
 
 const CHART_COLORS = {
-  apr: "#e85102", // Alphix orange for Swap APR
-  aaveApy: "#9896FF", // Aave purple for Unified Yield
+  totalApr: "#e85102", // Alphix orange for Total APR (main line)
+  apr: "#e85102", // Alphix orange for Swap APR (V4 positions)
+  aprMuted: "#a0a0a0", // Muted gray for Fees breakdown (UY positions)
+  aaveApy: "#9896FF", // Aave purple
+  sparkApy: "#F5AC37", // Spark/DAI golden yellow
   feesUsd: "hsl(var(--chart-3))", // Current unclaimed fees
   accumulatedFeesUsd: "hsl(var(--chart-2))", // Total accumulated fees
 };
@@ -89,9 +97,10 @@ const CHART_DATA_PADDING = 10;
 
 // Chart config for Recharts
 const chartConfig: ChartConfig = {
-  totalApr: { label: "Total APR", color: CHART_COLORS.apr },
-  apr: { label: "Swap APR", color: CHART_COLORS.apr },
-  aaveApy: { label: "Unified Yield", color: CHART_COLORS.aaveApy },
+  totalApr: { label: "Total APR", color: CHART_COLORS.totalApr },
+  apr: { label: "Fees", color: CHART_COLORS.apr },
+  aaveApy: { label: "Aave", color: CHART_COLORS.aaveApy },
+  sparkApy: { label: "Spark", color: CHART_COLORS.sparkApy },
   feesUsd: { label: "Unclaimed", color: CHART_COLORS.feesUsd },
   accumulatedFeesUsd: { label: "Total Fees", color: CHART_COLORS.accumulatedFeesUsd },
 };
@@ -183,7 +192,10 @@ interface ChartLegendProps {
   visibleSeries: Set<SeriesKey>;
   onToggle: (key: SeriesKey) => void;
   hasAaveData: boolean;
+  hasSparkData: boolean;
   disabled?: boolean;
+  /** If true, hide fee-related items (for Unified Yield positions) */
+  isUnifiedYield?: boolean;
 }
 
 interface LegendItem {
@@ -197,21 +209,39 @@ const ChartLegend = memo(function ChartLegend({
   visibleSeries,
   onToggle,
   hasAaveData,
+  hasSparkData,
   disabled,
+  isUnifiedYield = false,
 }: ChartLegendProps) {
   const items: LegendItem[] = useMemo(() => {
-    const base: LegendItem[] = [
-      { key: "apr", label: "Swap APR", color: CHART_COLORS.apr },
-    ];
-    if (hasAaveData) {
-      base.push({ key: "aaveApy", label: "Unified Yield", color: CHART_COLORS.aaveApy });
+    const base: LegendItem[] = [];
+
+    if (isUnifiedYield) {
+      // For Unified Yield: Total APR is solid (main), others are dashed (breakdown)
+      base.push({ key: "totalApr", label: "Total APR", color: CHART_COLORS.totalApr });
+      base.push({ key: "apr", label: "Fees", color: CHART_COLORS.aprMuted, dashed: true });
+      if (hasAaveData) {
+        base.push({ key: "aaveApy", label: "Aave", color: CHART_COLORS.aaveApy, dashed: true });
+      }
+      if (hasSparkData) {
+        base.push({ key: "sparkApy", label: "Spark", color: CHART_COLORS.sparkApy, dashed: true });
+      }
+    } else {
+      // For V4 positions: show APR and fees
+      base.push({ key: "apr", label: "Swap APR", color: CHART_COLORS.apr });
+      if (hasAaveData) {
+        base.push({ key: "aaveApy", label: "Aave", color: CHART_COLORS.aaveApy });
+      }
+      if (hasSparkData) {
+        base.push({ key: "sparkApy", label: "Spark", color: CHART_COLORS.sparkApy });
+      }
+      base.push(
+        { key: "accumulatedFeesUsd", label: "Total Fees", color: CHART_COLORS.accumulatedFeesUsd, dashed: true },
+        { key: "feesUsd", label: "Unclaimed", color: CHART_COLORS.feesUsd }
+      );
     }
-    base.push(
-      { key: "accumulatedFeesUsd", label: "Total Fees", color: CHART_COLORS.accumulatedFeesUsd, dashed: true },
-      { key: "feesUsd", label: "Unclaimed", color: CHART_COLORS.feesUsd }
-    );
     return base;
-  }, [hasAaveData]);
+  }, [hasAaveData, hasSparkData, isUnifiedYield]);
 
   return (
     <div
@@ -346,8 +376,10 @@ function DeltaDisplay({ delta }: { delta: number }) {
 // Main Component
 // ============================================================================
 
-/** Default visible series on mount */
-const DEFAULT_VISIBLE_SERIES: SeriesKey[] = ["apr", "aaveApy", "feesUsd", "accumulatedFeesUsd"];
+/** Default visible series on mount for V4 positions */
+const DEFAULT_VISIBLE_SERIES: SeriesKey[] = ["apr", "aaveApy", "sparkApy", "feesUsd", "accumulatedFeesUsd"];
+/** Default visible series for Unified Yield positions (Total APR + breakdown) */
+const DEFAULT_VISIBLE_SERIES_UY: SeriesKey[] = ["totalApr", "apr", "aaveApy", "sparkApy"];
 
 export const YieldChartSection = memo(function YieldChartSection({
   chartData,
@@ -356,10 +388,11 @@ export const YieldChartSection = memo(function YieldChartSection({
   currentFees,
   timePeriod,
   onTimePeriodChange,
+  isUnifiedYield = false,
 }: YieldChartSectionProps) {
   const [hoverData, setHoverData] = useState<HoverData | null>(null);
   const [visibleSeries, setVisibleSeries] = useState<Set<SeriesKey>>(
-    () => new Set(DEFAULT_VISIBLE_SERIES)
+    () => new Set(isUnifiedYield ? DEFAULT_VISIBLE_SERIES_UY : DEFAULT_VISIBLE_SERIES)
   );
 
   // Toggle series visibility (keeps at least one series visible)
@@ -418,6 +451,7 @@ export const YieldChartSection = memo(function YieldChartSection({
           accumulatedFeesUsd: point.accumulatedFeesUsd,
           apr: point.apr,
           aaveApy: point.aaveApy,
+          sparkApy: point.sparkApy,
           totalApr: point.totalApr ?? point.apr,
         });
       }
@@ -429,13 +463,17 @@ export const YieldChartSection = memo(function YieldChartSection({
     setHoverData(null);
   }, []);
 
-  // Check if data has Aave APY values (for legend display)
+  // Check if data has Aave/Spark APY values (for legend display)
   const hasAaveData = useMemo(() => {
     return chartData.some((d) => d.aaveApy !== undefined && d.aaveApy > 0);
   }, [chartData]);
 
+  const hasSparkData = useMemo(() => {
+    return chartData.some((d) => d.sparkApy !== undefined && d.sparkApy > 0);
+  }, [chartData]);
+
   // Calculate domains and values for dual Y-axis chart
-  // Use totalApr (swap + Aave) for display and domain calculations
+  // Use totalApr (swap + Aave + Spark) for display and domain calculations
   // Only include visible series in domain calculations for proper scaling
   const { aprDomain, feeDomain, latestValues, aprDelta } = useMemo(() => {
     if (filteredChartData.length === 0) {
@@ -447,6 +485,7 @@ export const YieldChartSection = memo(function YieldChartSection({
           accumulatedFeesUsd: 0,
           apr: 0,
           aaveApy: 0,
+          sparkApy: 0,
           totalApr: 0,
         },
         aprDelta: 0,
@@ -456,8 +495,10 @@ export const YieldChartSection = memo(function YieldChartSection({
     // Calculate APR domain using only visible series (for right Y-axis)
     const aprs = filteredChartData.flatMap((d) => {
       const values: number[] = [];
+      if (visibleSeries.has("totalApr")) values.push(d.totalApr ?? 0);
       if (visibleSeries.has("apr")) values.push(d.apr ?? 0);
       if (visibleSeries.has("aaveApy")) values.push(d.aaveApy ?? 0);
+      if (visibleSeries.has("sparkApy")) values.push(d.sparkApy ?? 0);
       return values;
     }).filter((a) => a >= 0);
     const minApr = aprs.length > 0 ? Math.min(...aprs) : 0;
@@ -480,9 +521,10 @@ export const YieldChartSection = memo(function YieldChartSection({
     const first = filteredChartData[0];
 
     // Calculate delta from first to latest using totalApr
+    // Use absolute difference (not percentage change) for APR - more meaningful
     const firstTotalApr = first.totalApr ?? first.apr;
     const latestTotalApr = latest.totalApr ?? latest.apr;
-    const aprDelta = firstTotalApr !== 0 ? ((latestTotalApr - firstTotalApr) / firstTotalApr) * 100 : 0;
+    const aprDelta = latestTotalApr - firstTotalApr;
 
     return {
       aprDomain: [
@@ -498,6 +540,7 @@ export const YieldChartSection = memo(function YieldChartSection({
         accumulatedFeesUsd: latest.accumulatedFeesUsd,
         apr: latest.apr,
         aaveApy: latest.aaveApy,
+        sparkApy: latest.sparkApy,
         totalApr: latest.totalApr ?? latest.apr,
       },
       aprDelta,
@@ -508,10 +551,14 @@ export const YieldChartSection = memo(function YieldChartSection({
   const displayValues = hoverData ?? latestValues;
   const isHovering = hoverData !== null;
 
-  // Display mode: "both" (both APRs), "single" (one APR), "fees" (no APRs)
+  // Display mode: "multi" (Total APR visible), "single" (one APR), "fees" (no APRs)
+  const totalAprVisible = visibleSeries.has("totalApr");
   const aprVisible = visibleSeries.has("apr");
   const aaveVisible = visibleSeries.has("aaveApy") && hasAaveData;
-  const displayMode = aprVisible && aaveVisible ? "both" : aprVisible || aaveVisible ? "single" : "fees";
+  const sparkVisible = visibleSeries.has("sparkApy") && hasSparkData;
+  const visibleAprCount = [totalAprVisible, aprVisible, aaveVisible, sparkVisible].filter(Boolean).length;
+  // If totalApr is visible, always use "multi" mode to show breakdown
+  const displayMode = totalAprVisible || visibleAprCount >= 2 ? "multi" : visibleAprCount === 1 ? "single" : "fees";
 
   // Dot pattern background
   const dotPattern = `radial-gradient(circle, ${DOT_PATTERN.color} ${DOT_PATTERN.size}, transparent ${DOT_PATTERN.size})`;
@@ -552,6 +599,8 @@ export const YieldChartSection = memo(function YieldChartSection({
             visibleSeries={visibleSeries}
             onToggle={toggleSeries}
             hasAaveData={hasAaveData}
+            hasSparkData={hasSparkData}
+            isUnifiedYield={isUnifiedYield}
             disabled
           />
         </div>
@@ -585,15 +634,33 @@ export const YieldChartSection = memo(function YieldChartSection({
           <div className="flex flex-col gap-1 p-3 pointer-events-none bg-background rounded-xl">
             <span className="text-3xl font-semibold text-foreground tabular-nums truncate">
               {displayMode === "fees" ? formatUsd(displayValues.accumulatedFeesUsd)
-                : formatApr(displayMode === "both" ? displayValues.totalApr
-                  : aprVisible ? displayValues.apr : (displayValues.aaveApy ?? 0))}
+                : formatApr(displayMode === "multi" ? displayValues.totalApr
+                  : aprVisible ? displayValues.apr
+                  : aaveVisible ? (displayValues.aaveApy ?? 0)
+                  : (displayValues.sparkApy ?? 0))}
             </span>
-            <div className="flex flex-row gap-2 items-center text-xs text-muted-foreground">
-              {displayMode === "both" ? (
+            <div className="flex flex-row gap-2 items-center text-xs text-muted-foreground flex-wrap">
+              {displayMode === "multi" ? (
                 isHovering ? (
                   <>
-                    <span className="inline-flex items-center gap-1"><span className="w-2 h-0.5 rounded-full" style={{ backgroundColor: CHART_COLORS.apr }} />{formatApr(displayValues.apr)}</span>
-                    <span className="inline-flex items-center gap-1"><span className="w-2 h-0.5 rounded-full" style={{ backgroundColor: CHART_COLORS.aaveApy }} />{formatApr(displayValues.aaveApy ?? 0)}</span>
+                    {aprVisible && (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="w-2 h-0.5 rounded-full" style={{ backgroundColor: isUnifiedYield ? CHART_COLORS.aprMuted : CHART_COLORS.apr }} />
+                        {formatApr(displayValues.apr)}
+                      </span>
+                    )}
+                    {aaveVisible && (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="w-2 h-0.5 rounded-full" style={{ backgroundColor: CHART_COLORS.aaveApy }} />
+                        {formatApr(displayValues.aaveApy ?? 0)}
+                      </span>
+                    )}
+                    {sparkVisible && (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="w-2 h-0.5 rounded-full" style={{ backgroundColor: CHART_COLORS.sparkApy }} />
+                        {formatApr(displayValues.sparkApy ?? 0)}
+                      </span>
+                    )}
                     <span>{formatTimestamp(hoverData!.timestamp)}</span>
                   </>
                 ) : <DeltaDisplay delta={aprDelta} />
@@ -702,27 +769,57 @@ export const YieldChartSection = memo(function YieldChartSection({
                 />
               )}
 
-              {/* SVG Gradient definitions for Unified Yield line */}
+              {/* SVG Gradient definitions for yield source lines */}
               <defs>
-                <linearGradient id="unifiedYieldGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <linearGradient id="aaveGradient" x1="0%" y1="0%" x2="100%" y2="0%">
                   <stop offset="0%" stopColor="#AAA8FF" />
                   <stop offset="25%" stopColor="#BDBBFF" />
                   <stop offset="50%" stopColor="#9896FF" />
                   <stop offset="75%" stopColor="#BDBBFF" />
                   <stop offset="100%" stopColor="#AAA8FF" />
                 </linearGradient>
+                <linearGradient id="sparkGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#F5AC37" />
+                  <stop offset="25%" stopColor="#F7BC5A" />
+                  <stop offset="50%" stopColor="#F5AC37" />
+                  <stop offset="75%" stopColor="#F7BC5A" />
+                  <stop offset="100%" stopColor="#F5AC37" />
+                </linearGradient>
               </defs>
 
-              {/* Swap APR line - orange (visible Y-axis) */}
+              {/* Total APR line - solid orange (main line for UY positions) */}
+              {visibleSeries.has("totalApr") && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="totalApr"
+                  strokeWidth={2.5}
+                  stroke={CHART_COLORS.totalApr}
+                  isAnimationActive={false}
+                  dot={({ key, ...props }) => (
+                    <LastPointPulsatingDot
+                      key={key}
+                      {...props}
+                      dataLength={dataLength}
+                      color={CHART_COLORS.totalApr}
+                      isHovering={isHovering}
+                    />
+                  )}
+                  connectNulls
+                />
+              )}
+
+              {/* Swap APR / Fees line - orange solid for V4, muted dashed for UY */}
               {visibleSeries.has("apr") && (
                 <Line
                   yAxisId="right"
                   type="monotone"
                   dataKey="apr"
-                  strokeWidth={2}
-                  stroke={CHART_COLORS.apr}
+                  strokeWidth={isUnifiedYield ? 1.5 : 2}
+                  stroke={isUnifiedYield ? CHART_COLORS.aprMuted : CHART_COLORS.apr}
+                  strokeDasharray={isUnifiedYield ? "4 4" : undefined}
                   isAnimationActive={false}
-                  dot={({ key, ...props }) => (
+                  dot={isUnifiedYield ? false : ({ key, ...props }) => (
                     <LastPointPulsatingDot
                       key={key}
                       {...props}
@@ -731,28 +828,37 @@ export const YieldChartSection = memo(function YieldChartSection({
                       isHovering={isHovering}
                     />
                   )}
+                  connectNulls
                 />
               )}
 
-              {/* Unified Yield (Aave APY) line - purple gradient (visible Y-axis) */}
+              {/* Aave APY line - purple, dashed (breakdown) */}
               {visibleSeries.has("aaveApy") && (
                 <Line
                   yAxisId="right"
                   type="monotone"
                   dataKey="aaveApy"
-                  strokeWidth={2}
-                  stroke="url(#unifiedYieldGradient)"
+                  strokeWidth={1.5}
+                  stroke={CHART_COLORS.aaveApy}
+                  strokeDasharray="4 4"
                   isAnimationActive={false}
-                  dot={({ key, ...props }) => (
-                    <LastPointPulsatingDot
-                      key={key}
-                      {...props}
-                      dataLength={dataLength}
-                      color={CHART_COLORS.aaveApy}
-                      isHovering={isHovering}
-                    />
-                  )}
-                  connectNulls={false}
+                  dot={false}
+                  connectNulls
+                />
+              )}
+
+              {/* Spark APY line - golden, dashed (breakdown) */}
+              {visibleSeries.has("sparkApy") && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="sparkApy"
+                  strokeWidth={1.5}
+                  stroke={CHART_COLORS.sparkApy}
+                  strokeDasharray="4 4"
+                  isAnimationActive={false}
+                  dot={false}
+                  connectNulls
                 />
               )}
             </LineChart>
@@ -770,6 +876,8 @@ export const YieldChartSection = memo(function YieldChartSection({
           visibleSeries={visibleSeries}
           onToggle={toggleSeries}
           hasAaveData={hasAaveData}
+          hasSparkData={hasSparkData}
+          isUnifiedYield={isUnifiedYield}
         />
       </div>
     </div>

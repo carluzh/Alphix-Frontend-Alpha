@@ -20,6 +20,8 @@ class Controller {
   private isEnabled = true
   private timeout: ReturnType<typeof setTimeout> | undefined
   private exponentialBackoffFactor = 1
+  /** Track consecutive rate limit errors to apply longer backoffs */
+  private rateLimitStreak = 0
 
   constructor(private minimumBackoffTime: number) {}
 
@@ -33,19 +35,29 @@ class Controller {
   onSuccess() {
     this.reset()
     this.exponentialBackoffFactor = 1
+    this.rateLimitStreak = 0
   }
 
   /**
    * Called onError.
    * Idempotent - calling this multiple times will *not* reset the exponential backoff timer.
    */
-  onError() {
+  onError(isRateLimited = false) {
     this.isEnabled = false
+
+    if (isRateLimited) {
+      this.rateLimitStreak++
+    }
+
     if (!this.timeout) {
+      // Apply extra backoff multiplier for rate limits (4x base, doubling each streak)
+      const rateLimitMultiplier = isRateLimited ? Math.pow(4, Math.min(this.rateLimitStreak, 3)) : 1
+      const backoffTime = this.minimumBackoffTime * this.exponentialBackoffFactor * rateLimitMultiplier
+
       this.timeout = setTimeout(() => {
         this.reset()
         this.exponentialBackoffFactor *= 2
-      }, this.minimumBackoffTime * this.exponentialBackoffFactor)
+      }, backoffTime)
     }
   }
 
@@ -142,8 +154,12 @@ export class AppRpcClient {
         return result
       } catch (error) {
         lastError = error as Error
-        console.warn(`[AppRpcClient] ${url} failed: ${lastError.message}`)
-        controller.onError()
+        const isRateLimited = lastError.message.includes('429')
+        // Only log non-429 errors to reduce noise (429s are expected under load)
+        if (!isRateLimited) {
+          console.warn(`[AppRpcClient] ${url} failed: ${lastError.message}`)
+        }
+        controller.onError(isRateLimited)
       }
     }
 
@@ -164,8 +180,11 @@ export class AppRpcClient {
         return results
       } catch (error) {
         lastError = error as Error
-        console.warn(`[AppRpcClient] Batch ${url} failed: ${lastError.message}`)
-        controller.onError()
+        const isRateLimited = lastError.message.includes('429')
+        if (!isRateLimited) {
+          console.warn(`[AppRpcClient] Batch ${url} failed: ${lastError.message}`)
+        }
+        controller.onError(isRateLimited)
       }
     }
 

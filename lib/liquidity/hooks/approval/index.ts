@@ -1,7 +1,8 @@
 /**
- * Approval Hooks
+ * Approval Hooks & Utilities
  *
  * Hooks for token approvals and permit2 handling.
+ * Shared utilities for building approval transactions.
  */
 
 export {
@@ -25,4 +26,11 @@ export {
   type UseModeAwareApprovalsResult,
   type ModeAwareApprovalResult,
 } from './useModeAwareApprovals';
+
+// Shared approval transaction utilities
+export {
+  buildApprovalCalldata,
+  buildApprovalRequests,
+  type BuildApprovalRequestsParams,
+} from './buildApprovalTx';
 

@@ -100,7 +100,6 @@ export {
   tryParseV4Tick,
   tryParsePrice,
   tryParseCurrencyAmount,
-  getV4TickToPrice,
   getFieldsDisabled,
   createMockV4Pool,
   getV4PriceRangeInfo,
@@ -242,26 +241,18 @@ export {
   type UnifiedYieldDepositTxResult,
   type UnifiedYieldApprovalStatus,
   type UnifiedYieldApprovalParams,
-  type UnifiedYieldVaultInfo,
   isUnifiedYieldPosition,
   // Approval hooks
   useUnifiedYieldApprovals,
-  useCheckUnifiedYieldApprovals,
   type UseUnifiedYieldApprovalsParams,
   type UseUnifiedYieldApprovalsOptions,
   type UseUnifiedYieldApprovalsResult,
   // Transaction building
   buildUnifiedYieldDepositTx,
-  estimateUnifiedYieldDepositGas,
   validateUnifiedYieldDepositParams,
   // Position fetching
   fetchUnifiedYieldPositions,
-  hasUnifiedYieldPositions,
   type FetchUnifiedYieldPositionsConfig,
   // Position adapter
   adaptUnifiedYieldToProcessedPosition,
-  adaptAllUnifiedYieldPositions,
-  isAdaptedUnifiedYieldPosition,
-  mergePositions,
-  markAsUnifiedYield,
 } from './unified-yield';

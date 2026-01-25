@@ -21,17 +21,25 @@ import {
   type ValidatedLiquidityTxContext,
   type FlowStatus,
   type StepState,
+  type UnifiedYieldApprovalStep,
+  type UnifiedYieldDepositStep,
+  type UnifiedYieldWithdrawStep,
   TransactionStepType,
 } from '../../types';
 
 import { generateLPTransactionSteps } from '../steps/generateLPTransactionSteps';
 
 import {
-  handleApprovalTransactionStep,
-  handlePermitTransactionStep as handlePermitTxStep,
   handleSignatureStep,
-  handlePositionTransactionStep,
-  handlePositionTransactionBatchedStep,
+  // Unified Yield info getters (for transaction tracking)
+  getUnifiedYieldApprovalInfo,
+  getUnifiedYieldDepositInfo,
+  getUnifiedYieldWithdrawInfo,
+  // Registry-based execution
+  executeRegisteredStep,
+  isRegisteredStepType,
+  type StepExecutionContext,
+  type TransactionFunctions,
 } from './handlers';
 
 // =============================================================================
@@ -69,6 +77,119 @@ const INITIAL_STATE: LiquidityExecutorState = {
   error: undefined,
   isExecuting: false,
 };
+
+// =============================================================================
+// TRANSACTION TRACKING HELPER
+// =============================================================================
+
+/**
+ * Tracks a transaction in the transaction history based on step type.
+ * Extracted from the switch statement to work with registry-based execution.
+ */
+function trackStepTransaction(
+  step: TransactionStep,
+  txHash: string,
+  chainId: number,
+  address: `0x${string}`,
+  txContext: ValidatedLiquidityTxContext,
+  addTransaction: ReturnType<typeof useTransactionAdder>,
+): void {
+  const baseTx = { hash: txHash, chainId, from: address } as any;
+
+  switch (step.type) {
+    // Approval steps
+    case TransactionStepType.TokenRevocationTransaction:
+    case TransactionStepType.TokenApprovalTransaction: {
+      const approveInfo: ApproveTransactionInfo = {
+        type: TransactionType.Approve,
+        tokenAddress: (step as any).token?.address || '',
+        spender: (step as any).spender || '',
+      };
+      addTransaction(baseTx, approveInfo);
+      break;
+    }
+
+    // Permit2 transaction
+    case TransactionStepType.Permit2Transaction: {
+      const permit2Info: Permit2ApproveTransactionInfo = {
+        type: TransactionType.Permit2Approve,
+        tokenAddress: (step as any).token?.address || '',
+        spender: (step as any).spender || '',
+        amount: (step as any).amount || '',
+      };
+      addTransaction(baseTx, permit2Info);
+      break;
+    }
+
+    // Position steps (V4)
+    case TransactionStepType.IncreasePositionTransaction:
+    case TransactionStepType.IncreasePositionTransactionAsync:
+    case TransactionStepType.DecreasePositionTransaction:
+    case TransactionStepType.CollectFeesTransactionStep: {
+      if (txContext.action) {
+        const isIncrease = step.type === TransactionStepType.IncreasePositionTransaction ||
+                           step.type === TransactionStepType.IncreasePositionTransactionAsync;
+        const isCollect = step.type === TransactionStepType.CollectFeesTransactionStep;
+        const txType = isCollect ? TransactionType.CollectFees :
+                       isIncrease ? TransactionType.LiquidityIncrease : TransactionType.LiquidityDecrease;
+        const { currency0Amount, currency1Amount } = txContext.action;
+        const typeInfo = {
+          type: txType,
+          currency0Id: currency0Amount?.currency ? `${chainId}-${currency0Amount.currency.wrapped?.address || ''}` : '',
+          currency1Id: currency1Amount?.currency ? `${chainId}-${currency1Amount.currency.wrapped?.address || ''}` : '',
+          currency0AmountRaw: currency0Amount?.quotient?.toString() || '0',
+          currency1AmountRaw: currency1Amount?.quotient?.toString() || '0',
+        };
+        addTransaction(baseTx, typeInfo as any);
+      }
+      break;
+    }
+
+    // Unified Yield approval
+    case TransactionStepType.UnifiedYieldApprovalTransaction: {
+      const uyApprovalStep = step as UnifiedYieldApprovalStep;
+      const approvalInfo = getUnifiedYieldApprovalInfo(uyApprovalStep);
+      addTransaction(baseTx, {
+        type: TransactionType.Approve,
+        tokenAddress: approvalInfo.tokenAddress,
+        spender: approvalInfo.hookAddress,
+      } as ApproveTransactionInfo);
+      break;
+    }
+
+    // Unified Yield deposit
+    case TransactionStepType.UnifiedYieldDepositTransaction: {
+      const uyDepositStep = step as UnifiedYieldDepositStep;
+      const depositInfo = getUnifiedYieldDepositInfo(uyDepositStep);
+      addTransaction(baseTx, {
+        type: TransactionType.LiquidityIncrease,
+        currency0Id: `${chainId}-${depositInfo.token0Symbol}`,
+        currency1Id: `${chainId}-${depositInfo.token1Symbol}`,
+        currency0AmountRaw: depositInfo.sharesToMint,
+        currency1AmountRaw: '0',
+      } as any);
+      break;
+    }
+
+    // Unified Yield withdraw
+    case TransactionStepType.UnifiedYieldWithdrawTransaction: {
+      const uyWithdrawStep = step as UnifiedYieldWithdrawStep;
+      const withdrawInfo = getUnifiedYieldWithdrawInfo(uyWithdrawStep);
+      addTransaction(baseTx, {
+        type: TransactionType.LiquidityDecrease,
+        currency0Id: `${chainId}-${withdrawInfo.token0Symbol}`,
+        currency1Id: `${chainId}-${withdrawInfo.token1Symbol}`,
+        currency0AmountRaw: withdrawInfo.sharesToWithdraw,
+        currency1AmountRaw: '0',
+      } as any);
+      break;
+    }
+
+    // No tracking needed for other types
+    default:
+      break;
+  }
+}
 
 // =============================================================================
 // EXECUTOR HOOK - ADAPTED FROM UNISWAP liquiditySaga.ts modifyLiquidity
@@ -242,117 +363,65 @@ export function useLiquidityStepExecutor(
         }
 
         try {
-          switch (step.type) {
-            // COPIED FROM UNISWAP: case TransactionStepType.TokenRevocationTransaction:
-            // COPIED FROM UNISWAP: case TransactionStepType.TokenApprovalTransaction:
-            case TransactionStepType.TokenRevocationTransaction:
-            case TransactionStepType.TokenApprovalTransaction: {
-              lastTxHash = await handleApprovalTransactionStep(
-                { address, step, setCurrentStep: setCurrentStep(i) },
-                sendTransaction,
-                waitForReceipt,
-              );
-              // Track approval transaction
-              if (lastTxHash && chainId) {
-                const approveInfo: ApproveTransactionInfo = {
-                  type: TransactionType.Approve,
-                  tokenAddress: (step as any).token?.address || '',
-                  spender: (step as any).spender || '',
-                };
-                addTransaction({ hash: lastTxHash, chainId, from: address } as any, approveInfo);
+          // =============================================================================
+          // SPECIAL CASES - Not handled by registry
+          // =============================================================================
+
+          // Permit2Signature: Uses signTypedData instead of sendTransaction
+          if (step.type === TransactionStepType.Permit2Signature) {
+            // C3: Extract token info for permit caching
+            const token0Symbol = txContext.action?.currency0Amount?.currency?.symbol;
+            const token1Symbol = txContext.action?.currency1Amount?.currency?.symbol;
+
+            signature = await handleSignatureStep(
+              {
+                address,
+                step,
+                setCurrentStep: setCurrentStep(i),
+                chainId,
+                token0Symbol,
+                token1Symbol,
+              },
+              signTypedData,
+            );
+          }
+          // IncreasePositionTransactionBatched: Requires ERC-5792 (unsupported)
+          else if (step.type === TransactionStepType.IncreasePositionTransactionBatched) {
+            throw new Error('Batched transactions not yet supported');
+          }
+          // =============================================================================
+          // REGISTRY-BASED EXECUTION - All other step types
+          // =============================================================================
+          else if (isRegisteredStepType(step.type)) {
+            // Build execution context
+            const context: StepExecutionContext = {
+              address,
+              chainId,
+              action: txContext.action,
+              signature,
+              setCurrentStep: setCurrentStep(i),
+            };
+
+            // Build transaction functions
+            const txFunctions: TransactionFunctions = {
+              sendTransaction,
+              waitForReceipt,
+            };
+
+            // Execute via registry
+            const txHash = await executeRegisteredStep(step, context, txFunctions);
+            if (txHash) {
+              lastTxHash = txHash;
+
+              // Track transaction based on step type
+              if (chainId) {
+                trackStepTransaction(step, txHash, chainId, address, txContext, addTransaction);
               }
-              break;
             }
-
-            // COPIED FROM UNISWAP: case TransactionStepType.Permit2Signature:
-            case TransactionStepType.Permit2Signature: {
-              // C3: Extract token info for permit caching
-              const token0Symbol = txContext.action?.currency0Amount?.currency?.symbol;
-              const token1Symbol = txContext.action?.currency1Amount?.currency?.symbol;
-              // Extract ticks from context if available (for Create/Increase flows)
-              const tickLower = (txContext as any).sqrtRatioX96 ? undefined : undefined; // Ticks not directly available, caching will work without them
-              const tickUpper = undefined;
-
-              signature = await handleSignatureStep(
-                {
-                  address,
-                  step,
-                  setCurrentStep: setCurrentStep(i),
-                  // C3: Pass caching params
-                  chainId,
-                  token0Symbol,
-                  token1Symbol,
-                  tickLower,
-                  tickUpper,
-                },
-                signTypedData,
-              );
-              break;
-            }
-
-            // COPIED FROM UNISWAP: case TransactionStepType.Permit2Transaction:
-            case TransactionStepType.Permit2Transaction: {
-              lastTxHash = await handlePermitTxStep(
-                { address, step, setCurrentStep: setCurrentStep(i) },
-                sendTransaction,
-                waitForReceipt,
-              );
-              // Track Permit2 transaction (Uniswap parity)
-              if (lastTxHash && chainId) {
-                const permit2Info: Permit2ApproveTransactionInfo = {
-                  type: TransactionType.Permit2Approve,
-                  tokenAddress: (step as any).token?.address || '',
-                  spender: (step as any).spender || '',
-                  amount: (step as any).amount || '',
-                };
-                addTransaction({ hash: lastTxHash, chainId, from: address } as any, permit2Info);
-              }
-              break;
-            }
-
-            // COPIED FROM UNISWAP: case TransactionStepType.IncreasePositionTransaction:
-            // COPIED FROM UNISWAP: case TransactionStepType.IncreasePositionTransactionAsync:
-            // COPIED FROM UNISWAP: case TransactionStepType.DecreasePositionTransaction:
-            // COPIED FROM UNISWAP: case TransactionStepType.CollectFeesTransactionStep:
-            case TransactionStepType.IncreasePositionTransaction:
-            case TransactionStepType.IncreasePositionTransactionAsync:
-            case TransactionStepType.DecreasePositionTransaction:
-            case TransactionStepType.CollectFeesTransactionStep: {
-              lastTxHash = await handlePositionTransactionStep(
-                { address, step, setCurrentStep: setCurrentStep(i), action: txContext.action, signature },
-                sendTransaction,
-                waitForReceipt,
-              );
-              // Track liquidity transaction
-              if (lastTxHash && chainId && txContext.action) {
-                const isIncrease = step.type === TransactionStepType.IncreasePositionTransaction ||
-                                   step.type === TransactionStepType.IncreasePositionTransactionAsync;
-                const isCollect = step.type === TransactionStepType.CollectFeesTransactionStep;
-                const txType = isCollect ? TransactionType.CollectFees :
-                               isIncrease ? TransactionType.LiquidityIncrease : TransactionType.LiquidityDecrease;
-                const { currency0Amount, currency1Amount } = txContext.action;
-                const typeInfo = {
-                  type: txType,
-                  currency0Id: currency0Amount?.currency ? `${chainId}-${currency0Amount.currency.wrapped?.address || ''}` : '',
-                  currency1Id: currency1Amount?.currency ? `${chainId}-${currency1Amount.currency.wrapped?.address || ''}` : '',
-                  currency0AmountRaw: currency0Amount?.quotient?.toString() || '0',
-                  currency1AmountRaw: currency1Amount?.quotient?.toString() || '0',
-                };
-                addTransaction({ hash: lastTxHash, chainId, from: address } as any, typeInfo as any);
-              }
-              break;
-            }
-
-            // COPIED FROM UNISWAP: case TransactionStepType.IncreasePositionTransactionBatched:
-            case TransactionStepType.IncreasePositionTransactionBatched: {
-              // Note: ERC-5792 batched transactions require special wallet support
-              // For now, we throw an error as most wallets don't support this yet
-              throw new Error('Batched transactions not yet supported');
-            }
-
-            default: {
-              throw new Error(`Unexpected step type: ${(step as any).type}`);
-            }
+          }
+          // Unknown step type
+          else {
+            throw new Error(`Unexpected step type: ${(step as any).type}`);
           }
 
           // Mark step as completed

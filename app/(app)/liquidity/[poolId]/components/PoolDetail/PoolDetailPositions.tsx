@@ -3,8 +3,18 @@
 import { memo, useMemo } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
+import { UnifiedYieldPositionCard } from "@/components/liquidity/UnifiedYieldPositionCard";
 import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
-import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
+import type { V4ProcessedPosition } from "@/pages/api/liquidity/get-positions";
+import { isUnifiedYieldPosition, type UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
+
+/** Position union type - V4 and Unified Yield positions fetched through separate flows */
+type Position = V4ProcessedPosition | UnifiedYieldPosition;
+
+/** Type guard for V4 positions */
+function isV4Position(position: Position): position is V4ProcessedPosition {
+  return position.type === 'v4';
+}
 import type { PositionInfo } from "@/lib/uniswap/liquidity";
 import type { PoolConfig, PoolStateData } from "../../hooks";
 
@@ -13,13 +23,14 @@ interface PoolDetailPositionsProps {
   poolState: PoolStateData;
   poolAPR: number;
   isLoadingPrices: boolean;
-  userPositions: ProcessedPosition[];
+  userPositions: Position[];
   isLoadingPositions: boolean;
   isDerivingNewPosition: boolean;
   priceMap: Record<string, number>;
-  onPositionClick: (position: ProcessedPosition) => void;
+  onPositionClick: (position: Position) => void;
   onAddLiquidity: () => void;
-  getPositionInfo: (position: ProcessedPosition) => PositionInfo | undefined;
+  /** Convert V4 position to PositionInfo for PositionCardCompact */
+  getPositionInfo: (position: V4ProcessedPosition) => PositionInfo | undefined;
   convertTickToPrice: (
     tick: number,
     currentPoolTick: number | null,
@@ -28,8 +39,8 @@ interface PoolDetailPositionsProps {
     token0Symbol: string,
     token1Symbol: string
   ) => string;
-  calculatePositionUsd: (position: ProcessedPosition) => number;
-  getFeesForPosition: (positionId: string, position?: ProcessedPosition) => {
+  calculatePositionUsd: (position: Position) => number;
+  getFeesForPosition: (positionId: string, position?: V4ProcessedPosition) => {
     positionId: string;
     amount0: string;
     amount1: string;
@@ -136,25 +147,47 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
 
         {/* Existing positions */}
         {userPositions.map((position, index) => {
-          const positionInfo = getPositionInfo(position);
           const valueUSD = calculatePositionUsd(position);
 
-          // Only render if positionInfo is available (required by PositionCardCompact)
-          if (!positionInfo) return null;
+          // Render different card based on position type
+          let card: React.ReactNode;
 
-          const card = (
-            <PositionCardCompact
-              key={position.positionId}
-              position={positionInfo}
-              valueUSD={valueUSD}
-              poolContext={poolContext}
-              poolType={poolConfig?.type}
-              onClick={() => onPositionClick(position)}
-              blockTimestamp={position.blockTimestamp}
-              lastTimestamp={position.lastTimestamp}
-              isOptimisticallyUpdating={position.isOptimisticallyUpdating}
-            />
-          );
+          if (isUnifiedYieldPosition(position)) {
+            // Unified Yield position - use dedicated card
+            card = (
+              <UnifiedYieldPositionCard
+                key={position.positionId}
+                position={position}
+                valueUSD={valueUSD}
+                poolContext={{
+                  currentPrice: poolState.currentPrice,
+                  isLoadingPrices,
+                }}
+                onClick={() => onPositionClick(position)}
+              />
+            );
+          } else if (isV4Position(position)) {
+            // V4 position - convert to PositionInfo for PositionCardCompact
+            const positionInfo = getPositionInfo(position);
+            if (!positionInfo) return null;
+
+            card = (
+              <PositionCardCompact
+                key={position.positionId}
+                position={positionInfo}
+                valueUSD={valueUSD}
+                poolContext={poolContext}
+                poolType={poolConfig?.type}
+                onClick={() => onPositionClick(position)}
+                blockTimestamp={position.blockTimestamp}
+                lastTimestamp={position.lastTimestamp}
+                isOptimisticallyUpdating={position.isOptimisticallyUpdating}
+              />
+            );
+          } else {
+            // Unknown position type - skip
+            return null;
+          }
 
           if (prefersReducedMotion) {
             return <div key={position.positionId}>{card}</div>;

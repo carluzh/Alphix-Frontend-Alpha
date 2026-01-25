@@ -18,6 +18,16 @@ import { getPoolById, type NetworkMode } from '@/lib/pools-config';
 import { TickMath } from '@uniswap/v3-sdk';
 
 /**
+ * Extended ProcessedPosition type that includes Unified Yield metadata
+ */
+export interface UnifiedYieldProcessedPosition extends ProcessedPosition {
+  isUnifiedYield: true;
+  hookAddress: string;
+  /** Share balance for withdrawals (formatted string, 18 decimals) */
+  shareBalance: string;
+}
+
+/**
  * Convert a UnifiedYieldPosition to ProcessedPosition format
  *
  * This enables Unified Yield positions to be rendered using existing
@@ -25,12 +35,12 @@ import { TickMath } from '@uniswap/v3-sdk';
  *
  * @param uyPosition - Unified Yield position
  * @param networkMode - Network mode for pool lookup
- * @returns ProcessedPosition compatible with V4 position display
+ * @returns ProcessedPosition compatible with V4 position display (with UY metadata)
  */
 export function adaptUnifiedYieldToProcessedPosition(
   uyPosition: UnifiedYieldPosition,
   networkMode: NetworkMode
-): ProcessedPosition {
+): UnifiedYieldProcessedPosition {
   const poolConfig = getPoolById(uyPosition.poolId, networkMode);
 
   // For Unified Yield, we use full range ticks
@@ -39,9 +49,9 @@ export function adaptUnifiedYieldToProcessedPosition(
   const fullRangeTickLower = Math.ceil(TickMath.MIN_TICK / tickSpacing) * tickSpacing;
   const fullRangeTickUpper = Math.floor(TickMath.MAX_TICK / tickSpacing) * tickSpacing;
 
-  // Generate a deterministic position ID from the Unified Yield position
-  // Use the hook + user address hash to create a unique ID
-  const positionId = generatePositionId(uyPosition.id);
+  // Keep the original UY position ID format for proper routing
+  // Format: uy-{hookAddress}-{userAddress}
+  const positionId = uyPosition.positionId;
 
   const now = Math.floor(Date.now() / 1000);
   const createdAt = uyPosition.createdAt ?? now;
@@ -52,6 +62,8 @@ export function adaptUnifiedYieldToProcessedPosition(
   const token1RawString = uyPosition.token1AmountRaw.toString();
 
   return {
+    // V4 ProcessedPosition fields
+    type: 'v4', // For compatibility with type guards
     positionId,
     owner: '', // Not applicable for Unified Yield (shares are fungible)
     poolId: uyPosition.poolId,
@@ -82,100 +94,10 @@ export function adaptUnifiedYieldToProcessedPosition(
     // No separate uncollected fees
     token0UncollectedFees: '0',
     token1UncollectedFees: '0',
-  };
-}
-
-/**
- * Convert multiple Unified Yield positions to ProcessedPosition format
- *
- * @param uyPositions - Array of Unified Yield positions
- * @param networkMode - Network mode
- * @returns Array of ProcessedPositions
- */
-export function adaptAllUnifiedYieldPositions(
-  uyPositions: UnifiedYieldPosition[],
-  networkMode: NetworkMode
-): ProcessedPosition[] {
-  return uyPositions.map((pos) =>
-    adaptUnifiedYieldToProcessedPosition(pos, networkMode)
-  );
-}
-
-/**
- * Generate a deterministic position ID from Unified Yield position ID
- *
- * The ID format is: uy-{vaultAddress}-{userAddress}
- * We convert this to a numeric string for compatibility with V4 position IDs
- *
- * @param uyPositionId - Unified Yield position ID
- * @returns Numeric position ID string
- */
-function generatePositionId(uyPositionId: string): string {
-  // Simple hash function to convert string to number
-  let hash = 0;
-  for (let i = 0; i < uyPositionId.length; i++) {
-    const char = uyPositionId.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  // Make it positive and add a prefix to distinguish from V4 positions
-  // Using a high number range to avoid collision with V4 tokenIds
-  const positiveHash = Math.abs(hash);
-  return `999${positiveHash}`;
-}
-
-/**
- * Check if a ProcessedPosition was adapted from a Unified Yield position
- *
- * Uses the position ID prefix to detect Unified Yield positions
- *
- * @param position - ProcessedPosition to check
- * @returns True if this is an adapted Unified Yield position
- */
-export function isAdaptedUnifiedYieldPosition(position: ProcessedPosition): boolean {
-  // Unified Yield positions have IDs starting with '999'
-  return position.positionId.startsWith('999');
-}
-
-/**
- * Merge V4 positions with Unified Yield positions
- *
- * Combines both position types into a single array for display.
- * Unified Yield positions are adapted to ProcessedPosition format.
- *
- * @param v4Positions - Standard V4 positions
- * @param uyPositions - Unified Yield positions
- * @param networkMode - Network mode
- * @returns Combined array of ProcessedPositions
- */
-export function mergePositions(
-  v4Positions: ProcessedPosition[],
-  uyPositions: UnifiedYieldPosition[],
-  networkMode: NetworkMode
-): ProcessedPosition[] {
-  const adaptedUyPositions = adaptAllUnifiedYieldPositions(uyPositions, networkMode);
-
-  // Sort by timestamp (newest first)
-  const allPositions = [...v4Positions, ...adaptedUyPositions];
-  allPositions.sort((a, b) => b.blockTimestamp - a.blockTimestamp);
-
-  return allPositions;
-}
-
-/**
- * Create a ProcessedPosition marker for Unified Yield positions
- *
- * This adds metadata that can be used by display components to
- * show Unified Yield-specific UI elements (like "Managed Range" badge)
- *
- * @param position - Base ProcessedPosition
- * @returns ProcessedPosition with Unified Yield markers
- */
-export function markAsUnifiedYield(
-  position: ProcessedPosition
-): ProcessedPosition & { _isUnifiedYield: true } {
-  return {
-    ...position,
-    _isUnifiedYield: true as const,
+    // Unified Yield specific metadata - used by modals and other components
+    isUnifiedYield: true,
+    hookAddress: uyPosition.hookAddress,
+    // Share balance for withdrawals (formatted string, parseable by parseUnits)
+    shareBalance: uyPosition.shareBalanceFormatted,
   };
 }

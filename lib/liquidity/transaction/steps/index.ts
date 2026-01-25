@@ -22,6 +22,10 @@ export {
   createIncreasePositionStepBatched,
   createDecreasePositionStep,
   createCollectFeesStep,
+  // Unified Yield step creation functions
+  createUnifiedYieldApprovalStep,
+  createUnifiedYieldDepositStep,
+  createUnifiedYieldWithdrawStep,
   // Flow ordering functions - COPIED FROM UNISWAP
   orderIncreaseLiquiditySteps,
   orderDecreaseLiquiditySteps,

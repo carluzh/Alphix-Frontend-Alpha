@@ -26,6 +26,8 @@ interface PoolsConfigFile {
     enabled: boolean;
     featured: boolean;
     type?: string;
+    yieldSources?: Array<'aave' | 'spark'>;
+    rehypoRange?: { min: string; max: string; isFullRange: boolean };
   }>;
   fees: { initialFee: number; initialTargetRatio: string; currentRatio: string };
 }
@@ -94,6 +96,8 @@ export interface RehypoRangeConfig {
   isFullRange: boolean;
 }
 
+export type YieldSource = 'aave' | 'spark';
+
 export interface PoolConfig {
   id: string;
   name: string;
@@ -106,7 +110,8 @@ export interface PoolConfig {
   hooks: string;
   enabled: boolean;
   featured: boolean;
-  type?: string; // Add the new type property
+  type?: string;
+  yieldSources?: YieldSource[]; // Yield sources for Unified Yield pools (aave, spark)
   rehypoRange?: RehypoRangeConfig; // Visualization-only range for Rehypo mode
 }
 
@@ -187,7 +192,12 @@ export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverr
 }
 
 export function getPoolById(poolId: string, networkModeOverride?: NetworkMode): PoolConfig | null {
-  return getPoolsConfig(networkModeOverride).pools.find(pool => pool.id === poolId) || null;
+  const pools = getPoolsConfig(networkModeOverride).pools;
+  // First try to match by pool.id (e.g., "atdai-atusdc")
+  // Then fallback to subgraphId (bytes32 hash used by Unified Yield positions)
+  return pools.find(pool => pool.id === poolId)
+    || pools.find(pool => pool.subgraphId?.toLowerCase() === poolId.toLowerCase())
+    || null;
 }
 
 // Create Token SDK instances

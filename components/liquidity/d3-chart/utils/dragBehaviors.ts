@@ -122,7 +122,15 @@ export function createHandleDragBehavior({
       const clampedY = clampYToChartBounds(event.y);
       const { finalMinPrice, finalMaxPrice } = calculateFinalPrices(clampedY);
 
-      if (finalMinPrice !== undefined && finalMaxPrice !== undefined) {
+      // Validate prices before updating
+      if (
+        finalMinPrice !== undefined &&
+        finalMaxPrice !== undefined &&
+        isFinite(finalMinPrice) &&
+        isFinite(finalMaxPrice) &&
+        finalMinPrice > 0 &&
+        finalMaxPrice > 0
+      ) {
         // Update state during drag (visual feedback)
         getActions().setRange(finalMinPrice, finalMaxPrice);
         getActions().drawAll();
@@ -134,8 +142,16 @@ export function createHandleDragBehavior({
 
       getActions().setIsDragging(false);
 
-      // Notify parent of final range
-      if (finalMinPrice !== undefined && finalMaxPrice !== undefined) {
+      // Notify parent of final range - only if valid prices
+      if (
+        finalMinPrice !== undefined &&
+        finalMaxPrice !== undefined &&
+        isFinite(finalMinPrice) &&
+        isFinite(finalMaxPrice) &&
+        finalMinPrice > 0 &&
+        finalMaxPrice > 0 &&
+        finalMaxPrice > finalMinPrice
+      ) {
         onRangeChange(finalMinPrice, finalMaxPrice);
       }
     });

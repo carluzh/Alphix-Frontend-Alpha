@@ -42,3 +42,33 @@ export {
   type LiquidityDecreaseTransactionInfo,
   type CollectFeesTransactionInfo,
 } from './positionHandler';
+
+// Unified Yield transaction handlers
+export {
+  handleUnifiedYieldApprovalStep,
+  handleUnifiedYieldDepositStep,
+  handleUnifiedYieldWithdrawStep,
+  getUnifiedYieldApprovalInfo,
+  getUnifiedYieldDepositInfo,
+  getUnifiedYieldWithdrawInfo,
+  type HandleUnifiedYieldApprovalParams,
+  type HandleUnifiedYieldDepositParams,
+  type HandleUnifiedYieldWithdrawParams,
+  type UnifiedYieldStep,
+  type UnifiedYieldApprovalInfo,
+  type UnifiedYieldDepositInfo,
+  type UnifiedYieldWithdrawInfo,
+  type UnifiedYieldTransactionInfo,
+} from './unifiedYieldHandler';
+
+// Step handler registry for extensible step execution
+export {
+  STEP_HANDLER_REGISTRY,
+  isRegisteredStepType,
+  getStepHandler,
+  executeRegisteredStep,
+  type TransactionFunctions,
+  type StepExecutionContext,
+  type TransactionStepHandler,
+  type StepHandlerEntry,
+} from './registry';

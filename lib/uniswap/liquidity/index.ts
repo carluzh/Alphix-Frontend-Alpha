@@ -30,8 +30,6 @@ export { useGetRangeDisplay, useIsTickAtLimit, usePriceOrdering } from './hooks'
 
 // Utils
 export {
-  getTickToPrice,
-  getV4TickToPrice,
   parseSubgraphPosition,
   parseSubgraphPositions,
   type SubgraphPosition,

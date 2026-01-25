@@ -7,12 +7,17 @@ import { usePositionPageData } from "./hooks";
 
 /**
  * Normalize tokenId from URL format to decimal string
- * Accepts: short hex (d0e35), full hex (0x...000d0e35), or decimal (852533)
+ * Accepts: short hex (d0e35), full hex (0x...000d0e35), decimal (852533),
+ * or Unified Yield format (uy-{hookAddress}-{userAddress})
  */
 function normalizeTokenId(rawTokenId: string): string {
   if (!rawTokenId) return "";
   const trimmed = rawTokenId.trim();
+  // Unified Yield position IDs start with "uy-" - pass through as-is
+  if (trimmed.startsWith("uy-")) return trimmed;
+  // Decimal format
   if (/^\d+$/.test(trimmed)) return trimmed;
+  // Hex format - convert to decimal
   try {
     const hex = trimmed.startsWith("0x") ? trimmed : "0x" + trimmed;
     return BigInt(hex).toString();
@@ -41,6 +46,7 @@ export default function PositionDetailPage() {
     // Position data
     position,
     positionInfo,
+    unifiedYieldPosition,
     isLoading,
     error,
     // Pool data
@@ -95,6 +101,7 @@ export default function PositionDetailPage() {
       tokenId={tokenId}
       position={position}
       positionInfo={positionInfo}
+      unifiedYieldPosition={unifiedYieldPosition}
       isLoading={isLoading}
       error={error}
       poolConfig={poolConfig}

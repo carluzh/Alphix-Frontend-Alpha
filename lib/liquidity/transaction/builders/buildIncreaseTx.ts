@@ -14,6 +14,7 @@ import { getToken, getTokenSymbolByAddress, type TokenSymbol } from '@/lib/pools
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity/liquidity-utils';
 import type { NetworkMode } from '@/lib/network-mode';
 import { DEFAULT_LP_SLIPPAGE } from '@/lib/slippage/slippage-constants';
+import { safeParseUnits } from '../../utils';
 
 // =============================================================================
 // TYPES
@@ -67,15 +68,6 @@ export interface BuildIncreaseTxContext {
 // =============================================================================
 // HELPERS
 // =============================================================================
-
-const safeParseUnits = (amount: string, decimals: number): bigint => {
-  let cleaned = (amount || '').toString().replace(/,/g, '').trim();
-  if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') return 0n;
-  if (cleaned.includes('e')) {
-    cleaned = parseFloat(cleaned).toFixed(decimals);
-  }
-  return parseUnits(cleaned, decimals);
-};
 
 export function parseTokenIdFromPosition(tokenId: string | number | bigint): bigint {
   const raw = tokenId.toString();

@@ -41,6 +41,10 @@ export const GET_USER_POSITIONS = gql`
       isInRange
       token0UncollectedFees
       token1UncollectedFees
+      isUnifiedYield
+      shareBalance
+      shareBalanceFormatted
+      hookAddress
     }
   }
 `

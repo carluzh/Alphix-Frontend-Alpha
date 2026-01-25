@@ -4,24 +4,29 @@
  * Builds the transaction calldata for withdrawing from a Unified Yield Hook.
  * Users burn Hook shares and receive underlying tokens (token0 + token1).
  *
+ * The contract function:
+ *   removeReHypothecatedLiquidity(uint256 shares) external returns (BalanceDelta)
+ *
  * Features:
  * - Partial withdrawals supported (any share amount)
- * - Returns both tokens proportionally
- * - No slippage protection at contract level (basic withdraw)
+ * - Returns both tokens proportionally based on current pool state
+ * - Native ETH is unwrapped by Hook and sent to user
+ * - No slippage protection at contract level
  */
 
-import { encodeFunctionData, type Address } from 'viem';
+import { encodeFunctionData, type Address, type PublicClient, formatUnits } from 'viem';
 import type {
   UnifiedYieldWithdrawParams,
   UnifiedYieldWithdrawTxResult,
+  UnifiedYieldWithdrawPreview,
 } from './types';
 import { UNIFIED_YIELD_HOOK_ABI } from './abi/unifiedYieldHookABI';
 
 /**
  * Build a Unified Yield withdraw transaction
  *
- * Burns user's Hook shares and returns underlying tokens to recipient.
- * Supports partial withdrawals - user can withdraw any number of shares.
+ * Calls removeReHypothecatedLiquidity(shares) on the Hook contract.
+ * Burns user's shares and returns underlying tokens to sender.
  *
  * @param params - Withdraw parameters
  * @returns Transaction data ready for execution
@@ -29,13 +34,13 @@ import { UNIFIED_YIELD_HOOK_ABI } from './abi/unifiedYieldHookABI';
 export function buildUnifiedYieldWithdrawTx(
   params: UnifiedYieldWithdrawParams
 ): UnifiedYieldWithdrawTxResult {
-  const { hookAddress, shares, userAddress } = params;
+  const { hookAddress, shares } = params;
 
-  // Build calldata for Hook.withdraw(shares, recipient)
+  // Build calldata for Hook.removeReHypothecatedLiquidity(shares)
   const calldata = encodeFunctionData({
     abi: UNIFIED_YIELD_HOOK_ABI,
-    functionName: 'withdraw',
-    args: [shares, userAddress],
+    functionName: 'removeReHypothecatedLiquidity',
+    args: [shares],
   });
 
   return {
@@ -46,35 +51,76 @@ export function buildUnifiedYieldWithdrawTx(
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PREVIEW FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
 /**
- * Estimate gas for a Unified Yield withdrawal
+ * Preview withdraw amounts for a given share amount
  *
- * @param params - Withdraw parameters
+ * Returns the token amounts the user would receive for burning the specified shares.
+ * Uses previewRemoveReHypothecatedLiquidity which rounds down (protocol-favorable).
+ *
+ * @param hookAddress - Hook contract address
+ * @param shares - Number of shares to burn
  * @param client - Viem public client
- * @returns Estimated gas limit with buffer
+ * @returns Tuple of [amount0, amount1] or null on error
  */
-export async function estimateUnifiedYieldWithdrawGas(
-  params: UnifiedYieldWithdrawParams,
-  client: any // PublicClient
-): Promise<bigint> {
-  const txData = buildUnifiedYieldWithdrawTx(params);
-
+export async function previewRemoveReHypothecatedLiquidity(
+  hookAddress: Address,
+  shares: bigint,
+  client: PublicClient
+): Promise<[bigint, bigint] | null> {
   try {
-    const gasEstimate = await client.estimateGas({
-      to: txData.to,
-      data: txData.calldata,
-      value: txData.value,
-      account: params.userAddress,
+    const result = await client.readContract({
+      address: hookAddress,
+      abi: UNIFIED_YIELD_HOOK_ABI,
+      functionName: 'previewRemoveReHypothecatedLiquidity',
+      args: [shares],
     });
-
-    // Add 20% buffer for safety
-    return (gasEstimate * 120n) / 100n;
+    return result as [bigint, bigint];
   } catch (error) {
-    console.warn('Gas estimation failed for Unified Yield withdraw:', error);
-    // Return reasonable default if estimation fails
-    return 250_000n;
+    console.warn(`Failed to preview remove liquidity for hook ${hookAddress}:`, error);
+    return null;
   }
 }
+
+/**
+ * Preview withdraw with formatted results
+ *
+ * Convenience function that returns full preview with formatted amounts.
+ *
+ * @param hookAddress - Hook contract address
+ * @param shares - Number of shares to burn
+ * @param token0Decimals - Decimals for token0
+ * @param token1Decimals - Decimals for token1
+ * @param client - Viem public client
+ * @returns Full withdraw preview or null on error
+ */
+export async function previewWithdraw(
+  hookAddress: Address,
+  shares: bigint,
+  token0Decimals: number,
+  token1Decimals: number,
+  client: PublicClient
+): Promise<UnifiedYieldWithdrawPreview | null> {
+  const result = await previewRemoveReHypothecatedLiquidity(hookAddress, shares, client);
+  if (!result) return null;
+
+  const [amount0, amount1] = result;
+
+  return {
+    shares,
+    amount0,
+    amount1,
+    amount0Formatted: formatUnits(amount0, token0Decimals),
+    amount1Formatted: formatUnits(amount1, token1Decimals),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VALIDATION
+// ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * Validate Unified Yield withdraw parameters
@@ -105,39 +151,22 @@ export function validateUnifiedYieldWithdrawParams(
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PERCENTAGE-BASED WITHDRAWALS
+// ═══════════════════════════════════════════════════════════════════════════
+
 /**
- * Build withdraw transaction for a percentage of position
+ * Calculate shares for a given withdrawal percentage
  *
- * Convenience function that calculates shares from percentage
- *
- * @param hookAddress - Hook contract address
  * @param totalShares - User's total share balance
  * @param percentage - Percentage to withdraw (1-100)
- * @param userAddress - User's wallet address
- * @param chainId - Chain ID
- * @returns Transaction data ready for execution
+ * @returns Number of shares to withdraw
  */
-export function buildPercentageWithdrawTx(
-  hookAddress: Address,
+export function calculateSharesFromPercentage(
   totalShares: bigint,
-  percentage: number,
-  userAddress: Address,
-  chainId: number
-): UnifiedYieldWithdrawTxResult {
-  // Clamp percentage to valid range
+  percentage: number
+): bigint {
   const clampedPercentage = Math.min(100, Math.max(1, percentage));
-
-  // Calculate shares to withdraw
-  const sharesToWithdraw =
-    clampedPercentage === 100
-      ? totalShares
-      : (totalShares * BigInt(clampedPercentage)) / 100n;
-
-  return buildUnifiedYieldWithdrawTx({
-    hookAddress,
-    shares: sharesToWithdraw,
-    userAddress,
-    poolId: '', // Not needed for tx building
-    chainId,
-  });
+  if (clampedPercentage === 100) return totalShares;
+  return (totalShares * BigInt(clampedPercentage)) / 100n;
 }

@@ -55,8 +55,11 @@ export interface UseUnifiedYieldApprovalsResult {
   /** Whether approvals are being checked */
   isLoading: boolean;
 
-  /** Refetch approvals */
-  refetch: () => Promise<void>;
+  /**
+   * Refetch approvals and return fresh status
+   * @param overrideAmounts - Optional amounts to use instead of hook params (for fresh preview data)
+   */
+  refetch: (overrideAmounts?: { amount0Wei: bigint; amount1Wei: bigint }) => Promise<UnifiedYieldApprovalStatus | null>;
 }
 
 /**
@@ -158,36 +161,42 @@ export function useUnifiedYieldApprovals(
     amount1Wei,
   ]);
 
-  const refetch = async () => {
-    await Promise.all([refetchToken0(), refetchToken1()]);
+  /**
+   * Refetch approvals and return fresh status
+   * @param overrideAmounts - Optional amounts to use instead of hook params (for fresh preview data)
+   * Returns the updated approval status after refetching
+   */
+  const refetch = async (overrideAmounts?: { amount0Wei: bigint; amount1Wei: bigint }): Promise<UnifiedYieldApprovalStatus | null> => {
+    const [result0, result1] = await Promise.all([refetchToken0(), refetchToken1()]);
+
+    // Build fresh approval status from refetch results
+    if (!params || !hookAddress) return null;
+
+    const t0Allowance = (result0.data as bigint) ?? 0n;
+    const t1Allowance = (result1.data as bigint) ?? 0n;
+
+    // Use override amounts if provided (for fresh preview data), otherwise use hook params
+    const checkAmount0 = overrideAmounts?.amount0Wei ?? amount0Wei;
+    const checkAmount1 = overrideAmounts?.amount1Wei ?? amount1Wei;
+
+    const token0NeedsApproval =
+      !isToken0Native && checkAmount0 > 0n && t0Allowance < checkAmount0;
+    const token1NeedsApproval =
+      !isToken1Native && checkAmount1 > 0n && t1Allowance < checkAmount1;
+
+    return {
+      token0NeedsApproval,
+      token1NeedsApproval,
+      token0Allowance: t0Allowance,
+      token1Allowance: t1Allowance,
+      token0Required: checkAmount0,
+      token1Required: checkAmount1,
+    };
   };
 
   return {
     data,
     isLoading: isLoadingToken0 || isLoadingToken1,
     refetch,
-  };
-}
-
-/**
- * Convenience hook that returns a simplified approval check result
- * matching the legacy format used by V4 approval hooks
- */
-export function useCheckUnifiedYieldApprovals(
-  params?: UseUnifiedYieldApprovalsParams,
-  options?: UseUnifiedYieldApprovalsOptions
-) {
-  const result = useUnifiedYieldApprovals(params, options);
-
-  return {
-    data: {
-      needsToken0ERC20Approval: result.data?.token0NeedsApproval ?? false,
-      needsToken1ERC20Approval: result.data?.token1NeedsApproval ?? false,
-      // Unified Yield doesn't use Permit2
-      needsToken0Permit: false,
-      needsToken1Permit: false,
-    },
-    isLoading: result.isLoading,
-    refetch: result.refetch,
   };
 }

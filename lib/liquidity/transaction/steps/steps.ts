@@ -31,6 +31,10 @@ import {
   type IncreasePositionTransactionStepBatched,
   type DecreasePositionTransactionStep,
   type CollectFeesTransactionStep,
+  // Unified Yield step types
+  type UnifiedYieldApprovalStep,
+  type UnifiedYieldDepositStep,
+  type UnifiedYieldWithdrawStep,
   type IncreaseLiquiditySteps,
   type DecreaseLiquiditySteps,
   type CollectFeesSteps,
@@ -592,5 +596,99 @@ export function isFlowComplete(flowState: LiquidityFlowState): boolean {
 
 export function hasFlowError(flowState: LiquidityFlowState): boolean {
   return flowState.steps.some((s) => s.status === 'error');
+}
+
+// =============================================================================
+// UNIFIED YIELD STEP FACTORIES - Direct ERC20 approvals to Hook (no Permit2)
+// =============================================================================
+
+/**
+ * Creates a Unified Yield approval step for direct ERC20 approval to Hook
+ *
+ * Unlike V4 which uses Permit2, Unified Yield uses direct approve() to the Hook.
+ *
+ * @param txRequest - The approval transaction request
+ * @param tokenAddress - Token address being approved
+ * @param tokenSymbol - Token symbol for display
+ * @param hookAddress - Hook contract (spender)
+ * @param amount - Amount to approve (in wei)
+ */
+export function createUnifiedYieldApprovalStep(
+  txRequest: ValidatedTransactionRequest,
+  tokenAddress: Address,
+  tokenSymbol: string,
+  hookAddress: Address,
+  amount: bigint
+): UnifiedYieldApprovalStep {
+  return {
+    type: TransactionStepType.UnifiedYieldApprovalTransaction,
+    txRequest,
+    tokenAddress,
+    tokenSymbol,
+    hookAddress,
+    amount,
+  };
+}
+
+/**
+ * Creates a Unified Yield deposit step
+ *
+ * Calls Hook.addReHypothecatedLiquidity(sharesToMint, maxAmount0, maxAmount1, recipient)
+ *
+ * @param txRequest - The deposit transaction request
+ * @param hookAddress - Hook contract address
+ * @param poolId - Pool identifier
+ * @param sharesToMint - Shares to mint
+ * @param token0Symbol - Token0 symbol for display
+ * @param token1Symbol - Token1 symbol for display
+ */
+export function createUnifiedYieldDepositStep(
+  txRequest: ValidatedTransactionRequest,
+  hookAddress: Address,
+  poolId: string,
+  sharesToMint: bigint,
+  token0Symbol: string,
+  token1Symbol: string
+): UnifiedYieldDepositStep {
+  return {
+    type: TransactionStepType.UnifiedYieldDepositTransaction,
+    txRequest,
+    hookAddress,
+    poolId,
+    sharesToMint,
+    token0Symbol,
+    token1Symbol,
+  };
+}
+
+/**
+ * Creates a Unified Yield withdraw step
+ *
+ * Calls Hook.removeReHypothecatedLiquidity(sharesToBurn, minAmount0, minAmount1, recipient)
+ *
+ * @param txRequest - The withdraw transaction request
+ * @param hookAddress - Hook contract address
+ * @param poolId - Pool identifier
+ * @param sharesToWithdraw - Shares to burn
+ * @param token0Symbol - Token0 symbol for display
+ * @param token1Symbol - Token1 symbol for display
+ */
+export function createUnifiedYieldWithdrawStep(
+  txRequest: ValidatedTransactionRequest,
+  hookAddress: Address,
+  poolId: string,
+  sharesToWithdraw: bigint,
+  token0Symbol: string,
+  token1Symbol: string
+): UnifiedYieldWithdrawStep {
+  return {
+    type: TransactionStepType.UnifiedYieldWithdrawTransaction,
+    txRequest,
+    hookAddress,
+    poolId,
+    sharesToWithdraw,
+    token0Symbol,
+    token1Symbol,
+  };
 }
 

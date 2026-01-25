@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useCallback, useState, useMemo } from 'react';
 import { useAccount } from 'wagmi';
 import { useSSE } from './useSSE';
+import { useNetwork } from '../network-context';
 import type {
   SSEConnectionStatus,
   PositionSnapshotPayload,
@@ -69,6 +70,7 @@ interface SSEProviderProps {
 
 export function SSEProvider({ children, enabled = true }: SSEProviderProps) {
   const { address } = useAccount();
+  const { networkMode } = useNetwork();
 
   // Latest data state
   const [latestSnapshot, setLatestSnapshot] = useState<PositionSnapshotPayload | null>(null);
@@ -113,6 +115,7 @@ export function SSEProvider({ children, enabled = true }: SSEProviderProps) {
   // SSE connection
   const { status, reconnect, disconnect } = useSSE({
     address,
+    networkMode,
     enabled: enabled && !!address,
     onSnapshot: handleSnapshot,
     onPoints: handlePoints,

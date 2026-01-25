@@ -25,7 +25,6 @@ export type {
   UnifiedYieldDepositTxResult,
   UnifiedYieldApprovalStatus,
   UnifiedYieldApprovalParams,
-  UnifiedYieldVaultInfo,
   // Withdraw types
   UnifiedYieldWithdrawParams,
   UnifiedYieldWithdrawTxResult,
@@ -36,12 +35,15 @@ export type {
 export {
   isUnifiedYieldPosition,
   calculateWithdrawShares,
+  parseUnifiedYieldPositionId,
+  isUnifiedYieldPositionId,
+  createUnifiedYieldPositionId,
+  type ParsedUnifiedYieldPositionId,
 } from './types';
 
 // Approval hooks
 export {
   useUnifiedYieldApprovals,
-  useCheckUnifiedYieldApprovals,
   type UseUnifiedYieldApprovalsParams,
   type UseUnifiedYieldApprovalsOptions,
   type UseUnifiedYieldApprovalsResult,
@@ -50,47 +52,37 @@ export {
 // Transaction building
 export {
   buildUnifiedYieldDepositTx,
-  estimateUnifiedYieldDepositGas,
   validateUnifiedYieldDepositParams,
+  previewDeposit,
 } from './buildUnifiedYieldDepositTx';
 
 // Position fetching
 export {
   fetchUnifiedYieldPositions,
   fetchSingleUnifiedYieldPosition,
-  hasUnifiedYieldPositions,
-  previewWithdraw,
-  previewDeposit,
   type FetchUnifiedYieldPositionsConfig,
 } from './fetchUnifiedYieldPositions';
 
 // Withdraw transaction building
 export {
   buildUnifiedYieldWithdrawTx,
-  estimateUnifiedYieldWithdrawGas,
   validateUnifiedYieldWithdrawParams,
-  buildPercentageWithdrawTx,
+  previewWithdraw,
+  calculateSharesFromPercentage,
 } from './buildUnifiedYieldWithdrawTx';
 
 // Position adapter
 export {
   adaptUnifiedYieldToProcessedPosition,
-  adaptAllUnifiedYieldPositions,
-  isAdaptedUnifiedYieldPosition,
-  mergePositions,
-  markAsUnifiedYield,
+  type UnifiedYieldProcessedPosition,
 } from './positionAdapter';
 
 // Execution hooks
 export {
   useUnifiedYieldDeposit,
   useUnifiedYieldWithdraw,
-  useUnifiedYieldPosition,
-  isNativeToken,
   type UseUnifiedYieldDepositParams,
   type UseUnifiedYieldDepositResult,
   type UseUnifiedYieldWithdrawParams,
   type UseUnifiedYieldWithdrawResult,
-  type UseUnifiedYieldPositionParams,
-  type UseUnifiedYieldPositionResult,
 } from './hooks';

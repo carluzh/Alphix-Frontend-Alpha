@@ -10,6 +10,8 @@ export interface DecreaseLiquidityState {
   position: ProcessedPosition;
   activeInputSide: WithdrawField | null;
   isFullWithdraw: boolean;
+  /** Whether this is a Unified Yield position (uses shares instead of liquidity) */
+  isUnifiedYield: boolean;
 }
 
 export interface DecreaseLiquidityDerivedInfo {
@@ -32,6 +34,8 @@ interface DecreaseLiquidityContextType {
   hasValidAmounts: boolean;
   isAmount0OverBalance: boolean;
   isAmount1OverBalance: boolean;
+  /** Whether this is a Unified Yield position */
+  isUnifiedYield: boolean;
 }
 
 const DecreaseLiquidityContext = createContext<DecreaseLiquidityContextType | null>(null);
@@ -42,10 +46,15 @@ export interface DecreaseLiquidityContextProviderProps extends PropsWithChildren
 
 export function DecreaseLiquidityContextProvider({ children, position }: DecreaseLiquidityContextProviderProps) {
   const [step, setStep] = useState(DecreaseLiquidityStep.Input);
+
+  // Detect if this is a Unified Yield position
+  const isUnifiedYield = position.isUnifiedYield ?? false;
+
   const [decreaseLiquidityState, setDecreaseLiquidityState] = useState<DecreaseLiquidityState>({
     position,
     activeInputSide: null,
     isFullWithdraw: false,
+    isUnifiedYield,
   });
   const [derivedInfo, setDerivedInfo] = useState<DecreaseLiquidityDerivedInfo>({
     withdrawAmount0: "",
@@ -101,7 +110,8 @@ export function DecreaseLiquidityContextProvider({ children, position }: Decreas
     hasValidAmounts,
     isAmount0OverBalance,
     isAmount1OverBalance,
-  }), [step, decreaseLiquidityState, derivedInfo, hasValidAmounts, isAmount0OverBalance, isAmount1OverBalance, setWithdrawAmount0, setWithdrawAmount1, setActiveInputSide, setIsFullWithdraw]);
+    isUnifiedYield,
+  }), [step, decreaseLiquidityState, derivedInfo, hasValidAmounts, isAmount0OverBalance, isAmount1OverBalance, setWithdrawAmount0, setWithdrawAmount1, setActiveInputSide, setIsFullWithdraw, isUnifiedYield]);
 
   return <DecreaseLiquidityContext.Provider value={value}>{children}</DecreaseLiquidityContext.Provider>;
 }

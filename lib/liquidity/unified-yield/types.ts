@@ -1,19 +1,30 @@
 /**
  * Unified Yield Types
  *
- * Types for the Unified Yield liquidity provision mechanism.
+ * Types for the Unified Yield (ReHypothecation) liquidity provision mechanism.
  * Unified Yield differs from standard V4 positions:
  * - Deposits go through a Hook contract (not PositionManager)
- * - Hook IS the ERC-4626 vault - users receive Hook shares directly
+ * - Hook IS the ERC20 share token - users receive Hook shares directly
  * - Earns yield from swap fees + Aave lending (rehypothecation)
  *
  * Architecture:
  * - One Hook per pool (ETH/USDC has its own Hook, USDC/USDT has its own)
- * - Hook mints shares to users (ERC-4626 compliant)
- * - Hook internally deposits into shared underlying vaults per token
- * - Native ETH is wrapped by Hook internally
- * - No slippage protection at contract level
- * - Partial withdrawals supported
+ * - Hook mints shares to users (extends IERC20)
+ * - Liquidity is deposited into a managed tick range (rehypo range)
+ * - Underlying assets are rehypothecated into yield sources (e.g., Aave)
+ * - Native ETH is wrapped by Hook internally (send as msg.value)
+ * - Partial withdrawals supported (any share amount)
+ *
+ * Deposit Flow:
+ * 1. User enters amount0 or amount1
+ * 2. Call previewAddFromAmount0(amount0) → (amount1, shares)
+ * 3. Approve both tokens to Hook
+ * 4. Call addReHypothecatedLiquidity(shares) with msg.value if native ETH
+ *
+ * Withdraw Flow:
+ * 1. User has shares from balanceOf(user)
+ * 2. Call previewRemoveReHypothecatedLiquidity(shares) → (amount0, amount1)
+ * 3. Call removeReHypothecatedLiquidity(shares)
  */
 
 import type { Address } from 'viem';
@@ -25,8 +36,17 @@ import type { Address } from 'viem';
  * Designed to be compatible with ProcessedPosition for display via adapter.
  */
 export interface UnifiedYieldPosition {
+  /** Type discriminator for union type */
+  type: 'unified-yield';
+
   /** Position identifier: `uy-${hookAddress}-${userAddress}` */
   id: string;
+
+  /**
+   * Alias for `id` to maintain compatibility with V4ProcessedPosition interface.
+   * Both V4 and UY positions can be identified via `position.positionId`.
+   */
+  positionId: string;
 
   /** Hook contract address - this IS the ERC-4626 vault */
   hookAddress: Address;
@@ -90,15 +110,12 @@ export interface UnifiedYieldPosition {
 }
 
 /**
- * @deprecated Use UnifiedYieldPosition.hookAddress instead
- * The Hook IS the vault - there's no separate vault address
- */
-export type UnifiedYieldPositionLegacy = UnifiedYieldPosition & {
-  vaultAddress: Address;
-};
-
-/**
  * Parameters for building a Unified Yield deposit transaction
+ *
+ * The new contract uses a share-centric flow:
+ * - User specifies one token amount
+ * - Preview function returns the other amount + shares
+ * - Transaction is called with shares to mint
  */
 export interface UnifiedYieldDepositParams {
   /** Pool identifier */
@@ -113,11 +130,24 @@ export interface UnifiedYieldDepositParams {
   /** Token1 address */
   token1Address: Address;
 
-  /** Amount of token0 to deposit (in wei) */
+  /**
+   * Amount of token0 to deposit (in wei)
+   * Used for preview calculation and approval
+   */
   amount0Wei: bigint;
 
-  /** Amount of token1 to deposit (in wei) */
+  /**
+   * Amount of token1 to deposit (in wei)
+   * Used for preview calculation and approval
+   */
   amount1Wei: bigint;
+
+  /**
+   * Number of shares to mint
+   * This is the actual parameter passed to addReHypothecatedLiquidity()
+   * Obtained from previewAddFromAmount0/1
+   */
+  sharesToMint: bigint;
 
   /** User's wallet address */
   userAddress: Address;
@@ -125,8 +155,55 @@ export interface UnifiedYieldDepositParams {
   /** Chain ID */
   chainId: number;
 
-  /** Slippage tolerance in basis points */
+  /**
+   * Slippage tolerance in basis points
+   * Note: Contract doesn't support slippage protection,
+   * but this can be used for UI warnings
+   */
   slippageBps?: number;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PREVIEW TYPES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Result of previewAddFromAmount0 or previewAddFromAmount1
+ *
+ * Used to calculate the deposit amounts and shares before executing
+ */
+export interface PreviewAddResult {
+  /** The amount of the OTHER token required (amount1 if input was amount0, vice versa) */
+  otherAmount: bigint;
+
+  /** The number of shares that will be minted */
+  shares: bigint;
+}
+
+/**
+ * Full preview result with both amounts for display
+ */
+export interface DepositPreviewResult {
+  /** Amount of token0 required */
+  amount0: bigint;
+
+  /** Amount of token1 required */
+  amount1: bigint;
+
+  /** Shares that will be minted */
+  shares: bigint;
+
+  /** Formatted amount0 for display */
+  amount0Formatted: string;
+
+  /** Formatted amount1 for display */
+  amount1Formatted: string;
+
+  /** Formatted shares for display */
+  sharesFormatted: string;
+
+  /** Which token the user originally entered */
+  inputSide: 'token0' | 'token1';
 }
 
 /**
@@ -197,29 +274,6 @@ export interface UnifiedYieldApprovalParams {
 }
 
 /**
- * Vault information for a Unified Yield pool
- */
-export interface UnifiedYieldVaultInfo {
-  /** Vault contract address */
-  vaultAddress: Address;
-
-  /** Hook contract address */
-  hookAddress: Address;
-
-  /** Pool identifier */
-  poolId: string;
-
-  /** Total shares in the vault */
-  totalShares: bigint;
-
-  /** Total assets in the vault */
-  totalAssets: bigint;
-
-  /** Current share price (assets per share) */
-  sharePrice: bigint;
-}
-
-/**
  * Type guard to check if a position is a Unified Yield position
  */
 export function isUnifiedYieldPosition(
@@ -228,8 +282,8 @@ export function isUnifiedYieldPosition(
   return (
     typeof position === 'object' &&
     position !== null &&
-    'isUnifiedYield' in position &&
-    (position as UnifiedYieldPosition).isUnifiedYield === true
+    'type' in position &&
+    (position as UnifiedYieldPosition).type === 'unified-yield'
   );
 }
 
@@ -318,4 +372,76 @@ export function calculateWithdrawShares(
 ): bigint {
   if (percentage === 100) return totalShares;
   return (totalShares * BigInt(percentage)) / 100n;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POSITION ID UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Parsed Unified Yield position ID components
+ */
+export interface ParsedUnifiedYieldPositionId {
+  hookAddress: Address;
+  userAddress: Address;
+}
+
+/**
+ * Parse Unified Yield position ID format: uy-{hookAddress}-{userAddress}
+ *
+ * @param positionId - The position ID string (e.g., "uy-0x123...abc-0x456...def")
+ * @returns Parsed addresses or null if not a valid Unified Yield position ID
+ *
+ * @example
+ * ```tsx
+ * const parsed = parseUnifiedYieldPositionId("uy-0xabc...123-0xdef...456");
+ * if (parsed) {
+ *   console.log(parsed.hookAddress); // "0xabc...123"
+ *   console.log(parsed.userAddress); // "0xdef...456"
+ * }
+ * ```
+ */
+export function parseUnifiedYieldPositionId(
+  positionId: string
+): ParsedUnifiedYieldPositionId | null {
+  if (!positionId || !positionId.startsWith('uy-')) return null;
+
+  const parts = positionId.split('-');
+  if (parts.length !== 3) return null;
+
+  const hookAddress = parts[1];
+  const userAddress = parts[2];
+
+  // Validate addresses (basic check for 0x prefix and length)
+  if (!hookAddress.startsWith('0x') || hookAddress.length !== 42) return null;
+  if (!userAddress.startsWith('0x') || userAddress.length !== 42) return null;
+
+  return {
+    hookAddress: hookAddress as Address,
+    userAddress: userAddress as Address,
+  };
+}
+
+/**
+ * Check if a position ID is a Unified Yield position ID
+ *
+ * @param positionId - The position ID to check
+ * @returns true if the ID follows the uy-{hookAddress}-{userAddress} format
+ */
+export function isUnifiedYieldPositionId(positionId: string): boolean {
+  return parseUnifiedYieldPositionId(positionId) !== null;
+}
+
+/**
+ * Create a Unified Yield position ID from addresses
+ *
+ * @param hookAddress - The hook contract address
+ * @param userAddress - The user's wallet address
+ * @returns Position ID in format "uy-{hookAddress}-{userAddress}"
+ */
+export function createUnifiedYieldPositionId(
+  hookAddress: Address,
+  userAddress: Address
+): string {
+  return `uy-${hookAddress}-${userAddress}`;
 }

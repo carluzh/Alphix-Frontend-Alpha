@@ -1,10 +1,15 @@
 /**
  * Fetches and transforms liquidity data for the D3 chart.
  * Transforms price0 based on priceInverted (chart is agnostic to inversion).
+ *
+ * IMPORTANT: Uses SDK-based tick-to-price conversion when token info is provided
+ * to ensure consistency with range prices displayed in the UI.
  */
 
 import { useState, useEffect, useMemo } from 'react';
+import { Currency } from '@uniswap/sdk-core';
 import { getPoolSubgraphId } from '@/lib/pools-config';
+import { tickToPriceSimple, tickToPriceNumber } from '@/lib/liquidity/utils/tick-price';
 
 export interface ChartEntry {
   tick: number;
@@ -16,6 +21,10 @@ export interface ChartEntry {
 interface UseLiquidityChartDataParams {
   poolId?: string;
   priceInverted: boolean;
+  /** SDK token0 for proper decimal handling in price conversion */
+  token0?: Currency;
+  /** SDK token1 for proper decimal handling in price conversion */
+  token1?: Currency;
 }
 
 interface UseLiquidityChartDataResult {
@@ -27,6 +36,8 @@ interface UseLiquidityChartDataResult {
 export function useLiquidityChartData({
   poolId,
   priceInverted,
+  token0,
+  token1,
 }: UseLiquidityChartDataParams): UseLiquidityChartDataResult {
   const [rawData, setRawData] = useState<ChartEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -77,7 +88,17 @@ export function useLiquidityChartData({
 
           if (!isNaN(tickIdx) && !isNaN(liquidityNet)) {
             cumulativeLiquidity += liquidityNet;
-            const price0 = Math.pow(1.0001, tickIdx);
+
+            // Use SDK-based conversion when token info available for proper decimal handling
+            // This ensures consistency with the range prices displayed in the UI
+            let price0: number;
+            if (token0 && token1) {
+              const sdkPrice = tickToPriceNumber(tickIdx, token0, token1);
+              price0 = sdkPrice !== undefined ? sdkPrice : tickToPriceSimple(tickIdx);
+            } else {
+              // Fallback to simple conversion if tokens not available
+              price0 = tickToPriceSimple(tickIdx);
+            }
 
             chartEntries.push({
               tick: tickIdx,
@@ -101,7 +122,7 @@ export function useLiquidityChartData({
 
     fetchData();
     return () => { cancelled = true; };
-  }, [poolId, subgraphPoolId]);
+  }, [poolId, subgraphPoolId, token0, token1]);
 
   // Transform and sort by price0 (inverts if needed)
   const liquidityData = useMemo(() => {

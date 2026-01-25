@@ -17,6 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { fetchPositionFees } from "@/lib/backend-client";
 import { fetchPositionAaveHistory } from "@/lib/aave-rates";
+import { useNetwork } from "@/lib/network-context";
 
 export type ChartPeriod = "1W" | "1M" | "1Y" | "ALL";
 
@@ -65,7 +66,8 @@ export function usePositionFeeChartData({
   token1Symbol,
   isRehypo = false,
 }: UsePositionFeeChartDataParams): UsePositionFeeChartDataResult {
-  const queryKey = ["position-fee-chart", positionId, period];
+  const { networkMode } = useNetwork();
+  const queryKey = ["position-fee-chart", positionId, period, networkMode];
 
   // Fetch position fee history
   const query = useQuery({
@@ -75,7 +77,7 @@ export function usePositionFeeChartData({
         return [];
       }
 
-      const response = await fetchPositionFees(positionId, period);
+      const response = await fetchPositionFees(positionId, period, networkMode);
 
       if (!response.success) {
         console.warn("[usePositionFeeChartData] Backend error:", response.error);

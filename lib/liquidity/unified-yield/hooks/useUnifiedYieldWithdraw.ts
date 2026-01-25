@@ -1,26 +1,39 @@
 /**
  * Unified Yield Withdraw Execution Hook
  *
- * Handles withdrawals from Unified Yield positions:
- * 1. Burn shares from Hook
- * 2. Receive underlying tokens (token0 + token1)
- * 3. Track transaction status
+ * Handles withdrawals from Unified Yield (ReHypothecation) positions:
+ * 1. Preview to show expected token amounts
+ * 2. Execute removeReHypothecatedLiquidity(shares) to burn shares
+ * 3. Receive underlying tokens (token0 + token1)
+ * 4. Track transaction status
+ *
+ * The contract function:
+ *   removeReHypothecatedLiquidity(uint256 shares) external returns (BalanceDelta)
  *
  * Supports partial withdrawals - user can withdraw any number of shares.
  */
 
 import { useCallback, useState } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import type { Address, Hash } from 'viem';
 
 import { UNIFIED_YIELD_HOOK_ABI } from '../abi/unifiedYieldHookABI';
-import { buildUnifiedYieldWithdrawTx, validateUnifiedYieldWithdrawParams } from '../buildUnifiedYieldWithdrawTx';
-import type { UnifiedYieldWithdrawParams, WithdrawPercentage } from '../types';
+import {
+  buildUnifiedYieldWithdrawTx,
+  validateUnifiedYieldWithdrawParams,
+  previewWithdraw,
+  calculateSharesFromPercentage,
+} from '../buildUnifiedYieldWithdrawTx';
+import type { UnifiedYieldWithdrawParams, UnifiedYieldWithdrawPreview, WithdrawPercentage } from '../types';
 import { calculateWithdrawShares } from '../types';
 
 export interface UseUnifiedYieldWithdrawParams {
   /** Hook contract address */
   hookAddress?: Address;
+  /** Token0 decimals (for preview formatting) */
+  token0Decimals?: number;
+  /** Token1 decimals (for preview formatting) */
+  token1Decimals?: number;
   /** Pool ID */
   poolId?: string;
   /** Chain ID */
@@ -36,6 +49,9 @@ export interface UseUnifiedYieldWithdrawResult {
 
   /** Execute full withdrawal (100% of shares) */
   withdrawAll: (totalShares: bigint) => Promise<Hash | undefined>;
+
+  /** Preview withdrawal amounts without executing */
+  getPreview: (shares: bigint) => Promise<UnifiedYieldWithdrawPreview | null>;
 
   /** Current transaction hash (if any) */
   txHash: Hash | undefined;
@@ -60,6 +76,9 @@ export interface UseUnifiedYieldWithdrawResult {
 
   /** Whether waiting for confirmation */
   isConfirming: boolean;
+
+  /** Latest preview result */
+  lastPreview: UnifiedYieldWithdrawPreview | null;
 }
 
 /**
@@ -70,11 +89,17 @@ export interface UseUnifiedYieldWithdrawResult {
  *
  * @example
  * ```tsx
- * const { withdraw, withdrawPercentage, isPending } = useUnifiedYieldWithdraw({
+ * const { withdraw, withdrawPercentage, getPreview, isPending } = useUnifiedYieldWithdraw({
  *   hookAddress: '0x...',
+ *   token0Decimals: 18,
+ *   token1Decimals: 6,
  *   poolId: 'eth-usdc',
- *   chainId: 8453,
+ *   chainId: 84532,
  * });
+ *
+ * // Preview to show user expected amounts
+ * const preview = await getPreview(sharesToBurn);
+ * // preview = { shares, amount0, amount1, amount0Formatted, amount1Formatted }
  *
  * // Withdraw 50% of position
  * await withdrawPercentage(totalShares, 50);
@@ -87,10 +112,12 @@ export function useUnifiedYieldWithdraw(
   params?: UseUnifiedYieldWithdrawParams
 ): UseUnifiedYieldWithdrawResult {
   const { address: userAddress } = useAccount();
+  const publicClient = usePublicClient();
   const [error, setError] = useState<Error | null>(null);
+  const [lastPreview, setLastPreview] = useState<UnifiedYieldWithdrawPreview | null>(null);
 
   const {
-    writeContract,
+    writeContractAsync,
     data: txHash,
     isPending: isWritePending,
     isSuccess: isWriteSuccess,
@@ -106,6 +133,40 @@ export function useUnifiedYieldWithdraw(
   } = useWaitForTransactionReceipt({
     hash: txHash,
   });
+
+  /**
+   * Get withdrawal preview
+   */
+  const getPreview = useCallback(
+    async (shares: bigint): Promise<UnifiedYieldWithdrawPreview | null> => {
+      if (!params?.hookAddress || !publicClient || shares <= 0n) {
+        return null;
+      }
+
+      try {
+        const token0Decimals = params.token0Decimals ?? 18;
+        const token1Decimals = params.token1Decimals ?? 18;
+
+        const preview = await previewWithdraw(
+          params.hookAddress,
+          shares,
+          token0Decimals,
+          token1Decimals,
+          publicClient
+        );
+
+        if (preview) {
+          setLastPreview(preview);
+        }
+
+        return preview;
+      } catch (err) {
+        console.warn('Preview failed:', err);
+        return null;
+      }
+    },
+    [params, publicClient]
+  );
 
   const withdraw = useCallback(
     async (shares: bigint): Promise<Hash | undefined> => {
@@ -135,7 +196,7 @@ export function useUnifiedYieldWithdraw(
           shares,
           userAddress,
           poolId: params.poolId || '',
-          chainId: params.chainId || 8453,
+          chainId: params.chainId || 84532,
         };
 
         const validation = validateUnifiedYieldWithdrawParams(withdrawParams);
@@ -148,22 +209,23 @@ export function useUnifiedYieldWithdraw(
         // Build transaction
         const txData = buildUnifiedYieldWithdrawTx(withdrawParams);
 
-        // Execute withdrawal
-        writeContract({
+        // Execute withdrawal: removeReHypothecatedLiquidity(shares)
+        // Use writeContractAsync to properly await the transaction submission
+        const hash = await writeContractAsync({
           address: txData.to,
           abi: UNIFIED_YIELD_HOOK_ABI,
-          functionName: 'withdraw',
-          args: [shares, userAddress],
+          functionName: 'removeReHypothecatedLiquidity',
+          args: [shares],
         });
 
-        return txHash;
+        return hash;
       } catch (err) {
         const error = err instanceof Error ? err : new Error('Withdrawal failed');
         setError(error);
         return undefined;
       }
     },
-    [params, userAddress, writeContract, txHash]
+    [params, userAddress, writeContractAsync]
   );
 
   const withdrawPercentage = useCallback(
@@ -183,6 +245,7 @@ export function useUnifiedYieldWithdraw(
 
   const reset = useCallback(() => {
     setError(null);
+    setLastPreview(null);
     resetWrite();
   }, [resetWrite]);
 
@@ -190,6 +253,7 @@ export function useUnifiedYieldWithdraw(
     withdraw,
     withdrawPercentage,
     withdrawAll,
+    getPreview,
     txHash,
     isPending: isWritePending,
     isSuccess: isWriteSuccess && isConfirmed,
@@ -198,5 +262,6 @@ export function useUnifiedYieldWithdraw(
     reset,
     receipt,
     isConfirming,
+    lastPreview,
   };
 }

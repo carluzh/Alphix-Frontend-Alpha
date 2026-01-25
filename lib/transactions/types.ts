@@ -35,6 +35,9 @@ export enum TransactionStepType {
 
   // Alphix-specific
   CreatePositionTransaction = 'CreatePositionTransaction',
+
+  // Faucet
+  FaucetMintTransaction = 'FaucetMintTransaction',
 }
 
 // ============================================================================
@@ -82,12 +85,24 @@ export interface LiquidityPositionStep extends TransactionStepBase {
 }
 
 /**
+ * Faucet mint step - minting testnet tokens
+ */
+export interface FaucetMintStep extends TransactionStepBase {
+  type: TransactionStepType.FaucetMintTransaction
+  tokenSymbol: string
+  tokenAddress: string
+  tokenIcon?: string
+  amount: string
+}
+
+/**
  * Union of all step types
  */
 export type TransactionStep =
   | TokenApprovalStep
   | Permit2SignatureStep
   | LiquidityPositionStep
+  | FaucetMintStep
 
 // ============================================================================
 // Component Props Interfaces
@@ -159,6 +174,24 @@ export function createLiquidityStep(
     token1Symbol,
     token0Icon,
     token1Icon,
+  }
+}
+
+/**
+ * Create a faucet mint step
+ */
+export function createFaucetMintStep(
+  tokenSymbol: string,
+  tokenAddress: string,
+  amount: string,
+  tokenIcon?: string
+): FaucetMintStep {
+  return {
+    type: TransactionStepType.FaucetMintTransaction,
+    tokenSymbol,
+    tokenAddress,
+    tokenIcon,
+    amount,
   }
 }
 

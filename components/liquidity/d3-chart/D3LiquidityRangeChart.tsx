@@ -380,7 +380,9 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
       const data = liquidityDataRef.current;
       const scale = tickScaleRef.current;
       if (!data.length || !scale) return currentPrice;
-      return yToPrice({ y, liquidityData: data, tickScale: scale });
+      const price = yToPrice({ y, liquidityData: data, tickScale: scale });
+      // Return currentPrice as fallback if yToPrice returns invalid value
+      return isFinite(price) && price > 0 ? price : currentPrice;
     };
   }, [currentPrice]);
 
@@ -565,6 +567,141 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
       drawAll();
     }
   }, [propMinPrice, propMaxPrice, isFullRange, priceData, drawAll]);
+
+  // Handle wheel zoom and pan
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || liquidityData.length === 0) return;
+
+    // Wheel zoom handler
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+
+      const { zoomLevel, panY, dimensions: dims } = stateRef.current;
+      const dynamicZoomMin = dynamicZoomMinRef.current;
+      const data = liquidityDataRef.current;
+
+      // Check if shift is held for pan mode
+      if (event.shiftKey) {
+        // Shift + scroll = pan vertically
+        let newPanY = panY - event.deltaY;
+        newPanY = boundPanY({
+          panY: newPanY,
+          viewportHeight: dims.height,
+          liquidityData: data,
+          zoomLevel,
+        });
+
+        stateRef.current.panY = newPanY;
+
+        if (data.length > 0) {
+          tickScaleRef.current = createTickScale(data, dims, zoomLevel, newPanY);
+        }
+
+        Object.values(renderersRef.current).forEach(renderer => {
+          if (renderer) renderer.draw();
+        });
+        return;
+      }
+
+      // Normal scroll = zoom
+      // Determine zoom direction (positive deltaY = zoom out, negative = zoom in)
+      const zoomingIn = event.deltaY < 0;
+      const zoomFactor = zoomingIn ? CHART_BEHAVIOR.ZOOM_FACTOR : 1 / CHART_BEHAVIOR.ZOOM_FACTOR;
+      const targetZoom = Math.max(dynamicZoomMin, Math.min(zoomLevel * zoomFactor, CHART_BEHAVIOR.ZOOM_MAX));
+
+      // Get mouse position relative to SVG for zoom anchoring
+      const rect = svg.getBoundingClientRect();
+      const mouseY = event.clientY - rect.top;
+
+      // Calculate new panY to keep the point under the mouse fixed
+      const zoomRatio = targetZoom / zoomLevel;
+      let newPanY = mouseY - (mouseY - panY) * zoomRatio;
+
+      // Apply relaxed bounds for free viewport movement
+      newPanY = boundPanY({
+        panY: newPanY,
+        viewportHeight: dims.height,
+        liquidityData: data,
+        zoomLevel: targetZoom,
+      });
+
+      // Update state and scale
+      stateRef.current.zoomLevel = targetZoom;
+      stateRef.current.panY = newPanY;
+
+      // Recreate tick scale with new zoom/pan
+      if (data.length > 0) {
+        tickScaleRef.current = createTickScale(data, dims, targetZoom, newPanY);
+      }
+
+      // Redraw all renderers
+      Object.values(renderersRef.current).forEach(renderer => {
+        if (renderer) renderer.draw();
+      });
+    };
+
+    // Middle mouse button drag for panning
+    let isPanning = false;
+    let panStartY = 0;
+    let panStartPanY = 0;
+
+    const handleMouseDown = (event: MouseEvent) => {
+      // Middle mouse button (button 1) or right-click for panning
+      if (event.button === 1) {
+        event.preventDefault();
+        isPanning = true;
+        panStartY = event.clientY;
+        panStartPanY = stateRef.current.panY;
+        svg.style.cursor = 'grabbing';
+      }
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!isPanning) return;
+
+      const { zoomLevel, dimensions: dims } = stateRef.current;
+      const data = liquidityDataRef.current;
+      const deltaY = event.clientY - panStartY;
+
+      let newPanY = panStartPanY + deltaY;
+      newPanY = boundPanY({
+        panY: newPanY,
+        viewportHeight: dims.height,
+        liquidityData: data,
+        zoomLevel,
+      });
+
+      stateRef.current.panY = newPanY;
+
+      if (data.length > 0) {
+        tickScaleRef.current = createTickScale(data, dims, zoomLevel, newPanY);
+      }
+
+      Object.values(renderersRef.current).forEach(renderer => {
+        if (renderer) renderer.draw();
+      });
+    };
+
+    const handleMouseUp = () => {
+      if (isPanning) {
+        isPanning = false;
+        svg.style.cursor = '';
+      }
+    };
+
+    svg.addEventListener('wheel', handleWheel, { passive: false });
+    svg.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      svg.removeEventListener('wheel', handleWheel);
+      svg.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [liquidityData.length]);
 
   // Total height includes chart + timescale
   const totalHeight = CHART_DIMENSIONS.CHART_HEIGHT + CHART_DIMENSIONS.TIMESCALE_HEIGHT;

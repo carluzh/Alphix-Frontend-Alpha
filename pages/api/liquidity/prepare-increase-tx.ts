@@ -89,6 +89,7 @@ interface ApprovalNeededResponse {
   approvalTokenSymbol?: string;
   approveToAddress?: string;
   approvalAmount?: string;
+  // Permit data is included for BOTH types - ERC20_TO_PERMIT2 includes it for after approval
   permitBatchData?: any;
   signatureDetails?: {
     domain: {
@@ -319,6 +320,9 @@ export default async function handler(
     // Filter to ERC20 tokens that need checking
     const erc20TokensToCheck = tokensToCheck.filter(t => !t.isNative && t.requiredAmount > 0n);
 
+    // Track which tokens need ERC20 approval to Permit2
+    let erc20ApprovalNeeded: { address: string; symbol: string } | null = null;
+
     // Check ERC20 allowances to Permit2
     if (erc20TokensToCheck.length > 0) {
       const erc20AllowanceAbi = parseAbi(['function allowance(address,address) view returns (uint256)']);
@@ -337,19 +341,18 @@ export default async function handler(
         const allowance = erc20AllowanceResults[i] as bigint;
 
         if (allowance < t.requiredAmount) {
-          return res.status(200).json({
-            needsApproval: true,
-            approvalType: 'ERC20_TO_PERMIT2' as const,
-            approvalTokenAddress: t.address,
-            approvalTokenSymbol: t.symbol,
-            approveToAddress: PERMIT2_ADDRESS,
-            approvalAmount: maxUint256.toString(),
-          });
+          // Track that approval is needed, but continue to generate permit data
+          erc20ApprovalNeeded = { address: t.address, symbol: t.symbol };
+          break; // Only report first token needing approval
         }
       }
     }
 
-    // Check Permit2 allowances (only if no permit signature provided)
+    // Generate permit data (needed for both ERC20_TO_PERMIT2 and PERMIT2_BATCH_SIGNATURE flows)
+    // This ensures frontend can build complete step list upfront
+    let permitBatchDataResponse: any = null;
+    let signatureDetailsResponse: any = null;
+
     if (!hasBatchPermit) {
       const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
       if (!latestBlock) throw new Error("Failed to get latest block");
@@ -425,7 +428,7 @@ export default async function handler(
           values: PermitBatch;
         };
 
-        const permitBatchDataResponse = {
+        permitBatchDataResponse = {
           domain,
           types,
           valuesRaw: values,
@@ -439,23 +442,43 @@ export default async function handler(
             spender: values.spender,
             sigDeadline: values.sigDeadline.toString(),
           },
-        } as any;
+        };
 
-        return res.status(200).json({
-          needsApproval: true,
-          approvalType: 'PERMIT2_BATCH_SIGNATURE' as const,
-          permitBatchData: permitBatchDataResponse,
-          signatureDetails: {
-            domain: {
-              name: domain.name || 'Permit2',
-              chainId: Number(domain.chainId || chainId),
-              verifyingContract: (domain.verifyingContract || PERMIT2_ADDRESS) as `0x${string}`,
-            },
-            types,
-            primaryType: 'PermitBatch',
-          }
-        });
+        signatureDetailsResponse = {
+          domain: {
+            name: domain.name || 'Permit2',
+            chainId: Number(domain.chainId || chainId),
+            verifyingContract: (domain.verifyingContract || PERMIT2_ADDRESS) as `0x${string}`,
+          },
+          types,
+          primaryType: 'PermitBatch',
+        };
       }
+    }
+
+    // Return ERC20 approval needed response (now includes permit data for complete step generation)
+    if (erc20ApprovalNeeded) {
+      return res.status(200).json({
+        needsApproval: true,
+        approvalType: 'ERC20_TO_PERMIT2' as const,
+        approvalTokenAddress: erc20ApprovalNeeded.address,
+        approvalTokenSymbol: erc20ApprovalNeeded.symbol,
+        approveToAddress: PERMIT2_ADDRESS,
+        approvalAmount: maxUint256.toString(),
+        // Include permit data so frontend can build complete step list
+        permitBatchData: permitBatchDataResponse,
+        signatureDetails: signatureDetailsResponse,
+      });
+    }
+
+    // Return Permit2 signature needed response
+    if (permitBatchDataResponse && !hasBatchPermit) {
+      return res.status(200).json({
+        needsApproval: true,
+        approvalType: 'PERMIT2_BATCH_SIGNATURE' as const,
+        permitBatchData: permitBatchDataResponse,
+        signatureDetails: signatureDetailsResponse,
+      });
     }
 
     // Build transaction

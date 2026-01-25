@@ -1,13 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getSubgraphUrlForPool, isMainnetSubgraphMode } from '../../../lib/subgraph-url-helper';
+import { getUniswapV4SubgraphUrl, isMainnetSubgraphMode } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '../../../lib/cache/CacheService';
 import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
-
-// Subgraph URL selection (Satsuma default with env/query overrides)
-const LEGACY_SUBGRAPH_URL = process.env.SUBGRAPH_URL || "";
-function selectSubgraphUrl(poolId: string | undefined, networkMode?: NetworkMode): string {
-  return getSubgraphUrlForPool(poolId, networkMode) || LEGACY_SUBGRAPH_URL;
-}
 
 // Mainnet query: uses poolId filter (minimal subgraph stores poolId as String, not Pool relation)
 const GET_LAST_HOOK_EVENTS_MAINNET = `
@@ -95,7 +89,7 @@ export default async function handler(
       cacheKey,
       { fresh: 6 * 60 * 60, stale: 24 * 60 * 60 }, // 6h fresh, 24h stale
       async () => {
-        const SUBGRAPH_URL = selectSubgraphUrl(poolId, networkMode);
+        const SUBGRAPH_URL = getUniswapV4SubgraphUrl(networkMode);
         const query = selectQuery(networkMode);
 
         // AbortController timeout pattern for subgraph fetch

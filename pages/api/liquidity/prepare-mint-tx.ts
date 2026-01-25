@@ -448,6 +448,14 @@ export default async function handler(
             t => getAddress(t.sdkToken.address) !== ETHERS_ADDRESS_ZERO && t.requiredAmount > 0n
         );
 
+        // Track ERC20 approval needs - don't return early, we need to compute permit data too
+        let erc20ApprovalNeeded: {
+            approvalTokenAddress: string;
+            approvalTokenSymbol: string;
+            approveToAddress: string;
+            approvalAmount: string;
+        } | null = null;
+
         // Batch all ERC20 allowance checks into single multicall
         if (erc20TokensToCheck.length > 0) {
             const erc20AllowanceAbi = parseAbi(['function allowance(address,address) view returns (uint256)']);
@@ -461,20 +469,19 @@ export default async function handler(
                 allowFailure: false,
             });
 
-            // Check results and return first token that needs approval
+            // Check results and note first token that needs approval (don't return early)
             for (let i = 0; i < erc20TokensToCheck.length; i++) {
                 const t = erc20TokensToCheck[i];
                 const erc20Allowance = erc20AllowanceResults[i] as bigint;
 
-                if (erc20Allowance < t.requiredAmount) {
-                    return res.status(200).json({
-                        needsApproval: true,
-                        approvalType: 'ERC20_TO_PERMIT2' as const,
+                if (erc20Allowance < t.requiredAmount && !erc20ApprovalNeeded) {
+                    erc20ApprovalNeeded = {
                         approvalTokenAddress: t.sdkToken.address,
                         approvalTokenSymbol: t.symbol,
                         approveToAddress: PERMIT2_ADDRESS,
                         approvalAmount: maxUint256.toString(),
-                    });
+                    };
+                    // Don't return early - continue to compute permit data
                 }
             }
         }
@@ -567,6 +574,7 @@ export default async function handler(
                         },
                     } as any;
 
+                    // Include ERC20 approval info if needed (so frontend can generate approval steps)
                     return res.status(200).json({
                         needsApproval: true,
                         approvalType: 'PERMIT2_BATCH_SIGNATURE' as const,
@@ -581,8 +589,103 @@ export default async function handler(
                             // Don't use PERMIT2_TYPES which includes PermitSingle and confuses wallet decoders
                             types,
                             primaryType: 'PermitBatch',
-                        }
+                        },
+                        // Include ERC20 approval info if token needs approval to Permit2
+                        ...(erc20ApprovalNeeded && {
+                            erc20ApprovalNeeded: true,
+                            approvalTokenAddress: erc20ApprovalNeeded.approvalTokenAddress,
+                            approvalTokenSymbol: erc20ApprovalNeeded.approvalTokenSymbol,
+                            approveToAddress: erc20ApprovalNeeded.approveToAddress,
+                            approvalAmount: erc20ApprovalNeeded.approvalAmount,
+                        }),
                     });
+            }
+
+            // If ERC20 approval is needed but no permits are needed (Permit2 allowance is sufficient),
+            // we still need to return permit data for the frontend step flow (approval → permit signature → tx)
+            // Note: We need to re-fetch nonces since permit2AllowanceResults may not exist if permit2TokensToCheck was empty
+            if (erc20ApprovalNeeded) {
+                // Re-filter tokens and get nonces for permit data
+                const permit2TokensForERC20Case = tokensToCheck.filter(
+                    t => getAddress(t.sdkToken.address) !== ETHERS_ADDRESS_ZERO && t.permitAmount > 0n
+                );
+
+                if (permit2TokensForERC20Case.length > 0) {
+                    const permit2NonceResults = await publicClient.multicall({
+                        contracts: permit2TokensForERC20Case.map(t => ({
+                            address: PERMIT2_ADDRESS as `0x${string}`,
+                            abi: iallowance_transfer_abi as any,
+                            functionName: 'allowance' as const,
+                            args: [getAddress(userAddress), getAddress(t.sdkToken.address), POSITION_MANAGER_ADDRESS] as const
+                        })),
+                        allowFailure: false,
+                    });
+
+                    const permitsForData = permit2TokensForERC20Case.map((t, i) => {
+                        const [, , permitNonce] = permit2NonceResults[i] as readonly [bigint, number, number];
+                        return {
+                            token: getAddress(t.sdkToken.address),
+                            amount: t.permitAmount.toString(),
+                            expiration: toDeadline(PERMIT_EXPIRATION_MS).toString(),
+                            nonce: permitNonce.toString(),
+                        };
+                    });
+
+                    const permit = {
+                        details: permitsForData,
+                        spender: POSITION_MANAGER_ADDRESS,
+                        sigDeadline: toDeadline(PERMIT_SIG_EXPIRATION_MS).toString(),
+                    };
+
+                    const permitData = AllowanceTransfer.getPermitData(permit, permit2Address(chainId), chainId);
+
+                    if (!('details' in permitData.values) || !Array.isArray(permitData.values.details)) {
+                        throw new Error('Expected PermitBatch data structure');
+                    }
+
+                    const { domain, types, values } = permitData as {
+                        domain: typeof permitData.domain;
+                        types: typeof permitData.types;
+                        values: PermitBatch;
+                    };
+
+                    const permitBatchData = {
+                        domain,
+                        types,
+                        valuesRaw: values,
+                        values: {
+                            details: values.details.map((detail: any) => ({
+                                token: detail.token,
+                                amount: detail.amount.toString(),
+                                expiration: detail.expiration.toString(),
+                                nonce: detail.nonce.toString(),
+                            })),
+                            spender: values.spender,
+                            sigDeadline: values.sigDeadline.toString(),
+                        },
+                    } as any;
+
+                    return res.status(200).json({
+                        needsApproval: true,
+                        approvalType: 'PERMIT2_BATCH_SIGNATURE' as const,
+                        permitBatchData,
+                        signatureDetails: {
+                            domain: {
+                                name: domain.name || 'Permit2',
+                                chainId: Number(domain.chainId || chainId),
+                                verifyingContract: (domain.verifyingContract || PERMIT2_ADDRESS) as `0x${string}`,
+                            },
+                            types,
+                            primaryType: 'PermitBatch',
+                        },
+                        // Include ERC20 approval info
+                        erc20ApprovalNeeded: true,
+                        approvalTokenAddress: erc20ApprovalNeeded.approvalTokenAddress,
+                        approvalTokenSymbol: erc20ApprovalNeeded.approvalTokenSymbol,
+                        approveToAddress: erc20ApprovalNeeded.approveToAddress,
+                        approvalAmount: erc20ApprovalNeeded.approvalAmount,
+                    });
+                }
             }
         }
 

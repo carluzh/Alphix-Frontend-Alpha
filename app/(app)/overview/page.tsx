@@ -17,6 +17,7 @@ export default function OverviewPage() {
     totalValue,
     walletBalances,
     activePositions,
+    unifiedYieldPositions,
     priceMap,
     aprByPoolId,
     isLoading,
@@ -30,6 +31,7 @@ export default function OverviewPage() {
       totalValue={totalValue}
       walletBalances={walletBalances}
       activePositions={activePositions}
+      unifiedYieldPositions={unifiedYieldPositions}
       priceMap={priceMap}
       aprByPoolId={aprByPoolId}
       isLoading={isLoading}

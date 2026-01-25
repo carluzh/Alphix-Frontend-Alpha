@@ -39,6 +39,8 @@ export default function PoolDetailPage() {
     isLoadingPrices,
     // Token definitions
     tokenDefinitions,
+    // Responsive
+    windowWidth,
     // Tick utilities
     convertTickToPrice,
     // USD calculations
@@ -59,6 +61,7 @@ export default function PoolDetailPage() {
       priceMap={priceMap}
       isLoadingPrices={isLoadingPrices}
       tokenDefinitions={tokenDefinitions}
+      windowWidth={windowWidth}
       convertTickToPrice={convertTickToPrice}
       calculatePositionUsd={calculatePositionUsd}
     />

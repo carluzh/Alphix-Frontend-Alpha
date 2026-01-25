@@ -59,6 +59,9 @@ export function LiquidityPositionFeeStats({
   // Value displays
   formattedUsdValue,
   formattedUsdFees,
+  hideFees,
+  token0Amount,
+  token1Amount,
 
   // APR data
   apr,
@@ -118,36 +121,40 @@ export function LiquidityPositionFeeStats({
         )}
       </FeeStat>
 
-      {/* Fees - mirrors second FeeStat */}
-      <FeeStat>
-        {isLoading ? (
-          <FeeStatLoader />
-        ) : (
-          <>
-            <span className={cn(
-              "text-sm font-medium font-mono",
-              formattedUsdFees === '$0.00' && "text-white/50"
-            )}>
-              {formattedUsdFees || '-'}
-            </span>
-            <span className="text-xs text-muted-foreground">Fees</span>
-          </>
-        )}
-      </FeeStat>
+      {/* Fees - mirrors second FeeStat (hidden for Unified Yield positions) */}
+      {!hideFees && (
+        <FeeStat>
+          {isLoading ? (
+            <FeeStatLoader />
+          ) : (
+            <>
+              <span className={cn(
+                "text-sm font-medium font-mono",
+                formattedUsdFees === '$0.00' && "text-white/50"
+              )}>
+                {formattedUsdFees || '-'}
+              </span>
+              <span className="text-xs text-muted-foreground">Fees</span>
+            </>
+          )}
+        </FeeStat>
+      )}
 
-      {/* Range - uses pre-formatted prices */}
-      <MinMaxRange
-        tickSpacing={tickSpacing}
-        tickLower={tickLower}
-        tickUpper={tickUpper}
-        pricesInverted={pricesInverted}
-        setPricesInverted={setPricesInverted}
-        poolType={poolType}
-        denominationBase={denominationBase}
-        formattedMinPrice={formattedMinPrice}
-        formattedMaxPrice={formattedMaxPrice}
-        isFullRange={isFullRange}
-      />
+      {/* Range - uses pre-formatted prices (hidden for Unified Yield positions) */}
+      {!hideFees && (
+        <MinMaxRange
+          tickSpacing={tickSpacing}
+          tickLower={tickLower}
+          tickUpper={tickUpper}
+          pricesInverted={pricesInverted}
+          setPricesInverted={setPricesInverted}
+          poolType={poolType}
+          denominationBase={denominationBase}
+          formattedMinPrice={formattedMinPrice}
+          formattedMaxPrice={formattedMaxPrice}
+          isFullRange={isFullRange}
+        />
+      )}
 
       {/* APR - Conditional: PointsFeeStat or APRFeeStat */}
       {/* Both now use unified APRBreakdownTooltip with Swap APR, Unified Yield, Points */}

@@ -2,11 +2,11 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useAccount } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
 import { CurrencyAmount, Token, Price, Currency } from "@uniswap/sdk-core";
-import { Pool as V4Pool, Position as V4Position, tickToPrice } from "@uniswap/v4-sdk";
+import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
-import { getAddress } from "viem";
+import { getAddress, type Address } from "viem";
 import { getAllPools, getToken, type PoolConfig, type TokenConfig } from "@/lib/pools-config";
 import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 import { usePoolPriceChartData } from "@/lib/chart/hooks/usePoolPriceChartData";
@@ -14,6 +14,12 @@ import { HistoryDuration } from "@/lib/chart/types";
 import { useNetwork } from "@/lib/network-context";
 import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
 import { fetchPositionApr } from "@/lib/backend-client";
+import {
+  fetchSingleUnifiedYieldPosition,
+  parseUnifiedYieldPositionId,
+  type UnifiedYieldPosition,
+} from "@/lib/liquidity/unified-yield";
+import { usePriceOrdering, useGetRangeDisplay } from "@/lib/uniswap/liquidity/hooks";
 
 // ============================================================================
 // Types
@@ -57,6 +63,7 @@ export interface PositionPageData {
   // Position data
   position: V4Position | null;
   positionInfo: PositionInfo | null;
+  unifiedYieldPosition: UnifiedYieldPosition | null;
   isLoading: boolean;
   error: Error | null;
   // Pool data
@@ -111,7 +118,8 @@ export interface PositionPageData {
 // ============================================================================
 
 async function fetchPosition(tokenId: string): Promise<PositionInfo | null> {
-  if (!tokenId) return null;
+  // Don't fetch V4 position for Unified Yield position IDs
+  if (!tokenId || tokenId.startsWith('uy-')) return null;
 
   const response = await fetch(`/api/liquidity/get-position?tokenId=${tokenId}`);
   if (!response.ok) {
@@ -156,29 +164,74 @@ async function fetchPoolState(poolId: string): Promise<PoolStateData | null> {
 export function usePositionPageData(tokenId: string): PositionPageData {
   const { address, chainId = 8453 } = useAccount();
   const { networkMode } = useNetwork();
+  const publicClient = usePublicClient();
   const [priceInverted, setPriceInverted] = useState(false);
   const [chartDuration, setChartDuration] = useState<ChartDuration>("1M");
   const [denominationBase, setDenominationBase] = useState(true);
 
-  // Fetch position info
+  // Check if this is a Unified Yield position (uy-{hookAddress}-{userAddress})
+  const unifiedYieldParsed = useMemo(() => parseUnifiedYieldPositionId(tokenId), [tokenId]);
+  const isUnifiedYieldPosition = !!unifiedYieldParsed;
+
+  // Fetch Unified Yield position (if applicable)
+  const {
+    data: unifiedYieldPosition,
+    isLoading: isLoadingUnifiedYield,
+    error: unifiedYieldError,
+    refetch: refetchUnifiedYield,
+  } = useQuery({
+    queryKey: ["unified-yield-position-detail", unifiedYieldParsed?.hookAddress, unifiedYieldParsed?.userAddress, networkMode],
+    queryFn: async () => {
+      if (!unifiedYieldParsed || !publicClient) return null;
+      return fetchSingleUnifiedYieldPosition(
+        unifiedYieldParsed.hookAddress,
+        unifiedYieldParsed.userAddress,
+        publicClient,
+        networkMode
+      );
+    },
+    enabled: isUnifiedYieldPosition && !!publicClient,
+    staleTime: 30_000,
+  });
+
+  // Fetch V4 position info (if not Unified Yield)
+  // Note: Only runs for V4 positions (non-uy- prefix)
   const {
     data: positionInfo,
     isLoading: isLoadingPosition,
     error: positionError,
-    refetch,
+    refetch: refetchV4,
   } = useQuery({
-    queryKey: ["position", tokenId],
+    queryKey: ["position", "v4", tokenId],
     queryFn: () => fetchPosition(tokenId),
-    enabled: !!tokenId,
+    enabled: !!tokenId && !isUnifiedYieldPosition,
     staleTime: 30_000,
+    retry: false, // Don't retry on 400 errors
   });
 
-  // Get pool config from position info
+  // Combined refetch
+  const refetch = useCallback(() => {
+    if (isUnifiedYieldPosition) {
+      return refetchUnifiedYield();
+    }
+    return refetchV4();
+  }, [isUnifiedYieldPosition, refetchUnifiedYield, refetchV4]);
+
+  // Get pool config from position info (handles both V4 and Unified Yield)
   const poolConfig = useMemo((): PoolConfig | null => {
+    const allPools = getAllPools(networkMode);
+
+    // For Unified Yield positions, find pool by hook address
+    if (isUnifiedYieldPosition && unifiedYieldParsed) {
+      const config = allPools.find(
+        (pool) => pool.hooks?.toLowerCase() === unifiedYieldParsed.hookAddress.toLowerCase()
+      );
+      return config || null;
+    }
+
+    // For V4 positions, find pool by token addresses
     if (!positionInfo) return null;
 
-    const allPools = getAllPools();
-    // Find matching pool config by token addresses
     const config = allPools.find(
       (pool) =>
         (pool.currency0.address.toLowerCase() === positionInfo.token0.toLowerCase() &&
@@ -187,7 +240,7 @@ export function usePositionPageData(tokenId: string): PositionPageData {
           pool.currency1.address.toLowerCase() === positionInfo.token0.toLowerCase())
     );
     return config || null;
-  }, [positionInfo]);
+  }, [positionInfo, isUnifiedYieldPosition, unifiedYieldParsed, networkMode]);
 
   // Get token configs
   const token0Config = useMemo((): TokenConfig | null => {
@@ -201,10 +254,9 @@ export function usePositionPageData(tokenId: string): PositionPageData {
   }, [poolConfig]);
 
   // Determine LP type
-  const lpType: LPType = useMemo(() => {
-    if (!poolConfig) return "concentrated";
-    return poolConfig.rehypoRange ? "rehypo" : "concentrated";
-  }, [poolConfig]);
+  // V4 positions (via Position Manager) are always "concentrated" - they don't participate in rehypothecation
+  // Only Unified Yield positions (uy- prefix) are "rehypo" - they earn yield from lending protocols
+  const lpType: LPType = isUnifiedYieldPosition ? "rehypo" : "concentrated";
 
   // Fetch pool state
   const { data: poolState, isLoading: isLoadingPool } = useQuery({
@@ -267,9 +319,39 @@ export function usePositionPageData(tokenId: string): PositionPageData {
     }
   }, [positionInfo, poolConfig, poolState, token0Config, token1Config, chainId]);
 
-  // Token amounts from position
-  const currency0Amount = position?.amount0 || null;
-  const currency1Amount = position?.amount1 || null;
+  // Token amounts from position (handles both V4 and Unified Yield)
+  const currency0Amount = useMemo(() => {
+    // For Unified Yield positions, use the fetched token amounts
+    if (isUnifiedYieldPosition && unifiedYieldPosition && token0Config) {
+      const token0 = new Token(
+        chainId,
+        getAddress(token0Config.address),
+        token0Config.decimals,
+        token0Config.symbol,
+        token0Config.name
+      );
+      // unifiedYieldPosition.token0AmountRaw is bigint
+      return CurrencyAmount.fromRawAmount(token0, unifiedYieldPosition.token0AmountRaw.toString());
+    }
+    // For V4 positions, use SDK position amounts
+    return position?.amount0 || null;
+  }, [isUnifiedYieldPosition, unifiedYieldPosition, position, token0Config, chainId]);
+
+  const currency1Amount = useMemo(() => {
+    // For Unified Yield positions, use the fetched token amounts
+    if (isUnifiedYieldPosition && unifiedYieldPosition && token1Config) {
+      const token1 = new Token(
+        chainId,
+        getAddress(token1Config.address),
+        token1Config.decimals,
+        token1Config.symbol,
+        token1Config.name
+      );
+      return CurrencyAmount.fromRawAmount(token1, unifiedYieldPosition.token1AmountRaw.toString());
+    }
+    // For V4 positions, use SDK position amounts
+    return position?.amount1 || null;
+  }, [isUnifiedYieldPosition, unifiedYieldPosition, position, token1Config, chainId]);
 
   // USD prices - pass Token objects to the hook
   const { price: price0 } = useUSDCPriceRaw(currency0Amount?.currency);
@@ -291,8 +373,10 @@ export function usePositionPageData(tokenId: string): PositionPageData {
     return (fiatValue0 || 0) + (fiatValue1 || 0);
   }, [fiatValue0, fiatValue1]);
 
-  // Fee amounts
+  // Fee amounts (Unified Yield doesn't have separate fee tracking - fees are compounded)
   const fee0Amount = useMemo(() => {
+    // Unified Yield positions don't track fees separately
+    if (isUnifiedYieldPosition) return null;
     if (!positionInfo || !token0Config) return null;
     const token0 = new Token(
       chainId,
@@ -301,9 +385,11 @@ export function usePositionPageData(tokenId: string): PositionPageData {
       token0Config.symbol
     );
     return CurrencyAmount.fromRawAmount(token0, positionInfo.tokensOwed0.toString());
-  }, [positionInfo, token0Config, chainId]);
+  }, [isUnifiedYieldPosition, positionInfo, token0Config, chainId]);
 
   const fee1Amount = useMemo(() => {
+    // Unified Yield positions don't track fees separately
+    if (isUnifiedYieldPosition) return null;
     if (!positionInfo || !token1Config) return null;
     const token1 = new Token(
       chainId,
@@ -312,7 +398,7 @@ export function usePositionPageData(tokenId: string): PositionPageData {
       token1Config.symbol
     );
     return CurrencyAmount.fromRawAmount(token1, positionInfo.tokensOwed1.toString());
-  }, [positionInfo, token1Config, chainId]);
+  }, [isUnifiedYieldPosition, positionInfo, token1Config, chainId]);
 
   const fiatFeeValue0 = useMemo(() => {
     if (!fee0Amount || !price0) return null;
@@ -332,40 +418,75 @@ export function usePositionPageData(tokenId: string): PositionPageData {
   // Current price
   const currentPrice = pool?.token0Price || null;
 
-  // Range calculations
-  const { minPrice, maxPrice, tokenASymbol, tokenBSymbol, isFullRange, isInRange } = useMemo(() => {
-    if (!position || !pool || !poolConfig) {
+  // ============================================================================
+  // Range Calculations using shared hooks
+  // ============================================================================
+
+  // Compute tick bounds (from position or pool config for Unified Yield)
+  const { tickLower, tickUpper } = useMemo(() => {
+    // For Unified Yield, use pool's rehypoRange or default to full range
+    if (isUnifiedYieldPosition && poolConfig?.rehypoRange) {
+      const isFullRangeCalc = poolConfig.rehypoRange.isFullRange ?? true;
+      if (isFullRangeCalc) {
+        return { tickLower: -887272, tickUpper: 887272 };
+      }
       return {
-        minPrice: "0",
-        maxPrice: "∞",
-        tokenASymbol: "",
-        tokenBSymbol: "",
-        isFullRange: false,
-        isInRange: false,
+        tickLower: parseInt(poolConfig.rehypoRange.min, 10),
+        tickUpper: parseInt(poolConfig.rehypoRange.max, 10),
       };
     }
 
-    const tickLower = position.tickLower;
-    const tickUpper = position.tickUpper;
+    // For V4 positions, use position tick bounds
+    if (positionInfo) {
+      return {
+        tickLower: positionInfo.tickLower,
+        tickUpper: positionInfo.tickUpper,
+      };
+    }
+
+    // Default fallback
+    return { tickLower: 0, tickUpper: 0 };
+  }, [isUnifiedYieldPosition, poolConfig, positionInfo]);
+
+  // Use price ordering hook (converts ticks to prices using SDK)
+  const priceOrdering = usePriceOrdering({
+    chainId,
+    token0: {
+      address: token0Config?.address ?? "0x0000000000000000000000000000000000000000",
+      symbol: token0Config?.symbol ?? "",
+      decimals: token0Config?.decimals ?? 18,
+    },
+    token1: {
+      address: token1Config?.address ?? "0x0000000000000000000000000000000000000000",
+      symbol: token1Config?.symbol ?? "",
+      decimals: token1Config?.decimals ?? 18,
+    },
+    tickLower,
+    tickUpper,
+  });
+
+  // Use range display hook for formatted min/max prices
+  const {
+    minPrice,
+    maxPrice,
+    tokenASymbol,
+    tokenBSymbol,
+    isFullRange,
+  } = useGetRangeDisplay({
+    priceOrdering,
+    pricesInverted: priceInverted,
+    tickSpacing: poolConfig?.tickSpacing,
+    tickLower,
+    tickUpper,
+  });
+
+  // Calculate isInRange separately (Unified Yield is always in range)
+  const isInRange = useMemo(() => {
+    if (isUnifiedYieldPosition) return true; // Unified Yield is managed, always in range
+    if (!pool) return false;
     const currentTick = pool.tickCurrent;
-
-    const priceLower = tickToPrice(pool.token0, pool.token1, tickLower);
-    const priceUpper = tickToPrice(pool.token0, pool.token1, tickUpper);
-
-    const isFullRangeCalc =
-      tickLower === -887272 && tickUpper === 887272; // Near min/max ticks
-
-    const isInRangeCalc = currentTick >= tickLower && currentTick < tickUpper;
-
-    return {
-      minPrice: priceInverted ? priceUpper.invert().toSignificant(6) : priceLower.toSignificant(6),
-      maxPrice: priceInverted ? priceLower.invert().toSignificant(6) : priceUpper.toSignificant(6),
-      tokenASymbol: priceInverted ? poolConfig.currency1.symbol : poolConfig.currency0.symbol,
-      tokenBSymbol: priceInverted ? poolConfig.currency0.symbol : poolConfig.currency1.symbol,
-      isFullRange: isFullRangeCalc,
-      isInRange: isInRangeCalc,
-    };
-  }, [position, pool, poolConfig, priceInverted]);
+    return currentTick >= tickLower && currentTick < tickUpper;
+  }, [isUnifiedYieldPosition, pool, tickLower, tickUpper]);
 
   // Fetch pool APR from pools batch endpoint (fallback for pool-wide APR)
   const { data: poolStatsData } = useQuery({
@@ -387,8 +508,8 @@ export function usePositionPageData(tokenId: string): PositionPageData {
 
   // Fetch position-specific 7d APR from backend (primary source for position APR)
   const { data: backendAprData } = useQuery({
-    queryKey: ["positionApr", tokenId],
-    queryFn: () => fetchPositionApr(tokenId),
+    queryKey: ["positionApr", tokenId, networkMode],
+    queryFn: () => fetchPositionApr(tokenId, networkMode),
     enabled: !!tokenId,
     staleTime: 5 * 60_000, // 5 minutes
   });
@@ -452,16 +573,42 @@ export function usePositionPageData(tokenId: string): PositionPageData {
   }, []);
 
   const isOwner = useMemo(() => {
-    if (!address || !positionInfo?.owner) return false;
+    if (!address) return false;
+
+    // For Unified Yield positions, check against the userAddress in the URL
+    if (isUnifiedYieldPosition && unifiedYieldParsed) {
+      return unifiedYieldParsed.userAddress.toLowerCase() === address.toLowerCase();
+    }
+
+    // Fallback: If we have a loaded UY position but parsing failed for some reason,
+    // check if the tokenId contains the connected wallet address
+    // This handles edge cases where URL parsing might fail unexpectedly
+    if (tokenId.startsWith('uy-') && unifiedYieldPosition) {
+      const addressLower = address.toLowerCase();
+      return tokenId.toLowerCase().includes(addressLower);
+    }
+
+    // For V4 positions, check against the position owner
+    if (!positionInfo?.owner) return false;
     return positionInfo.owner.toLowerCase() === address.toLowerCase();
-  }, [address, positionInfo]);
+  }, [address, positionInfo, isUnifiedYieldPosition, unifiedYieldParsed, tokenId, unifiedYieldPosition]);
+
+  // Determine loading and error states
+  const isLoading = isUnifiedYieldPosition
+    ? isLoadingUnifiedYield
+    : (isLoadingPosition || isLoadingPool);
+
+  const error = isUnifiedYieldPosition
+    ? (unifiedYieldError as Error | null)
+    : (positionError as Error | null);
 
   return {
     // Position data
     position,
     positionInfo: positionInfo ?? null,
-    isLoading: isLoadingPosition || isLoadingPool,
-    error: positionError as Error | null,
+    unifiedYieldPosition: unifiedYieldPosition ?? null,
+    isLoading,
+    error,
     // Pool data
     poolConfig,
     poolState: poolState ?? null,

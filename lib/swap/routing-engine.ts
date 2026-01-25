@@ -169,14 +169,15 @@ function scoreRoute(route: SwapRoute): number {
  * Main function to find the best route between two tokens
  */
 export function findBestRoute(fromToken: string, toToken: string, networkMode?: NetworkMode): RouteResult {
-  console.log(`[RoutingEngine] Finding routes from ${fromToken} to ${toToken}`);
-
   // Validate tokens exist
   const fromTokenConfig = getToken(fromToken, networkMode);
   const toTokenConfig = getToken(toToken, networkMode);
 
   if (!fromTokenConfig || !toTokenConfig) {
-    console.error(`[RoutingEngine] Invalid tokens: ${fromToken} or ${toToken} not found`);
+    // Only log if both tokens should exist (reduces noise for price discovery calls)
+    if (fromTokenConfig || toTokenConfig) {
+      console.error(`[RoutingEngine] Invalid tokens: ${fromToken} or ${toToken} not found`);
+    }
     return {
       bestRoute: null,
       allRoutes: [],
@@ -186,9 +187,9 @@ export function findBestRoute(fromToken: string, toToken: string, networkMode?: 
 
   // Find all possible routes
   const allRoutes = findAllRoutes(fromToken, toToken, 3, networkMode); // Max 3 hops
-  
+
   if (allRoutes.length === 0) {
-    console.warn(`[RoutingEngine] No routes found from ${fromToken} to ${toToken}`);
+    // No warning - missing routes are expected for tokens without pools (e.g., ETH on testnet)
     return {
       bestRoute: null,
       allRoutes: [],
@@ -205,8 +206,6 @@ export function findBestRoute(fromToken: string, toToken: string, networkMode?: 
   const bestRoute = scoredRoutes[0].route;
   const hasDirectRoute = allRoutes.some(route => route.isDirectRoute);
 
-  console.log(`[RoutingEngine] Found ${allRoutes.length} routes. Best route: ${bestRoute.path.join(' → ')} (${bestRoute.hops} hops)`);
-  
   return {
     bestRoute,
     allRoutes,

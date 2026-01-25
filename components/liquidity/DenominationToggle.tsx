@@ -10,6 +10,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { cn, getTokenIcon } from '@/lib/utils';
+import { useNetwork } from '@/lib/network-context';
 
 interface DenominationToggleProps {
   /** Symbol of token0 */
@@ -35,8 +36,9 @@ export function DenominationToggle({
   onToggle,
   className,
 }: DenominationToggleProps) {
-  const icon0 = getTokenIcon(token0Symbol);
-  const icon1 = getTokenIcon(token1Symbol);
+  const { networkMode } = useNetwork();
+  const icon0 = getTokenIcon(token0Symbol, networkMode);
+  const icon1 = getTokenIcon(token1Symbol, networkMode);
 
   return (
     <div

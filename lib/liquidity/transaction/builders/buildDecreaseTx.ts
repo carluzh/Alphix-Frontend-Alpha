@@ -15,6 +15,7 @@ import { getToken, getTokenSymbolByAddress, getTokenDefinitions, type TokenSymbo
 import { getPositionDetails, getPoolState } from '@/lib/liquidity/liquidity-utils';
 import { EMPTY_BYTES } from '@/lib/swap/swap-constants';
 import type { NetworkMode } from '@/lib/network-mode';
+import { safeParseUnits } from '../../utils';
 
 import { parseTokenIdFromPosition } from './buildIncreaseTx';
 
@@ -62,19 +63,6 @@ export interface BuildDecreaseTxContext {
   chainId: number;
   networkMode: NetworkMode;
 }
-
-// =============================================================================
-// HELPERS
-// =============================================================================
-
-const safeParseUnits = (amount: string, decimals: number): bigint => {
-  let cleaned = (amount || '').toString().replace(/,/g, '').trim();
-  if (!cleaned || cleaned === '.' || cleaned === '< 0.0001') return 0n;
-  if (cleaned.includes('e')) {
-    cleaned = parseFloat(cleaned).toFixed(decimals);
-  }
-  return parseUnits(cleaned, decimals);
-};
 
 // =============================================================================
 // PERCENTAGE-BASED DECREASE (removeCallParameters path)

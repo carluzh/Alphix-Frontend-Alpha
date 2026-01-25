@@ -29,6 +29,9 @@ import {
   createIncreasePositionStepBatched,
   createDecreasePositionStep,
   createCollectFeesStep,
+  createUnifiedYieldApprovalStep,
+  createUnifiedYieldDepositStep,
+  createUnifiedYieldWithdrawStep,
   orderIncreaseLiquiditySteps,
   orderDecreaseLiquiditySteps,
   orderCollectFeesSteps,
@@ -107,6 +110,20 @@ export function generateLPTransactionSteps(txContext: LiquidityTxAndGasInfo): Tr
 
     switch (txContext.type) {
       case 'decrease':
+        // Unified Yield withdrawals - direct Hook call, no approvals needed
+        if (txContext.isUnifiedYield && txContext.hookAddress && txContext.sharesToWithdraw && txContext.txRequest) {
+          return [
+            createUnifiedYieldWithdrawStep(
+              txContext.txRequest,
+              txContext.hookAddress,
+              txContext.poolId || '',
+              txContext.sharesToWithdraw,
+              action.currency0Amount.currency.symbol || '',
+              action.currency1Amount.currency.symbol || '',
+            ),
+          ];
+        }
+        // V4 decrease - standard flow with position approval
         return orderDecreaseLiquiditySteps({
           approvalPositionToken,
           decreasePosition: createDecreasePositionStep(txContext.txRequest, txContext.sqrtRatioX96),
@@ -114,6 +131,50 @@ export function generateLPTransactionSteps(txContext: LiquidityTxAndGasInfo): Tr
 
       case 'create':
       case 'increase':
+        // Unified Yield deposits - direct ERC20 approval to Hook, then deposit
+        if (txContext.isUnifiedYield && txContext.hookAddress && txContext.sharesToMint && txContext.txRequest) {
+          const steps: TransactionStep[] = [];
+
+          // Add approval steps if needed (ERC20 approve to Hook, not Permit2)
+          if (approveToken0Request) {
+            steps.push(
+              createUnifiedYieldApprovalStep(
+                approveToken0Request,
+                action.currency0Amount.currency.wrapped.address as `0x${string}`,
+                action.currency0Amount.currency.symbol || '',
+                txContext.hookAddress,
+                BigInt(action.currency0Amount.quotient.toString()),
+              ),
+            );
+          }
+          if (approveToken1Request) {
+            steps.push(
+              createUnifiedYieldApprovalStep(
+                approveToken1Request,
+                action.currency1Amount.currency.wrapped.address as `0x${string}`,
+                action.currency1Amount.currency.symbol || '',
+                txContext.hookAddress,
+                BigInt(action.currency1Amount.quotient.toString()),
+              ),
+            );
+          }
+
+          // Add deposit step
+          steps.push(
+            createUnifiedYieldDepositStep(
+              txContext.txRequest,
+              txContext.hookAddress,
+              txContext.poolId || '',
+              txContext.sharesToMint,
+              action.currency0Amount.currency.symbol || '',
+              action.currency1Amount.currency.symbol || '',
+            ),
+          );
+
+          return steps;
+        }
+
+        // V4 create/increase flows below
         if (txContext.unsigned) {
           // Unsigned flow uses permit signature - MATCHES UNISWAP PATTERN
           // The async step will call the API with the signature to get the transaction

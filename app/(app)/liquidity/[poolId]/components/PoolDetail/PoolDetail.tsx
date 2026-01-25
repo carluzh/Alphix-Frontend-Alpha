@@ -1,10 +1,14 @@
 "use client";
 
-import { memo, useState, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { useAccount } from "wagmi";
 import { useRouter } from "next/navigation";
 import { parseSubgraphPosition, type SubgraphPosition, type PositionInfo } from "@/lib/uniswap/liquidity";
-import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
+import type { V4ProcessedPosition } from "@/pages/api/liquidity/get-positions";
+import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
+
+/** Position union type - V4 and Unified Yield positions fetched through separate flows */
+type Position = V4ProcessedPosition | UnifiedYieldPosition;
 import type { TokenSymbol } from "@/lib/pools-config";
 import { useQuery } from "@tanstack/react-query";
 import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
@@ -33,8 +37,8 @@ export interface PoolDetailProps {
   chartData: ChartDataPoint[];
   isLoadingChartData: boolean;
 
-  // Positions
-  userPositions: ProcessedPosition[];
+  // Positions (discriminated union of V4 and Unified Yield)
+  userPositions: Position[];
   isLoadingPositions: boolean;
   isDerivingNewPosition: boolean;
   optimisticallyClearedFees: Set<string>;
@@ -46,6 +50,9 @@ export interface PoolDetailProps {
   // Token definitions
   tokenDefinitions: Record<string, { address: string; decimals: number; symbol: string }>;
 
+  // Responsive
+  windowWidth: number;
+
   // Tick utilities
   convertTickToPrice: (
     tick: number,
@@ -56,8 +63,8 @@ export interface PoolDetailProps {
     token1Symbol: string
   ) => string;
 
-  // USD calculations
-  calculatePositionUsd: (position: ProcessedPosition) => number;
+  // USD calculations (handles both V4 and Unified Yield positions)
+  calculatePositionUsd: (position: Position) => number;
 }
 
 /**
@@ -77,6 +84,7 @@ export const PoolDetail = memo(function PoolDetail({
   priceMap,
   isLoadingPrices,
   tokenDefinitions,
+  windowWidth,
   convertTickToPrice,
   calculatePositionUsd,
 }: PoolDetailProps) {
@@ -111,25 +119,11 @@ export const PoolDetail = memo(function PoolDetail({
     return apy0 ?? apy1 ?? undefined;
   }, [poolConfig, aaveRatesData]);
 
-  // Window width for responsive chart
-  const [windowWidth, setWindowWidth] = useState<number>(
-    typeof window !== "undefined" ? window.innerWidth : 1200
-  );
-
-  useEffect(() => {
-    const handleResize = () => setWindowWidth(window.innerWidth);
-    if (typeof window !== "undefined") {
-      setWindowWidth(window.innerWidth);
-      window.addEventListener("resize", handleResize);
-      return () => window.removeEventListener("resize", handleResize);
-    }
-  }, []);
-
   // =========================================================================
-  // POSITION INFO CONVERSION
+  // POSITION INFO CONVERSION (V4 positions only)
   // =========================================================================
   const getPositionInfo = useCallback(
-    (position: ProcessedPosition, feeData?: { amount0?: string; amount1?: string }): PositionInfo | undefined => {
+    (position: V4ProcessedPosition, feeData?: { amount0?: string; amount1?: string }): PositionInfo | undefined => {
       const subgraphPos: SubgraphPosition = {
         positionId: position.positionId,
         owner: position.owner || "",
@@ -167,10 +161,10 @@ export const PoolDetail = memo(function PoolDetail({
   );
 
   // =========================================================================
-  // FEE DATA EXTRACTION
+  // FEE DATA EXTRACTION (V4 positions only - UY positions don't have uncollected fees)
   // =========================================================================
   const getFeesForPosition = useCallback(
-    (positionId: string, position?: ProcessedPosition) => {
+    (positionId: string, position?: V4ProcessedPosition) => {
       if (!positionId) return null;
 
       // If optimistically cleared, return zero
@@ -208,7 +202,7 @@ export const PoolDetail = memo(function PoolDetail({
     }
   }, [poolConfig?.id, router]);
 
-  const handlePositionClick = useCallback((position: ProcessedPosition) => {
+  const handlePositionClick = useCallback((position: Position) => {
     router.push(`/liquidity/position/${position.positionId}`);
   }, [router]);
 

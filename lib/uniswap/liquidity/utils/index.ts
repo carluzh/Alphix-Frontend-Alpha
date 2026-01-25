@@ -1,9 +1,4 @@
 export {
-  getTickToPrice,
-  getV4TickToPrice,
-} from './getTickToPrice'
-
-export {
   parseSubgraphPosition,
   parseSubgraphPositions,
   type SubgraphPosition,

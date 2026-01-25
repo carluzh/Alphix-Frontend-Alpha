@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { SSEConnectionStatus, SSEEventType, SSEEventMap, SSEHandlers } from './types';
+import { type NetworkMode } from '../network-mode';
+import { getBackendUrl, getNetworkParam } from '../backend-client';
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 const DEFAULT_RECONNECT_INTERVAL = 5000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 interface UseSSEOptions extends SSEHandlers {
   address: string | undefined;
+  networkMode: NetworkMode;
   enabled?: boolean;
   reconnectInterval?: number;
   maxReconnectAttempts?: number;
@@ -28,6 +30,7 @@ interface UseSSEReturn {
  */
 export function useSSE({
   address,
+  networkMode,
   enabled = true,
   reconnectInterval = DEFAULT_RECONNECT_INTERVAL,
   maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS,
@@ -95,7 +98,9 @@ export function useSSE({
 
     updateStatus('connecting');
 
-    const url = `${BACKEND_URL}/stream?address=${encodeURIComponent(address)}`;
+    const backendUrl = getBackendUrl();
+    const networkParam = getNetworkParam(networkMode);
+    const url = `${backendUrl}/stream?address=${encodeURIComponent(address)}&network=${networkParam}`;
     const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
 
@@ -158,6 +163,7 @@ export function useSSE({
     });
   }, [
     address,
+    networkMode,
     enabled,
     maxReconnectAttempts,
     reconnectInterval,

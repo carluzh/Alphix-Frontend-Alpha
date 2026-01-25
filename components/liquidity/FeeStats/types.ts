@@ -55,6 +55,14 @@ export interface LiquidityPositionFeeStatsProps extends LiquidityPositionMinMaxR
   formattedUsdValue?: string;
   /** Formatted fees USD value (e.g., "$12.34") */
   formattedUsdFees?: string;
+  /** Hide the fees stat entirely (for Unified Yield positions) */
+  hideFees?: boolean;
+
+  // Token amounts (for Unified Yield positions - shown instead of fees)
+  /** Formatted token0 amount (e.g., "500.00") */
+  token0Amount?: string;
+  /** Formatted token1 amount (e.g., "500.00") */
+  token1Amount?: string;
 
   // APR data
   /** Raw APR value (for points calculation) */

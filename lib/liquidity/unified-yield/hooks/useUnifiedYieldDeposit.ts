@@ -1,22 +1,32 @@
 /**
  * Unified Yield Deposit Execution Hook
  *
- * Handles the full deposit flow for Unified Yield positions:
- * 1. Check/request ERC20 approvals to Hook
- * 2. Execute deposit transaction
- * 3. Track transaction status
+ * Handles the full deposit flow for Unified Yield (ReHypothecation) positions:
+ * 1. Preview the deposit to get required amounts and shares
+ * 2. Check/request ERC20 approvals to Hook
+ * 3. Execute addReHypothecatedLiquidity(shares) transaction
+ * 4. Track transaction status
+ *
+ * KEY CHANGE: The contract uses a share-centric flow:
+ * - User enters one token amount
+ * - Preview calculates the other amount and shares
+ * - Transaction calls addReHypothecatedLiquidity(shares)
  *
  * Unlike V4 deposits which use Permit2, Unified Yield uses direct ERC20 approvals.
  */
 
 import { useCallback, useState } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import type { Address, Hash } from 'viem';
 import { parseUnits } from 'viem';
 
 import { UNIFIED_YIELD_HOOK_ABI } from '../abi/unifiedYieldHookABI';
-import { buildUnifiedYieldDepositTx, validateUnifiedYieldDepositParams } from '../buildUnifiedYieldDepositTx';
-import type { UnifiedYieldDepositParams } from '../types';
+import {
+  buildUnifiedYieldDepositTx,
+  validateUnifiedYieldDepositParams,
+  previewDeposit,
+} from '../buildUnifiedYieldDepositTx';
+import type { UnifiedYieldDepositParams, DepositPreviewResult } from '../types';
 import { NATIVE_TOKEN_ADDRESS } from '@/lib/pools-config';
 
 export interface UseUnifiedYieldDepositParams {
@@ -26,6 +36,10 @@ export interface UseUnifiedYieldDepositParams {
   token0Address?: Address;
   /** Token1 address */
   token1Address?: Address;
+  /** Token0 decimals */
+  token0Decimals?: number;
+  /** Token1 decimals */
+  token1Decimals?: number;
   /** Pool ID */
   poolId?: string;
   /** Chain ID */
@@ -33,8 +47,35 @@ export interface UseUnifiedYieldDepositParams {
 }
 
 export interface UseUnifiedYieldDepositResult {
-  /** Execute the deposit */
-  deposit: (amount0: string, amount1: string, decimals0: number, decimals1: number) => Promise<Hash | undefined>;
+  /**
+   * Execute the deposit with a pre-calculated preview
+   * Use this when you've already run the preview and have all values
+   */
+  depositWithPreview: (preview: DepositPreviewResult) => Promise<Hash | undefined>;
+
+  /**
+   * Execute deposit from a single token amount
+   * Automatically runs preview and then deposits
+   *
+   * @param amount - The token amount as a string (e.g., "1.5")
+   * @param inputSide - Which token the user entered ('token0' or 'token1')
+   * @param decimals - Decimals for the input token
+   */
+  deposit: (
+    amount: string,
+    inputSide: 'token0' | 'token1',
+    decimals: number
+  ) => Promise<Hash | undefined>;
+
+  /**
+   * Preview the deposit without executing
+   * Returns the calculated amounts and shares
+   */
+  getPreview: (
+    amount: string,
+    inputSide: 'token0' | 'token1',
+    decimals: number
+  ) => Promise<DepositPreviewResult | null>;
 
   /** Current transaction hash (if any) */
   txHash: Hash | undefined;
@@ -59,6 +100,9 @@ export interface UseUnifiedYieldDepositResult {
 
   /** Whether waiting for confirmation */
   isConfirming: boolean;
+
+  /** Latest preview result (from getPreview or deposit) */
+  lastPreview: DepositPreviewResult | null;
 }
 
 /**
@@ -69,26 +113,37 @@ export interface UseUnifiedYieldDepositResult {
  *
  * @example
  * ```tsx
- * const { deposit, isPending, isSuccess } = useUnifiedYieldDeposit({
+ * const { deposit, getPreview, isPending, isSuccess, lastPreview } = useUnifiedYieldDeposit({
  *   hookAddress: '0x...',
  *   token0Address: '0x...',
  *   token1Address: '0x...',
+ *   token0Decimals: 18,
+ *   token1Decimals: 6,
  *   poolId: 'eth-usdc',
- *   chainId: 8453,
+ *   chainId: 84532,
  * });
  *
- * // Execute deposit
- * await deposit('1.0', '1000', 18, 6); // 1 ETH + 1000 USDC
+ * // Preview to show user the required amounts
+ * const preview = await getPreview('1.0', 'token0', 18);
+ * // preview = { amount0: 1e18, amount1: 3000e6, shares: ..., ... }
+ *
+ * // Execute deposit (will run preview again internally)
+ * await deposit('1.0', 'token0', 18);
+ *
+ * // Or deposit with pre-calculated preview
+ * await depositWithPreview(preview);
  * ```
  */
 export function useUnifiedYieldDeposit(
   params?: UseUnifiedYieldDepositParams
 ): UseUnifiedYieldDepositResult {
   const { address: userAddress } = useAccount();
+  const publicClient = usePublicClient();
   const [error, setError] = useState<Error | null>(null);
+  const [lastPreview, setLastPreview] = useState<DepositPreviewResult | null>(null);
 
   const {
-    writeContract,
+    writeContractAsync,
     data: txHash,
     isPending: isWritePending,
     isSuccess: isWriteSuccess,
@@ -105,13 +160,55 @@ export function useUnifiedYieldDeposit(
     hash: txHash,
   });
 
-  const deposit = useCallback(
+  /**
+   * Get deposit preview
+   */
+  const getPreview = useCallback(
     async (
-      amount0: string,
-      amount1: string,
-      decimals0: number,
-      decimals1: number
-    ): Promise<Hash | undefined> => {
+      amount: string,
+      inputSide: 'token0' | 'token1',
+      decimals: number
+    ): Promise<DepositPreviewResult | null> => {
+      if (!params?.hookAddress || !publicClient) {
+        return null;
+      }
+
+      try {
+        const amountWei = parseUnits(amount || '0', decimals);
+        if (amountWei <= 0n) return null;
+
+        const token0Decimals = params.token0Decimals ?? 18;
+        const token1Decimals = params.token1Decimals ?? 18;
+        const shareDecimals = 18; // Standard share decimals
+
+        const preview = await previewDeposit(
+          params.hookAddress,
+          amountWei,
+          inputSide,
+          token0Decimals,
+          token1Decimals,
+          shareDecimals,
+          publicClient
+        );
+
+        if (preview) {
+          setLastPreview(preview);
+        }
+
+        return preview;
+      } catch (err) {
+        console.warn('Preview failed:', err);
+        return null;
+      }
+    },
+    [params, publicClient]
+  );
+
+  /**
+   * Execute deposit with a pre-calculated preview
+   */
+  const depositWithPreview = useCallback(
+    async (preview: DepositPreviewResult): Promise<Hash | undefined> => {
       setError(null);
 
       if (!params?.hookAddress || !params?.token0Address || !params?.token1Address) {
@@ -126,23 +223,27 @@ export function useUnifiedYieldDeposit(
         return undefined;
       }
 
-      try {
-        // Parse amounts to wei
-        const amount0Wei = parseUnits(amount0 || '0', decimals0);
-        const amount1Wei = parseUnits(amount1 || '0', decimals1);
+      if (preview.shares <= 0n) {
+        const err = new Error('Invalid shares amount from preview');
+        setError(err);
+        return undefined;
+      }
 
-        // Validate params
+      try {
+        // Build full deposit params
         const depositParams: UnifiedYieldDepositParams = {
           hookAddress: params.hookAddress,
           token0Address: params.token0Address,
           token1Address: params.token1Address,
-          amount0Wei,
-          amount1Wei,
+          amount0Wei: preview.amount0,
+          amount1Wei: preview.amount1,
+          sharesToMint: preview.shares,
           userAddress,
           poolId: params.poolId || '',
-          chainId: params.chainId || 8453,
+          chainId: params.chainId || 84532,
         };
 
+        // Validate
         const validation = validateUnifiedYieldDepositParams(depositParams);
         if (!validation.valid) {
           const err = new Error(validation.errors.join(', '));
@@ -150,41 +251,66 @@ export function useUnifiedYieldDeposit(
           return undefined;
         }
 
-        // Build transaction
-        const txData = await buildUnifiedYieldDepositTx(depositParams);
+        // Build transaction data
+        const txData = buildUnifiedYieldDepositTx(depositParams);
 
-        // Execute deposit
-        writeContract({
+        // Execute: addReHypothecatedLiquidity(shares)
+        // Use writeContractAsync to properly await the transaction submission
+        const hash = await writeContractAsync({
           address: txData.to,
           abi: UNIFIED_YIELD_HOOK_ABI,
-          functionName: 'deposit',
-          args: [
-            params.token0Address,
-            params.token1Address,
-            amount0Wei,
-            amount1Wei,
-            userAddress,
-          ],
+          functionName: 'addReHypothecatedLiquidity',
+          args: [preview.shares],
           value: txData.value,
         });
 
-        return txHash;
+        return hash;
       } catch (err) {
         const error = err instanceof Error ? err : new Error('Deposit failed');
         setError(error);
         return undefined;
       }
     },
-    [params, userAddress, writeContract, txHash]
+    [params, userAddress, writeContractAsync]
+  );
+
+  /**
+   * Execute deposit from a single token amount
+   * Runs preview first, then executes the deposit
+   */
+  const deposit = useCallback(
+    async (
+      amount: string,
+      inputSide: 'token0' | 'token1',
+      decimals: number
+    ): Promise<Hash | undefined> => {
+      setError(null);
+
+      // Get preview first
+      const preview = await getPreview(amount, inputSide, decimals);
+
+      if (!preview) {
+        const err = new Error('Failed to preview deposit amounts');
+        setError(err);
+        return undefined;
+      }
+
+      // Execute with the preview
+      return depositWithPreview(preview);
+    },
+    [getPreview, depositWithPreview]
   );
 
   const reset = useCallback(() => {
     setError(null);
+    setLastPreview(null);
     resetWrite();
   }, [resetWrite]);
 
   return {
     deposit,
+    depositWithPreview,
+    getPreview,
     txHash,
     isPending: isWritePending,
     isSuccess: isWriteSuccess && isConfirmed,
@@ -193,12 +319,6 @@ export function useUnifiedYieldDeposit(
     reset,
     receipt,
     isConfirming,
+    lastPreview,
   };
-}
-
-/**
- * Helper to check if a token is native ETH
- */
-export function isNativeToken(tokenAddress: Address): boolean {
-  return tokenAddress === NATIVE_TOKEN_ADDRESS;
 }

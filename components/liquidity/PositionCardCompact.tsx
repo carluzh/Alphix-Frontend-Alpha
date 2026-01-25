@@ -18,7 +18,6 @@ import { Percent } from '@uniswap/sdk-core';
 import { ArrowUpRight } from 'lucide-react';
 import { type PositionPointsData } from '@/types';
 import { useQuery } from '@tanstack/react-query';
-import { fetchAaveRates, getAaveKey } from '@/lib/aave-rates';
 import { fetchPositionApr } from '@/lib/backend-client';
 import {
     StatusIndicatorCircle,
@@ -99,38 +98,14 @@ export function PositionCardCompact({
 
     const { currentPrice, poolAPR, isLoadingPrices, isLoadingPoolStates } = poolContext;
 
-    // Fetch Aave rates for Unified Yield display
-    const { data: aaveRatesData } = useQuery({
-        queryKey: ['aaveRates'],
-        queryFn: fetchAaveRates,
-        staleTime: 5 * 60_000, // 5 minutes
-    });
-
     // Fetch position-specific 7d APR from backend
     const positionId = position.tokenId?.toString();
     const { data: backendAprData, isLoading: isLoadingBackendApr } = useQuery({
-        queryKey: ['positionApr', positionId],
-        queryFn: () => fetchPositionApr(positionId!),
+        queryKey: ['positionApr', positionId, networkMode],
+        queryFn: () => fetchPositionApr(positionId!, networkMode),
         enabled: !!positionId && position.status !== PositionStatus.CLOSED,
         staleTime: 5 * 60_000, // 5 minutes
     });
-
-    // Calculate Aave APY based on position tokens
-    const unifiedYieldApr = useMemo(() => {
-        if (!aaveRatesData?.success) return undefined;
-
-        const key0 = getAaveKey(token0Symbol);
-        const key1 = getAaveKey(token1Symbol);
-
-        const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
-        const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
-
-        // Average if both tokens supported, otherwise use single token's APY
-        if (apy0 !== null && apy1 !== null) {
-            return (apy0 + apy1) / 2;
-        }
-        return apy0 ?? apy1 ?? undefined;
-    }, [aaveRatesData, token0Symbol, token1Symbol]);
 
     // Get USD values for fees using Uniswap's routing-based pricing
     // This fixes the bug where tokens not in priceMap returned $0
@@ -379,7 +354,6 @@ export function PositionCardCompact({
                 apr={rawSwapApr}
                 formattedApr={formattedAPR}
                 isAprFallback={isAPRFallback}
-                unifiedYieldApr={unifiedYieldApr}
                 pointsData={pointsData}
                 token0Symbol={token0Symbol}
                 token1Symbol={token1Symbol}

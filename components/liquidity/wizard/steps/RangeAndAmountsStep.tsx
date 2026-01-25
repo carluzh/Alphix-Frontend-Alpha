@@ -33,12 +33,18 @@ import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
 import { formatCalculatedAmount } from '@/components/liquidity/liquidity-form-utils';
 import { calculateTicksFromPercentage, getFieldsDisabled, PositionField, isInvalidRange } from '@/lib/liquidity/utils/calculations';
 import { DEFAULT_TICK_SPACING } from '@/lib/liquidity/utils/validation/feeTiers';
-import { nearestUsableTick } from '@uniswap/v3-sdk';
-import { tickToPrice as tickToPriceV4 } from '@uniswap/v4-sdk';
+import {
+  nearestUsableTick,
+  tickToPriceNumber,
+  priceToTickSimple,
+  priceNumberToTick,
+  tickToPriceSmart,
+} from '@/lib/liquidity/utils/tick-price';
 import { D3LiquidityRangeChart, LiquidityRangeActionButtons, LiquidityChartSkeleton, CHART_DIMENSIONS, type D3LiquidityRangeChartHandle } from '@/components/liquidity/d3-chart';
 import { HistoryDuration, usePoolPriceChartData } from '@/lib/chart';
 import { useLiquidityChartData } from '@/hooks/useLiquidityChartData';
 import { getPoolSubgraphId } from '@/lib/pools-config';
+import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 
 // Price Strategy configurations (aligned with Uniswap's DefaultPriceStrategies)
 interface PriceStrategyConfig {
@@ -51,9 +57,9 @@ interface PriceStrategyConfig {
 const PRICE_STRATEGIES: PriceStrategyConfig[] = [
   {
     id: 'stable',
-    title: 'Stable',
-    display: '± 3 ticks',
-    description: 'Good for stablecoins or low volatility pairs',
+    title: 'Narrow',
+    display: '± ~0.03%',
+    description: 'Tight range for stablecoins or pegged pairs',
   },
   {
     id: 'wide',
@@ -172,6 +178,7 @@ interface RangeInputProps {
   percentFromCurrent: string;
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
   disabled?: boolean;
@@ -183,6 +190,7 @@ function RangeInput({
   percentFromCurrent,
   value,
   onChange,
+  onBlur,
   onIncrement,
   onDecrement,
   disabled,
@@ -202,6 +210,7 @@ function RangeInput({
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
           disabled={disabled}
           className="bg-transparent border-none text-xl md:text-xl font-semibold p-0 h-auto text-white focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
           placeholder="0"
@@ -292,21 +301,27 @@ export function RangeAndAmountsStep() {
 
   // Disabled fields based on price range (Uniswap priceRangeInfo.ts pattern)
   // At range extremes, one token deposit may be disabled
-  const { [PositionField.TOKEN0]: deposit0Disabled, [PositionField.TOKEN1]: deposit1Disabled } = useMemo(() => {
+  // NOTE: For Unified Yield (rehypo mode), both deposits are always enabled - the Hook handles allocation
+  const { [PositionField.TOKEN0]: deposit0DisabledRaw, [PositionField.TOKEN1]: deposit1DisabledRaw } = useMemo(() => {
     return getFieldsDisabled({
       pool: sdkPool,
       ticks: [state.tickLower ?? undefined, state.tickUpper ?? undefined],
     });
   }, [sdkPool, state.tickLower, state.tickUpper]);
 
-  // Animation controls
-  const wiggleControls0 = useAnimation();
-  const wiggleControls1 = useAnimation();
-
   // Pool and token data - now uses context (Uniswap pattern)
   const poolConfig = state.poolId ? getPoolById(state.poolId) : null;
   const isStablePool = poolConfig?.type === 'Stable';
   const isRehypoMode = state.mode === 'rehypo';
+
+  // For Unified Yield, never disable deposit fields - users always provide both tokens
+  const deposit0Disabled = isRehypoMode ? false : deposit0DisabledRaw;
+  const deposit1Disabled = isRehypoMode ? false : deposit1DisabledRaw;
+
+  // Animation controls
+  const wiggleControls0 = useAnimation();
+  const wiggleControls1 = useAnimation();
+
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
   const token0Symbol = poolConfig?.currency0.symbol as TokenSymbol | undefined;
@@ -318,12 +333,70 @@ export function RangeAndAmountsStep() {
   const currentPriceRaw = poolStateData?.currentPrice || '1.00';
   const currentTick = poolStateData?.currentPoolTick;
 
+  // For Unified Yield: Convert tick range from config to prices
+  // rehypoRange stores tick values (e.g., min: "-276326", max: "-276324"), NOT prices
+  const rehypoTickLower = poolConfig?.rehypoRange?.min ? parseInt(poolConfig.rehypoRange.min, 10) : null;
+  const rehypoTickUpper = poolConfig?.rehypoRange?.max ? parseInt(poolConfig.rehypoRange.max, 10) : null;
+
+  // Use the same hooks as ReviewExecuteModal for proper tick-to-price conversion
+  // These hooks properly handle token decimal differences
+  const FALLBACK_TOKEN0_ADDRESS = '0x0000000000000000000000000000000000000001';
+  const FALLBACK_TOKEN1_ADDRESS = '0x0000000000000000000000000000000000000002';
+
+  const rehypoPriceOrdering = usePriceOrdering({
+    chainId,
+    token0: {
+      address: poolConfig?.currency0.address || FALLBACK_TOKEN0_ADDRESS,
+      symbol: poolConfig?.currency0.symbol || 'TOKEN0',
+      decimals: token0Def?.decimals ?? 18,
+    },
+    token1: {
+      address: poolConfig?.currency1.address || FALLBACK_TOKEN1_ADDRESS,
+      symbol: poolConfig?.currency1.symbol || 'TOKEN1',
+      decimals: token1Def?.decimals ?? 18,
+    },
+    tickLower: rehypoTickLower ?? 0,
+    tickUpper: rehypoTickUpper ?? 0,
+  });
+
+  const { minPrice: rehypoMinPriceFormatted, maxPrice: rehypoMaxPriceFormatted, isFullRange: rehypoIsFullRange } = useGetRangeDisplay({
+    priceOrdering: rehypoPriceOrdering,
+    pricesInverted: priceInverted,
+    tickSpacing: poolConfig?.tickSpacing,
+    tickLower: rehypoTickLower ?? 0,
+    tickUpper: rehypoTickUpper ?? 0,
+  });
+
+  // Parse the formatted strings to numbers for chart usage
+  const rehypoPriceRange = useMemo(() => {
+    if (!isRehypoMode || rehypoTickLower === null || rehypoTickUpper === null) {
+      return { minPrice: undefined, maxPrice: undefined, minPriceFormatted: undefined, maxPriceFormatted: undefined };
+    }
+
+    const minPriceNum = rehypoMinPriceFormatted && rehypoMinPriceFormatted !== '-' && rehypoMinPriceFormatted !== '∞'
+      ? parseFloat(rehypoMinPriceFormatted.replace(/,/g, ''))
+      : undefined;
+    const maxPriceNum = rehypoMaxPriceFormatted && rehypoMaxPriceFormatted !== '-' && rehypoMaxPriceFormatted !== '∞'
+      ? parseFloat(rehypoMaxPriceFormatted.replace(/,/g, ''))
+      : undefined;
+
+    return {
+      minPrice: minPriceNum,
+      maxPrice: maxPriceNum,
+      minPriceFormatted: rehypoMinPriceFormatted,
+      maxPriceFormatted: rehypoMaxPriceFormatted,
+    };
+  }, [isRehypoMode, rehypoTickLower, rehypoTickUpper, rehypoMinPriceFormatted, rehypoMaxPriceFormatted]);
+
   const subgraphPoolId = state.poolId ? (getPoolSubgraphId(state.poolId) || state.poolId) : undefined;
 
   // Fetch pre-transformed data for chart (handles inversion)
+  // Pass SDK tokens for proper decimal handling in tick-to-price conversion
   const { liquidityData, isLoading: isLiquidityLoading } = useLiquidityChartData({
     poolId: state.poolId ?? undefined,
     priceInverted,
+    token0: sdkPool?.token0,
+    token1: sdkPool?.token1,
   });
 
   const { entries: priceChartEntries, loading: isPriceLoading } = usePoolPriceChartData({
@@ -336,15 +409,30 @@ export function RangeAndAmountsStep() {
     priceInverted,
   });
 
-  const priceData = useMemo(() => {
-    return priceChartEntries.map(e => ({ time: e.time, value: e.value }));
-  }, [priceChartEntries]);
-
   const chartCurrentPrice = useMemo(() => {
     const priceNum = parseFloat(currentPriceRaw);
     if (!isFinite(priceNum) || priceNum <= 0) return 1;
     return priceInverted ? (1 / priceNum) : priceNum;
   }, [currentPriceRaw, priceInverted]);
+
+  // Price data for chart - includes fallback current price point when no historical data
+  const priceData = useMemo(() => {
+    const historicalData = priceChartEntries.map(e => ({ time: e.time, value: e.value }));
+
+    // If we have historical data, use it
+    if (historicalData.length > 0) {
+      return historicalData;
+    }
+
+    // Fallback: create a single point with current price so chart can orient itself
+    // This ensures the price line renderer has at least one point to work with
+    if (chartCurrentPrice > 0) {
+      const now = Math.floor(Date.now() / 1000);
+      return [{ time: now, value: chartCurrentPrice }];
+    }
+
+    return [];
+  }, [priceChartEntries, chartCurrentPrice]);
 
   // Format current price with proper decimals and inversion (Uniswap pattern)
   const formattedCurrentPrice = useMemo(() => {
@@ -447,19 +535,19 @@ export function RangeAndAmountsStep() {
     setAmount1
   );
 
-  // Helper: Convert tick to price using SDK (Uniswap-aligned - handles token decimals properly)
-  // @see interface/apps/web/src/utils/getTickToPrice.ts getV4TickToPrice
-  // @see interface/apps/web/src/components/Liquidity/utils/priceRangeInfo.ts lines 528-543
+  // Helper: Convert tick to price using SDK (handles token decimals properly)
+  // Uses consolidated tick-price utilities
   const tickToPrice = useCallback((tick: number): number | undefined => {
-    // Match Uniswap pattern: return undefined if currencies not available
-    if (!sdkPool) {
-      return undefined;
-    }
-    // Use SDK's tickToPrice which properly accounts for token decimal differences
-    // This matches: tickToPriceV4(baseCurrency, quoteCurrency, tick)
-    const price = tickToPriceV4(sdkPool.token0, sdkPool.token1, tick);
-    // Convert Price object to number for display
-    return parseFloat(price.toSignificant(18));
+    // Use SDK-based conversion for proper decimal handling
+    return tickToPriceNumber(tick, sdkPool?.token0, sdkPool?.token1);
+  }, [sdkPool]);
+
+  // Helper: Convert price to tick using SDK (handles token decimals properly)
+  // This is the inverse of tickToPrice and must use the same decimal handling
+  const priceToTick = useCallback((price: number): number | undefined => {
+    // Use SDK-based conversion for proper decimal handling
+    // This ensures round-trip consistency: tick -> price -> tick
+    return priceNumberToTick(price, sdkPool?.token0, sdkPool?.token1);
   }, [sdkPool]);
 
   // Helper: Format price for display based on pool type and inversion
@@ -478,14 +566,13 @@ export function RangeAndAmountsStep() {
   const noopRangeChange = useCallback(() => {}, []);
 
   // Chart range change handler - must be memoized to prevent chart reinitialization
+  // Uses SDK-based price-to-tick conversion for proper decimal handling
   const handleChartRangeChange = useCallback((newMinPrice: number, newMaxPrice: number) => {
     setRangePreset('custom');
 
     // Convert prices to ticks and update context
     // When inverted, prices are in inverted form (e.g., USDC/ETH instead of ETH/USDC)
     // We need canonical prices (token1/token0) for tick calculation
-    const tickFromPrice = (price: number) => Math.round(Math.log(price) / Math.log(1.0001));
-
     let canonicalMinPrice: number;
     let canonicalMaxPrice: number;
 
@@ -497,13 +584,21 @@ export function RangeAndAmountsStep() {
       canonicalMaxPrice = newMaxPrice;
     }
 
-    const tickLower = tickFromPrice(canonicalMinPrice);
-    const tickUpper = tickFromPrice(canonicalMaxPrice);
+    // Convert prices to ticks using SDK (handles token decimals properly)
+    // Falls back to simple calculation if SDK tokens not available
+    let tickLower = priceToTick(canonicalMinPrice);
+    let tickUpper = priceToTick(canonicalMaxPrice);
 
-    // Align to tick spacing
+    if (tickLower === undefined || tickUpper === undefined) {
+      // Fallback: use simple conversion
+      tickLower = priceToTickSimple(canonicalMinPrice);
+      tickUpper = priceToTickSimple(canonicalMaxPrice);
+    }
+
+    // Align to tick spacing using nearestUsableTick for proper alignment
     const tickSpacingVal = poolConfig?.tickSpacing || DEFAULT_TICK_SPACING;
-    const alignedTickLower = Math.round(tickLower / tickSpacingVal) * tickSpacingVal;
-    const alignedTickUpper = Math.round(tickUpper / tickSpacingVal) * tickSpacingVal;
+    const alignedTickLower = nearestUsableTick(tickLower, tickSpacingVal);
+    const alignedTickUpper = nearestUsableTick(tickUpper, tickSpacingVal);
 
     // Convert aligned ticks back to canonical prices
     const alignedPriceLower = tickToPrice(alignedTickLower);
@@ -525,7 +620,7 @@ export function RangeAndAmountsStep() {
     }
 
     setRange(alignedTickLower, alignedTickUpper);
-  }, [priceInverted, poolConfig?.tickSpacing, tickToPrice, formatPriceForDisplay, setRangePreset, setRange]);
+  }, [priceInverted, poolConfig?.tickSpacing, priceToTick, tickToPrice, formatPriceForDisplay, setRangePreset, setRange]);
 
   // Price strategy selection
   const handleSelectStrategy = useCallback((strategy: RangePreset) => {
@@ -626,6 +721,7 @@ export function RangeAndAmountsStep() {
   const isSorted = !priceInverted;
 
   // Get the 4 tick navigation functions from hook
+  // Pass SDK pool tokens for proper decimal handling in tick-to-price conversion
   const {
     getDecrementLower,
     getIncrementLower,
@@ -636,6 +732,8 @@ export function RangeAndAmountsStep() {
     tickUpper: state.tickUpper,
     tickSpacing,
     poolCurrentTick: currentTick ?? undefined,
+    token0: sdkPool?.token0,
+    token1: sdkPool?.token1,
   });
 
   // Helper: Convert canonical price to display price (inverts if needed)
@@ -727,6 +825,85 @@ export function RangeAndAmountsStep() {
     }
   }, [maxPrice, isSorted, getDecrementUpper, getIncrementLower, currentPriceRaw, formatPriceForDisplay, priceInverted, setRangePreset, state.tickLower, state.tickUpper, tickSpacing, setRange, toDisplayPrice]);
 
+  // Blur handlers - snap typed price to nearest valid tick (Uniswap pattern)
+  // Converts price → tick → nearest usable tick → price, then updates display and context
+  // IMPORTANT: Uses SDK-based conversions for proper decimal handling (priceToTick + tickToPrice)
+  const handleMinPriceBlur = useCallback(() => {
+    if (minPrice === '' || minPrice === '0') return;
+
+    const typedPrice = parseFloat(minPrice);
+    if (!isFinite(typedPrice) || typedPrice <= 0) return;
+
+    // Convert display price to canonical price (undo inversion if needed)
+    // Canonical price is always token1/token0 (quote/base)
+    const canonicalPrice = priceInverted ? (1 / typedPrice) : typedPrice;
+
+    // Convert price to tick using SDK (handles token decimals properly)
+    // Falls back to simple calculation if SDK tokens not available
+    let rawTick = priceToTick(canonicalPrice);
+    if (rawTick === undefined) {
+      // Fallback: use simple conversion (may cause display discrepancies with different decimals)
+      rawTick = priceToTickSimple(canonicalPrice);
+    }
+
+    // Snap to nearest usable tick
+    const alignedTick = nearestUsableTick(rawTick, tickSpacing);
+
+    // Convert aligned tick back to price using SDK for display
+    const alignedPrice = tickToPrice(alignedTick);
+    if (alignedPrice === undefined) return;
+
+    // Update display (inverted if needed)
+    const displayPrice = priceInverted ? (1 / alignedPrice) : alignedPrice;
+    setMinPrice(formatPriceForDisplay(displayPrice, priceInverted));
+
+    // Update context tick
+    // When inverted, min price input controls tickUpper; otherwise tickLower
+    if (priceInverted) {
+      setRange(state.tickLower, alignedTick);
+    } else {
+      setRange(alignedTick, state.tickUpper);
+    }
+  }, [minPrice, priceInverted, tickSpacing, priceToTick, tickToPrice, formatPriceForDisplay, setRange, state.tickLower, state.tickUpper]);
+
+  const handleMaxPriceBlur = useCallback(() => {
+    if (maxPrice === '' || maxPrice === '∞') return;
+
+    const typedPrice = parseFloat(maxPrice);
+    if (!isFinite(typedPrice) || typedPrice <= 0) return;
+
+    // Convert display price to canonical price (undo inversion if needed)
+    // Canonical price is always token1/token0 (quote/base)
+    const canonicalPrice = priceInverted ? (1 / typedPrice) : typedPrice;
+
+    // Convert price to tick using SDK (handles token decimals properly)
+    // Falls back to simple calculation if SDK tokens not available
+    let rawTick = priceToTick(canonicalPrice);
+    if (rawTick === undefined) {
+      // Fallback: use simple conversion (may cause display discrepancies with different decimals)
+      rawTick = priceToTickSimple(canonicalPrice);
+    }
+
+    // Snap to nearest usable tick
+    const alignedTick = nearestUsableTick(rawTick, tickSpacing);
+
+    // Convert aligned tick back to price using SDK for display
+    const alignedPrice = tickToPrice(alignedTick);
+    if (alignedPrice === undefined) return;
+
+    // Update display (inverted if needed)
+    const displayPrice = priceInverted ? (1 / alignedPrice) : alignedPrice;
+    setMaxPrice(formatPriceForDisplay(displayPrice, priceInverted));
+
+    // Update context tick
+    // When inverted, max price input controls tickLower; otherwise tickUpper
+    if (priceInverted) {
+      setRange(alignedTick, state.tickUpper);
+    } else {
+      setRange(state.tickLower, alignedTick);
+    }
+  }, [maxPrice, priceInverted, tickSpacing, priceToTick, tickToPrice, formatPriceForDisplay, setRange, state.tickLower, state.tickUpper]);
+
   // Handle amount changes - sync to context for real calculation via TxContext
   const handleAmount0Change = useCallback((value: string) => {
     setAmount0(value);
@@ -773,34 +950,66 @@ export function RangeAndAmountsStep() {
     setIsAmount1OverBalance(amt1 > balance1 && amt1 > 0);
   }, [amount1, token1BalanceData]);
 
-  // Initialize with stable strategy when data loads
+  // Initialize range for Unified Yield (separate effect to avoid loops)
+  const rehypoRangeSet = useRef(false);
   useEffect(() => {
-    if (!minPrice && !maxPrice && liquidityData.length > 0) {
-      handleSelectStrategy('stable');
+    if (isRehypoMode && rehypoTickLower !== null && rehypoTickUpper !== null && !rehypoRangeSet.current) {
+      rehypoRangeSet.current = true;
+      setRange(rehypoTickLower, rehypoTickUpper);
     }
-  }, [liquidityData.length]);
+    // Reset ref when mode changes away from rehypo
+    if (!isRehypoMode) {
+      rehypoRangeSet.current = false;
+    }
+  }, [isRehypoMode, rehypoTickLower, rehypoTickUpper, setRange]);
 
-  // Re-apply strategy when inversion changes
+  // Initialize with stable strategy for Custom Range mode
+  // Runs when: not rehypo mode, no range set yet, and either liquidity data loaded or loading completed (testnet may have no data)
+  const rangeInitialized = useRef(false);
+  useEffect(() => {
+    if (!isRehypoMode && !minPrice && !maxPrice && !rangeInitialized.current && sdkPool) {
+      // Wait for liquidity data if loading, otherwise initialize immediately (testnet fallback)
+      if (liquidityData.length > 0 || !isLiquidityLoading) {
+        rangeInitialized.current = true;
+        handleSelectStrategy('stable');
+      }
+    }
+    // Reset ref when switching to rehypo mode
+    if (isRehypoMode) {
+      rangeInitialized.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liquidityData.length, isLiquidityLoading, sdkPool, isRehypoMode]); // Run when data loads OR loading finishes
+
+  // Re-apply strategy when inversion changes (for Custom Range mode only)
   const prevPriceInverted = useRef(priceInverted);
   useEffect(() => {
-    if (prevPriceInverted.current !== priceInverted && liquidityData.length > 0) {
+    // Only re-apply for Custom Range mode when inversion changes
+    if (!isRehypoMode && prevPriceInverted.current !== priceInverted && sdkPool) {
       handleSelectStrategy(selectedPreset as RangePreset);
       prevPriceInverted.current = priceInverted;
     }
-  }, [priceInverted, liquidityData, selectedPreset, handleSelectStrategy]);
+  }, [priceInverted, sdkPool, selectedPreset, handleSelectStrategy, isRehypoMode]);
 
   // Validation
   const isValidRange = useMemo(() => {
+    // Unified Yield: Range is always valid (pre-configured from pool config)
+    if (isRehypoMode) return rehypoTickLower !== null && rehypoTickUpper !== null;
     if (selectedPreset === 'full') return true;
     if (minPrice === '0' || maxPrice === '∞') return true;
     const min = parseFloat(minPrice);
     const max = parseFloat(maxPrice);
     return !isNaN(min) && !isNaN(max) && min < max && min >= 0;
-  }, [selectedPreset, minPrice, maxPrice]);
+  }, [isRehypoMode, rehypoTickLower, rehypoTickUpper, selectedPreset, minPrice, maxPrice]);
 
   const hasValidAmount = useMemo(() => {
-    return (amount0 && parseFloat(amount0) > 0) && (amount1 && parseFloat(amount1) > 0);
-  }, [amount0, amount1]);
+    const amt0Valid = !deposit0Disabled && amount0 && parseFloat(amount0) > 0;
+    const amt1Valid = !deposit1Disabled && amount1 && parseFloat(amount1) > 0;
+    // Need at least one valid amount, and if a field is enabled it must have a value
+    if (deposit0Disabled) return amt1Valid;
+    if (deposit1Disabled) return amt0Valid;
+    return amt0Valid && amt1Valid;
+  }, [amount0, amount1, deposit0Disabled, deposit1Disabled]);
 
   const hasInsufficientBalance = isAmount0OverBalance || isAmount1OverBalance;
   const canReview = isValidRange && hasValidAmount && !hasInsufficientBalance && !isCalculating && !inputError;
@@ -853,11 +1062,12 @@ export function RangeAndAmountsStep() {
         )}
 
         {/* D3 Interactive Range Chart - show chart OR skeleton (Uniswap pattern) */}
+        {/* Show skeleton only while actively loading; once done, show chart (even without data on testnet) */}
         <div className={cn(
           "border border-sidebar-border rounded-lg overflow-hidden",
           isRehypoMode && "opacity-60 pointer-events-none"
         )}>
-          {liquidityData.length > 0 ? (
+          {(!isLiquidityLoading || isRehypoMode || liquidityData.length > 0) ? (
             <>
             <D3LiquidityRangeChart
               ref={chartRef}
@@ -866,14 +1076,14 @@ export function RangeAndAmountsStep() {
               currentPrice={chartCurrentPrice}
               currentTick={currentTick ?? undefined}
               minPrice={isRehypoMode
-                ? (poolConfig.rehypoRange?.isFullRange ? undefined : (priceInverted ? 1 / parseFloat(poolConfig.rehypoRange?.max || '1') : parseFloat(poolConfig.rehypoRange?.min || '0')))
+                ? (poolConfig.rehypoRange?.isFullRange || rehypoIsFullRange ? undefined : rehypoPriceRange.minPrice)
                 : (minPrice !== '' && minPrice !== '0' ? parseFloat(minPrice) : undefined)
               }
               maxPrice={isRehypoMode
-                ? (poolConfig.rehypoRange?.isFullRange ? undefined : (priceInverted ? 1 / parseFloat(poolConfig.rehypoRange?.min || '1') : parseFloat(poolConfig.rehypoRange?.max || '0')))
+                ? (poolConfig.rehypoRange?.isFullRange || rehypoIsFullRange ? undefined : rehypoPriceRange.maxPrice)
                 : (maxPrice !== '' && maxPrice !== '∞' ? parseFloat(maxPrice) : undefined)
               }
-              isFullRange={isRehypoMode ? (poolConfig.rehypoRange?.isFullRange ?? true) : selectedPreset === 'full'}
+              isFullRange={isRehypoMode ? (poolConfig.rehypoRange?.isFullRange ?? rehypoIsFullRange ?? true) : selectedPreset === 'full'}
               duration={chartDuration}
               onRangeChange={isRehypoMode ? noopRangeChange : handleChartRangeChange}
             />
@@ -904,8 +1114,11 @@ export function RangeAndAmountsStep() {
             <RangeInput
               label="Min"
               percentFromCurrent={isRehypoMode ? '—' : minPricePercent}
-              value={isRehypoMode ? (priceInverted ? formatPriceForDisplay(1 / parseFloat(poolConfig.rehypoRange?.max || '1'), true) : (poolConfig.rehypoRange?.min || '0')) : minPrice}
+              value={isRehypoMode
+                ? (rehypoPriceRange.minPriceFormatted || '—')
+                : minPrice}
               onChange={handleMinPriceChange}
+              onBlur={handleMinPriceBlur}
               onIncrement={incrementMinPrice}
               onDecrement={decrementMinPrice}
               disabled={isRehypoMode || selectedPreset === 'full'}
@@ -914,8 +1127,11 @@ export function RangeAndAmountsStep() {
             <RangeInput
               label="Max"
               percentFromCurrent={isRehypoMode ? '—' : maxPricePercent}
-              value={isRehypoMode ? (priceInverted ? formatPriceForDisplay(1 / parseFloat(poolConfig.rehypoRange?.min || '1'), true) : (poolConfig.rehypoRange?.max || '∞')) : maxPrice}
+              value={isRehypoMode
+                ? (rehypoPriceRange.maxPriceFormatted || '—')
+                : maxPrice}
               onChange={handleMaxPriceChange}
+              onBlur={handleMaxPriceBlur}
               onIncrement={incrementMaxPrice}
               onDecrement={decrementMaxPrice}
               disabled={isRehypoMode || selectedPreset === 'full'}

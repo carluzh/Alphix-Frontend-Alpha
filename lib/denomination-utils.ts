@@ -1,4 +1,8 @@
-import { TickMath } from '@uniswap/v3-sdk';
+import {
+  TickMath,
+  tickToPriceRelative,
+  tickToPriceSimple,
+} from '@/lib/liquidity/utils/tick-price';
 
 // Quote token priority for determining base token in price display
 // Includes both mainnet (USDC, USDT, etc.) and testnet (aUSDC, aUSDT, etc.) symbols
@@ -67,9 +71,8 @@ export function convertTickToPrice(
   if (currentPoolTick !== null && currentPrice) {
     const currentPriceNum = parseFloat(currentPrice);
     if (isFinite(currentPriceNum) && currentPriceNum > 0) {
-      const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
-      // currentPriceNum is token1/token0 (Uniswap standard)
-      const priceInToken1PerToken0 = currentPriceNum * priceDelta;
+      // Use consolidated utility for relative price calculation
+      const priceInToken1PerToken0 = tickToPriceRelative(tick, currentPoolTick, currentPriceNum);
 
       // If we want token0 denomination (token0/token1), invert
       const priceAtTick = (baseToken === token0Symbol)
@@ -84,8 +87,8 @@ export function convertTickToPrice(
     }
   }
 
-  // Fallback: calculate from tick alone
-  const priceInToken1PerToken0 = Math.pow(1.0001, tick);
+  // Fallback: calculate from tick alone using consolidated utility
+  const priceInToken1PerToken0 = tickToPriceSimple(tick);
   const priceAtTick = (baseToken === token0Symbol)
     ? 1 / priceInToken1PerToken0
     : priceInToken1PerToken0;

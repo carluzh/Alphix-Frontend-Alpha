@@ -139,12 +139,18 @@ function RehypoModeCard({ selected, onSelect, extraApr }: { selected: boolean; o
           </div>
         </div>
 
-        {extraApr !== undefined && (
-          <div className="relative z-10 flex items-center justify-center w-[25%] min-w-[140px] rounded-lg overflow-hidden" style={{ background: '#1e1a2e' }}>
-            <div className="absolute inset-0" style={{ backgroundImage: `url(${YIELD_SOURCE.bgPurple})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
+        <div className="relative z-10 flex items-center justify-center w-[25%] min-w-[140px] rounded-lg overflow-hidden" style={{ background: '#1e1a2e' }}>
+          <div className="absolute inset-0" style={{ backgroundImage: `url(${YIELD_SOURCE.bgPurple})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
+          {extraApr !== undefined ? (
             <AnimatedAprValue value={extraApr} />
-          </div>
-        )}
+          ) : (
+            <div className="relative z-10 flex items-center gap-1">
+              <span className="text-white text-2xl font-bold">+</span>
+              <div className="h-7 w-14 bg-white/20 rounded animate-pulse" />
+              <span className="text-white text-2xl font-bold">%</span>
+            </div>
+          )}
+        </div>
       </button>
     </div>
   );

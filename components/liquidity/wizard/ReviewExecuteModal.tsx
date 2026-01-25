@@ -55,6 +55,13 @@ import {
 
 // Progress indicator
 import { ProgressIndicator } from '@/components/transactions';
+
+// Unified Yield transaction building
+import { buildUnifiedYieldDepositTx, buildDepositParamsFromPreview } from '@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx';
+import type { ValidatedTransactionRequest } from '@/lib/liquidity/types';
+
+// Shared approval utilities
+import { buildApprovalRequests as buildApprovalRequestsUtil } from '@/lib/liquidity/hooks/approval';
 import {
   type CurrentStepState,
   type TransactionStep as UITransactionStep,
@@ -85,11 +92,24 @@ function mapExecutorStepsToUI(
         };
       }
 
+      // Unified Yield approval - direct ERC20 to Hook
+      case 'UnifiedYieldApproval': {
+        const uyStep = step as any;
+        const isToken0 = uyStep.tokenSymbol === pool.currency0.symbol;
+        return {
+          type: UIStepType.TokenApprovalTransaction,
+          tokenSymbol: uyStep.tokenSymbol || pool.currency0.symbol,
+          tokenAddress: uyStep.tokenAddress || '',
+          tokenIcon: isToken0 ? token0Icon : token1Icon,
+        };
+      }
+
       case 'Permit2Signature':
         return { type: UIStepType.Permit2Signature };
 
       case 'IncreasePositionTransaction':
       case 'IncreasePositionTransactionAsync':
+      case 'UnifiedYieldDeposit': // UY deposit maps to create position UI
         return {
           type: UIStepType.CreatePositionTransaction,
           token0Symbol: pool.currency0.symbol,
@@ -254,6 +274,9 @@ export function ReviewExecuteModal() {
     calculatedData,
     usdValues,
     gasFeeEstimateUSD,
+    depositPreview,
+    isUnifiedYield,
+    refetchApprovals,
   } = useCreatePositionTxContext();
 
   // Refunded amounts (populated during migrations or when position manager returns excess)
@@ -337,8 +360,16 @@ export function ReviewExecuteModal() {
   });
 
   // Get tick data for price calculations
-  const tickLower = txInfo?.tickLower ?? state.tickLower ?? 0;
-  const tickUpper = txInfo?.tickUpper ?? state.tickUpper ?? 0;
+  // For Unified Yield: Use the pool config's rehypoRange ticks directly (same as RangeAndAmountsStep)
+  const rehypoTickLower = pool?.rehypoRange?.min ? parseInt(pool.rehypoRange.min, 10) : null;
+  const rehypoTickUpper = pool?.rehypoRange?.max ? parseInt(pool.rehypoRange.max, 10) : null;
+
+  const tickLower = isUnifiedYield && rehypoTickLower !== null
+    ? rehypoTickLower
+    : (txInfo?.tickLower ?? state.tickLower ?? 0);
+  const tickUpper = isUnifiedYield && rehypoTickUpper !== null
+    ? rehypoTickUpper
+    : (txInfo?.tickUpper ?? state.tickUpper ?? 0);
 
   // Use Uniswap's price ordering hooks for proper tick-to-price conversion
   // This matches how PositionCardCompact handles chart prices
@@ -371,25 +402,15 @@ export function ReviewExecuteModal() {
   });
 
   // Calculate price bounds for chart using the properly formatted values
+  // Note: For both Custom and Unified Yield modes, use the SDK-derived prices from priceOrdering hook
   const chartPrices = useMemo(() => {
-    // For Unified Yield (rehypo) mode, use the predefined range from pool config
-    if (state.mode === 'rehypo' && pool?.rehypoRange) {
-      // If rehypoRange is full range, use full range values
-      if (pool.rehypoRange.isFullRange) {
-        return { priceLower: 0, priceUpper: Number.MAX_SAFE_INTEGER };
-      }
-      // Use the predefined min/max from pool config
-      const priceLower = parseFloat(pool.rehypoRange.min);
-      const priceUpper = parseFloat(pool.rehypoRange.max);
-      return { priceLower, priceUpper };
-    }
-
     // For full range positions, the hook returns '0' and '∞'
-    if (isFullRangeFromHook || state.isFullRange) {
+    if (isFullRangeFromHook || state.isFullRange || (state.mode === 'rehypo' && pool?.rehypoRange?.isFullRange)) {
       return { priceLower: 0, priceUpper: Number.MAX_SAFE_INTEGER };
     }
 
-    // Parse the formatted prices for the chart
+    // Parse the formatted prices from the SDK hook for the chart
+    // This works for both Custom and Unified Yield modes since both use tick values
     const priceLower = minPrice && minPrice !== '-' && minPrice !== '∞'
       ? parseFloat(minPrice.replace(/,/g, ''))
       : undefined;
@@ -398,23 +419,17 @@ export function ReviewExecuteModal() {
       : undefined;
 
     return { priceLower, priceUpper };
-  }, [minPrice, maxPrice, isFullRangeFromHook, state.isFullRange, state.mode, pool?.rehypoRange]);
+  }, [minPrice, maxPrice, isFullRangeFromHook, state.isFullRange, state.mode, pool?.rehypoRange?.isFullRange]);
 
   // Use the hook's formatted prices for display
+  // The useGetRangeDisplay hook already converts ticks to human-readable prices using the SDK
   const formattedPrices = useMemo(() => {
-    // For Unified Yield (rehypo) mode, use the predefined range from pool config
-    if (state.mode === 'rehypo' && pool?.rehypoRange) {
-      if (pool.rehypoRange.isFullRange) {
-        return { min: '0', max: '∞' };
-      }
-      return { min: pool.rehypoRange.min, max: pool.rehypoRange.max };
-    }
-
-    if (isFullRangeFromHook || state.isFullRange) {
+    if (isFullRangeFromHook || state.isFullRange || (state.mode === 'rehypo' && pool?.rehypoRange?.isFullRange)) {
       return { min: '0', max: '∞' };
     }
+    // Use SDK-derived prices for both modes - these are already converted from ticks
     return { min: minPrice || '-', max: maxPrice || '-' };
-  }, [minPrice, maxPrice, isFullRangeFromHook, state.isFullRange, state.mode, pool?.rehypoRange]);
+  }, [minPrice, maxPrice, isFullRangeFromHook, state.isFullRange, state.mode, pool?.rehypoRange?.isFullRange]);
 
   // Determine position status for chart (new position is always in-range initially)
   const chartPositionStatus = useMemo(() => {
@@ -432,6 +447,17 @@ export function ReviewExecuteModal() {
     return PositionStatus.OUT_OF_RANGE;
   }, [poolStateData, txInfo]);
 
+  // Wrapper for shared approval utility (adds chainId from context)
+  const buildApprovalRequests = useCallback((params: {
+    needsToken0: boolean;
+    needsToken1: boolean;
+    token0Address: Address;
+    token1Address: Address;
+    spender: Address;
+    amount0: bigint;
+    amount1: bigint;
+  }) => buildApprovalRequestsUtil({ ...params, chainId: chainId! }), [chainId]);
+
   // Fetch API data and build context for step executor
   const fetchAndBuildContext = useCallback(async (): Promise<ValidatedLiquidityTxContext | null> => {
     if (!pool || !address || !chainId) return null;
@@ -444,6 +470,84 @@ export function ReviewExecuteModal() {
     if (!token0 || !token1) {
       throw new Error('Token configuration not found');
     }
+
+    // =========================================================================
+    // UNIFIED YIELD POSITIONS - Build context with deposit tx (no API call)
+    // =========================================================================
+    if (isUnifiedYield && depositPreview && pool.hooks) {
+      const hookAddress = pool.hooks as Address;
+
+      // Build approval requests using shared helper
+      const approvals = buildApprovalRequests({
+        needsToken0: txInfo?.needsToken0Approval ?? false,
+        needsToken1: txInfo?.needsToken1Approval ?? false,
+        token0Address: token0.address as Address,
+        token1Address: token1.address as Address,
+        spender: hookAddress,
+        amount0: depositPreview.amount0,
+        amount1: depositPreview.amount1,
+      });
+      const approveToken0Request = approvals.token0;
+      const approveToken1Request = approvals.token1;
+
+      // Build deposit params from preview
+      const depositParams = buildDepositParamsFromPreview(
+        depositPreview,
+        hookAddress,
+        token0.address as Address,
+        token1.address as Address,
+        address,
+        state.poolId,
+        chainId
+      );
+
+      // Build deposit transaction
+      const depositTx = buildUnifiedYieldDepositTx(depositParams);
+
+      // Build context with UY-specific fields
+      const context = buildLiquidityTxContext({
+        type: LiquidityTransactionType.Create,
+        apiResponse: {
+          needsApproval: false,
+          create: {
+            to: depositTx.to,
+            data: depositTx.calldata,
+            value: depositTx.value?.toString() || '0',
+            gasLimit: depositTx.gasLimit?.toString(),
+            chainId,
+          },
+          sqrtRatioX96: undefined,
+        } as MintTxApiResponse,
+        token0: {
+          address: token0.address as Address,
+          symbol: token0.symbol,
+          decimals: token0.decimals,
+          chainId,
+        },
+        token1: {
+          address: token1.address as Address,
+          symbol: token1.symbol,
+          decimals: token1.decimals,
+          chainId,
+        },
+        amount0: depositPreview.amount0.toString(),
+        amount1: depositPreview.amount1.toString(),
+        chainId,
+        approveToken0Request,
+        approveToken1Request,
+        // Unified Yield specific fields
+        isUnifiedYield: true,
+        hookAddress,
+        poolId: state.poolId,
+        sharesToMint: depositPreview.shares,
+      });
+
+      return context as ValidatedLiquidityTxContext;
+    }
+
+    // =========================================================================
+    // V4 POSITIONS - Call API to build transaction
+    // =========================================================================
 
     // Determine input token and amount
     const tl = calculatedData?.finalTickLower ?? txInfo?.tickLower ?? 0;
@@ -517,6 +621,22 @@ export function ReviewExecuteModal() {
       }
     };
 
+    // Build ERC20 approval requests using shared helper (same as Unified Yield)
+    const approvalTokenLower = apiResponse.approvalTokenAddress?.toLowerCase();
+    const v4Approvals = apiResponse.erc20ApprovalNeeded && apiResponse.approveToAddress
+      ? buildApprovalRequests({
+          needsToken0: token0.address.toLowerCase() === approvalTokenLower,
+          needsToken1: token1.address.toLowerCase() === approvalTokenLower,
+          token0Address: token0.address as Address,
+          token1Address: token1.address as Address,
+          spender: apiResponse.approveToAddress as Address,
+          amount0: BigInt(getRawAmount0()),
+          amount1: BigInt(getRawAmount1()),
+        })
+      : {};
+    const v4ApproveToken0Request = v4Approvals.token0;
+    const v4ApproveToken1Request = v4Approvals.token1;
+
     const context = buildLiquidityTxContext({
       type: LiquidityTransactionType.Create,
       apiResponse,
@@ -535,6 +655,9 @@ export function ReviewExecuteModal() {
       amount0: getRawAmount0(),
       amount1: getRawAmount1(),
       chainId,
+      // Pass ERC20 approval requests if needed (for approval step before permit)
+      approveToken0Request: v4ApproveToken0Request,
+      approveToken1Request: v4ApproveToken1Request,
       // Pass request args for async step - needed to call API with signature after permit
       // Uniswap pattern: batchPermitData is embedded in request args so it's available
       // when getTxRequest(signature) is called after user signs the permit
@@ -554,10 +677,10 @@ export function ReviewExecuteModal() {
     });
 
     return context as ValidatedLiquidityTxContext;
-  }, [pool, address, chainId, networkMode, state, txInfo, calculatedData]);
+  }, [pool, address, chainId, networkMode, state, txInfo, calculatedData, isUnifiedYield, depositPreview, buildApprovalRequests]);
 
-  // Handle confirm
-  const handleNormalConfirm = useCallback(async () => {
+  // Handle confirm - unified for both V4 and Unified Yield
+  const handleConfirm = useCallback(async () => {
     if (!pool || !address) return;
 
     setView('executing');
@@ -565,21 +688,23 @@ export function ReviewExecuteModal() {
     setError(null);
     setIsPermitError(false);
 
-    // C4: Initialize flow tracking
-    const tl = calculatedData?.finalTickLower ?? txInfo?.tickLower ?? state.tickLower ?? 0;
-    const tu = calculatedData?.finalTickUpper ?? txInfo?.tickUpper ?? state.tickUpper ?? 0;
-    const flow = getOrCreateFlowState(
-      address,
-      chainId || 0,
-      pool.currency0.symbol,
-      pool.currency1.symbol,
-      tl,
-      tu
-    );
-    setFlowId(flow.flowId);
+    // V4 uses permit flow state tracking
+    if (!isUnifiedYield) {
+      const tl = calculatedData?.finalTickLower ?? txInfo?.tickLower ?? state.tickLower ?? 0;
+      const tu = calculatedData?.finalTickUpper ?? txInfo?.tickUpper ?? state.tickUpper ?? 0;
+      const flow = getOrCreateFlowState(
+        address,
+        chainId || 0,
+        pool.currency0.symbol,
+        pool.currency1.symbol,
+        tl,
+        tu
+      );
+      setFlowId(flow.flowId);
+    }
 
     try {
-      // Build context from API
+      // Unified execution path - works for both V4 and Unified Yield
       const context = await fetchAndBuildContext();
       if (!context) {
         throw new Error('Failed to build transaction context');
@@ -603,10 +728,7 @@ export function ReviewExecuteModal() {
       setView('review');
       setError(err?.message || 'Transaction failed');
     }
-  }, [pool, address, fetchAndBuildContext, executor, calculatedData, txInfo, state, chainId]);
-
-  // Handle confirm - just call the normal flow
-  const handleConfirm = handleNormalConfirm;
+  }, [pool, address, fetchAndBuildContext, executor, calculatedData, txInfo, state, chainId, isUnifiedYield]);
 
   // Clear error and retry
   const handleRetry = useCallback(() => {
@@ -653,7 +775,9 @@ export function ReviewExecuteModal() {
             {/* Header: Title + Close X */}
             <div className="flex items-center justify-between px-4 pt-4 pb-2">
               <span className="text-base font-medium text-muted-foreground">
-                {view === 'executing' ? 'Creating position' : 'Add liquidity'}
+                {view === 'executing'
+                  ? (isUnifiedYield ? 'Depositing to Unified Yield' : 'Creating position')
+                  : (isUnifiedYield ? 'Unified Yield Deposit' : 'Add liquidity')}
               </span>
               <button
                 onClick={handleClose}
@@ -741,21 +865,45 @@ export function ReviewExecuteModal() {
             <div className="px-4 py-3 mt-2">
               <span className="text-sm text-muted-foreground mb-3 block">Depositing</span>
               <div className="flex flex-col gap-4">
-                {state.amount0 && parseFloat(state.amount0) > 0 && (
-                  <TokenInfoRow
-                    symbol={pool.currency0.symbol}
-                    icon={token0Config?.icon}
-                    amount={state.amount0}
-                    usdValue={usdValues?.TOKEN0 || '0.00'}
-                  />
-                )}
-                {state.amount1 && parseFloat(state.amount1) > 0 && (
-                  <TokenInfoRow
-                    symbol={pool.currency1.symbol}
-                    icon={token1Config?.icon}
-                    amount={state.amount1}
-                    usdValue={usdValues?.TOKEN1 || '0.00'}
-                  />
+                {/* For Unified Yield, use depositPreview amounts (shows both tokens with calculated values) */}
+                {isUnifiedYield && depositPreview ? (
+                  <>
+                    {parseFloat(depositPreview.amount0Formatted) > 0 && (
+                      <TokenInfoRow
+                        symbol={pool.currency0.symbol}
+                        icon={token0Config?.icon}
+                        amount={depositPreview.amount0Formatted}
+                        usdValue={usdValues?.TOKEN0 || '0.00'}
+                      />
+                    )}
+                    {parseFloat(depositPreview.amount1Formatted) > 0 && (
+                      <TokenInfoRow
+                        symbol={pool.currency1.symbol}
+                        icon={token1Config?.icon}
+                        amount={depositPreview.amount1Formatted}
+                        usdValue={usdValues?.TOKEN1 || '0.00'}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {state.amount0 && parseFloat(state.amount0) > 0 && (
+                      <TokenInfoRow
+                        symbol={pool.currency0.symbol}
+                        icon={token0Config?.icon}
+                        amount={state.amount0}
+                        usdValue={usdValues?.TOKEN0 || '0.00'}
+                      />
+                    )}
+                    {state.amount1 && parseFloat(state.amount1) > 0 && (
+                      <TokenInfoRow
+                        symbol={pool.currency1.symbol}
+                        icon={token1Config?.icon}
+                        amount={state.amount1}
+                        usdValue={usdValues?.TOKEN1 || '0.00'}
+                      />
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -829,7 +977,8 @@ export function ReviewExecuteModal() {
               ) : (
                 <Button
                   onClick={handleConfirm}
-                  className="w-full h-12 text-base font-semibold bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90"
+                  disabled={isUnifiedYield && !depositPreview}
+                  className="w-full h-12 text-base font-semibold bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Create
                 </Button>

@@ -2,14 +2,19 @@
  * Unified Yield Hooks
  *
  * React hooks for managing Unified Yield positions:
+ * - useUnifiedYieldApproval: Execute token approvals to Hook
  * - useUnifiedYieldDeposit: Execute deposits
  * - useUnifiedYieldWithdraw: Execute withdrawals
- * - useUnifiedYieldPosition: Combined position management
  */
 
 export {
+  useUnifiedYieldApproval,
+  type UseUnifiedYieldApprovalParams,
+  type UseUnifiedYieldApprovalResult,
+} from './useUnifiedYieldApproval';
+
+export {
   useUnifiedYieldDeposit,
-  isNativeToken,
   type UseUnifiedYieldDepositParams,
   type UseUnifiedYieldDepositResult,
 } from './useUnifiedYieldDeposit';
@@ -19,9 +24,3 @@ export {
   type UseUnifiedYieldWithdrawParams,
   type UseUnifiedYieldWithdrawResult,
 } from './useUnifiedYieldWithdraw';
-
-export {
-  useUnifiedYieldPosition,
-  type UseUnifiedYieldPositionParams,
-  type UseUnifiedYieldPositionResult,
-} from './useUnifiedYieldPosition';

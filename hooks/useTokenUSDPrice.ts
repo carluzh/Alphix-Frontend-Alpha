@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { TokenSymbol } from '@/lib/pools-config';
 import { getQuotePrice } from '@/lib/swap/quote-prices';
 import useIsWindowVisible from '@/hooks/useIsWindowVisible';
+import { useNetwork } from '@/lib/network-context';
 
 const POLL_INTERVAL_MS = 30 * 1000; // Poll every 30 seconds
 const CACHE_DURATION_MS = 10 * 1000; // Client cache for 10 seconds
@@ -25,10 +26,14 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
   const [price, setPrice] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const isWindowVisible = useIsWindowVisible();
+  const { chainId, networkMode } = useNetwork();
 
   const fetchPrice = useCallback(async (symbol: TokenSymbol) => {
+    // Include chainId in cache key to avoid cross-network cache collisions
+    const cacheKey = `${symbol}-${chainId}`;
+
     // Check cache first
-    const cached = priceCache.get(symbol);
+    const cached = priceCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_DURATION_MS) {
       setPrice(cached.price);
       return;
@@ -36,9 +41,9 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
 
     setIsLoading(true);
     try {
-      const quotedPrice = await getQuotePrice(symbol);
+      const quotedPrice = await getQuotePrice(symbol, chainId, networkMode);
       if (quotedPrice > 0) {
-        priceCache.set(symbol, { price: quotedPrice, timestamp: Date.now() });
+        priceCache.set(cacheKey, { price: quotedPrice, timestamp: Date.now() });
         setPrice(quotedPrice);
       } else {
         setPrice(null);
@@ -49,7 +54,7 @@ export function useTokenUSDPrice(tokenSymbol: TokenSymbol | null | undefined): {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [chainId, networkMode]);
 
   useEffect(() => {
     if (!tokenSymbol) {

@@ -76,12 +76,24 @@ function mapExecutorStepsToUI(
           tokenIcon: isToken0 ? token0Icon : token1Icon,
         };
       }
+      // Unified Yield approval - direct ERC20 to Hook
+      case "UnifiedYieldApproval": {
+        const uyStep = step as any;
+        const isToken0 = uyStep.tokenSymbol === token0Symbol;
+        return {
+          type: UIStepType.TokenApprovalTransaction,
+          tokenSymbol: uyStep.tokenSymbol || token0Symbol,
+          tokenAddress: uyStep.tokenAddress || "",
+          tokenIcon: isToken0 ? token0Icon : token1Icon,
+        };
+      }
       case "Permit2Signature":
         return {
           type: UIStepType.Permit2Signature,
         };
       case "IncreasePositionTransaction":
       case "IncreasePositionTransactionAsync":
+      case "UnifiedYieldDeposit": // UY deposit maps to increase position UI
         return {
           type: UIStepType.IncreasePositionTransaction,
           token0Symbol,
@@ -161,6 +173,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
     hasValidAmounts,
     isOverBalance0,
     isOverBalance1,
+    isUnifiedYield,
   } = useIncreaseLiquidityContext();
 
   const {
@@ -309,6 +322,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
   };
 
   // Handle Review button click - starts transaction flow
+  // Uses unified executor for both V4 and Unified Yield positions
   const handleReview = useCallback(async () => {
     if (!address || !hasValidAmounts) return;
 
@@ -317,17 +331,21 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
     setLocalError(null);
     setIsPermitError(false);
 
-    const flow = getOrCreateFlowState(
-      address,
-      chainId || 0,
-      position.token0.symbol,
-      position.token1.symbol,
-      position.tickLower,
-      position.tickUpper
-    );
-    setFlowId(flow.flowId);
+    // V4 uses permit flow state tracking
+    if (!isUnifiedYield) {
+      const flow = getOrCreateFlowState(
+        address,
+        chainId || 0,
+        position.token0.symbol,
+        position.token1.symbol,
+        position.tickLower,
+        position.tickUpper
+      );
+      setFlowId(flow.flowId);
+    }
 
     try {
+      // Unified execution path - works for both V4 and Unified Yield
       const context = await fetchAndBuildContext();
       if (!context) {
         throw new Error("Failed to build transaction context");
@@ -348,7 +366,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
       setView("input");
       setLocalError(err?.message || "Transaction failed");
     }
-  }, [address, chainId, position, hasValidAmounts, fetchAndBuildContext, executor]);
+  }, [address, chainId, position, hasValidAmounts, fetchAndBuildContext, executor, isUnifiedYield]);
 
   // Handle retry
   const handleRetry = useCallback(() => {

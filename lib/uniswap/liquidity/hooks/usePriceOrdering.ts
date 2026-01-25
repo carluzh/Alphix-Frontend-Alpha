@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Currency, Token } from '@uniswap/sdk-core'
 import { PriceOrdering } from '../types'
-import { getV4TickToPrice } from '../utils/getTickToPrice'
+import { tickToPrice } from '@/lib/liquidity/utils/tick-price'
 
 interface TokenInfo {
   address: string
@@ -47,19 +47,10 @@ export function usePriceOrdering({
       token1.symbol
     )
 
-    // Get prices at tick boundaries
+    // Get prices at tick boundaries using consolidated utility
     // Note: token0 is quote, token1 is base (price = token0 per token1)
-    const priceLower = getV4TickToPrice({
-      baseCurrency: currency0,
-      quoteCurrency: currency1,
-      tick: tickLower,
-    })
-
-    const priceUpper = getV4TickToPrice({
-      baseCurrency: currency0,
-      quoteCurrency: currency1,
-      tick: tickUpper,
-    })
+    const priceLower = tickToPrice(tickLower, currency0, currency1)
+    const priceUpper = tickToPrice(tickUpper, currency0, currency1)
 
     return {
       priceLower,

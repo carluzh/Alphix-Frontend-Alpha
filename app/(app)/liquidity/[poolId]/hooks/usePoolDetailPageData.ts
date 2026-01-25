@@ -5,12 +5,23 @@ import { useAccount } from "wagmi";
 import { useNetwork } from "@/lib/network-context";
 import { usePoolState, useAllPrices } from "@/lib/apollo/hooks";
 import { getPoolById, getToken, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
-import { SafeStorage } from "@/lib/safe-storage";
-import { getOptimalBaseToken } from "@/lib/denomination-utils";
 import { usePoolChartData, type ChartDataPoint } from "./usePoolChartData";
 import { usePoolPositions } from "./usePoolPositions";
-import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
-import { TickMath } from "@uniswap/v3-sdk";
+import type { V4ProcessedPosition } from "@/pages/api/liquidity/get-positions";
+import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
+import { isUnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
+
+/**
+ * Position union type - combines V4 and Unified Yield positions
+ * Each type is fetched through its own dedicated flow for clean separation
+ */
+type Position = V4ProcessedPosition | UnifiedYieldPosition;
+
+/** Type guard for V4 positions */
+function isV4Position(position: Position): position is V4ProcessedPosition {
+  return position.type === 'v4';
+}
+import { TickMath, tickToPriceRelative, tickToPriceSimple } from "@/lib/liquidity/utils/tick-price";
 import { formatUSD as formatUSDShared } from "@/lib/format";
 
 // Re-export ChartDataPoint for convenience
@@ -76,8 +87,8 @@ export interface UsePoolDetailPageDataReturn {
   chartData: ChartDataPoint[];
   isLoadingChartData: boolean;
 
-  // Positions
-  userPositions: ProcessedPosition[];
+  // Positions (discriminated union of V4 and Unified Yield)
+  userPositions: Position[];
   isLoadingPositions: boolean;
   isDerivingNewPosition: boolean;
   optimisticallyClearedFees: Set<string>;
@@ -86,17 +97,13 @@ export interface UsePoolDetailPageDataReturn {
   priceMap: Record<string, number>;
   isLoadingPrices: boolean;
 
-  // Denomination
-  effectiveDenominationBase: string;
-  denominationBaseOverride: string | null;
-  handleDenominationToggle: (newBase: string) => void;
-
   // Token definitions
   tokenDefinitions: Record<string, { address: string; decimals: number; symbol: string }>;
 
+  // Responsive
+  windowWidth: number;
+
   // Tick/price utilities
-  sdkMinTick: number;
-  sdkMaxTick: number;
   convertTickToPrice: (
     tick: number,
     currentPoolTick: number | null,
@@ -114,14 +121,13 @@ export interface UsePoolDetailPageDataReturn {
     txInfo?: { txHash?: `0x${string}`; blockNumber?: bigint; tvlDelta?: number; volumeDelta?: number };
   }) => Promise<void>;
   refreshAfterMutation: (info?: { txHash?: `0x${string}`; tvlDelta?: number }) => Promise<void>;
-  updatePositionOptimistically: (positionId: string, updates: Partial<ProcessedPosition>) => void;
+  updatePositionOptimistically: (positionId: string, updates: Partial<V4ProcessedPosition>) => void;
   removePositionOptimistically: (positionId: string) => void;
   clearOptimisticFees: (positionId: string) => void;
   clearAllOptimisticStates: () => void;
 
   // USD calculations
-  getUsdPriceForSymbol: (symbol?: string) => number;
-  calculatePositionUsd: (position: ProcessedPosition) => number;
+  calculatePositionUsd: (position: Position) => number;
 }
 
 /**
@@ -166,10 +172,11 @@ function convertTickToPriceImpl(
   if (currentPoolTick !== null && currentPrice) {
     const currentPriceNum = parseFloat(currentPrice);
     if (Number.isFinite(currentPriceNum) && currentPriceNum > 0) {
-      const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
+      // Use consolidated utility for relative price calculation
+      const priceInToken1PerToken0 = tickToPriceRelative(tick, currentPoolTick, currentPriceNum);
       const priceAtTick = baseTokenForPriceDisplay === token0Symbol
-        ? 1 / (currentPriceNum * priceDelta)
-        : currentPriceNum * priceDelta;
+        ? 1 / priceInToken1PerToken0
+        : priceInToken1PerToken0;
 
       if (Number.isFinite(priceAtTick)) {
         if (priceAtTick < 1e-11 && priceAtTick > 0) return "0";
@@ -191,7 +198,8 @@ function convertTickToPriceImpl(
     const sorted0Decimals = sorted0IsToken0 ? dec0 : dec1;
     const sorted1Decimals = sorted0IsToken0 ? dec1 : dec0;
     const exp = sorted0Decimals - sorted1Decimals;
-    const price01 = Math.pow(1.0001, tick) * Math.pow(10, exp);
+    // Use consolidated utility for simple tick-to-price, then apply decimal adjustment
+    const price01 = tickToPriceSimple(tick) * Math.pow(10, exp);
     const baseIsToken0 = baseTokenForPriceDisplay === token0Symbol;
     const baseMatchesSorted0 = baseIsToken0 === sorted0IsToken0;
     const displayVal = baseMatchesSorted0 ? (price01 === 0 ? Infinity : 1 / price01) : price01;
@@ -309,13 +317,28 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     return 0;
   }, [allPrices, extractUsd]);
 
-  const calculatePositionUsd = useCallback((position: ProcessedPosition): number => {
+  const calculatePositionUsd = useCallback((position: Position): number => {
     if (!position) return 0;
-    const amt0 = parseFloat(position.token0.amount || '0');
-    const amt1 = parseFloat(position.token1.amount || '0');
-    const p0 = getUsdPriceForSymbol(position.token0.symbol);
-    const p1 = getUsdPriceForSymbol(position.token1.symbol);
-    return (amt0 * p0) + (amt1 * p1);
+
+    // Handle V4 positions
+    if (isV4Position(position)) {
+      const amt0 = parseFloat(position.token0.amount || '0');
+      const amt1 = parseFloat(position.token1.amount || '0');
+      const p0 = getUsdPriceForSymbol(position.token0.symbol);
+      const p1 = getUsdPriceForSymbol(position.token1.symbol);
+      return (amt0 * p0) + (amt1 * p1);
+    }
+
+    // Handle Unified Yield positions
+    if (isUnifiedYieldPosition(position)) {
+      const amt0 = parseFloat(position.token0Amount || '0');
+      const amt1 = parseFloat(position.token1Amount || '0');
+      const p0 = getUsdPriceForSymbol(position.token0Symbol);
+      const p1 = getUsdPriceForSymbol(position.token1Symbol);
+      return (amt0 * p0) + (amt1 * p1);
+    }
+
+    return 0;
   }, [getUsdPriceForSymbol]);
 
   // Price map for components
@@ -324,36 +347,6 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     ETH: extractUsd(allPrices?.ETH, 0),
     BTC: extractUsd(allPrices?.BTC, 0),
   }), [allPrices, extractUsd]);
-
-  // Denomination toggle
-  const [denominationBaseOverride, setDenominationBaseOverride] = useState<string | null>(null);
-  const token0Symbol = poolConfig?.tokens?.[0]?.symbol || '';
-  const token1Symbol = poolConfig?.tokens?.[1]?.symbol || '';
-
-  const effectiveDenominationBase = useMemo(() => {
-    if (
-      denominationBaseOverride &&
-      (denominationBaseOverride === token0Symbol || denominationBaseOverride === token1Symbol)
-    ) {
-      return denominationBaseOverride;
-    }
-    const priceNum = poolState.currentPrice ? parseFloat(poolState.currentPrice) : undefined;
-    return getOptimalBaseToken(token0Symbol, token1Symbol, priceNum);
-  }, [denominationBaseOverride, token0Symbol, token1Symbol, poolState.currentPrice]);
-
-  // Load saved denomination preference
-  useEffect(() => {
-    const storageKey = `denomination-base-${poolId}`;
-    const saved = SafeStorage.get(storageKey);
-    if (saved && (saved === token0Symbol || saved === token1Symbol)) {
-      setDenominationBaseOverride(saved);
-    }
-  }, [poolId, token0Symbol, token1Symbol]);
-
-  const handleDenominationToggle = useCallback((newBase: string) => {
-    setDenominationBaseOverride(newBase);
-    SafeStorage.set(`denomination-base-${poolId}`, newBase);
-  }, [poolId]);
 
   // Convert tick to price (bound to tokenDefinitions)
   const convertTickToPrice = useCallback(
@@ -435,12 +428,8 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     optimisticallyClearedFees,
     priceMap,
     isLoadingPrices,
-    effectiveDenominationBase,
-    denominationBaseOverride,
-    handleDenominationToggle,
     tokenDefinitions,
-    sdkMinTick: TickMath.MIN_TICK,
-    sdkMaxTick: TickMath.MAX_TICK,
+    windowWidth,
     convertTickToPrice,
     refreshPositions,
     refreshAfterLiquidityAdded,
@@ -449,7 +438,6 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     removePositionOptimistically,
     clearOptimisticFees,
     clearAllOptimisticStates,
-    getUsdPriceForSymbol,
     calculatePositionUsd,
   };
 }

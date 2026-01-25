@@ -3,10 +3,79 @@
  *
  * Client for calling the AlphixBackend API for portfolio chart data.
  * The backend handles pool snapshots, position value calculations, and fee estimation.
+ *
+ * Network-aware: Most endpoints support ?network=base (mainnet) or ?network=base-sepolia (testnet)
  */
+
+import { type NetworkMode } from './network-mode';
 
 // Backend URL - defaults to localhost for development
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
+
+// =============================================================================
+// NETWORK HELPERS
+// =============================================================================
+
+/**
+ * Map frontend NetworkMode to backend network query param value
+ *
+ * @param networkMode - 'mainnet' | 'testnet' from NetworkContext
+ * @returns 'base' for mainnet, 'base-sepolia' for testnet
+ */
+export function getNetworkParam(networkMode: NetworkMode): 'base' | 'base-sepolia' {
+  return networkMode === 'testnet' ? 'base-sepolia' : 'base';
+}
+
+/**
+ * Build a backend URL with network param and optional additional params
+ *
+ * @param path - API path (e.g., '/pools/0x123/history')
+ * @param networkMode - Network mode from context
+ * @param params - Additional query params
+ * @returns Full URL string
+ */
+export function buildBackendUrl(
+  path: string,
+  networkMode: NetworkMode,
+  params?: Record<string, string>
+): string {
+  // Handle path starting with or without leading slash
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const url = new URL(normalizedPath, BACKEND_URL);
+  url.searchParams.set('network', getNetworkParam(networkMode));
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      url.searchParams.set(key, value);
+    });
+  }
+  return url.toString();
+}
+
+/**
+ * Build a backend URL WITHOUT network param (for mainnet-only endpoints)
+ *
+ * Used for: /aave/rates, /spark/rates, /points/*, /referral/*
+ */
+export function buildBackendUrlNoNetwork(
+  path: string,
+  params?: Record<string, string>
+): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const url = new URL(normalizedPath, BACKEND_URL);
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      url.searchParams.set(key, value);
+    });
+  }
+  return url.toString();
+}
+
+/**
+ * Get the raw backend URL (for SSE connections that build their own params)
+ */
+export function getBackendUrl(): string {
+  return BACKEND_URL;
+}
 
 /**
  * Convert position ID to full 66-character hex format expected by backend.
@@ -137,19 +206,23 @@ export async function checkBackendHealth(): Promise<HealthStatus> {
  *
  * @param address - User's wallet address
  * @param period - Time period (DAY, WEEK, MONTH)
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
  */
 export async function fetchPositionsChart(
   address: string,
-  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK'
+  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
+  networkMode: NetworkMode = 'mainnet'
 ): Promise<PortfolioChartResponse> {
   try {
-    const response = await fetch(
-      `${BACKEND_URL}/portfolio/chart?address=${encodeURIComponent(address)}&period=${period}`,
-      {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    const url = buildBackendUrl('/portfolio/chart', networkMode, {
+      address: address,
+      period: period,
+    });
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -176,19 +249,22 @@ export async function fetchPositionsChart(
  *
  * @param poolId - Pool ID
  * @param period - Time period (DAY, WEEK, MONTH)
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
  */
 export async function fetchPoolHistory(
   poolId: string,
-  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK'
+  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
+  networkMode: NetworkMode = 'mainnet'
 ): Promise<PoolHistoryResponse> {
   try {
-    const response = await fetch(
-      `${BACKEND_URL}/pools/${encodeURIComponent(poolId)}/history?period=${period}`,
-      {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/history`, networkMode, {
+      period: period,
+    });
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -242,10 +318,12 @@ export interface PositionFeeChartResponse {
  *
  * @param positionId - Position token ID
  * @param period - Time period (1W, 1M, 1Y, ALL - mapped to backend format)
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
  */
 export async function fetchPositionFees(
   positionId: string,
-  period: '1W' | '1M' | '1Y' | 'ALL' = '1W'
+  period: '1W' | '1M' | '1Y' | 'ALL' = '1W',
+  networkMode: NetworkMode = 'mainnet'
 ): Promise<PositionFeeChartResponse> {
   // Map frontend period format to backend format
   const periodMap: Record<string, 'DAY' | 'WEEK' | 'MONTH'> = {
@@ -260,13 +338,14 @@ export async function fetchPositionFees(
   const fullHexPositionId = toFullHexPositionId(positionId);
 
   try {
-    const response = await fetch(
-      `${BACKEND_URL}/position/${encodeURIComponent(fullHexPositionId)}/fees?period=${backendPeriod}`,
-      {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    const url = buildBackendUrl(`/position/${encodeURIComponent(fullHexPositionId)}/fees`, networkMode, {
+      period: backendPeriod,
+    });
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -315,21 +394,22 @@ export interface PositionAprResponse {
  * Returns daysCovered < 7 for positions younger than 7 days.
  *
  * @param positionId - Position token ID
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
  */
 export async function fetchPositionApr(
-  positionId: string
+  positionId: string,
+  networkMode: NetworkMode = 'mainnet'
 ): Promise<PositionAprResponse> {
   // Convert position ID to full 66-char hex format expected by backend
   const fullHexPositionId = toFullHexPositionId(positionId);
 
   try {
-    const response = await fetch(
-      `${BACKEND_URL}/position/${encodeURIComponent(fullHexPositionId)}/apr`,
-      {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    const url = buildBackendUrl(`/position/${encodeURIComponent(fullHexPositionId)}/apr`, networkMode);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -356,20 +436,23 @@ export async function fetchPositionApr(
  * Get current pool state
  *
  * @param poolId - Pool ID
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
  */
-export async function fetchPoolCurrent(poolId: string): Promise<{
+export async function fetchPoolCurrent(
+  poolId: string,
+  networkMode: NetworkMode = 'mainnet'
+): Promise<{
   success: boolean;
   snapshot?: PoolSnapshot;
   error?: string;
 }> {
   try {
-    const response = await fetch(
-      `${BACKEND_URL}/pools/${encodeURIComponent(poolId)}/current`,
-      {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/current`, networkMode);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -384,6 +467,387 @@ export async function fetchPoolCurrent(poolId: string): Promise<{
   } catch (error) {
     return {
       success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+// =============================================================================
+// UNIFIED YIELD ENDPOINTS
+// =============================================================================
+
+/**
+ * Unified Yield pool info
+ */
+export interface UnifiedYieldPool {
+  poolId: string;
+  name: string;
+  token0: { address: string; symbol: string; decimals: number };
+  token1: { address: string; symbol: string; decimals: number };
+  hookAddress: string;
+  tvlUsd?: number;
+}
+
+/**
+ * Response for listing UY pools
+ */
+export interface UnifiedYieldPoolsResponse {
+  success: boolean;
+  pools: UnifiedYieldPool[];
+  error?: string;
+}
+
+/**
+ * Fetch all Unified Yield pools for a network
+ *
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
+ */
+export async function fetchUnifiedYieldPools(
+  networkMode: NetworkMode = 'mainnet'
+): Promise<UnifiedYieldPoolsResponse> {
+  try {
+    const url = buildBackendUrl('/unified-yield/pools', networkMode);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      pools: [],
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * APR response for a UY pool
+ */
+export interface UnifiedYieldPoolAprResponse {
+  success: boolean;
+  network?: string;
+  poolName?: string;
+  poolId: string;
+  swapApr7d: number | null;
+  swapApr24h?: number | null;
+  volume24hUsd?: number;
+  tvlUsd?: number;
+  calculatedAt?: number;
+  error?: string;
+}
+
+/**
+ * Fetch swap APR for a Unified Yield pool
+ *
+ * @param poolId - Pool ID
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
+ */
+export async function fetchUnifiedYieldPoolApr(
+  poolId: string,
+  networkMode: NetworkMode = 'mainnet'
+): Promise<UnifiedYieldPoolAprResponse> {
+  try {
+    const url = buildBackendUrl(`/unified-yield/pool/${encodeURIComponent(poolId)}/apr`, networkMode);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      poolId,
+      swapApr7d: null,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Historical APR point for swap APR
+ */
+export interface SwapAprHistoryPoint {
+  timestamp: number;
+  swapApr: number;
+  tvlUsd?: number;
+}
+
+/**
+ * Historical APR point (generic)
+ */
+export interface AprHistoryPoint {
+  timestamp: number;
+  apr: number;
+}
+
+/**
+ * Historical APR response
+ */
+export interface UnifiedYieldAprHistoryResponse {
+  success: boolean;
+  poolId: string;
+  period: string;
+  points: AprHistoryPoint[];
+  error?: string;
+}
+
+/**
+ * Fetch historical APR for a Unified Yield pool
+ *
+ * @param poolId - Pool ID
+ * @param period - Time period (DAY, WEEK, MONTH)
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
+ */
+export async function fetchUnifiedYieldPoolAprHistory(
+  poolId: string,
+  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
+  networkMode: NetworkMode = 'mainnet'
+): Promise<UnifiedYieldAprHistoryResponse> {
+  try {
+    const url = buildBackendUrl(`/unified-yield/pool/${encodeURIComponent(poolId)}/apr/history`, networkMode, {
+      period: period,
+    });
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      poolId,
+      period,
+      points: [],
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Token prices from pool
+ */
+export interface PoolPricesResponse {
+  success: boolean;
+  poolId: string;
+  token0Price: number | null;
+  token1Price: number | null;
+  error?: string;
+}
+
+/**
+ * Fetch token prices from a pool
+ *
+ * @param poolId - Pool ID
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
+ */
+export async function fetchPoolPrices(
+  poolId: string,
+  networkMode: NetworkMode = 'mainnet'
+): Promise<PoolPricesResponse> {
+  try {
+    const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/prices`, networkMode);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      poolId,
+      token0Price: null,
+      token1Price: null,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Historical pool prices response
+ */
+export interface PoolPricesHistoryResponse {
+  success: boolean;
+  poolId: string;
+  period: string;
+  points: Array<{
+    timestamp: number;
+    token0Price: number;
+    token1Price: number;
+  }>;
+  error?: string;
+}
+
+/**
+ * Fetch historical token prices from a pool
+ *
+ * @param poolId - Pool ID
+ * @param period - Time period (DAY, WEEK, MONTH)
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
+ */
+export async function fetchPoolPricesHistory(
+  poolId: string,
+  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
+  networkMode: NetworkMode = 'mainnet'
+): Promise<PoolPricesHistoryResponse> {
+  try {
+    const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/prices/history`, networkMode, {
+      period: period,
+    });
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      poolId,
+      period,
+      points: [],
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+// =============================================================================
+// SPARK RATES (MAINNET-ONLY)
+// =============================================================================
+
+/**
+ * Spark rate data (sUSDS yield)
+ */
+export interface SparkRateData {
+  apy: number;
+  timestamp: number;
+}
+
+/**
+ * Spark rates response
+ */
+export interface SparkRatesResponse {
+  success: boolean;
+  data: SparkRateData | null;
+  error?: string;
+}
+
+/**
+ * Fetch Spark rates (sUSDS yield on Ethereum mainnet)
+ *
+ * Note: This is mainnet-only - no network param needed
+ */
+export async function fetchSparkRates(): Promise<SparkRatesResponse> {
+  try {
+    const url = buildBackendUrlNoNetwork('/spark/rates');
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      data: null,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Spark historical rate point
+ */
+export interface SparkHistoryPoint {
+  timestamp: number;
+  apy: number;
+}
+
+/**
+ * Spark rates history response
+ */
+export interface SparkHistoryResponse {
+  success: boolean;
+  token: string;
+  period: string;
+  points: SparkHistoryPoint[];
+  error?: string;
+}
+
+/**
+ * Fetch historical Spark rates for a token
+ *
+ * Note: This is mainnet-only - no network param needed
+ *
+ * @param token - Token symbol (e.g., 'DAI', 'USDS')
+ * @param period - Time period (DAY, WEEK, MONTH)
+ */
+export async function fetchSparkRatesHistory(
+  token: string,
+  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK'
+): Promise<SparkHistoryResponse> {
+  try {
+    const url = new URL('/spark/rates/history', BACKEND_URL);
+    url.searchParams.set('token', token);
+    url.searchParams.set('period', period);
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      token,
+      period,
+      points: [],
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }

@@ -4,13 +4,19 @@
 import type { NetworkMode } from '@/lib/pools-config'
 import { MAINNET_CHAIN_ID } from '@/lib/network-mode'
 
-// USDC is the quote currency, so it's always $1.00
-// Other stablecoins (USDT, DAI) are quoted on-chain for accurate pricing
-const QUOTE_CURRENCY = new Set(['USDC', 'AUSDC', 'aUSDC'])
+// Stablecoins that are always priced at $1.00
+// Mainnet: USDC is the quote currency
+// Testnet: atDAI and atUSDC are mock stablecoins (always $1)
+const STABLECOINS_USD = new Set([
+  'USDC', 'USDT', 'DAI',           // Mainnet stablecoins
+  'AUSDC', 'aUSDC', 'aDAI',        // Aave wrapped
+  'atUSDC', 'atDAI',               // Testnet mock stablecoins
+])
 
-function isQuoteCurrency(symbol: string | null | undefined): boolean {
+function isStablecoinUSD(symbol: string | null | undefined): boolean {
   if (!symbol || typeof symbol !== 'string') return false
-  return QUOTE_CURRENCY.has(symbol.toUpperCase()) || QUOTE_CURRENCY.has(symbol)
+  const upper = symbol.toUpperCase()
+  return STABLECOINS_USD.has(symbol) || STABLECOINS_USD.has(upper)
 }
 
 function getBaseUrl(): string {
@@ -25,13 +31,13 @@ export async function getQuotePrice(
   networkMode?: NetworkMode
 ): Promise<number> {
   if (!symbol || typeof symbol !== 'string' || symbol.trim() === '') return 0
-  if (isQuoteCurrency(symbol)) return 1
+  if (isStablecoinUSD(symbol)) return 1
 
   // Derive networkMode from chainId if not explicitly provided
   const resolvedNetworkMode: NetworkMode = networkMode ?? (chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet')
 
-  // Use USDC for mainnet, aUSDC for testnet
-  const quoteToken = resolvedNetworkMode === 'mainnet' ? 'USDC' : 'aUSDC'
+  // Use USDC for mainnet, atUSDC for testnet
+  const quoteToken = resolvedNetworkMode === 'mainnet' ? 'USDC' : 'atUSDC'
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 5000)

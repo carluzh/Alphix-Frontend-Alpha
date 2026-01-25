@@ -13,43 +13,9 @@
     "stateView": "0x571291b572ed32ce6751a2cb2486ebee8defb9b4"
   },
   "hooks": {
-    "alphixHookId": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000"
+    "alphixHookId": "0xca7979275e3856E33d9A351a170733217084A0C0"
   },
   "tokens": {
-    "aUSDC": {
-      "symbol": "aUSDC",
-      "name": "Alphix USDC",
-      "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD",
-      "decimals": 6,
-      "icon": "/tokens/aUSDC.png",
-      "usdPrice": "1.0",
-      "color": "#2775CA"
-    },
-    "aUSDT": {
-      "symbol": "aUSDT",
-      "name": "Alphix USDT",
-      "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC",
-      "decimals": 6,
-      "icon": "/tokens/aUSDT.png",
-      "usdPrice": "1.0",
-      "color": "#26A17B"
-    },
-    "aETH": {
-      "symbol": "aETH",
-      "name": "Alphix Ethereum",
-      "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7",
-      "decimals": 18,
-      "icon": "/tokens/aETH.png",
-      "color": "#627EEA"
-    },
-    "aBTC": {
-      "symbol": "aBTC",
-      "name": "Alphix Bitcoin",
-      "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604",
-      "decimals": 8,
-      "icon": "/tokens/aBTC.png",
-      "color": "#F7931A"
-    },
     "ETH": {
       "symbol": "ETH",
       "name": "Ethereum",
@@ -58,156 +24,51 @@
       "icon": "/tokens/ETH.png",
       "color": "#627EEA"
     },
-    "aDAI": {
-      "symbol": "aDAI",
-      "name": "Alphix DAI",
-      "address": "0x6876Ef4dc1aBADd2f3dA7a0ccbF562E63b62964e",
+    "atDAI": {
+      "symbol": "atDAI",
+      "name": "Alphix Testnet DAI",
+      "address": "0x5ae7Ce909022a2B031C31872af5Dfa796F233Aa5",
       "decimals": 18,
       "icon": "/tokens/aDAI.png",
       "usdPrice": "1.0",
       "color": "#F5AC37"
+    },
+    "atUSDC": {
+      "symbol": "atUSDC",
+      "name": "Alphix Testnet USDC",
+      "address": "0xFADB34a7e6F1D263053d05987408bA5cFF60B4f1",
+      "decimals": 6,
+      "icon": "/tokens/aUSDC.png",
+      "usdPrice": "1.0",
+      "color": "#2775CA"
     }
   },
   "pools": [
     {
-      "id": "ausdt-aeth",
-      "name": "aUSDT/aETH",
-      "description": "Alphix USDT / Alphix Ethereum pool",
-      "subgraphId": "0x4e1b037b56e13bea1dfe20e8f592b95732cc52b5b10777b9f9bea856c145e7c7",
+      "id": "atdai-atusdc",
+      "name": "atDAI/atUSDC",
+      "description": "Stable pool - Alphix Testnet DAI / Alphix Testnet USDC",
+      "subgraphId": "0xee09c3a9e72038e8a8b4049350352afdef83505d8171a3e00dd53e1c63a562da",
       "currency0": {
-        "symbol": "aUSDT",
-        "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC"
+        "symbol": "atDAI",
+        "address": "0x5ae7Ce909022a2B031C31872af5Dfa796F233Aa5"
       },
       "currency1": {
-        "symbol": "aETH",
-        "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7"
-      },
-      "fee": 8388608,
-      "tickSpacing": 100,
-      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
-      "enabled": true,
-      "featured": true,
-      "type": "Standard"
-    },
-    {
-      "id": "ausdc-abtc",
-      "name": "aUSDC/aBTC",
-      "description": "Alphix USDC / Alphix Bitcoin pool",
-      "subgraphId": "0x8392f09ccc3c387d027d189f13a1f1f2e9d73f34011191a3d58157b9b2bf8bdd",
-      "currency0": {
-        "symbol": "aUSDC",
-        "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD"
-      },
-      "currency1": {
-        "symbol": "aBTC",
-        "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604"
-      },
-      "fee": 8388608,
-      "tickSpacing": 80,
-      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
-      "enabled": true,
-      "featured": false,
-      "type": "Standard"
-    },
-    {
-      "id": "ausdc-ausdt",
-      "name": "aUSDC/aUSDT",
-      "description": "Alphix USDC / Alphix USDT pool",
-      "subgraphId": "0xfaa0e80397dda369eb68f6f67c9cd4d4884841f1417078e20844addc11170127",
-      "currency0": {
-        "symbol": "aUSDC",
-        "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD"
-      },
-      "currency1": {
-        "symbol": "aUSDT",
-        "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC"
+        "symbol": "atUSDC",
+        "address": "0xFADB34a7e6F1D263053d05987408bA5cFF60B4f1"
       },
       "fee": 8388608,
       "tickSpacing": 1,
-      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
+      "hooks": "0xca7979275e3856E33d9A351a170733217084A0C0",
       "enabled": true,
-      "featured": false,
-      "type": "Stable"
-    },
-    {
-      "id": "eth-ausdt",
-      "name": "ETH/aUSDT",
-      "description": "Ethereum / Alphix USDT pool",
-      "subgraphId": "0xe6a2c6909de49149dced232f472247979fdc098cd2de74b0923e3cefb5602c15",
-      "currency0": {
-        "symbol": "ETH",
-        "address": "0x0000000000000000000000000000000000000000"
-      },
-      "currency1": {
-        "symbol": "aUSDT",
-        "address": "0x9F785fEb65DBd0170bd6Ca1A045EEda44ae9b4dC"
-      },
-      "fee": 8388608,
-      "tickSpacing": 45,
-      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
-      "enabled": true,
-      "featured": false,
-      "type": "Standard"
-    },
-    {
-      "id": "abtc-aeth",
-      "name": "aBTC/aETH",
-      "description": "Alphix Bitcoin / Alphix Ethereum pool",
-      "subgraphId": "0xe9b5f2692da366148c42074373f37d00f368edcae46bcf7e39dd1aab5207d7c2",
-      "currency0": {
-        "symbol": "aBTC",
-        "address": "0x9d5F910c91E69ADDDB06919825305eFEa5c9c604"
-      },
-      "currency1": {
-        "symbol": "aETH",
-        "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7"
-      },
-      "fee": 8388608,
-      "tickSpacing": 60,
-      "hooks": "0xd450f7f8e4C11EE8620a349f73e7aC3905Dfd000",
-      "enabled": true,
-      "featured": false,
-      "type": "Standard"
-    },
-    {
-      "id": "ausdc-adai",
-      "name": "aUSDC/aDAI",
-      "description": "Alphix USDC / Alphix DAI pool",
-      "subgraphId": "0x4bd4386e6ef583af6cea0e010a7118f41c4d3315e88b81a88fc7fd3822bf766b",
-      "currency0": {
-        "symbol": "aUSDC",
-        "address": "0x24429b8f2C8ebA374Dd75C0a72BCf4dF4C545BeD"
-      },
-      "currency1": {
-        "symbol": "aDAI",
-        "address": "0x6876Ef4dc1aBADd2f3dA7a0ccbF562E63b62964e"
-      },
-      "fee": 8388608,
-      "tickSpacing": 30,
-      "hooks": "0x285a195230239822adbc6fd2281c7b1de1a17fc0",
-      "enabled": true,
-      "featured": false,
-      "type": "Stable"
-    },
-    {
-      "id": "adai-aeth",
-      "name": "aDAI/aETH",
-      "description": "Alphix DAI / Alphix Ethereum pool",
-      "subgraphId": "0x47da32fed07f99dc9a10744a58f43bf563909d8b46203c300487caf3edd8b1f3",
-      "currency0": {
-        "symbol": "aDAI",
-        "address": "0x6876Ef4dc1aBADd2f3dA7a0ccbF562E63b62964e"
-      },
-      "currency1": {
-        "symbol": "aETH",
-        "address": "0xE7711aa6557A69592520Bbe7D704D64438f160e7"
-      },
-      "fee": 8388608,
-      "tickSpacing": 55,
-      "hooks": "0x285a195230239822adbc6fd2281c7b1de1a17fc0",
-      "enabled": true,
-      "featured": false,
-      "type": "Standard"
+      "featured": true,
+      "type": "Stable",
+      "yieldSources": ["aave", "spark"],
+      "rehypoRange": {
+        "min": "-276326",
+        "max": "-276324",
+        "isFullRange": false
+      }
     }
   ],
   "fees": {
@@ -216,9 +77,9 @@
     "currentRatio": "700000000000000000"
   },
   "_comments": {
-    "subgraphId": "CRITICAL: The 'subgraphId' field contains the ACTUAL on-chain poolId (bytes32). DO NOT recalculate this value using keccak256 or any other method. The on-chain poolId may differ from calculated values due to internal contract logic. Always use the poolId provided by the contract deployment transaction or queried directly from on-chain state.",
-    "poolIdCalculation": "If you need a poolId for a new pool, get it from: 1) The deployment transaction logs, 2) The InitializePool event, or 3) By querying the PoolManager contract directly. Never calculate it manually.",
+    "subgraphId": "CRITICAL: The 'subgraphId' field contains the ACTUAL on-chain poolId (bytes32). DO NOT recalculate this value using keccak256 or any other method.",
+    "poolIdCalculation": "If you need a poolId for a new pool, get it from: 1) The deployment transaction logs, 2) The InitializePool event, or 3) By querying the PoolManager contract directly.",
     "fee": "The fee value 8388608 is the dynamic fee flag (0x800000). This indicates the pool uses dynamic fees managed by the hook contract.",
-    "hooks": "Each pool's hook address determines its on-chain behavior. Changing the hook address will change the poolId, making the pool a completely different pool on-chain."
+    "hooks": "Each pool's hook address determines its on-chain behavior. Changing the hook address will change the poolId."
   }
-} 
+}

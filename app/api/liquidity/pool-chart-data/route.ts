@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { checkRateLimit } from '@/lib/api/ratelimit';
 import { getPoolSubgraphId, getAllPools, type NetworkMode } from '@/lib/pools-config';
-import { getUniswapV4SubgraphUrl, isDaiPool, getDaiSubgraphUrl } from '@/lib/subgraph-url-helper';
+import { getUniswapV4SubgraphUrl } from '@/lib/subgraph-url-helper';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
 import { poolKeys } from '@/lib/cache/redis-keys';
 import { batchQuotePrices } from '@/lib/swap/quote-prices';
@@ -39,29 +39,24 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
     const subgraphId = (getPoolSubgraphId(poolId, networkMode) || poolId).toLowerCase();
     if (!/^0x[a-f0-9]+$/i.test(subgraphId)) throw new Error('Invalid pool ID format');
 
-    // Use Uniswap V4 subgraph for Pool/PoolHourData queries (volume, TVL)
-    // Fee events are handled by the /api/liquidity/get-historical-dynamic-fees endpoint
-    // DAI pools on testnet use a separate subgraph
-    const poolDataSubgraphUrl = isDaiPool(subgraphId, networkMode)
-      ? getDaiSubgraphUrl(networkMode)
-      : getUniswapV4SubgraphUrl(networkMode);
-
+    const poolDataSubgraphUrl = getUniswapV4SubgraphUrl(networkMode);
     if (!poolDataSubgraphUrl) {
       throw new Error('Uniswap V4 subgraph URL not found for pool data');
     }
 
-    // Get pool config for token symbols
+    // Get pool config for token symbols and hook address
     const allPools = getAllPools(networkMode);
     const poolCfg = allPools.find(p => (getPoolSubgraphId(p.id, networkMode) || p.id).toLowerCase() === subgraphId);
     const sym0 = poolCfg?.currency0?.symbol || 'USDC';
     const sym1 = poolCfg?.currency1?.symbol || 'USDC';
+    const hookAddress = poolCfg?.hooks?.toLowerCase() || '';
 
     // Get token prices for USD conversion
     const prices = await batchQuotePrices([sym0, sym1]);
     const p0 = prices[sym0] || 1;
     const p1 = prices[sym1] || 1;
 
-    // Generate date keys for the past N days (excluding today for historical, including today for current)
+    // Generate date keys for the past N days
     const end = new Date();
     end.setUTCHours(0, 0, 0, 0);
     const start = new Date(end);
@@ -76,8 +71,11 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
 
     const cutoffTimestamp = Math.floor(start.getTime() / 1000);
     const todayKey = new Date().toISOString().split('T')[0];
+    const isTestnet = networkMode === 'testnet';
 
+    // =============================================================================
     // STEP 1: Fetch volume from poolHourDatas (aggregated to daily)
+    // =============================================================================
     const hourlyQuery = `{
       poolHourDatas(
         where: { pool: "${subgraphId}", periodStartUnix_gte: ${cutoffTimestamp} }
@@ -90,16 +88,47 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       }
     }`;
 
-    // STEP 2: Build block number query for end-of-day timestamps (for TVL)
-    const blockAliases = allDateKeys.filter(k => k !== todayKey).map((key) => {
-      const alias = `b_${key.replace(/-/g, '_')}`;
-      const ts = Math.floor(new Date(key + 'T23:59:59Z').getTime() / 1000);
-      return `${alias}: transactions(first: 1, orderBy: timestamp, orderDirection: desc, where: { timestamp_lte: ${ts} }) { blockNumber }`;
-    }).join('\n');
-    const blocksQuery = blockAliases ? `query Blocks {\n${blockAliases}\n}` : null;
+    // =============================================================================
+    // STEP 2: For testnet, fetch alphixHookTVLDayDatas for COMBINED historical TVL
+    //         For mainnet, fall back to block-by-block pool TVL queries
+    // =============================================================================
+    let tvlDayDataQuery: string | null = null;
+    let blocksQuery: string | null = null;
 
-    // Fetch volume, blocks, and fee events in parallel
-    const [hourlyResult, blocksResult, feeEventsResult] = await Promise.all([
+    if (isTestnet) {
+      // Testnet: Use alphixHookTVLDayDatas for combined TVL (pool + rehypothecated)
+      // Note: The subgraph's USD fields are not populated, so we use token amounts
+      // and convert to USD using our price data.
+      // Hook address is used as filter (testnet only has one hook currently)
+      tvlDayDataQuery = `{
+        alphixHookTVLDayDatas(
+          where: { hook: "${hookAddress}" }
+          orderBy: date
+          orderDirection: desc
+          first: ${days + 5}
+        ) {
+          id
+          date
+          totalAmount0
+          totalAmount1
+        }
+        alphixHookTVLs(first: 1) {
+          totalAmount0
+          totalAmount1
+        }
+      }`;
+    } else {
+      // Mainnet: Build block number query for historical TVL
+      const blockAliases = allDateKeys.filter(k => k !== todayKey).map((key) => {
+        const alias = `b_${key.replace(/-/g, '_')}`;
+        const ts = Math.floor(new Date(key + 'T23:59:59Z').getTime() / 1000);
+        return `${alias}: transactions(first: 1, orderBy: timestamp, orderDirection: desc, where: { timestamp_lte: ${ts} }) { blockNumber }`;
+      }).join('\n');
+      blocksQuery = blockAliases ? `query Blocks {\n${blockAliases}\n}` : null;
+    }
+
+    // Fetch all data in parallel
+    const [hourlyResult, tvlDataResult, feeEventsResult] = await Promise.all([
       // Query 1: Hourly volume data
       fetch(poolDataSubgraphUrl, {
         method: 'POST',
@@ -107,14 +136,16 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
         body: JSON.stringify({ query: hourlyQuery })
       }),
 
-      // Query 2: Block numbers for TVL historical queries
-      blocksQuery ? fetch(poolDataSubgraphUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: blocksQuery })
-      }) : Promise.resolve(null),
+      // Query 2: TVL data (either alphixHookTVLDayDatas or block numbers)
+      (tvlDayDataQuery || blocksQuery)
+        ? fetch(poolDataSubgraphUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: tvlDayDataQuery || blocksQuery })
+          })
+        : Promise.resolve(null),
 
-      // Query 3: Fee events from unified endpoint (pass networkMode since server-to-server calls don't forward cookies)
+      // Query 3: Fee events
       fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphId)}&network=${networkMode}`)
     ]);
 
@@ -136,10 +167,48 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       volByDate.set(date, vol);
     }
 
-    // Process block numbers for TVL queries
-    const aliasToBlock = new Map<string, number>();
-    if (blocksResult) {
-      const blocksJson = await blocksResult.json();
+    // =============================================================================
+    // STEP 3: Process TVL data based on network
+    // =============================================================================
+    const tvlByDate = new Map<string, number>(); // Store USD values directly
+
+    if (isTestnet && tvlDataResult) {
+      // TESTNET: Use alphixHookTVLDayDatas for combined historical TVL
+      const tvlJson = await tvlDataResult.json();
+
+      if (!tvlJson.errors) {
+        const dayDatas = tvlJson?.data?.alphixHookTVLDayDatas || [];
+
+        // Map day data by date string - use token amounts since USD fields are not populated
+        for (const d of dayDatas) {
+          // Convert unix timestamp to date string
+          const dateTs = Number(d.date);
+          const dateStr = new Date(dateTs * 1000).toISOString().split('T')[0];
+
+          // Calculate TVL from token amounts (already in human-readable format)
+          const amt0 = Number(d.totalAmount0) || 0;
+          const amt1 = Number(d.totalAmount1) || 0;
+          const totalTvl = (amt0 * p0) + (amt1 * p1);
+          if (totalTvl > 0) {
+            tvlByDate.set(dateStr, totalTvl);
+          }
+        }
+
+        // Get current TVL from alphixHookTVLs for today (more accurate than day data)
+        const hookTvl = tvlJson?.data?.alphixHookTVLs?.[0];
+        if (hookTvl) {
+          const todayTvl = (Number(hookTvl.totalAmount0) || 0) * p0 +
+                           (Number(hookTvl.totalAmount1) || 0) * p1;
+          if (todayTvl > 0) {
+            tvlByDate.set(todayKey, todayTvl);
+          }
+        }
+      }
+    } else if (!isTestnet && tvlDataResult) {
+      // MAINNET: Use block-by-block pool TVL queries
+      const blocksJson = await tvlDataResult.json();
+      const aliasToBlock = new Map<string, number>();
+
       if (!blocksJson.errors) {
         for (const key of allDateKeys) {
           if (key === todayKey) continue;
@@ -151,58 +220,60 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
           }
         }
       }
-    }
 
-    // STEP 3: Query pool TVL at each historical block
-    let tvlByDate = new Map<string, { tvl0: number; tvl1: number }>();
+      // Query pool TVL at each historical block
+      if (aliasToBlock.size > 0) {
+        const poolAliases = Array.from(aliasToBlock.entries()).map(([key, block]) => {
+          const alias = `p_${key.replace(/-/g, '_')}`;
+          return `${alias}: pools(where: { id: "${subgraphId}" }, block: { number: ${block} }) { totalValueLockedToken0 totalValueLockedToken1 }`;
+        }).join('\n');
 
-    if (aliasToBlock.size > 0) {
-      const poolAliases = Array.from(aliasToBlock.entries()).map(([key, block]) => {
-        const alias = `p_${key.replace(/-/g, '_')}`;
-        return `${alias}: pools(where: { id: "${subgraphId}" }, block: { number: ${block} }) { totalValueLockedToken0 totalValueLockedToken1 }`;
-      }).join('\n');
+        const poolsQuery = `query Pools {\n${poolAliases}\n}`;
 
-      const poolsQuery = `query Pools {\n${poolAliases}\n}`;
+        const poolsResult = await fetch(poolDataSubgraphUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: poolsQuery })
+        });
 
-      const poolsResult = await fetch(poolDataSubgraphUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: poolsQuery })
-      });
-
-      if (poolsResult.ok) {
-        const poolsJson = await poolsResult.json();
-        if (!poolsJson.errors) {
-          for (const key of aliasToBlock.keys()) {
-            const alias = `p_${key.replace(/-/g, '_')}`;
-            const arr = poolsJson?.data?.[alias] || [];
-            if (Array.isArray(arr) && arr[0]) {
-              tvlByDate.set(key, {
-                tvl0: Number(arr[0]?.totalValueLockedToken0) || 0,
-                tvl1: Number(arr[0]?.totalValueLockedToken1) || 0
-              });
+        if (poolsResult.ok) {
+          const poolsJson = await poolsResult.json();
+          if (!poolsJson.errors) {
+            for (const key of aliasToBlock.keys()) {
+              const alias = `p_${key.replace(/-/g, '_')}`;
+              const arr = poolsJson?.data?.[alias] || [];
+              if (Array.isArray(arr) && arr[0]) {
+                const tvl0 = Number(arr[0]?.totalValueLockedToken0) || 0;
+                const tvl1 = Number(arr[0]?.totalValueLockedToken1) || 0;
+                const tvlUSD = (tvl0 * p0) + (tvl1 * p1);
+                if (tvlUSD > 0) {
+                  tvlByDate.set(key, tvlUSD);
+                }
+              }
             }
           }
         }
       }
-    }
 
-    // Get current TVL for today
-    const currentPoolQuery = `{ pools(where: { id: "${subgraphId}" }) { totalValueLockedToken0 totalValueLockedToken1 } }`;
-    const currentResult = await fetch(poolDataSubgraphUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: currentPoolQuery })
-    });
+      // Get current pool TVL for today (mainnet - pool only)
+      const currentPoolQuery = `{ pools(where: { id: "${subgraphId}" }) { totalValueLockedToken0 totalValueLockedToken1 } }`;
+      const currentResult = await fetch(poolDataSubgraphUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: currentPoolQuery })
+      });
 
-    if (currentResult.ok) {
-      const currentJson = await currentResult.json();
-      const currentPool = currentJson?.data?.pools?.[0];
-      if (currentPool) {
-        tvlByDate.set(todayKey, {
-          tvl0: Number(currentPool.totalValueLockedToken0) || 0,
-          tvl1: Number(currentPool.totalValueLockedToken1) || 0
-        });
+      if (currentResult.ok) {
+        const currentJson = await currentResult.json();
+        const currentPool = currentJson?.data?.pools?.[0];
+        if (currentPool) {
+          const tvl0 = Number(currentPool.totalValueLockedToken0) || 0;
+          const tvl1 = Number(currentPool.totalValueLockedToken1) || 0;
+          const tvlUSD = (tvl0 * p0) + (tvl1 * p1);
+          if (tvlUSD > 0) {
+            tvlByDate.set(todayKey, tvlUSD);
+          }
+        }
       }
     }
 
@@ -213,7 +284,9 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       if (!Array.isArray(feeEvents)) feeEvents = [];
     }
 
-    // Build final chart data with forward-fill for missing TVL
+    // =============================================================================
+    // STEP 4: Build final chart data with forward-fill for missing TVL
+    // =============================================================================
     const data: ChartDataPoint[] = [];
     let lastTvlUSD = 0;
 
@@ -222,21 +295,21 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       const vol0 = volByDate.get(dateKey) || 0;
       const volumeUSD = vol0 * p0;
 
-      // TVL: token amounts * prices, with forward-fill
-      const tvlData = tvlByDate.get(dateKey);
-      let tvlUSD: number;
-      if (tvlData) {
-        tvlUSD = (tvlData.tvl0 * p0) + (tvlData.tvl1 * p1);
-        if (tvlUSD > 0) lastTvlUSD = tvlUSD;
+      // TVL: use pre-computed USD value with forward-fill
+      const tvlUSD = tvlByDate.get(dateKey);
+      let finalTvlUSD: number;
+      if (tvlUSD !== undefined && tvlUSD > 0) {
+        finalTvlUSD = tvlUSD;
+        lastTvlUSD = tvlUSD;
       } else {
-        tvlUSD = lastTvlUSD; // Forward-fill
+        finalTvlUSD = lastTvlUSD; // Forward-fill
       }
 
       data.push({
         date: dateKey,
-        tvlUSD,
+        tvlUSD: finalTvlUSD,
         volumeUSD,
-        feesUSD: 0, // Fee calculation would need fee rate per day
+        feesUSD: 0,
       });
     }
 

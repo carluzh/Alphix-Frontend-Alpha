@@ -1,24 +1,26 @@
 /**
  * Unified Yield Position Fetching
  *
- * Fetches user's Unified Yield positions by querying Hook contracts directly.
- * The Hook IS the ERC-4626 vault - users hold Hook shares.
+ * Fetches user's Unified Yield (ReHypothecation) positions by querying Hook contracts directly.
+ * The Hook IS the ERC20 share token - users hold Hook shares.
  *
  * For each pool with Unified Yield enabled:
  * 1. Query Hook.balanceOf(user) for share balance
- * 2. Query Hook.previewRedeem(shares) for underlying token amounts
+ * 2. Query Hook.previewRemoveReHypothecatedLiquidity(shares) for underlying token amounts
  * 3. Build UnifiedYieldPosition with all data
  *
  * Architecture:
- * - Hook IS ERC-4626 compliant (balanceOf, previewRedeem, etc.)
- * - previewRedeem returns (amount0, amount1) for two-token positions
- * - No separate vault address - Hook IS the vault
+ * - Hook extends IERC20 (balanceOf, totalSupply, etc.)
+ * - previewRemoveReHypothecatedLiquidity returns (amount0, amount1) - rounds down
+ * - No separate vault address - Hook IS the share token
  */
 
 import { formatUnits, type Address, type PublicClient } from 'viem';
 import type { UnifiedYieldPosition } from './types';
+import { createUnifiedYieldPositionId } from './types';
 import type { NetworkMode } from '@/lib/pools-config';
 import { getEnabledPools, getToken, type PoolConfig } from '@/lib/pools-config';
+import { isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { UNIFIED_YIELD_HOOK_ABI } from './abi/unifiedYieldHookABI';
 
 /**
@@ -52,11 +54,9 @@ export async function fetchUnifiedYieldPositions(
 ): Promise<UnifiedYieldPosition[]> {
   const { userAddress, networkMode, client } = config;
 
-  // Get all enabled pools
+  // Get all enabled Unified Yield pools
   const pools = getEnabledPools(networkMode);
-
-  // Filter pools that support Unified Yield (have hooks address)
-  const unifiedYieldPools = pools.filter((pool) => pool.hooks);
+  const unifiedYieldPools = pools.filter(isUnifiedYieldPool);
 
   if (unifiedYieldPools.length === 0) {
     return [];
@@ -136,8 +136,8 @@ async function fetchPoolUnifiedYieldPosition(
     return null;
   }
 
-  // Get underlying amounts from Hook.previewRedeem
-  // Returns [amount0, amount1] for two-token positions
+  // Get underlying amounts from Hook.previewRemoveReHypothecatedLiquidity
+  // Returns [amount0, amount1] - rounds down (protocol-favorable for withdrawals)
   let token0AmountRaw: bigint;
   let token1AmountRaw: bigint;
 
@@ -145,17 +145,17 @@ async function fetchPoolUnifiedYieldPosition(
     const redeemResult = await client.readContract({
       address: hookAddress,
       abi: UNIFIED_YIELD_HOOK_ABI,
-      functionName: 'previewRedeem',
+      functionName: 'previewRemoveReHypothecatedLiquidity',
       args: [shareBalance],
     });
 
-    // previewRedeem returns tuple (amount0, amount1)
+    // previewRemoveReHypothecatedLiquidity returns tuple (amount0, amount1)
     const [amount0, amount1] = redeemResult as [bigint, bigint];
     token0AmountRaw = amount0;
     token1AmountRaw = amount1;
   } catch (error) {
     console.warn(
-      `Failed to preview redeem for pool ${pool.id}:`,
+      `Failed to preview remove liquidity for pool ${pool.id}:`,
       error
     );
     // Fallback: set amounts to 0 if preview fails
@@ -171,8 +171,12 @@ async function fetchPoolUnifiedYieldPosition(
   const token1Decimals = token1Config?.decimals ?? 18;
   const shareDecimals = 18; // Standard ERC-4626 share decimals
 
+  const positionId = createUnifiedYieldPositionId(hookAddress, userAddress);
+
   return {
-    id: `uy-${hookAddress}-${userAddress}`,
+    type: 'unified-yield',
+    id: positionId,
+    positionId, // Alias for compatibility with V4ProcessedPosition
     hookAddress,
     shareBalance,
     shareBalanceFormatted: formatUnits(shareBalance, shareDecimals),
@@ -180,7 +184,9 @@ async function fetchPoolUnifiedYieldPosition(
     token1Amount: formatUnits(token1AmountRaw, token1Decimals),
     token0AmountRaw,
     token1AmountRaw,
-    poolId: pool.id,
+    // Use subgraphId (bytes32 hash) for consistency with V4 positions
+    // The frontend filters positions by matching poolId against subgraphId
+    poolId: pool.subgraphId,
     token0Symbol: pool.currency0.symbol,
     token1Symbol: pool.currency1.symbol,
     token0Address: pool.currency0.address as Address,
@@ -221,97 +227,4 @@ export async function fetchSingleUnifiedYieldPosition(
   }
 
   return fetchPoolUnifiedYieldPosition(pool, userAddress, client, networkMode);
-}
-
-/**
- * Check if a user has any Unified Yield positions
- *
- * Quick check without fetching full position data
- *
- * @param userAddress - User's wallet address
- * @param client - Viem public client
- * @param networkMode - Network mode
- * @returns True if user has at least one Unified Yield position
- */
-export async function hasUnifiedYieldPositions(
-  userAddress: Address,
-  client: PublicClient,
-  networkMode: NetworkMode
-): Promise<boolean> {
-  const pools = getEnabledPools(networkMode);
-  const unifiedYieldPools = pools.filter((pool) => pool.hooks);
-
-  // Check balances in parallel
-  const balanceChecks = unifiedYieldPools.map(async (pool) => {
-    try {
-      const balance = await client.readContract({
-        address: pool.hooks as Address,
-        abi: UNIFIED_YIELD_HOOK_ABI,
-        functionName: 'balanceOf',
-        args: [userAddress],
-      });
-      return (balance as bigint) > 0n;
-    } catch {
-      return false;
-    }
-  });
-
-  const results = await Promise.all(balanceChecks);
-  return results.some((hasBalance) => hasBalance);
-}
-
-/**
- * Preview withdraw amounts for a given share amount
- *
- * @param hookAddress - Hook contract address
- * @param shares - Number of shares to preview
- * @param client - Viem public client
- * @returns Tuple of [amount0, amount1] or null on error
- */
-export async function previewWithdraw(
-  hookAddress: Address,
-  shares: bigint,
-  client: PublicClient
-): Promise<[bigint, bigint] | null> {
-  try {
-    const result = await client.readContract({
-      address: hookAddress,
-      abi: UNIFIED_YIELD_HOOK_ABI,
-      functionName: 'previewRedeem',
-      args: [shares],
-    });
-    return result as [bigint, bigint];
-  } catch (error) {
-    console.warn(`Failed to preview withdraw for hook ${hookAddress}:`, error);
-    return null;
-  }
-}
-
-/**
- * Preview deposit shares for given token amounts
- *
- * @param hookAddress - Hook contract address
- * @param amount0 - Amount of token0 to deposit
- * @param amount1 - Amount of token1 to deposit
- * @param client - Viem public client
- * @returns Expected shares or null on error
- */
-export async function previewDeposit(
-  hookAddress: Address,
-  amount0: bigint,
-  amount1: bigint,
-  client: PublicClient
-): Promise<bigint | null> {
-  try {
-    const result = await client.readContract({
-      address: hookAddress,
-      abi: UNIFIED_YIELD_HOOK_ABI,
-      functionName: 'previewDeposit',
-      args: [amount0, amount1],
-    });
-    return result as bigint;
-  } catch (error) {
-    console.warn(`Failed to preview deposit for hook ${hookAddress}:`, error);
-    return null;
-  }
 }

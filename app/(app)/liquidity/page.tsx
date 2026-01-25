@@ -18,24 +18,17 @@ import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import { useAccount } from "wagmi";
 import { toast as sonnerToast } from "sonner";
-import { getEnabledPools, getToken, getPoolSubgraphId, getAllTokenSymbols } from "@/lib/pools-config";
+import { getEnabledPools, getToken, getPoolSubgraphId } from "@/lib/pools-config";
 import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps } from "@/lib/client-cache";
 import { Pool } from "@/types";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential";
-import { IconBadgeCheck2 } from "nucleo-micro-bold-essential";
-import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
+import { IconCircleInfo } from "nucleo-micro-bold-essential";
 import { useNetwork } from "@/lib/network-context";
-import { useIncreaseLiquidity, type IncreasePositionData, useDecreaseLiquidity, type DecreasePositionData } from "@/lib/liquidity/hooks";
 import { prefetchService } from "@/lib/prefetch-service";
-import { batchQuotePrices } from "@/lib/swap/quote-prices";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { TickMath } from '@uniswap/v3-sdk';
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 import { APRBadge } from "@/components/liquidity/APRBadge";
 import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
-
-const DEFAULT_TICK_SPACING = 60;
 
 /**
  * PoolRowPrefetchWrapper - Wraps pool table rows with hover prefetch and stagger animation
@@ -137,7 +130,6 @@ const formatAPR = (aprValue: number) => {
 export default function LiquidityPage() {
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const { networkMode } = useNetwork();
-  const warnedAllZeroBatchRef = React.useRef(false);
 
   const initialPools = useMemo(() => generatePoolsFromConfig(), [networkMode]);
   const [poolsData, setPoolsData] = useState<Pool[]>([]);
@@ -172,12 +164,8 @@ export default function LiquidityPage() {
 
   const isMobile = useIsMobile();
   const { address: accountAddress, isConnected, chainId } = useAccount();
-  const [selectedPoolId, setSelectedPoolId] = useState<string>("");
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [poolDataByPoolId, setPoolDataByPoolId] = useState<Record<string, any>>({});
-  const [priceMap, setPriceMap] = useState<Record<string, number>>({});
-  const [isLoadingPoolStates, setIsLoadingPoolStates] = useState(true);
 
   // Token search state - sync with URL param
   const initialTokenSearch = searchParams?.get('token') || '';
@@ -223,10 +211,6 @@ export default function LiquidityPage() {
     );
   };
 
-  const navigateToPool = useCallback((poolId: string) => {
-    router.push(`/liquidity/${poolId}`);
-  }, [router]);
-
   const fetchAllPoolStatsBatch = useCallback(async () => {
       try {
         // Fetch from API - Redis cache handles caching on server side
@@ -259,36 +243,13 @@ export default function LiquidityPage() {
           return pool;
         });
 
-        const numericPools = updatedPools.filter((p: any) => typeof p?.tvlUSD === 'number');
-        const looksAllZero =
-          numericPools.length > 0 &&
-          numericPools.every((p: any) => p.tvlUSD === 0 && p.volume24hUSD === 0 && p.fees24hUSD === 0);
-
-        if (looksAllZero) {
-          throw new Error('All-zero pool stats response');
-        }
-
         setPoolsData(updatedPools as Pool[]);
 
       } catch (error) {
         console.error("[LiquidityPage] Batch fetch failed:", error);
-        const msg = (error instanceof Error ? error.message : String(error)) || '';
-        if (!warnedAllZeroBatchRef.current && msg.includes('All-zero pool stats')) {
-          warnedAllZeroBatchRef.current = true;
-          sonnerToast.error("Pool data temporarily unavailable", {
-            description: "Refresh in a moment — we kept the last good values.",
-            icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
-          });
-          return;
-        }
-
-        sonnerToast.error("Could not load pool data", {
-          description: "Failed to fetch data from the server.",
-          icon: <IconCircleXmarkFilled className="h-4 w-4 text-red-500" />,
-          action: {
-            label: "Open Ticket",
-            onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank')
-          }
+        sonnerToast("Pool data may be delayed", {
+          description: "The team has been notified. Data will refresh automatically.",
+          icon: <IconCircleInfo className="h-4 w-4" />,
         });
       }
     }, [initialPools, networkMode]);
@@ -321,12 +282,6 @@ export default function LiquidityPage() {
         return pool;
       });
 
-      const numericPools = updatedPools.filter((p: any) => typeof p?.tvlUSD === 'number');
-      const looksAllZero =
-        numericPools.length > 0 &&
-        numericPools.every((p: any) => p.tvlUSD === 0 && p.volume24hUSD === 0 && p.fees24hUSD === 0);
-      if (looksAllZero) return;
-
       setPoolsData(updatedPools as Pool[]);
     } catch {}
   }, [initialPools, networkMode]);
@@ -342,72 +297,6 @@ export default function LiquidityPage() {
     });
   }, [isConnected, accountAddress, forceRefreshAllPoolStatsBatch]);
 
-  const determineBaseTokenForPriceDisplay = useMemo(() => (token0: string, token1: string): string => {
-    if (!token0 || !token1) return token0;
-    const quotePriority: Record<string, number> = {
-      'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'USDC': 7, 'USDT': 6, 'DAI': 5, 'aETH': 4, 'ETH': 3, 'YUSD': 2, 'mUSDT': 1,
-    };
-    const token0Priority = quotePriority[token0] || 0;
-    const token1Priority = quotePriority[token1] || 0;
-    return token1Priority > token0Priority ? token1 : token0;
-  }, []);
-
-  const convertTickToPrice = useMemo(() => (tick: number, currentPoolTick: number | null, currentPrice: string | null, baseTokenForPriceDisplay: string, token0Symbol: string, token1Symbol: string): string => {
-    if (tick === TickMath.MAX_TICK) return '∞';
-    if (tick === TickMath.MIN_TICK) return '0.00';
-    if (currentPoolTick === null || !currentPrice) return 'N/A';
-    const currentPriceNum = parseFloat(currentPrice);
-    if (isNaN(currentPriceNum) || currentPriceNum <= 0) return 'N/A';
-    let priceAtTick: number;
-    const priceDelta = Math.pow(1.0001, tick - currentPoolTick);
-    if (baseTokenForPriceDisplay === token0Symbol) {
-      priceAtTick = 1 / (currentPriceNum * priceDelta);
-    } else {
-      priceAtTick = currentPriceNum * priceDelta;
-    }
-    if (!isFinite(priceAtTick) || isNaN(priceAtTick)) return 'N/A';
-    if (priceAtTick < 1e-11 && priceAtTick > 0) return '0';
-    if (priceAtTick > 1e30) return '∞';
-    const displayDecimals = 6;
-    return priceAtTick.toFixed(displayDecimals);
-  }, []);
-
-  const formatTokenDisplayAmount = (amount: string) => {
-    const num = parseFloat(amount);
-    if (isNaN(num)) return amount;
-    if (num === 0) return "0";
-    if (num > 0 && num < 0.000001) return "< 0.000001";
-    return num.toFixed(6);
-  };
-
-  const formatAgeShort = (seconds: number | undefined) => {
-    if (!seconds || !isFinite(seconds)) return '';
-    const d = Math.floor(seconds / 86400);
-    if (d >= 1) return `${d}d`;
-    const h = Math.floor(seconds / 3600);
-    if (h >= 1) return `${h}h`;
-    const m = Math.floor(seconds / 60);
-    return `${m}m`;
-  };
-
-  const { increaseLiquidity } = useIncreaseLiquidity({
-    onLiquidityIncreased: () => {
-      sonnerToast.success("Liquidity Increased", { icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" /> });
-      // Consider a targeted position refresh here
-    },
-  });
-
-  const { decreaseLiquidity, claimFees } = useDecreaseLiquidity({
-    onLiquidityDecreased: () => {
-      sonnerToast.success("Liquidity Decreased", { icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" /> });
-      // Consider a targeted position refresh here
-    },
-    onFeesCollected: () => {
-      sonnerToast.success("Fees Collected", { icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" /> });
-      // Consider a targeted position refresh here
-    },
-  });
-
   useEffect(() => {
     if (isConnected && accountAddress && chainId) {
       (async () => {
@@ -415,7 +304,7 @@ export default function LiquidityPage() {
           const ids = await loadUserPositionIds(accountAddress);
           const timestamps = getCachedPositionTimestamps(accountAddress);
           const positions = await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
-          setUserPositions(positions as any);
+          setUserPositions(positions as ProcessedPosition[]);
         } catch (error) {
           console.error("Failed to load derived positions:", error);
           setUserPositions([]);
@@ -425,20 +314,6 @@ export default function LiquidityPage() {
       setUserPositions([]);
     }
   }, [isConnected, accountAddress, chainId]);
-
-  useEffect(() => {
-    const fetchPrices = async () => {
-      try {
-        // Use config-derived token list for current network
-        const symbols = getAllTokenSymbols(networkMode);
-        const prices = await batchQuotePrices(symbols, chainId, networkMode);
-        setPriceMap(prices);
-      } catch (error) {
-        console.error("Failed to fetch token prices for liquidity page:", error);
-      }
-    };
-    fetchPrices();
-  }, [networkMode, chainId]);
 
   const poolsWithPositionCounts = useMemo(() => {
     return poolsData.map(pool => {

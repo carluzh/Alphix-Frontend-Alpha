@@ -218,28 +218,9 @@ async function getV4QuoteExactInputSingle(
     EMPTY_BYTES
   ] as const;
 
-  const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
   const quoterAddress = getQuoterAddress(networkMode);
   const stateViewAddress = getStateViewAddress(networkMode);
   const poolId = poolConfig.pool.subgraphId;
-
-  console.log('[V4 Quoter ExactInputSingle] Config:', {
-    networkMode,
-    rpcUrl,
-    quoterAddress,
-    stateViewAddress,
-    poolId,
-    poolName: poolConfig.pool.name,
-    amountIn: amountInSmallestUnits.toString(),
-    zeroForOne,
-    poolKey: {
-      currency0: poolKey.currency0,
-      currency1: poolKey.currency1,
-      fee: poolKey.fee,
-      tickSpacing: poolKey.tickSpacing,
-      hooks: poolKey.hooks
-    }
-  });
 
   try {
     const provider = createProvider(networkMode);
@@ -247,37 +228,22 @@ async function getV4QuoteExactInputSingle(
     const stateView = new ethers.Contract(stateViewAddress, STATE_VIEW_ABI as any, provider);
 
     // Verify pool exists
-    console.log('[V4 Quoter] Verifying pool exists via StateView.getSlot0...');
     const slot0 = await stateView.callStatic.getSlot0(poolId);
-    console.log('[V4 Quoter] Pool slot0:', {
-      sqrtPriceX96: slot0.sqrtPriceX96?.toString(),
-      tick: slot0.tick,
-      protocolFee: slot0.protocolFee,
-      lpFee: slot0.lpFee
-    });
 
     // Convert lpFee (millionths) to basis points
     const dynamicFeeBps = Math.max(0, Math.round((Number(slot0.lpFee || 0) / 1_000_000) * 10_000 * 100) / 100);
 
-    console.log('[V4 Quoter] Calling quoter.quoteExactInputSingle...');
     const retryResult = await RetryUtility.execute(
       () => quoter.callStatic.quoteExactInputSingle(quoteParams),
       { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
     );
     const [amountOut, gasEstimate] = retryResult.data!;
-    console.log('[V4 Quoter] Quote success:', { amountOut: amountOut.toString(), gasEstimate: gasEstimate.toString() });
 
     // Get mid price for price impact calculation
     const midPrice = await getMidPrice(fromToken, toToken, poolConfig, networkMode);
 
     return { amountOut, gasEstimate, midPrice: midPrice || undefined, dynamicFeeBps };
   } catch (error: any) {
-    console.error('[V4 Quoter ExactInputSingle] FAILED:', {
-      errorMessage: error.message,
-      errorCode: error.code,
-      errorReason: error.reason,
-      errorData: error.data
-    });
     throw error;
   }
 }
@@ -299,22 +265,10 @@ async function getV4QuoteExactOutputSingle(
     EMPTY_BYTES
   ] as const;
 
-  const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
   const quoterAddress = getQuoterAddress(networkMode);
   const stateViewAddress = getStateViewAddress(networkMode);
   // Use subgraphId directly - DO NOT recalculate using keccak256
   const poolId = poolConfig.pool.subgraphId;
-
-  console.log('[V4 Quoter ExactOutputSingle] Config:', {
-    networkMode,
-    rpcUrl,
-    quoterAddress,
-    stateViewAddress,
-    poolId,
-    poolName: poolConfig.pool.name,
-    amountOut: amountOutSmallestUnits.toString(),
-    zeroForOne
-  });
 
   try {
     const provider = createProvider(networkMode);
@@ -322,19 +276,16 @@ async function getV4QuoteExactOutputSingle(
     const stateView = new ethers.Contract(stateViewAddress, STATE_VIEW_ABI as any, provider);
 
     // Verify pool exists
-    console.log('[V4 Quoter ExactOutputSingle] Verifying pool exists...');
     const slot0 = await stateView.callStatic.getSlot0(poolId);
 
     // Convert lpFee (millionths) to basis points
     const dynamicFeeBps = Math.max(0, Math.round((Number(slot0.lpFee || 0) / 1_000_000) * 10_000 * 100) / 100);
 
-    console.log('[V4 Quoter ExactOutputSingle] Calling quoter.quoteExactOutputSingle...');
     const retryResult = await RetryUtility.execute(
       () => quoter.callStatic.quoteExactOutputSingle(quoteParams),
       { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
     );
     const [amountIn, gasEstimate] = retryResult.data!;
-    console.log('[V4 Quoter ExactOutputSingle] Quote success:', { amountIn: amountIn.toString(), gasEstimate: gasEstimate.toString() });
 
     // Get mid price for price impact calculation
     const midPrice = await getMidPrice(fromToken, toToken, poolConfig, networkMode);
@@ -410,15 +361,6 @@ async function getV4QuoteExactInputMultiHop(
     throw new Error(`Address validation failed: ${validationError.message}`);
   }
 
-  const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
-  console.log('[V4 Quoter ExactInputMultiHop] Config:', {
-    networkMode,
-    rpcUrl,
-    quoterAddress,
-    route: route.path.join(' → '),
-    amountIn: amountInSmallestUnits.toString()
-  });
-
   try {
     const provider = createProvider(networkMode);
 
@@ -433,7 +375,6 @@ async function getV4QuoteExactInputMultiHop(
       }
       // Use subgraphId directly - DO NOT recalculate using keccak256
       const poolId = poolCfg.subgraphId;
-      console.log(`[V4 Quoter ExactInputMultiHop] Verifying hop ${i}: ${poolCfg.name} (poolId: ${poolId})`);
       const slot0 = await stateView.callStatic.getSlot0(poolId);
       // Use fee from first pool (matches existing behavior in useSwapRoutingFees)
       if (i === 0) {
@@ -441,14 +382,12 @@ async function getV4QuoteExactInputMultiHop(
       }
     }
 
-    console.log('[V4 Quoter ExactInputMultiHop] Calling quoter.quoteExactInput...');
     const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
     const retryResult = await RetryUtility.execute(
       () => quoter.callStatic.quoteExactInput(quoteParams),
       { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
     );
     const [amountOut, gasEstimate] = retryResult.data!;
-    console.log('[V4 Quoter ExactInputMultiHop] Quote success:', { amountOut: amountOut.toString(), gasEstimate: gasEstimate.toString() });
     return { amountOut, gasEstimate, dynamicFeeBps };
   } catch (error: any) {
     console.error('[V4 Quoter ExactInputMultiHop] FAILED:', {
@@ -518,7 +457,6 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     const networkMode: NetworkMode = (networkParam === 'mainnet' || networkParam === 'testnet')
       ? networkParam
       : getNetworkModeFromRequest(req.headers.cookie);
-    console.log(`[V4 Quoter] Using network mode: ${networkMode}`);
 
     // Validate required fields
     if (!fromTokenSymbol || !toTokenSymbol || !amountDecimalsStr) {
@@ -541,23 +479,15 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       return res.status(200).json(cached.result);
     }
 
-    console.log(`[V4 Quoter] ${fromTokenSymbol} → ${toTokenSymbol}, amount: ${amountDecimalsStr}, chainId: ${req.body.chainId}`);
+    // Only log if not a price quote (amount > 1) to reduce noise
+    if (amountDecimalsStr !== '1') {
+      console.log(`[V4 Quoter] ${fromTokenSymbol} → ${toTokenSymbol}, amount: ${amountDecimalsStr}, chainId: ${req.body.chainId}`);
+    }
 
     // Create Token instances with network-aware config
     const fromToken = createTokenSDK(fromTokenSymbol, req.body.chainId, networkMode);
     const toToken = createTokenSDK(toTokenSymbol, req.body.chainId, networkMode);
-    
-    console.log(`[V4 Quoter] Token creation debug:`, {
-      fromTokenSymbol,
-      fromTokenValid: !!fromToken,
-      fromTokenAddress: fromToken?.address,
-      fromTokenAddressType: typeof fromToken?.address,
-      toTokenSymbol,
-      toTokenValid: !!toToken,
-      toTokenAddress: toToken?.address,
-      toTokenAddressType: typeof toToken?.address
-    });
-    
+
     // Additional validation - check for undefined addresses
     if (fromToken?.address === undefined || fromToken?.address === 'undefined') {
       return res.status(400).json({ 
@@ -604,7 +534,6 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     }
 
     const route = routeResult.bestRoute;
-    console.log(`[V4 Quoter] Using route: ${routeToString(route)}`);
 
     let amountOut: bigint = 0n;
     let amountIn: bigint = 0n;
@@ -668,28 +597,9 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         // Positive → unfavorable (show warning), Negative → favorable (no warning)
 
         if (priceImpact < -50 || priceImpact > 500) {
-          console.warn('[get-quote] Price impact out of bounds, setting to null:', priceImpact);
           priceImpact = null;
         }
-
-        console.log('[get-quote] Price Impact Calculation:', {
-          fromToken: fromTokenSymbol,
-          toToken: toTokenSymbol,
-          fromAmount: fromAmountDecimals,
-          toAmount: toAmountDecimals,
-          midPrice,
-          executionPrice,
-          priceImpact: priceImpact !== null ? `${priceImpact.toFixed(2)}%` : 'null (out of bounds)',
-          favorable: priceImpact !== null && priceImpact < 0,
-        });
       }
-    } else {
-      console.log('[get-quote] Price Impact Skipped:', {
-        midPrice,
-        fromAmountDecimals,
-        toAmountDecimals,
-        reason: midPrice === null ? 'midPrice is null' : 'amounts are zero',
-      });
     }
 
     // Build response and cache it

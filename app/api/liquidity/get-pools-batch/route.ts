@@ -8,7 +8,7 @@ import { checkRateLimit } from '@/lib/api/ratelimit';
 import { getPoolSubgraphId, getAllPools, getTokenDecimals, getStateViewAddress, getNetworkModeFromRequest } from '@/lib/pools-config';
 import { batchQuotePrices, calculateTotalUSD } from '@/lib/swap/quote-prices';
 import { formatUnits, parseAbi } from 'viem';
-import { getUniswapV4SubgraphUrl, isDaiPool, isMainnetSubgraphMode } from '@/lib/subgraph-url-helper';
+import { getUniswapV4SubgraphUrl, isMainnetSubgraphMode } from '@/lib/subgraph-url-helper';
 import { createNetworkClient } from '@/lib/viemClient';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
 import { cacheService } from '@/lib/cache/CacheService';
@@ -16,13 +16,22 @@ import { poolKeys } from '@/lib/cache/redis-keys';
 import type { NetworkMode } from '@/lib/network-mode';
 
 // Combined query: pools (TVL) + poolHourDatas (24h volume) + poolDayDatas (7d yield) in single request
-const buildPoolsQuery = (poolCount: number) => `
+// Testnet version includes alphixHookTVLs for combined TVL (pool + rehypothecated)
+const buildPoolsQuery = (poolCount: number, includeHookTVL: boolean) => `
   query GetPoolsWithVolume($poolIds: [String!]!, $hourCutoff: Int!, $dayCutoff: Int!) {
     pools(where: { id_in: $poolIds }) {
       id
       totalValueLockedToken0
       totalValueLockedToken1
     }
+    ${includeHookTVL ? `
+    alphixHookTVLs {
+      id
+      pool { id }
+      totalAmount0
+      totalAmount1
+    }
+    ` : ''}
     poolHourDatas(
       first: ${Math.max(poolCount * 25, 50)}
       where: { pool_in: $poolIds, periodStartUnix_gte: $hourCutoff }
@@ -55,9 +64,8 @@ interface BatchPoolStats {
   apr: number;
 }
 
-// Get testnet subgraph URLs (used only on testnet)
+// Get testnet subgraph URL
 const getTestnetSubgraphUrl = () => process.env.SUBGRAPH_URL as string | undefined;
-const getTestnetDaiSubgraphUrl = () => process.env.SUBGRAPH_URL_DAI as string | undefined;
 
 async function fetchSubgraphDirect(
   url: string,
@@ -103,7 +111,6 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   const isMainnet = isMainnetSubgraphMode(networkMode);
 
   const POOL_SUBGRAPH_URL = isMainnet ? getUniswapV4SubgraphUrl(networkMode) : getTestnetSubgraphUrl();
-  const TESTNET_DAI_URL = !isMainnet ? getTestnetDaiSubgraphUrl() : undefined;
 
   if (!POOL_SUBGRAPH_URL) {
     return { success: false, message: isMainnet
@@ -114,19 +121,8 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   const allPools = getAllPools(networkMode);
   const targetPoolIds = allPools.map((pool) => getPoolSubgraphId(pool.id, networkMode) || pool.id);
 
-  // Separate pools into DAI and non-DAI pools (testnet only)
-  const daiPoolIds: string[] = [];
-  const nonDaiPoolIds: string[] = [];
-
-  for (const pool of allPools) {
-    const poolId = pool.id;
-    const subgraphId = getPoolSubgraphId(poolId, networkMode) || poolId;
-    if (!isMainnet && isDaiPool(poolId, networkMode)) {
-      daiPoolIds.push(subgraphId);
-    } else {
-      nonDaiPoolIds.push(subgraphId);
-    }
-  }
+  // All pools use the same subgraph
+  const poolIds = allPools.map(pool => getPoolSubgraphId(pool.id, networkMode) || pool.id);
 
   const tokenSymbols = new Set<string>();
   for (const p of allPools) {
@@ -151,22 +147,25 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   const dayCutoff = nowSec - 7 * 86400; // 7 days ago as Unix timestamp (for yield)
 
   const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
+  const hookTvlByPoolId = new Map<string, { totalAmount0: string; totalAmount1: string }>();
   const hourlyByPoolId = new Map<string, Array<{ periodStartUnix: number; volumeToken0: string }>>();
   const dailyByPoolId = new Map<string, Array<{ date: number; volumeToken0: string }>>();
   const errors: string[] = [];
   const stateViewAddress = getStateViewAddress(networkMode);
   const client = createNetworkClient(networkMode);
 
+  // Include alphixHookTVLs query for testnet (unified subgraph has this entity)
+  const includeHookTVL = !isMainnet;
+
   // RUN EVERYTHING IN PARALLEL (Promise.allSettled pattern identical to Uniswap getPool.ts)
   console.time('[PERF] All data fetches (parallel)');
-  const [pricesResult, feesResult, combinedQueryResult, daiQueryResult] = await Promise.allSettled([
+  const [pricesResult, feesResult, combinedQueryResult] = await Promise.allSettled([
     batchQuotePrices(Array.from(tokenSymbols), 8453, networkMode),
     (async () => {
       const feeCalls = targetPoolIds.map(poolId => ({ address: stateViewAddress as `0x${string}`, abi: parseAbi(STATE_VIEW_ABI), functionName: 'getSlot0', args: [poolId as `0x${string}`] }));
       return client.multicall({ contracts: feeCalls, allowFailure: true });
     })(),
-    nonDaiPoolIds.length > 0 ? fetchSubgraphDirect(POOL_SUBGRAPH_URL, buildPoolsQuery(nonDaiPoolIds.length), { poolIds: nonDaiPoolIds.map(id => id.toLowerCase()), hourCutoff, dayCutoff }) : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [], poolDayDatas: [] } } }),
-    daiPoolIds.length > 0 && TESTNET_DAI_URL ? fetchSubgraphDirect(TESTNET_DAI_URL, buildPoolsQuery(daiPoolIds.length), { poolIds: daiPoolIds.map(id => id.toLowerCase()), hourCutoff, dayCutoff }) : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [], poolDayDatas: [] } } }),
+    poolIds.length > 0 ? fetchSubgraphDirect(POOL_SUBGRAPH_URL, buildPoolsQuery(poolIds.length, includeHookTVL), { poolIds: poolIds.map(id => id.toLowerCase()), hourCutoff, dayCutoff }) : Promise.resolve({ success: true, data: { data: { pools: [], poolHourDatas: [], poolDayDatas: [], alphixHookTVLs: [] } } }),
   ]);
   console.timeEnd('[PERF] All data fetches (parallel)');
 
@@ -174,21 +173,22 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
   const tokenPrices = pricesResult.status === 'fulfilled' ? pricesResult.value : {};
   const feeResults = feesResult.status === 'fulfilled' ? feesResult.value : [];
   const combinedResult = combinedQueryResult.status === 'fulfilled' ? combinedQueryResult.value : { success: false, data: {}, error: 'Query failed' };
-  const combinedResultDai = daiQueryResult.status === 'fulfilled' ? daiQueryResult.value : { success: false, data: {}, error: 'Query failed' };
 
   if (!combinedResult.success && 'error' in combinedResult) {
     errors.push(`Combined query failed: ${combinedResult.error}`);
   }
-  if (!combinedResultDai.success && 'error' in combinedResultDai) {
-    errors.push(`Combined DAI query failed: ${combinedResultDai.error}`);
-  }
 
-  // Process TVL results
+  // Process TVL results from pool entity
   for (const p of combinedResult.data?.data?.pools || []) {
     tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
   }
-  for (const p of combinedResultDai.data?.data?.pools || []) {
-    tvlById.set(String(p.id).toLowerCase(), { tvl0: p.totalValueLockedToken0, tvl1: p.totalValueLockedToken1 });
+
+  // Process combined TVL from alphixHookTVLs (testnet only - includes pool + rehypothecated amounts)
+  for (const h of combinedResult.data?.data?.alphixHookTVLs || []) {
+    const poolId = String(h?.pool?.id || '').toLowerCase();
+    if (poolId && h.totalAmount0 && h.totalAmount1) {
+      hookTvlByPoolId.set(poolId, { totalAmount0: h.totalAmount0, totalAmount1: h.totalAmount1 });
+    }
   }
 
   // Process hourly volume data (for 24h volume)
@@ -198,21 +198,9 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
     if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
     hourlyByPoolId.get(id)!.push({ periodStartUnix: h.periodStartUnix, volumeToken0: h.volumeToken0 });
   }
-  for (const h of combinedResultDai.data?.data?.poolHourDatas || []) {
-    const id = String(h?.pool?.id || '').toLowerCase();
-    if (!id) continue;
-    if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
-    hourlyByPoolId.get(id)!.push({ periodStartUnix: h.periodStartUnix, volumeToken0: h.volumeToken0 });
-  }
 
   // Process daily volume data (for 7d yield)
   for (const d of combinedResult.data?.data?.poolDayDatas || []) {
-    const id = String(d?.pool?.id || '').toLowerCase();
-    if (!id) continue;
-    if (!dailyByPoolId.has(id)) dailyByPoolId.set(id, []);
-    dailyByPoolId.get(id)!.push({ date: d.date, volumeToken0: d.volumeToken0 });
-  }
-  for (const d of combinedResultDai.data?.data?.poolDayDatas || []) {
     const id = String(d?.pool?.id || '').toLowerCase();
     if (!id) continue;
     if (!dailyByPoolId.has(id)) dailyByPoolId.set(id, []);
@@ -250,10 +238,18 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
       const safeToken0Price = typeof token0Price === 'number' ? token0Price : 0;
       const safeToken1Price = typeof token1Price === 'number' ? token1Price : 0;
 
-      // Calculate TVL
+      // Calculate TVL - prefer combined TVL from alphixHookTVLs (pool + rehypothecated)
       let tvlUSD = 0;
+      const hookTvlEntry = hookTvlByPoolId.get(poolId);
       const tvlEntry = tvlById.get(poolId);
-      if (tvlEntry) {
+
+      if (hookTvlEntry) {
+        // Use combined TVL from alphixHookTVLs (already decimal-adjusted BigDecimal)
+        const amt0 = parseFloat(hookTvlEntry.totalAmount0 || '0');
+        const amt1 = parseFloat(hookTvlEntry.totalAmount1 || '0');
+        tvlUSD = calculateTotalUSD(amt0, amt1, safeToken0Price, safeToken1Price);
+      } else if (tvlEntry) {
+        // Fallback to pool-only TVL (for pools without hooks or mainnet)
         const toHuman = (val: any, decimals: number) => {
           try {
             const bi = BigInt(String(val));
@@ -336,7 +332,7 @@ export async function GET(request: Request) {
     const cookieHeader = request.headers.get('cookie') || '';
     const networkMode = (networkFromQuery ?? getNetworkModeFromRequest(cookieHeader)) as NetworkMode;
 
-    const cacheKey = poolKeys.batch('v2', networkMode); // Bumped version for new schema
+    const cacheKey = poolKeys.batch('v3', networkMode); // v3: includes alphixHookTVLs combined TVL
     const ttl = { fresh: 5 * 60, stale: 60 * 60 }
 
     const shouldCache = (payload: any): boolean => {
@@ -345,12 +341,7 @@ export async function GET(request: Request) {
 
       const pools = payload?.pools
       if (!Array.isArray(pools) || pools.length === 0) return false
-      const looksAllZero = pools.every((p: any) =>
-        Number(p?.tvlUSD ?? 0) === 0 &&
-        Number(p?.volume24hUSD ?? 0) === 0 &&
-        Number(p?.fees24hUSD ?? 0) === 0
-      )
-      return !looksAllZero
+      return true
     }
 
     let result: { data: any; isStale: boolean }

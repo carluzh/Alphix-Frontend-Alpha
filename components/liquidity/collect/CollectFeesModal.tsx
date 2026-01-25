@@ -25,6 +25,7 @@ import type { TokenSymbol } from "@/lib/pools-config";
 import { getToken, getPoolById } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import type { Address } from "viem";
+import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
 
 // Uniswap step-based executor
 import {
@@ -232,6 +233,17 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
       },
     };
 
+    // Convert display amounts to raw amounts (wei) using consolidated helper
+    // safeParseUnits handles edge cases: scientific notation, commas, "< 0.0001" format
+    const rawAmount0 = safeParseUnits(
+      position.token0UncollectedFees || "0",
+      token0Config.decimals
+    ).toString();
+    const rawAmount1 = safeParseUnits(
+      position.token1UncollectedFees || "0",
+      token1Config.decimals
+    ).toString();
+
     // Build context using the shared builder
     const context = buildCollectFeesContext({
       type: LiquidityTransactionType.Collect,
@@ -248,8 +260,8 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
         decimals: token1Config.decimals,
         chainId,
       },
-      amount0: position.token0UncollectedFees || "0",
-      amount1: position.token1UncollectedFees || "0",
+      amount0: rawAmount0,
+      amount1: rawAmount1,
       chainId,
     });
 

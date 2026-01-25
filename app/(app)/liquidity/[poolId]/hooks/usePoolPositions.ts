@@ -2,7 +2,18 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
-import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
+import type { V4ProcessedPosition } from "@/pages/api/liquidity/get-positions";
+import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
+import { isUnifiedYieldPositionId } from "@/lib/liquidity/unified-yield/types";
+import { fetchUnifiedYieldPositions } from "@/lib/liquidity/unified-yield/fetchUnifiedYieldPositions";
+
+/**
+ * Position union type for this hook - combines V4 and Unified Yield positions
+ * Each position type is fetched through its own dedicated flow for clean separation
+ */
+type Position = V4ProcessedPosition | UnifiedYieldPosition;
+import { createNetworkClient } from "@/lib/viemClient";
+import { useNetwork } from "@/lib/network-context";
 import {
   loadUserPositionIds,
   derivePositionsFromIds,
@@ -17,14 +28,14 @@ interface UsePoolPositionsOptions {
 }
 
 interface UsePoolPositionsReturn {
-  userPositions: ProcessedPosition[];
+  userPositions: Position[];
   isLoadingPositions: boolean;
   isDerivingNewPosition: boolean;
   optimisticallyClearedFees: Set<string>;
   refreshPositions: () => Promise<void>;
   refreshAfterLiquidityAdded: (options?: RefreshOptions) => Promise<void>;
   refreshAfterMutation: (info?: MutationInfo) => Promise<void>;
-  updatePositionOptimistically: (positionId: string, updates: Partial<ProcessedPosition>) => void;
+  updatePositionOptimistically: (positionId: string, updates: Partial<V4ProcessedPosition>) => void;
   removePositionOptimistically: (positionId: string) => void;
   clearOptimisticFees: (positionId: string) => void;
   clearAllOptimisticStates: () => void;
@@ -51,19 +62,51 @@ export function usePoolPositions({
   subgraphId,
 }: UsePoolPositionsOptions): UsePoolPositionsReturn {
   const { address: accountAddress, isConnected, chainId } = useAccount();
+  const { networkMode } = useNetwork();
 
-  const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
+  const [userPositions, setUserPositions] = useState<Position[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(true);
   const [isDerivingNewPosition, setIsDerivingNewPosition] = useState(false);
   const [optimisticallyClearedFees, setOptimisticallyClearedFees] = useState<Set<string>>(new Set());
 
   const refreshThrottleRef = useRef(0);
 
-  // Filter positions to this pool
-  const filterPositionsForPool = useCallback((positions: ProcessedPosition[]) => {
+  // Filter positions to this pool (works for both V4 and Unified Yield)
+  const filterPositionsForPool = useCallback((positions: Position[]) => {
     const subgraphIdLc = (subgraphId || '').toLowerCase();
     return positions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphIdLc);
   }, [subgraphId]);
+
+  // Fetch all positions (V4 from on-chain, UY from Hook contracts)
+  const fetchAllPositions = useCallback(async (ids: string[]): Promise<Position[]> => {
+    if (!accountAddress || !chainId) return [];
+
+    // Separate V4 and Unified Yield IDs
+    const v4Ids = ids.filter(id => !isUnifiedYieldPositionId(id));
+
+    // Fetch V4 positions from on-chain
+    const timestamps = getCachedPositionTimestamps(accountAddress);
+    const v4Positions = v4Ids.length > 0
+      ? await derivePositionsFromIds(accountAddress, v4Ids, chainId, timestamps)
+      : [];
+
+    // Fetch Unified Yield positions from Hook contracts
+    let uyPositions: Position[] = [];
+    try {
+      const client = createNetworkClient(networkMode);
+      const fetchedUY = await fetchUnifiedYieldPositions({
+        userAddress: accountAddress as `0x${string}`,
+        chainId,
+        networkMode,
+        client,
+      });
+      uyPositions = fetchedUY;
+    } catch (error) {
+      console.warn('[usePoolPositions] Failed to fetch Unified Yield positions:', error);
+    }
+
+    return [...v4Positions, ...uyPositions];
+  }, [accountAddress, chainId, networkMode]);
 
   // Load user positions
   const refreshPositions = useCallback(async () => {
@@ -79,13 +122,11 @@ export function usePoolPositions({
     try {
       const ids = await loadUserPositionIds(accountAddress, {
         onRefreshed: async (freshIds) => {
-          const timestamps = getCachedPositionTimestamps(accountAddress);
-          const allPositions = await derivePositionsFromIds(accountAddress, freshIds, chainId, timestamps);
+          const allPositions = await fetchAllPositions(freshIds);
           setUserPositions(filterPositionsForPool(allPositions));
         },
       });
-      const timestamps = getCachedPositionTimestamps(accountAddress);
-      const allPositions = await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
+      const allPositions = await fetchAllPositions(ids);
       setUserPositions(filterPositionsForPool(allPositions));
     } catch (error) {
       console.error('[usePoolPositions] Failed to load positions:', error);
@@ -93,7 +134,7 @@ export function usePoolPositions({
     } finally {
       setIsLoadingPositions(false);
     }
-  }, [poolId, isConnected, accountAddress, chainId, filterPositionsForPool]);
+  }, [poolId, isConnected, accountAddress, chainId, filterPositionsForPool, fetchAllPositions]);
 
   // Refresh after liquidity added - with skeleton for new position
   const refreshAfterLiquidityAdded = useCallback(async (options?: RefreshOptions) => {
@@ -107,8 +148,7 @@ export function usePoolPositions({
     setIsDerivingNewPosition(true);
     try {
       const ids = await loadUserPositionIds(accountAddress);
-      const timestamps = getCachedPositionTimestamps(accountAddress);
-      const allDerived = await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
+      const allDerived = await fetchAllPositions(ids);
       const filtered = filterPositionsForPool(allDerived);
 
       setUserPositions(prev => {
@@ -116,7 +156,12 @@ export function usePoolPositions({
         const newPositions = filtered.filter(p => !existingIds.has(p.positionId));
         const updated = prev.map(p => {
           const fresh = filtered.find(f => f.positionId === p.positionId);
-          return fresh ? { ...fresh, isOptimisticallyUpdating: undefined } : p;
+          if (!fresh) return p;
+          // Only V4 positions have optimistic update flags
+          if (fresh.type === 'v4') {
+            return { ...fresh, isOptimisticallyUpdating: undefined };
+          }
+          return fresh;
         });
         return [...newPositions, ...updated];
       });
@@ -132,7 +177,7 @@ export function usePoolPositions({
     } finally {
       setIsDerivingNewPosition(false);
     }
-  }, [accountAddress, poolId, chainId, filterPositionsForPool]);
+  }, [accountAddress, poolId, chainId, filterPositionsForPool, fetchAllPositions]);
 
   // Refresh after mutation (decrease/burn)
   const refreshAfterMutation = useCallback(async (info?: MutationInfo) => {
@@ -144,17 +189,25 @@ export function usePoolPositions({
       poolId,
       optimisticUpdates: info?.tvlDelta ? { tvlDelta: info.tvlDelta } : undefined,
       clearOptimisticStates: () => {
-        setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+        setUserPositions(prev => prev.map(p => {
+          if (p.type === 'v4') {
+            return { ...p, isOptimisticallyUpdating: undefined };
+          }
+          return p;
+        }));
         setOptimisticallyClearedFees(new Set());
       },
     });
   }, [poolId, isConnected, accountAddress, chainId]);
 
-  // Update a position optimistically
-  const updatePositionOptimistically = useCallback((positionId: string, updates: Partial<ProcessedPosition>) => {
-    setUserPositions(prev => prev.map(p =>
-      p.positionId === positionId ? { ...p, ...updates } : p
-    ));
+  // Update a position optimistically (V4 positions only)
+  const updatePositionOptimistically = useCallback((positionId: string, updates: Partial<V4ProcessedPosition>) => {
+    setUserPositions(prev => prev.map(p => {
+      if (p.positionId === positionId && p.type === 'v4') {
+        return { ...p, ...updates };
+      }
+      return p;
+    }));
   }, []);
 
   // Remove a position optimistically (full burn)
@@ -170,9 +223,14 @@ export function usePoolPositions({
     setOptimisticallyClearedFees(prev => new Set(prev).add(positionId));
   }, []);
 
-  // Clear all optimistic states
+  // Clear all optimistic states (V4 positions only have these flags)
   const clearAllOptimisticStates = useCallback(() => {
-    setUserPositions(prev => prev.map(p => ({ ...p, isOptimisticallyUpdating: undefined })));
+    setUserPositions(prev => prev.map(p => {
+      if (p.type === 'v4') {
+        return { ...p, isOptimisticallyUpdating: undefined };
+      }
+      return p;
+    }));
     setOptimisticallyClearedFees(new Set());
   }, []);
 

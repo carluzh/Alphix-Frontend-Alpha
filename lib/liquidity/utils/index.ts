@@ -19,7 +19,6 @@ export {
   tryParseV4Tick,
   tryParsePrice,
   tryParseCurrencyAmount,
-  getV4TickToPrice,
   getFieldsDisabled,
   createMockV4Pool,
   getV4PriceRangeInfo,
@@ -79,3 +78,31 @@ export {
   isValidAmount,
   amountsEqual,
 } from './parsing'
+
+// Tick/Price conversion utilities (consolidated)
+export {
+  // SDK-based (preferred - handles decimals properly)
+  tickToPrice,
+  tickToPriceNumber,
+  tickToPriceString,
+  priceToTick,
+  // Simple fallbacks (use when tokens unavailable)
+  tickToPriceSimple,
+  tickToPriceStringSimple,
+  priceToTickSimple,
+  priceToNearestUsableTick,
+  // Tick utilities
+  alignTickToSpacing,
+  getTickBounds,
+  isTickAtLimit,
+  isTickValid,
+  // Relative/denomination-aware
+  tickToPriceRelative,
+  tickToPriceWithDenomination,
+  // Smart conversion (SDK first, fallback to simple)
+  tickToPriceSmart,
+  // Re-exports from SDK
+  TickMath,
+  nearestUsableTick,
+  priceToClosestV4Tick,
+} from './tick-price'

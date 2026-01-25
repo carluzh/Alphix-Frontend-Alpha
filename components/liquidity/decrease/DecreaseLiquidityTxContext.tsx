@@ -14,7 +14,7 @@
 
 import React, { createContext, useContext, useState, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount } from "wagmi";
-import { formatUnits, type Address } from "viem";
+import { formatUnits, parseUnits, type Address, type Hash } from "viem";
 import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useAllPrices } from "@/lib/apollo/hooks";
@@ -32,6 +32,11 @@ import {
   type ValidatedLiquidityTxContext,
 } from "@/lib/liquidity/types";
 
+// Unified Yield withdraw hook for ReHypothecation positions
+import { useUnifiedYieldWithdraw } from "@/lib/liquidity/unified-yield/hooks/useUnifiedYieldWithdraw";
+import { buildUnifiedYieldWithdrawTx, calculateSharesFromPercentage } from "@/lib/liquidity/unified-yield/buildUnifiedYieldWithdrawTx";
+import type { WithdrawPercentage } from "@/lib/liquidity/unified-yield/types";
+
 export type DecreaseTxStep = "input" | "withdraw";
 
 interface DecreaseLiquidityTxContextType {
@@ -39,7 +44,7 @@ interface DecreaseLiquidityTxContextType {
   isLoading: boolean;
   error: string | null;
 
-  // Transaction context for step executor
+  // Transaction context for step executor (V4 positions only)
   txContext: ValidatedLiquidityTxContext | null;
 
   // Prices
@@ -50,10 +55,18 @@ interface DecreaseLiquidityTxContextType {
   isCalculating: boolean;
   calculateWithdrawAmount: (inputAmount: string, inputSide: "amount0" | "amount1") => void;
 
-  // Actions
+  // Actions - V4 positions
   fetchAndBuildContext: () => Promise<ValidatedLiquidityTxContext | null>;
   getWithdrawButtonText: () => string;
   clearError: () => void;
+
+  // Unified Yield execution (ReHypothecation positions)
+  executeUnifiedYieldWithdraw: (percentage: WithdrawPercentage) => Promise<Hash | undefined>;
+  isUnifiedYieldPending: boolean;
+  isUnifiedYieldConfirming: boolean;
+  isUnifiedYieldSuccess: boolean;
+  unifiedYieldTxHash: Hash | undefined;
+  resetUnifiedYield: () => void;
 }
 
 const DecreaseLiquidityTxContext = createContext<DecreaseLiquidityTxContextType | null>(null);
@@ -64,9 +77,18 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { data: allPrices } = useAllPrices();
 
-  const { decreaseLiquidityState, derivedDecreaseInfo, setDerivedInfo } = useDecreaseLiquidityContext();
+  const { decreaseLiquidityState, derivedDecreaseInfo, setDerivedInfo, isUnifiedYield } = useDecreaseLiquidityContext();
   const { position } = decreaseLiquidityState;
   const { withdrawAmount0, withdrawAmount1 } = derivedDecreaseInfo;
+
+  // Unified Yield withdraw hook - only active for ReHypothecation positions
+  const unifiedYieldWithdraw = useUnifiedYieldWithdraw({
+    hookAddress: position.hookAddress as Address | undefined,
+    token0Decimals: tokenDefinitions[getTokenSymbolByAddress(position.token0.address, networkMode) as keyof typeof tokenDefinitions]?.decimals ?? 18,
+    token1Decimals: tokenDefinitions[getTokenSymbolByAddress(position.token1.address, networkMode) as keyof typeof tokenDefinitions]?.decimals ?? 18,
+    poolId: position.poolId,
+    chainId,
+  });
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -178,8 +200,46 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   }, 300), [position, chainId, networkMode, tokenDefinitions, setDerivedInfo]);
 
   /**
+   * Execute Unified Yield withdrawal by percentage.
+   * For ReHypothecation positions, we burn shares directly from the Hook contract.
+   *
+   * @param percentage - 25 | 50 | 75 | 100
+   */
+  const executeUnifiedYieldWithdraw = useCallback(async (percentage: WithdrawPercentage): Promise<Hash | undefined> => {
+    if (!isUnifiedYield || !position.shareBalance) {
+      setError("Not a Unified Yield position or no share balance");
+      return undefined;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // Parse share balance from the position
+      const shareBalanceBigInt = parseUnits(position.shareBalance, 18);
+
+      if (shareBalanceBigInt <= 0n) {
+        throw new Error("No shares to withdraw");
+      }
+
+      // Execute withdrawal by percentage
+      const txHash = await unifiedYieldWithdraw.withdrawPercentage(shareBalanceBigInt, percentage);
+      setIsLoading(false);
+      return txHash;
+    } catch (err: any) {
+      console.error("[DecreaseLiquidityTxContext] Unified Yield withdraw error:", err);
+      setError(err.message || "Unified Yield withdrawal failed");
+      setIsLoading(false);
+      return undefined;
+    }
+  }, [isUnifiedYield, position.shareBalance, unifiedYieldWithdraw]);
+
+  /**
    * Fetch API and build transaction context for step executor.
    * Decrease operations don't need approvals or permits.
+   *
+   * For Unified Yield positions: builds txRequest directly (no API call needed)
+   * For V4 positions: calls API to build transaction
    */
   const fetchAndBuildContext = useCallback(async (): Promise<ValidatedLiquidityTxContext | null> => {
     if (!accountAddress || !chainId) return null;
@@ -204,6 +264,82 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       return null;
     }
 
+    // =========================================================================
+    // UNIFIED YIELD POSITIONS - Build txRequest directly (no API call)
+    // =========================================================================
+    if (isUnifiedYield && position.hookAddress && position.shareBalance) {
+      try {
+        // Calculate percentage from withdraw amounts
+        const amt0 = parseFloat(withdrawAmount0 || "0");
+        const max0 = parseFloat(position.token0.amount || "0");
+        const withdrawPercentage = max0 > 0 ? Math.min(100, Math.round((amt0 / max0) * 100)) : 100;
+
+        // Calculate shares to withdraw
+        const shareBalanceBigInt = parseUnits(position.shareBalance, 18);
+        const sharesToWithdraw = calculateSharesFromPercentage(shareBalanceBigInt, withdrawPercentage);
+
+        // Build the withdraw transaction
+        const txResult = buildUnifiedYieldWithdrawTx({
+          hookAddress: position.hookAddress as Address,
+          shares: sharesToWithdraw,
+          userAddress: accountAddress,
+          poolId: position.poolId,
+          chainId,
+        });
+
+        // Convert display amounts to raw amounts (wei) for the SDK
+        const rawAmount0 = parseUnits(withdrawAmount0 || "0", token0Config.decimals).toString();
+        const rawAmount1 = parseUnits(withdrawAmount1 || "0", token1Config.decimals).toString();
+
+        // Build context with UY-specific fields
+        const context = buildLiquidityTxContext({
+          type: LiquidityTransactionType.Decrease,
+          apiResponse: {
+            needsApproval: false,
+            create: {
+              to: txResult.to,
+              data: txResult.calldata,
+              value: txResult.value?.toString() || "0",
+              gasLimit: txResult.gasLimit?.toString(),
+            },
+            sqrtRatioX96: undefined,
+          } as MintTxApiResponse,
+          token0: {
+            address: token0Config.address as Address,
+            symbol: token0Config.symbol,
+            decimals: token0Config.decimals,
+            chainId,
+          },
+          token1: {
+            address: token1Config.address as Address,
+            symbol: token1Config.symbol,
+            decimals: token1Config.decimals,
+            chainId,
+          },
+          amount0: rawAmount0,
+          amount1: rawAmount1,
+          chainId,
+          // Unified Yield specific fields
+          isUnifiedYield: true,
+          hookAddress: position.hookAddress as Address,
+          poolId: position.poolId,
+          sharesToWithdraw,
+        });
+
+        setTxContext(context as ValidatedLiquidityTxContext);
+        setIsLoading(false);
+        return context as ValidatedLiquidityTxContext;
+      } catch (err: any) {
+        console.error("[DecreaseLiquidityTxContext] Unified Yield context error:", err);
+        setError(err.message || "Failed to prepare Unified Yield withdrawal");
+        setIsLoading(false);
+        return null;
+      }
+    }
+
+    // =========================================================================
+    // V4 POSITIONS - Call API to build transaction
+    // =========================================================================
     const tokenId = parseTokenId(position.positionId);
 
     // Check if this is a full burn
@@ -279,7 +415,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       setIsLoading(false);
       return null;
     }
-  }, [accountAddress, chainId, position, withdrawAmount0, withdrawAmount1, networkMode, tokenDefinitions, parseTokenId]);
+  }, [accountAddress, chainId, position, withdrawAmount0, withdrawAmount1, networkMode, tokenDefinitions, parseTokenId, isUnifiedYield]);
 
   // Get button text based on amounts
   const getWithdrawButtonText = useCallback(() => {
@@ -314,6 +450,13 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     fetchAndBuildContext,
     getWithdrawButtonText,
     clearError,
+    // Unified Yield
+    executeUnifiedYieldWithdraw,
+    isUnifiedYieldPending: unifiedYieldWithdraw.isPending,
+    isUnifiedYieldConfirming: unifiedYieldWithdraw.isConfirming,
+    isUnifiedYieldSuccess: unifiedYieldWithdraw.isSuccess,
+    unifiedYieldTxHash: unifiedYieldWithdraw.txHash,
+    resetUnifiedYield: unifiedYieldWithdraw.reset,
   }), [
     isLoading,
     error,
@@ -325,6 +468,12 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     fetchAndBuildContext,
     getWithdrawButtonText,
     clearError,
+    executeUnifiedYieldWithdraw,
+    unifiedYieldWithdraw.isPending,
+    unifiedYieldWithdraw.isConfirming,
+    unifiedYieldWithdraw.isSuccess,
+    unifiedYieldWithdraw.txHash,
+    unifiedYieldWithdraw.reset,
   ]);
 
   return <DecreaseLiquidityTxContext.Provider value={value}>{children}</DecreaseLiquidityTxContext.Provider>;

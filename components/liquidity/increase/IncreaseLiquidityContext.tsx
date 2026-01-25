@@ -33,6 +33,8 @@ interface IncreaseLiquidityContextType {
   hasValidAmounts: boolean;
   isOverBalance0: boolean;
   isOverBalance1: boolean;
+  /** Whether this is a Unified Yield position */
+  isUnifiedYield: boolean;
 }
 
 const IncreaseLiquidityContext = createContext<IncreaseLiquidityContextType | null>(null);
@@ -47,6 +49,9 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
   const [step, setStep] = useState(IncreaseLiquidityStep.Input);
   const [increaseLiquidityState, setIncreaseLiquidityState] = useState<IncreaseLiquidityState>({ position, exactField: "TOKEN0", exactAmount: initialAmount0 });
   const [derivedInfo, setDerivedInfo] = useState<IncreaseLiquidityDerivedInfo>({ formattedAmounts: { TOKEN0: initialAmount0, TOKEN1: initialAmount1 }, currencyAmounts: {}, currencyAmountsUSDValue: {}, currencyBalances: {} });
+
+  // Detect if this is a Unified Yield position
+  const isUnifiedYield = position.isUnifiedYield ?? false;
 
   const setAmount0 = (value: string) => {
     setIncreaseLiquidityState((prev) => ({ ...prev, exactField: "TOKEN0", exactAmount: value }));
@@ -78,7 +83,7 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
     return amt > bal && amt > 0;
   }, [derivedInfo.formattedAmounts?.TOKEN1, derivedInfo.currencyBalances?.TOKEN1]);
 
-  const value = useMemo(() => ({ step, setStep, increaseLiquidityState, setIncreaseLiquidityState, derivedIncreaseLiquidityInfo: derivedInfo, setDerivedInfo, setAmount0, setAmount1, setExactField, hasValidAmounts, isOverBalance0, isOverBalance1 }), [step, increaseLiquidityState, derivedInfo, hasValidAmounts, isOverBalance0, isOverBalance1]);
+  const value = useMemo(() => ({ step, setStep, increaseLiquidityState, setIncreaseLiquidityState, derivedIncreaseLiquidityInfo: derivedInfo, setDerivedInfo, setAmount0, setAmount1, setExactField, hasValidAmounts, isOverBalance0, isOverBalance1, isUnifiedYield }), [step, increaseLiquidityState, derivedInfo, hasValidAmounts, isOverBalance0, isOverBalance1, isUnifiedYield]);
 
   return <IncreaseLiquidityContext.Provider value={value}>{children}</IncreaseLiquidityContext.Provider>;
 }

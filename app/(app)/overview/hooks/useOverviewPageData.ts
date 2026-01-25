@@ -8,6 +8,9 @@ import { useNetwork } from "@/lib/network-context";
 import { useOverview } from "./useOverviewData";
 import { useWalletBalances } from "./useWalletBalances";
 import { fetchUserPoints, DEFAULT_USER_POINTS, type CachedUserPoints } from "@/lib/upstash-points";
+import { fetchUnifiedYieldPositions } from "@/lib/liquidity/unified-yield/fetchUnifiedYieldPositions";
+import { createNetworkClient } from "@/lib/viemClient";
+import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
 
 /**
  * useOverviewPageData - Aggregates all data needed for overview pages
@@ -62,6 +65,51 @@ export function useOverviewPageData() {
     setPositionsRefresh,
   });
 
+  // Unified Yield positions (fetched directly from Hook contracts)
+  const [unifiedYieldPositions, setUnifiedYieldPositions] = useState<UnifiedYieldPosition[]>([]);
+  const [isLoadingUYPositions, setIsLoadingUYPositions] = useState(false);
+
+  useEffect(() => {
+    if (!isConnected || !accountAddress) {
+      setUnifiedYieldPositions([]);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingUYPositions(true);
+
+    const fetchUYPositions = async () => {
+      try {
+        const client = createNetworkClient(networkMode);
+        const chainId = networkMode === 'mainnet' ? 8453 : 84532;
+        const positions = await fetchUnifiedYieldPositions({
+          userAddress: accountAddress as `0x${string}`,
+          chainId,
+          networkMode,
+          client,
+        });
+        if (!cancelled) {
+          setUnifiedYieldPositions(positions);
+        }
+      } catch (error) {
+        console.warn('[useOverviewPageData] Failed to fetch Unified Yield positions:', error);
+        if (!cancelled) {
+          setUnifiedYieldPositions([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingUYPositions(false);
+        }
+      }
+    };
+
+    fetchUYPositions();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, accountAddress, networkMode, positionsRefresh]);
+
   // Points data (fetched from Upstash)
   const [pointsData, setPointsData] = useState<CachedUserPoints>(DEFAULT_USER_POINTS);
   const [isLoadingPoints, setIsLoadingPoints] = useState(false);
@@ -100,7 +148,7 @@ export function useOverviewPageData() {
 
   // Overall loading state
   const isLoading =
-    isLoadingPositions || isLoadingWalletBalances || isLoadingPoints || !readiness.core;
+    isLoadingPositions || isLoadingWalletBalances || isLoadingPoints || isLoadingUYPositions || !readiness.core;
 
   return {
     // Connection state
@@ -111,6 +159,7 @@ export function useOverviewPageData() {
     totalValue: overviewData.totalValue,
     walletBalances,
     activePositions,
+    unifiedYieldPositions,
     priceMap: overviewData.priceMap,
     priceChange24hPctMap: overviewData.priceChange24hPctMap,
     aprByPoolId,
@@ -124,6 +173,7 @@ export function useOverviewPageData() {
     isLoading,
     isLoadingWalletBalances,
     isLoadingPositions,
+    isLoadingUYPositions,
     isLoadingPoints,
   };
 }

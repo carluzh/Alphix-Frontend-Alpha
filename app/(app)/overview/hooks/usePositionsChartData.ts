@@ -13,6 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useMemo } from "react";
 import { fetchPositionsChart } from "@/lib/backend-client";
 import { useSSEContext } from "@/lib/realtime";
+import { useNetwork } from "@/lib/network-context";
 
 export type ChartPeriod = "DAY" | "WEEK" | "MONTH";
 
@@ -55,8 +56,9 @@ export function usePositionsChartData({
 }: UsePositionsChartDataParams): UsePositionsChartDataResult {
   const queryClient = useQueryClient();
   const { subscribeToSnapshots, isConnected } = useSSEContext();
+  const { networkMode } = useNetwork();
 
-  const queryKey = ["positions-chart", address, period];
+  const queryKey = ["positions-chart", address, period, networkMode];
   // Use ref to avoid stale closure in subscription callback
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
@@ -72,7 +74,7 @@ export function usePositionsChartData({
         return [];
       }
 
-      const response = await fetchPositionsChart(address, period);
+      const response = await fetchPositionsChart(address, period, networkMode);
 
       if (!response.success) {
         timeRangeRef.current = null;
