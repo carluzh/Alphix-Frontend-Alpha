@@ -566,8 +566,22 @@ export function RangeAndAmountsStep() {
   const noopRangeChange = useCallback(() => {}, []);
 
   // Chart range change handler - must be memoized to prevent chart reinitialization
-  // Uses SDK-based price-to-tick conversion for proper decimal handling
+  // IMPORTANT: Only processes range changes when SDK pool is available to ensure
+  // consistent price-to-tick conversion (chart data uses SDK prices when tokens available)
   const handleChartRangeChange = useCallback((newMinPrice: number, newMaxPrice: number) => {
+    // Guard: Don't process if SDK pool isn't ready - this prevents scale mismatch
+    // between chart's liquidity data and tick conversion
+    if (!sdkPool?.token0 || !sdkPool?.token1) {
+      console.warn('[handleChartRangeChange] SDK pool not ready, ignoring range change');
+      return;
+    }
+
+    // Validate input prices
+    if (!isFinite(newMinPrice) || !isFinite(newMaxPrice) || newMinPrice <= 0 || newMaxPrice <= 0) {
+      console.warn('[handleChartRangeChange] Invalid prices:', { newMinPrice, newMaxPrice });
+      return;
+    }
+
     setRangePreset('custom');
 
     // Convert prices to ticks and update context
@@ -585,14 +599,13 @@ export function RangeAndAmountsStep() {
     }
 
     // Convert prices to ticks using SDK (handles token decimals properly)
-    // Falls back to simple calculation if SDK tokens not available
-    let tickLower = priceToTick(canonicalMinPrice);
-    let tickUpper = priceToTick(canonicalMaxPrice);
+    const tickLower = priceToTick(canonicalMinPrice);
+    const tickUpper = priceToTick(canonicalMaxPrice);
 
+    // If SDK conversion fails, don't proceed - this prevents scale mismatch
     if (tickLower === undefined || tickUpper === undefined) {
-      // Fallback: use simple conversion
-      tickLower = priceToTickSimple(canonicalMinPrice);
-      tickUpper = priceToTickSimple(canonicalMaxPrice);
+      console.warn('[handleChartRangeChange] SDK tick conversion failed');
+      return;
     }
 
     // Align to tick spacing using nearestUsableTick for proper alignment
@@ -604,7 +617,7 @@ export function RangeAndAmountsStep() {
     const alignedPriceLower = tickToPrice(alignedTickLower);
     const alignedPriceUpper = tickToPrice(alignedTickUpper);
 
-    // Guard: if pool not available yet, just set ticks without updating display prices
+    // Guard: if conversion fails, just set ticks without updating display prices
     if (alignedPriceLower === undefined || alignedPriceUpper === undefined) {
       setRange(alignedTickLower, alignedTickUpper);
       return;
@@ -620,7 +633,7 @@ export function RangeAndAmountsStep() {
     }
 
     setRange(alignedTickLower, alignedTickUpper);
-  }, [priceInverted, poolConfig?.tickSpacing, priceToTick, tickToPrice, formatPriceForDisplay, setRangePreset, setRange]);
+  }, [sdkPool, priceInverted, poolConfig?.tickSpacing, priceToTick, tickToPrice, formatPriceForDisplay, setRangePreset, setRange]);
 
   // Price strategy selection
   const handleSelectStrategy = useCallback((strategy: RangePreset) => {

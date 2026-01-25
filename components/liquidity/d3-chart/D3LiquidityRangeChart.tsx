@@ -568,18 +568,22 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
     }
   }, [propMinPrice, propMaxPrice, isFullRange, priceData, drawAll]);
 
-  // Handle wheel zoom and pan
+  // Handle wheel zoom and pan - attached to container for better event capture
   useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg || liquidityData.length === 0) return;
+    const container = containerRef.current;
+    if (!container) return;
 
     // Wheel zoom handler
     const handleWheel = (event: WheelEvent) => {
+      // Only handle if we have data
+      const data = liquidityDataRef.current;
+      if (data.length === 0) return;
+
       event.preventDefault();
+      event.stopPropagation();
 
       const { zoomLevel, panY, dimensions: dims } = stateRef.current;
       const dynamicZoomMin = dynamicZoomMinRef.current;
-      const data = liquidityDataRef.current;
 
       // Check if shift is held for pan mode
       if (event.shiftKey) {
@@ -610,8 +614,11 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
       const zoomFactor = zoomingIn ? CHART_BEHAVIOR.ZOOM_FACTOR : 1 / CHART_BEHAVIOR.ZOOM_FACTOR;
       const targetZoom = Math.max(dynamicZoomMin, Math.min(zoomLevel * zoomFactor, CHART_BEHAVIOR.ZOOM_MAX));
 
-      // Get mouse position relative to SVG for zoom anchoring
-      const rect = svg.getBoundingClientRect();
+      // Skip if zoom wouldn't change
+      if (targetZoom === zoomLevel) return;
+
+      // Get mouse position relative to container for zoom anchoring
+      const rect = container.getBoundingClientRect();
       const mouseY = event.clientY - rect.top;
 
       // Calculate new panY to keep the point under the mouse fixed
@@ -641,19 +648,19 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
       });
     };
 
-    // Middle mouse button drag for panning
+    // Middle mouse button or right-click drag for panning
     let isPanning = false;
     let panStartY = 0;
     let panStartPanY = 0;
 
     const handleMouseDown = (event: MouseEvent) => {
-      // Middle mouse button (button 1) or right-click for panning
+      // Middle mouse button (button 1)
       if (event.button === 1) {
         event.preventDefault();
         isPanning = true;
         panStartY = event.clientY;
         panStartPanY = stateRef.current.panY;
-        svg.style.cursor = 'grabbing';
+        container.style.cursor = 'grabbing';
       }
     };
 
@@ -662,6 +669,8 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
 
       const { zoomLevel, dimensions: dims } = stateRef.current;
       const data = liquidityDataRef.current;
+      if (data.length === 0) return;
+
       const deltaY = event.clientY - panStartY;
 
       let newPanY = panStartPanY + deltaY;
@@ -686,22 +695,23 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
     const handleMouseUp = () => {
       if (isPanning) {
         isPanning = false;
-        svg.style.cursor = '';
+        container.style.cursor = '';
       }
     };
 
-    svg.addEventListener('wheel', handleWheel, { passive: false });
-    svg.addEventListener('mousedown', handleMouseDown);
+    // Attach to container for better event capture
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    container.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
 
     return () => {
-      svg.removeEventListener('wheel', handleWheel);
-      svg.removeEventListener('mousedown', handleMouseDown);
+      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [liquidityData.length]);
+  }, []);
 
   // Total height includes chart + timescale
   const totalHeight = CHART_DIMENSIONS.CHART_HEIGHT + CHART_DIMENSIONS.TIMESCALE_HEIGHT;
