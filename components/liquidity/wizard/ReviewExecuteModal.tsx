@@ -474,6 +474,18 @@ export function ReviewExecuteModal() {
     // =========================================================================
     // UNIFIED YIELD POSITIONS - Build context with deposit tx (no API call)
     // =========================================================================
+    // For Unified Yield, we MUST have depositPreview and hooks - don't fall through to V4
+    if (isUnifiedYield) {
+      if (!depositPreview) {
+        console.error('[ReviewExecuteModal] Unified Yield mode but depositPreview is missing');
+        throw new Error('Deposit preview not available. Please enter an amount and try again.');
+      }
+      if (!pool.hooks) {
+        console.error('[ReviewExecuteModal] Unified Yield mode but pool.hooks is missing');
+        throw new Error('Pool hook address not configured');
+      }
+    }
+
     if (isUnifiedYield && depositPreview && pool.hooks) {
       const hookAddress = pool.hooks as Address;
 

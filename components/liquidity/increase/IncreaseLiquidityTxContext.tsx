@@ -38,7 +38,7 @@ import {
 import { PERMIT2_ADDRESS } from "../liquidity-form-utils";
 
 // Shared approval utilities
-import { buildApprovalRequests } from "@/lib/liquidity/hooks/approval";
+import { buildApprovalRequests, buildApprovalCalldata } from "@/lib/liquidity/hooks/approval";
 
 // Unified Yield deposit hook for ReHypothecation positions
 import { useUnifiedYieldDeposit } from "@/lib/liquidity/unified-yield/hooks/useUnifiedYieldDeposit";
@@ -268,6 +268,16 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     // =========================================================================
     // UNIFIED YIELD POSITIONS - Build context with deposit tx (no API call)
     // =========================================================================
+    // For Unified Yield, we MUST have poolConfig and hooks - don't fall through to V4
+    if (isUnifiedYield) {
+      if (!poolConfig?.hooks) {
+        console.error('[IncreaseLiquidityTxContext] Unified Yield mode but pool.hooks is missing');
+        setError("Pool hook address not configured for Unified Yield");
+        setIsLoading(false);
+        return null;
+      }
+    }
+
     if (isUnifiedYield && poolConfig?.hooks) {
       try {
         const hookAddress = poolConfig.hooks as Address;
