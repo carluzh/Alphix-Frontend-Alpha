@@ -263,12 +263,25 @@ async function fetchBackendPriceHistory(
       return null
     }
 
-    // Convert to TimestampedPoolPrice format (already compatible)
-    return result.points.map((p) => ({
-      timestamp: p.timestamp,
-      token0Price: p.token0Price,
-      token1Price: p.token1Price,
-    }))
+    // Convert to TimestampedPoolPrice format
+    // Backend returns USD prices, but chart needs token-to-token ratios
+    // to align with tick-based range bounds
+    //
+    // NOTE: Backend returns tokens in opposite order from subgraph convention.
+    // Subgraph orders by address (token0 < token1), backend uses pool config order.
+    // We swap the calculation to align with subgraph/Uniswap expectations:
+    //
+    // token0Price = price of token0 in token1 terms = token1Usd / token0Usd
+    // token1Price = price of token1 in token0 terms = token0Usd / token1Usd
+    return result.points.map((p) => {
+      const token0Usd = p.token0PriceUsd || 1
+      const token1Usd = p.token1PriceUsd || 1
+      return {
+        timestamp: p.timestamp,
+        token0Price: token1Usd / token0Usd,  // Swapped: aligns with subgraph token ordering
+        token1Price: token0Usd / token1Usd,  // Swapped: aligns with subgraph token ordering
+      }
+    })
   } catch (error) {
     console.warn('[pool-price-history] Backend error:', error)
     return null

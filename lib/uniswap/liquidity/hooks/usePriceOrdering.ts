@@ -48,7 +48,8 @@ export function usePriceOrdering({
     )
 
     // Get prices at tick boundaries using consolidated utility
-    // Note: token0 is quote, token1 is base (price = token0 per token1)
+    // tickToPrice(base, quote, tick) returns "quote per base"
+    // So tickToPrice(currency0, currency1, tick) returns "currency1 per currency0"
     const priceLower = tickToPrice(tickLower, currency0, currency1)
     const priceUpper = tickToPrice(tickUpper, currency0, currency1)
 

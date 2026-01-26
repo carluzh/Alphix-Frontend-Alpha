@@ -20,7 +20,7 @@ interface DecreaseLiquidityModalProps {
   position: ProcessedPosition;
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (options?: { isFullBurn?: boolean }) => void;
 }
 
 /**

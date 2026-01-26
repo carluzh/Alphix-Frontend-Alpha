@@ -7,7 +7,8 @@
  * Styled identically to PositionCardCompact for consistent UX.
  *
  * Key differences from V4 PositionCardCompact:
- * - Status always "In Range" (managed by Hook)
+ * - Status always shows "Earning" (managed by Hook)
+ * - Shows Yield chart instead of Price Range chart
  * - Range comes from pool config's rehypoRange (tick values)
  * - Shows Aave yield APR instead of swap APR
  * - No uncollected fees (yield accrued via aTokens)
@@ -22,7 +23,6 @@ import { cn } from "@/lib/utils";
 import { getOptimalBaseToken } from '@/lib/denomination-utils';
 import { useQuery } from '@tanstack/react-query';
 import { fetchAaveRates, getAaveKey } from '@/lib/aave-rates';
-import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 import {
     StatusIndicatorCircle,
@@ -31,8 +31,8 @@ import {
 import { LiquidityPositionFeeStats } from './FeeStats';
 import type { UnifiedYieldPosition } from '@/lib/liquidity/unified-yield/types';
 
-const PositionRangeChart = dynamic(
-    () => import('./PositionRangeChart').then(mod => mod.PositionRangeChart),
+const PositionYieldChart = dynamic(
+    () => import('./PositionYieldChart').then(mod => mod.PositionYieldChart),
     { ssr: false }
 );
 
@@ -160,19 +160,6 @@ export function UnifiedYieldPositionCard({
         tickUpper: tickUpper ?? 887272,
     });
 
-    // Parse numeric prices for chart
-    const priceLower = useMemo(() => {
-        if (isFullRange) return 0;
-        const parsed = parseFloat(minPrice);
-        return isNaN(parsed) ? 0 : parsed;
-    }, [isFullRange, minPrice]);
-
-    const priceUpper = useMemo(() => {
-        if (isFullRange) return Number.MAX_SAFE_INTEGER;
-        const parsed = parseFloat(maxPrice);
-        return isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
-    }, [isFullRange, maxPrice]);
-
     // Formatted USD value
     const formattedUsdValue = useMemo(() => {
         if (!Number.isFinite(valueUSD)) return '-';
@@ -190,8 +177,8 @@ export function UnifiedYieldPositionCard({
         return `${aaveApr.toFixed(2)}%`;
     }, [aaveApr]);
 
-    // Status text based on range
-    const statusText = isFullRange ? 'Full range' : 'In Range';
+    // Status text - Unified Yield positions always show "Earning"
+    const statusText = 'Earning';
 
     // Status - always in range for Unified Yield
     const statusColor = getPositionStatusColor('IN_RANGE', isFullRange);
@@ -238,30 +225,24 @@ export function UnifiedYieldPositionCard({
                     </div>
                 </div>
 
-                {/* Range chart - mobile */}
+                {/* Yield chart - mobile */}
                 <div className="flex lg:hidden w-[140px] sm:w-[160px] h-12 ml-auto cursor-pointer flex-shrink-0">
-                    <PositionRangeChart
+                    <PositionYieldChart
                         poolId={poolConfig?.id || position.poolId}
-                        token0={token0Symbol}
-                        token1={token1Symbol}
-                        priceInverted={pricesInverted}
-                        positionStatus={PositionStatus.IN_RANGE}
-                        priceLower={priceLower}
-                        priceUpper={priceUpper}
+                        token0Symbol={token0Symbol}
+                        token1Symbol={token1Symbol}
+                        yieldSources={poolConfig?.yieldSources}
                         className="w-full h-full"
                     />
                 </div>
 
-                {/* Range chart - desktop */}
+                {/* Yield chart - desktop */}
                 <div className="hidden lg:flex flex-1 max-w-[280px] h-12 ml-auto cursor-pointer">
-                    <PositionRangeChart
+                    <PositionYieldChart
                         poolId={poolConfig?.id || position.poolId}
-                        token0={token0Symbol}
-                        token1={token1Symbol}
-                        priceInverted={pricesInverted}
-                        positionStatus={PositionStatus.IN_RANGE}
-                        priceLower={priceLower}
-                        priceUpper={priceUpper}
+                        token0Symbol={token0Symbol}
+                        token1Symbol={token1Symbol}
+                        yieldSources={poolConfig?.yieldSources}
                         className="w-full h-full"
                     />
                 </div>

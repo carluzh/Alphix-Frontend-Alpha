@@ -14,15 +14,9 @@ const YIELD_SOURCE = {
   textLogo: "/aave/Logo-light.png",
 };
 
-/** Shorten any hex string (for pool IDs, hashes that aren't valid addresses) */
-const shortenHex = (hex: string, chars = 4): string => {
-  if (!hex) return "";
-  return `${hex.slice(0, chars + 2)}...${hex.slice(-chars)}`;
-};
-
 /**
  * Copyable text row with hover-to-reveal copy icon
- * Icon takes 0 width normally, expands on hover (like Overview MiniTokensTable arrow)
+ * Icon takes 0 width normally, expands on hover
  * Styled to match YieldBreakdownSection rows
  */
 function CopyableRow({
@@ -939,7 +933,7 @@ function YieldBreakdownSection({
           </span>
         </div>
         <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors">
-          <span className="text-xs text-muted-foreground">Unified Yield</span>
+          <span className="text-xs text-muted-foreground">Lending Yield</span>
           <span className="text-xs font-mono text-foreground">
             {aaveApr !== undefined ? `${aaveApr.toFixed(2)}%` : "—"}
           </span>
@@ -953,7 +947,7 @@ function YieldBreakdownSection({
         </div>
         <div className="border-t border-sidebar-border/40 mx-2 my-1" />
         <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors">
-          <span className="text-xs font-medium text-foreground">Total APR</span>
+          <span className="text-xs font-medium text-foreground">Unified Yield</span>
           <span className="text-xs font-mono font-medium text-foreground">
             ~{totalApr.toFixed(2)}%
           </span>
@@ -975,13 +969,6 @@ function ContractsSection({ poolConfig }: { poolConfig: PoolConfig }) {
     <div className="flex flex-col gap-2 rounded-lg border border-dashed border-sidebar-border/60 p-4 pb-2">
       <h4 className="text-sm font-semibold text-foreground">Contracts</h4>
       <div className="flex flex-col -mx-2">
-        {poolConfig.subgraphId && (
-          <CopyableRow
-            label="Pool ID"
-            value={poolConfig.subgraphId}
-            displayValue={shortenHex(poolConfig.subgraphId)}
-          />
-        )}
         {token0 && (
           <CopyableRow label={token0.symbol} value={token0.address} />
         )}
@@ -989,8 +976,13 @@ function ContractsSection({ poolConfig }: { poolConfig: PoolConfig }) {
           <CopyableRow label={token1.symbol} value={token1.address} />
         )}
         {poolConfig.hooks && (
-          <CopyableRow label="ERC-4626 Vault" value={poolConfig.hooks} />
+          <CopyableRow label="Lending Vault" value={poolConfig.hooks} />
         )}
+      </div>
+      {/* Lending protocol info */}
+      <div className="flex items-center justify-between py-1.5 px-2 text-xs text-muted-foreground">
+        <span>Lending via</span>
+        <span className="font-medium text-foreground">Aave V3</span>
       </div>
     </div>
   );

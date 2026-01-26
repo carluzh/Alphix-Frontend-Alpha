@@ -165,15 +165,16 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     const urlT1 = searchParams?.get('t1');
 
     // Determine starting step based on entry config
+    // Always start at step 1 (POOL_AND_MODE) to allow strategy selection
+    // Pool will be pre-selected if coming from pool page
     let startStep = WizardStep.POOL_AND_MODE;
     if (entryConfig?.skipToStep !== undefined) {
       startStep = entryConfig.skipToStep;
     } else if (urlStep) {
       startStep = parseInt(urlStep, 10) as WizardStep;
-    } else if (entryConfig?.poolId) {
-      // If entering from pool page, skip to range and amounts
-      startStep = WizardStep.RANGE_AND_AMOUNTS;
     }
+    // Note: We no longer skip to step 2 when poolId is set - users should always
+    // be able to choose their LP strategy (rehypo vs concentrated)
 
     return {
       ...DEFAULT_WIZARD_STATE,
@@ -238,11 +239,11 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
 
   // Determine if back/forward navigation is possible
   const canGoBack = useMemo(() => {
-    // Can't go back from first step or if entry was from pool page
+    // Can't go back from first step
     if (currentStep === WizardStep.POOL_AND_MODE) return false;
-    if (entryConfig?.poolId && currentStep === WizardStep.RANGE_AND_AMOUNTS) return false;
+    // Can always go back from step 2 to change strategy
     return true;
-  }, [currentStep, entryConfig]);
+  }, [currentStep]);
 
   // Uniswap pattern: continueButtonEnabled = creatingPoolOrPair || poolOrPair
   // For Alphix (predefined pools), we require pool data to be loaded

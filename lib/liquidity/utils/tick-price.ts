@@ -227,21 +227,35 @@ export function priceNumberToTick(
   }
 
   try {
-    // Create a Price object from the numeric price
-    // Price = quote/base, so we need CurrencyAmount for base and quote
-    // We use a large precision multiplier to avoid floating point issues
-    const PRECISION = 1e15;
-    const scaledQuote = Math.round(price * PRECISION);
-    const scaledBase = PRECISION;
+    // Convert human-readable price to raw amounts accounting for decimals
+    // Human price: quote_tokens / base_tokens (e.g., 1.5 USDC per 1 ETH)
+    // Raw ratio: quote_raw / base_raw = price * (10^quote_decimals / 10^base_decimals)
+    //
+    // We use 1 whole base token in raw units as denominator
+    // and price * 1 whole quote token in raw units as numerator
+    const baseDecimals = baseCurrency.decimals;
+    const quoteDecimals = quoteCurrency.decimals;
 
-    // Ensure we don't overflow JSBI
+    // rawBase = 1 whole base token in smallest units
+    const rawBase = BigInt(10 ** baseDecimals);
+
+    // rawQuote = price * 1 whole quote token in smallest units
+    // Use high precision intermediate step to avoid floating point issues
+    const scaledPrice = Math.round(price * 1e12);
+    const rawQuote = (BigInt(scaledPrice) * BigInt(10 ** quoteDecimals)) / BigInt(1e12);
+
+    // Ensure non-zero amounts
+    if (rawQuote <= BigInt(0) || rawBase <= BigInt(0)) {
+      return undefined;
+    }
+
     const quoteAmount = CurrencyAmount.fromRawAmount(
       quoteCurrency,
-      JSBI.BigInt(scaledQuote.toString())
+      JSBI.BigInt(rawQuote.toString())
     );
     const baseAmount = CurrencyAmount.fromRawAmount(
       baseCurrency,
-      JSBI.BigInt(scaledBase.toString())
+      JSBI.BigInt(rawBase.toString())
     );
 
     // Create Price object: Price(baseCurrency, quoteCurrency, denominator, numerator)

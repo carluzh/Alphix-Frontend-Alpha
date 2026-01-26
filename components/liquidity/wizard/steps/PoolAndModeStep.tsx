@@ -3,7 +3,6 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight } from 'lucide-react';
 import { IconCircleInfo } from 'nucleo-micro-bold-essential';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -175,28 +174,11 @@ function CustomRangeModeCard({ selected, onSelect }: { selected: boolean; onSele
 }
 
 function LPModeSection({ mode, onSelectMode, extraAaveApr }: { mode: LPMode; onSelectMode: (mode: LPMode) => void; extraAaveApr?: number }) {
-  const [isCtaHovered, setIsCtaHovered] = useState(false);
-
   return (
     <div className="flex flex-col gap-4 pt-4 border-t border-sidebar-border/40">
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-semibold text-white">Choose LP Strategy</h2>
-        <div className="flex flex-row items-center justify-between gap-4">
-          <p className="text-sm text-muted-foreground">Select how you want to provide liquidity</p>
-          <a
-            href="https://alphix.gitbook.io/docs/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cn("bg-muted/20 border border-sidebar-border/40 rounded-lg px-3 py-1.5 cursor-pointer shrink-0 transition-all duration-150", isCtaHovered && "bg-muted/30")}
-            onMouseEnter={() => setIsCtaHovered(true)}
-            onMouseLeave={() => setIsCtaHovered(false)}
-          >
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-muted-foreground">Learn about Rehypothecation</span>
-              <ChevronRight className={cn("w-3 h-3 text-muted-foreground transition-transform duration-100", isCtaHovered && "translate-x-0.5")} />
-            </div>
-          </a>
-        </div>
+        <p className="text-sm text-muted-foreground">Select how you want to provide liquidity</p>
       </div>
       <div className="flex flex-col gap-3">
         <RehypoModeCard selected={mode === 'rehypo'} onSelect={() => onSelectMode('rehypo')} extraApr={extraAaveApr} />

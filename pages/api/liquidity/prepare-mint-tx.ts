@@ -356,9 +356,13 @@ export default async function handler(
             return res.status(500).json({ message: "Failed to fetch current pool data.", error });
         }
 
+        // Detect native tokens early using getAddress for consistent comparison
+        const isToken0Native = getAddress(sortedToken0.address) === ETHERS_ADDRESS_ZERO;
+        const isToken1Native = getAddress(sortedToken1.address) === ETHERS_ADDRESS_ZERO;
+
         // Use NativeCurrency for the native leg to satisfy SDK native handling
-        const poolCurrency0 = sortedToken0.address === ETHERS_ADDRESS_ZERO ? Ether.onChain(Number(chainId)) : sortedToken0;
-        const poolCurrency1 = sortedToken1.address === ETHERS_ADDRESS_ZERO ? Ether.onChain(Number(chainId)) : sortedToken1;
+        const poolCurrency0 = isToken0Native ? Ether.onChain(Number(chainId)) : sortedToken0;
+        const poolCurrency1 = isToken1Native ? Ether.onChain(Number(chainId)) : sortedToken1;
 
         const v4PoolForCalc = new V4Pool(
             poolCurrency0 as any,
@@ -436,16 +440,17 @@ export default async function handler(
         }
 
         // Use slippage-adjusted amounts for permit checks (matches what addCallParameters will transfer)
-        const tokensToCheck = [
-            { sdkToken: sortedToken0, requiredAmount: amount0, permitAmount: amount0ForPermit, symbol: getToken(sortedToken0.symbol as TokenSymbol, networkMode)?.symbol || sortedToken0.symbol || "Token0" },
-            { sdkToken: sortedToken1, requiredAmount: amount1, permitAmount: amount1ForPermit, symbol: getToken(sortedToken1.symbol as TokenSymbol, networkMode)?.symbol || sortedToken1.symbol || "Token1" }
-        ];
+        // Note: isToken0Native and isToken1Native were already computed earlier (before pool construction)
+        const hasNativeETH = isToken0Native || isToken1Native;
 
-        const hasNativeETH = sortedToken0.address === ETHERS_ADDRESS_ZERO || sortedToken1.address === ETHERS_ADDRESS_ZERO;
+        const tokensToCheck = [
+            { sdkToken: sortedToken0, requiredAmount: amount0, permitAmount: amount0ForPermit, symbol: getToken(sortedToken0.symbol as TokenSymbol, networkMode)?.symbol || sortedToken0.symbol || "Token0", isNative: isToken0Native },
+            { sdkToken: sortedToken1, requiredAmount: amount1, permitAmount: amount1ForPermit, symbol: getToken(sortedToken1.symbol as TokenSymbol, networkMode)?.symbol || sortedToken1.symbol || "Token1", isNative: isToken1Native }
+        ];
 
         // Filter to non-native tokens that need checking
         const erc20TokensToCheck = tokensToCheck.filter(
-            t => getAddress(t.sdkToken.address) !== ETHERS_ADDRESS_ZERO && t.requiredAmount > 0n
+            t => !t.isNative && t.requiredAmount > 0n
         );
 
         // Track ERC20 approval needs - don't return early, we need to compute permit data too
@@ -506,7 +511,7 @@ export default async function handler(
 
             // Filter to non-native tokens that need permit checking
             const permit2TokensToCheck = tokensToCheck.filter(
-                t => getAddress(t.sdkToken.address) !== ETHERS_ADDRESS_ZERO && t.permitAmount > 0n
+                t => !t.isNative && t.permitAmount > 0n
             );
 
             if (permit2TokensToCheck.length > 0) {
@@ -527,7 +532,13 @@ export default async function handler(
 
                     // Check if existing permit covers slippage-adjusted amount
                     const hasValidPermit = permitAmt >= t.permitAmount && permitExp > currentTimestamp;
-                    if (hasValidPermit) return;
+
+                    // If ERC20 approval is needed for this token, always include permit data regardless of existing Permit2 allowance.
+                    // This ensures the frontend step flow works correctly: [approval] -> [permit] -> [tx]
+                    const isTokenNeedingApproval = erc20ApprovalNeeded &&
+                        getAddress(t.sdkToken.address).toLowerCase() === erc20ApprovalNeeded.approvalTokenAddress.toLowerCase();
+
+                    if (hasValidPermit && !isTokenNeedingApproval) return;
 
                     // Use slippage-adjusted amount for permit (matches SDK's permitBatchData behavior)
                     permitsNeeded.push({
@@ -607,7 +618,7 @@ export default async function handler(
             if (erc20ApprovalNeeded) {
                 // Re-filter tokens and get nonces for permit data
                 const permit2TokensForERC20Case = tokensToCheck.filter(
-                    t => getAddress(t.sdkToken.address) !== ETHERS_ADDRESS_ZERO && t.permitAmount > 0n
+                    t => !t.isNative && t.permitAmount > 0n
                 );
 
                 if (permit2TokensForERC20Case.length > 0) {

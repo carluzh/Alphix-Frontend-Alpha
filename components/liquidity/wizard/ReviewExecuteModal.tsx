@@ -328,7 +328,8 @@ export function ReviewExecuteModal() {
       }
 
       closeReviewModal();
-      reset();
+      // Navigate FIRST before resetting state to prevent URL sync from interfering
+      // The context will be recreated fresh when user returns to the wizard
       router.push('/overview');
     },
     onFailure: (err) => {

@@ -10,12 +10,11 @@ import { useOverviewPageData } from "./hooks/useOverviewPageData";
  * Shows the Overview tab with:
  * - Portfolio chart (with demo wallet when disconnected)
  * - Points earned card
- * - Mini tables (Pools, Tokens)
+ * - Your Positions
  */
 export default function OverviewPage() {
   const {
     totalValue,
-    walletBalances,
     activePositions,
     unifiedYieldPositions,
     priceMap,
@@ -29,7 +28,6 @@ export default function OverviewPage() {
   return (
     <Overview
       totalValue={totalValue}
-      walletBalances={walletBalances}
       activePositions={activePositions}
       unifiedYieldPositions={unifiedYieldPositions}
       priceMap={priceMap}

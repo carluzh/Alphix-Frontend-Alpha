@@ -4,10 +4,12 @@ import useIsTickAtLimit from './useIsTickAtLimit'
 import { Bound } from '@/lib/liquidity/hooks/range'
 
 // Simple number formatter (replaces Uniswap's LocalizationContext)
+// Note: Do NOT use toLocaleString here as it adds commas which break parseFloat later
 function formatNumberOrString(value: string): string {
   const num = parseFloat(value)
   if (!isFinite(num)) return value
-  return num.toLocaleString('en-US', { maximumSignificantDigits: 6 })
+  // Use toPrecision for significant digits without locale formatting
+  return num.toPrecision(6)
 }
 
 function calculateInvertedValues({
@@ -75,10 +77,12 @@ export function useGetRangeDisplay({
   tokenBSymbol?: string
   isFullRange?: boolean
 } {
+  // Invert prices when pricesInverted=true to match chart denomination
   const { priceLower, priceUpper, base, quote } = calculateInvertedValues({
     ...priceOrdering,
     invert: pricesInverted,
   })
+
 
   const isTickAtLimit = useIsTickAtLimit({ tickSpacing, tickLower, tickUpper })
 

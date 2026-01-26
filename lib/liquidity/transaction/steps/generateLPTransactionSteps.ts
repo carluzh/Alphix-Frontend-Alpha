@@ -51,6 +51,17 @@ import type { OnChainTransactionFields, IncreaseLiquiditySteps } from '../../typ
 export function generateLPTransactionSteps(txContext: LiquidityTxAndGasInfo): TransactionStep[] {
   const isValidLP = isValidLiquidityTxContext(txContext);
 
+  if (!isValidLP) {
+    console.error('[generateLPTransactionSteps] Invalid context:', {
+      type: txContext?.type,
+      hasAction: !!(txContext as any)?.action,
+      hasTxRequest: !!(txContext as any)?.txRequest,
+      hasPermit: !!(txContext as any)?.permit,
+      unsigned: (txContext as any)?.unsigned,
+      isUnifiedYield: (txContext as any)?.isUnifiedYield,
+    });
+  }
+
   if (isValidLP) {
     // Handle collect fees - simplest case, just the collect step
     if (txContext.type === LiquidityTransactionType.Collect) {

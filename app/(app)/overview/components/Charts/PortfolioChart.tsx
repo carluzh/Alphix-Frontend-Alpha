@@ -92,7 +92,6 @@ class ChartModelWrapper implements ChartModelWithLiveDot {
     return x != null && y != null ? { x: Number(x), y: Number(y) } : null;
   }
 
-  fitContent(): void { this.chartApi.timeScale().fitContent(); }
   updateData(data: ChartDataPoint[]): void { this.data = data; }
 }
 
@@ -111,8 +110,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
   const [isChartReady, setIsChartReady] = useState(false);
 
   // Fetch historical position values from backend
-  // Backend returns stored snapshots, frontend adds "live now" point
-  const { data: positionsHistoricalData, isLoading: isLoadingPositions, fromTimestamp, toTimestamp } = usePositionsChartData({
+  const { data: positionsHistoricalData, isLoading: isLoadingPositions } = usePositionsChartData({
     address,
     period: selectedPeriod,
     currentTotalValue: currentPositionsValue,
@@ -129,7 +127,6 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
 
   const showSkeleton = isParentLoading || isLoadingPositions || !isConnected;
 
-  // Create stable dataKey based on actual data (for dot repositioning)
   const positionsDataKey = useMemo(() => {
     if (positionsChartData.length === 0) return undefined;
     return JSON.stringify(positionsChartData[positionsChartData.length - 1]);
@@ -151,7 +148,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
         horzLine: { visible: false, labelVisible: false },
       },
       rightPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: 0.32, bottom: 0.15 }, autoScale: true },
-      timeScale: { borderVisible: false, ticksVisible: false, timeVisible: true, fixLeftEdge: true, fixRightEdge: true },
+      timeScale: { borderVisible: false, ticksVisible: false, timeVisible: true, fixLeftEdge: false, fixRightEdge: false },
       handleScale: false,
       handleScroll: { horzTouchDrag: true, vertTouchDrag: false },
     });
@@ -159,8 +156,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
     chartRef.current = chart;
 
     // Enforce minimum visible range so tiny movements don't look like huge swings
-    // Example: 0.01% change shouldn't fill the entire chart height
-    const MIN_RANGE_PERCENT = 5; // Minimum 5% range visible (±2.5% from center)
+    const MIN_RANGE_PERCENT = 5;
 
     const autoscaleInfoProvider = (original: () => { priceRange: { minValue: number; maxValue: number } } | null) => {
       const res = original();
@@ -171,7 +167,6 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
       const currentRange = maxValue - minValue;
       const minRange = center * (MIN_RANGE_PERCENT / 100);
 
-      // If actual range is smaller than minimum, expand symmetrically around center
       if (currentRange < minRange && center > 0) {
         const halfMinRange = minRange / 2;
         return {
@@ -183,7 +178,6 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
         };
       }
 
-      // Otherwise just enforce $0 floor
       return {
         ...res,
         priceRange: {
@@ -227,7 +221,6 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
     const handleResize = () => {
       if (chartContainerRef.current) {
         chart.applyOptions({ width: chartContainerRef.current.clientWidth });
-        chart.timeScale().fitContent();
       }
     };
     window.addEventListener("resize", handleResize);
@@ -242,7 +235,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
       positionsModelRef.current = null;
       setIsChartReady(false);
     };
-  }, []); // Only run once on mount
+  }, []);
 
   // Update time scale formatter when period changes
   useEffect(() => {
@@ -255,7 +248,6 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
   useEffect(() => {
     if (!chartRef.current) return;
 
-    // Don't set data while skeleton is showing
     if (showSkeleton) {
       if (positionsSeriesRef.current) positionsSeriesRef.current.setData([]);
       return;
@@ -263,26 +255,27 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
 
     positionsDataRef.current = positionsChartData;
 
-    if (positionsSeriesRef.current) {
+    if (positionsSeriesRef.current && positionsChartData.length > 0) {
       positionsSeriesRef.current.setData(positionsChartData);
       positionsModelRef.current?.updateData(positionsChartData);
-    }
 
-    // Calculate visible range from selected period (frontend-calculated)
-    // This ensures the chart always shows the full selected timeframe (1D, 1W, 1M)
-    // regardless of how much actual data exists. Data will appear where it exists,
-    // and empty areas will remain empty (not stretched).
-    // Only set range if chart has data - lightweight-charts throws "Value is null" on empty charts
-    if (positionsChartData.length > 0) {
+      // Use setVisibleLogicalRange to show full period (setVisibleRange can't show beyond data bounds)
       const [periodFrom, periodTo] = calculatePeriodRange(selectedPeriod);
-      chartRef.current.timeScale().setVisibleRange({
-        from: periodFrom as UTCTimestamp,
-        to: periodTo as UTCTimestamp,
+      const firstDataTime = positionsChartData[0].time;
+      const lastDataTime = positionsChartData[positionsChartData.length - 1].time;
+      const dataTimeSpan = lastDataTime - firstDataTime;
+      const avgBarWidth = positionsChartData.length > 1 ? dataTimeSpan / (positionsChartData.length - 1) : 3600;
+
+      chartRef.current.timeScale().setVisibleLogicalRange({
+        from: (periodFrom - firstDataTime) / avgBarWidth,
+        to: (periodTo - firstDataTime) / avgBarWidth,
       });
+    } else if (positionsSeriesRef.current) {
+      positionsSeriesRef.current.setData([]);
     }
   }, [positionsChartData, showSkeleton, selectedPeriod]);
 
-  // Hide price scale (y-axis) during skeleton loading to prevent "sticking"
+  // Hide price scale during skeleton loading
   useEffect(() => {
     if (!chartRef.current) return;
     chartRef.current.applyOptions({
@@ -291,8 +284,6 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
   }, [showSkeleton]);
 
   const isHovering = hoverTime !== undefined;
-
-  // Display values - positions only
   const displayValue = isHovering ? (hoverPositionsValue ?? 0) : latestPositionsValue;
   const startValue = positionsChartData[0]?.value ?? 0;
   const delta = calculateDelta(startValue, displayValue);
@@ -301,7 +292,6 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
   return (
     <div className={cn("flex flex-col gap-4 flex-1 min-w-0", className)}>
       <div className="relative" style={{ height: CHART_HEIGHT }}>
-        {/* Only show header after skeleton is gone - ChartSkeleton has its own header placeholder */}
         {!showSkeleton && (
           <ChartHeader
             value={displayValue}
@@ -317,22 +307,18 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
         <PatternOverlay showPriceScale />
         <div ref={chartContainerRef} className="w-full h-full" />
 
-        {/* Skeleton overlay */}
         {showSkeleton && (
           <div className="absolute inset-0">
             <ChartSkeleton height={CHART_HEIGHT} />
           </div>
         )}
 
-        {/* Live pulsating dot at line end - only show after skeleton is gone */}
         {!showSkeleton && isChartReady && !isHovering && hasPositionsData && positionsModelRef.current && chartContainerRef.current && (
           <LiveDotRenderer chartModel={positionsModelRef.current} isHovering={false} chartContainer={chartContainerRef.current} overrideColor={COLORS.positions} dataKey={positionsDataKey} />
         )}
-        {/* Hover marker */}
         {isHovering && hoverPositionsCoords && <CustomHoverMarker coordinates={hoverPositionsCoords} lineColor={COLORS.positions} />}
       </div>
 
-      {/* Bottom row: TimeFrame selector only */}
       <div className="flex items-center">
         <TimeFrameSelector selectedPeriod={selectedPeriod} onSelectPeriod={setSelectedPeriod} />
       </div>

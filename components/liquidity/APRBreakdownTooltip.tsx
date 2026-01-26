@@ -22,7 +22,7 @@ import { PointsIcon } from "@/components/PointsIcons/PointsIcon";
 export interface APRBreakdownData {
   /** Swap/Pool APR from trading fees */
   swapApr?: number;
-  /** Unified Yield APR (Aave lending) */
+  /** Lending Yield APR (Aave lending) */
   unifiedYieldApr?: number;
   /** Points APR bonus */
   pointsApr?: number;
@@ -164,7 +164,7 @@ export function APRBreakdownTooltip({
         variant="default"
       />
 
-      {/* Unified Yield Row - always visible */}
+      {/* Lending Yield Row - always visible */}
       <TooltipRow
         icon={
           <Image
@@ -175,7 +175,7 @@ export function APRBreakdownTooltip({
             className="rounded-full"
           />
         }
-        label="Unified Yield"
+        label="Lending Yield"
         value={formatPercent(unifiedYieldApr)}
         variant="unified"
       />

@@ -2,7 +2,7 @@
  * PointsFeeStat
  *
  * Displays total APR with visual emphasis for positions earning points.
- * Shows unified breakdown tooltip on hover with Swap APR, Unified Yield, and Points.
+ * Shows unified breakdown tooltip on hover with Swap APR, Lending Yield, and Points.
  *
  * @example
  * ```tsx
@@ -31,7 +31,7 @@ interface PointsFeeStatProps {
   pointsApr: number;
   /** Total APR (pool + points + unified yield) */
   totalApr?: number;
-  /** Unified Yield APR (Aave lending) - optional */
+  /** Lending Yield APR (Aave lending) - optional */
   unifiedYieldApr?: number;
   /** Token0 symbol (for tooltip) */
   token0Symbol?: string;
@@ -47,7 +47,7 @@ interface PointsFeeStatProps {
  *
  * Design:
  * - Shows total APR value with dotted underline indicating hover for more info
- * - Hover shows unified breakdown: Swap APR + Unified Yield + Points
+ * - Hover shows unified breakdown: Swap APR + Lending Yield + Points
  */
 export function PointsFeeStat({
   poolApr,

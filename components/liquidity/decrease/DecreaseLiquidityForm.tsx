@@ -12,7 +12,7 @@
  * @see interface/apps/web/src/pages/RemoveLiquidity/RemoveLiquidityForm.tsx
  */
 
-import React, { useState, useCallback, useMemo, useEffect, useRef, useLayoutEffect } from "react";
+import React, { useState, useCallback, useMemo, useRef, useLayoutEffect, useEffect } from "react";
 import { AlertCircle } from "lucide-react";
 import Image from "next/image";
 import { useAccount } from "wagmi";
@@ -114,7 +114,7 @@ const PERCENTAGE_OPTIONS = [25, 50, 75, 100];
 
 interface DecreaseLiquidityFormProps {
   onClose?: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (options?: { isFullBurn?: boolean }) => void;
 }
 
 export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityFormProps) {
@@ -152,6 +152,7 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
   const [localError, setLocalError] = useState<string | null>(null);
   const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
   const [percent, setPercent] = useState<number>(0);
+  const percentRef = useRef<number>(0); // Ref for use in success callback (avoids stale closure)
   const [percentStr, setPercentStr] = useState<string>(""); // String value for input (Uniswap pattern)
 
   // Dynamic width measurement for percentage input (Uniswap pattern)
@@ -188,6 +189,7 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
   // Handle percentage selection (from buttons)
   const handlePercentageSelect = useCallback((selectedPercent: number) => {
     setPercent(selectedPercent);
+    percentRef.current = selectedPercent; // Keep ref in sync for async callback
     setPercentStr(selectedPercent.toString()); // Sync string value
 
     // Calculate and set withdraw amounts based on percentage
@@ -225,20 +227,22 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
       setCurrentStepIndex(0);
       setStepAccepted(false);
 
+      const isFullBurn = percentRef.current >= 99;
+
       // Show success toast with explorer link
       if (hash) {
-        toast.success("Liquidity withdrawn successfully!", {
+        toast.success(isFullBurn ? "Position closed successfully!" : "Liquidity withdrawn successfully!", {
           action: {
             label: "View",
             onClick: () => window.open(getExplorerTxUrl(hash), "_blank"),
           },
         });
       } else {
-        toast.success("Liquidity withdrawn successfully!");
+        toast.success(isFullBurn ? "Position closed successfully!" : "Liquidity withdrawn successfully!");
       }
 
-      // Trigger refetch and close modal
-      onSuccess?.();
+      // Signal success to parent with burn info, let parent handle navigation
+      onSuccess?.({ isFullBurn });
       onClose?.();
     },
     onFailure: (err) => {
@@ -410,6 +414,7 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
                     const num = val === "" ? 0 : parseInt(val, 10);
                     if (num === 0) {
                       setPercent(0);
+                      percentRef.current = 0;
                       setWithdrawAmount0("0");
                       setWithdrawAmount1("0");
                       setIsFullWithdraw(false);

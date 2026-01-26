@@ -203,7 +203,7 @@ export const PoolDetail = memo(function PoolDetail({
   }, [poolConfig?.id, router]);
 
   const handlePositionClick = useCallback((position: Position) => {
-    router.push(`/liquidity/position/${position.positionId}`);
+    router.push(`/liquidity/position/${position.positionId}?from=pool`);
   }, [router]);
 
   const token0Symbol = poolConfig?.tokens?.[0]?.symbol || "";

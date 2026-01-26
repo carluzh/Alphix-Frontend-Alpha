@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useRef, useCallback } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IconChevronRight } from "nucleo-micro-bold-essential";
 import { cn } from "@/lib/utils";
@@ -20,17 +20,6 @@ export function PointsRewardsCard({
   const isMobile = useIsMobile();
   const [isCardHovered, setIsCardHovered] = useState(false);
   const [isCtaHovered, setIsCtaHovered] = useState(false);
-  const cardRef = useRef<HTMLDivElement>(null);
-
-  // Handle cursor-following glow
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!cardRef.current || isMobile) return;
-    const rect = cardRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    cardRef.current.style.setProperty('--mouse-x', `${x}%`);
-    cardRef.current.style.setProperty('--mouse-y', `${y}%`);
-  }, [isMobile]);
 
   const formattedPoints = useMemo(() => {
     return totalPoints.toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -65,11 +54,9 @@ export function PointsRewardsCard({
       className="group cursor-pointer"
       onMouseEnter={() => setIsCardHovered(true)}
       onMouseLeave={() => setIsCardHovered(false)}
-      onMouseMove={handleMouseMove}
       onClick={() => router.push("/points")}
     >
       <div
-        ref={cardRef}
         className={cn(
           isMobile ? "h-[142px]" : "h-[192px]",
           isMobile ? "p-4" : "p-6",
@@ -77,7 +64,6 @@ export function PointsRewardsCard({
           "bg-muted/30 border border-sidebar-border/60 rounded-lg",
           "overflow-hidden relative",
           "transition-all duration-300 ease-out",
-          !isMobile && "cursor-glow",
           isCardHovered && "bg-muted/40 border-sidebar-primary/30"
         )}
       >

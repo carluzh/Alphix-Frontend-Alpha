@@ -41,6 +41,8 @@ function AddLiquidityPageContent() {
   // Build entry config based on URL params
   const entryConfig: WizardEntryConfig | undefined = (() => {
     // If a pool is specified, get its tokens
+    // Note: We do NOT skip to step 2 - users should always see the strategy selection
+    // to choose between Unified Yield and Custom Range
     if (poolId) {
       const pool = getPoolById(poolId);
       if (pool) {
@@ -49,8 +51,7 @@ function AddLiquidityPageContent() {
           token0Symbol: pool.currency0.symbol,
           token1Symbol: pool.currency1.symbol,
           mode: mode || 'rehypo',
-          // Skip to range & amounts when coming from pool page
-          skipToStep: WizardStep.RANGE_AND_AMOUNTS,
+          // Pool is pre-selected but user still sees step 1 to choose LP strategy
         };
       }
     }

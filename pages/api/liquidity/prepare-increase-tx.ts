@@ -203,8 +203,9 @@ export default async function handler(
     }
 
     const isNativeC0 = getAddress(details.poolKey.currency0) === ETHERS_ADDRESS_ZERO;
+    const isNativeC1 = getAddress(details.poolKey.currency1) === ETHERS_ADDRESS_ZERO;
     const currency0 = isNativeC0 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC0.address), defC0.decimals, defC0.symbol);
-    const currency1 = new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
+    const currency1 = isNativeC1 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
 
     // Get pool state
     const keyTuple = [{
@@ -304,7 +305,7 @@ export default async function handler(
     // Debug logging for permit amounts
     console.log('[prepare-increase-tx] Permit amounts:', {
       token0: { symbol: defC0.symbol, inputAmount: amountC0Raw.toString(), permitAmount: amount0ForPermit.toString(), isNative: isNativeC0 },
-      token1: { symbol: defC1.symbol, inputAmount: amountC1Raw.toString(), permitAmount: amount1ForPermit.toString(), isNative: false },
+      token1: { symbol: defC1.symbol, inputAmount: amountC1Raw.toString(), permitAmount: amount1ForPermit.toString(), isNative: isNativeC1 },
     });
 
     // Extract permit data
@@ -314,7 +315,7 @@ export default async function handler(
     // Tokens to check
     const tokensToCheck = [
       { address: isNativeC0 ? ETHERS_ADDRESS_ZERO : getAddress(defC0.address), requiredAmount: amountC0Raw, permitAmount: amount0ForPermit, symbol: defC0.symbol, isNative: isNativeC0, decimals: defC0.decimals },
-      { address: getAddress(defC1.address), requiredAmount: amountC1Raw, permitAmount: amount1ForPermit, symbol: defC1.symbol, isNative: false, decimals: defC1.decimals }
+      { address: isNativeC1 ? ETHERS_ADDRESS_ZERO : getAddress(defC1.address), requiredAmount: amountC1Raw, permitAmount: amount1ForPermit, symbol: defC1.symbol, isNative: isNativeC1, decimals: defC1.decimals }
     ];
 
     // Filter to ERC20 tokens that need checking
@@ -385,7 +386,14 @@ export default async function handler(
         permit2TokensToCheck.forEach((t, i) => {
           const [permitAmt, permitExp, permitNonce] = permit2AllowanceResults[i] as readonly [bigint, number, number];
           const hasValidPermit = permitAmt >= t.permitAmount && permitExp > currentTimestamp;
-          if (hasValidPermit) return;
+
+          // If ERC20 approval is needed, always include permit data regardless of existing Permit2 allowance.
+          // This ensures the frontend step flow works correctly: [approval] -> [permit] -> [tx]
+          // After ERC20 approval, user will sign a fresh permit which is fine even if they had existing allowance.
+          const isTokenNeedingApproval = erc20ApprovalNeeded &&
+            t.address.toLowerCase() === erc20ApprovalNeeded.address.toLowerCase();
+
+          if (hasValidPermit && !isTokenNeedingApproval) return;
 
           permitsNeeded.push({
             token: t.address,
@@ -493,12 +501,13 @@ export default async function handler(
       sigDeadline: permitBatchData.sigDeadline || '0'
     }) : null;
 
+    const hasNativeETH = isNativeC0 || isNativeC1;
     let addOptions: AddLiquidityOptions = {
       slippageTolerance: SLIPPAGE_TOLERANCE,
       deadline: deadlineBigInt.toString(),
       tokenId: nftTokenId.toString(),
       hookData: '0x',
-      useNative: isNativeC0 ? Ether.onChain(chainId) : undefined,
+      useNative: hasNativeETH ? Ether.onChain(chainId) : undefined,
     };
 
     if (permitBatchValues) {
@@ -570,7 +579,7 @@ export default async function handler(
       deadline: deadlineBigInt.toString(),
       details: {
         token0: { address: isNativeC0 ? ETHERS_ADDRESS_ZERO : getAddress(defC0.address), symbol: defC0.symbol, amount: finalAmount0.toString() },
-        token1: { address: getAddress(defC1.address), symbol: defC1.symbol, amount: finalAmount1.toString() },
+        token1: { address: isNativeC1 ? ETHERS_ADDRESS_ZERO : getAddress(defC1.address), symbol: defC1.symbol, amount: finalAmount1.toString() },
         liquidity: position.liquidity.toString(),
         tickLower: details.tickLower,
         tickUpper: details.tickUpper,

@@ -136,6 +136,21 @@ export function PositionRangeChart({
   const hasError = dataQuality === DataQuality.INVALID
   const hasData = entries.length > 0
 
+  // Debug logging for testnet chart issues
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[PositionRangeChart]', {
+      poolId,
+      entriesCount: entries.length,
+      loading,
+      hasError,
+      dataQuality,
+      priceLower,
+      priceUpper,
+      priceInverted,
+      sampleEntry: entries[0],
+    })
+  }
+
   // Chart color based on position status
   const lineColor = getPriceLineColor(positionStatus)
 
@@ -265,6 +280,28 @@ export function PositionRangeChart({
         })
         bandIndicatorRef.current.updateAllViews()
       }
+
+      // Ensure price scale includes band values and matches Uniswap's visual positioning
+      // Uniswap centers the current price and gives ~20% margin above/below the bands
+      const currentPrice = entries[entries.length - 1]?.value ?? (priceLower + priceUpper) / 2
+      const bandHeight = priceUpper - priceLower
+
+      // Calculate visible range:
+      // - Include both bands and current price
+      // - Add 20% of band height as margin (Uniswap style)
+      // - Ensure current price has room to "breathe" within the bands
+      const margin = Math.max(bandHeight * 0.2, Math.abs(currentPrice - priceLower) * 0.3, Math.abs(priceUpper - currentPrice) * 0.3)
+      const visibleMin = Math.min(priceLower, currentPrice) - margin
+      const visibleMax = Math.max(priceUpper, currentPrice) + margin
+
+      series.applyOptions({
+        autoscaleInfoProvider: () => ({
+          priceRange: {
+            minValue: visibleMin,
+            maxValue: visibleMax,
+          },
+        }),
+      })
     }
 
     chart.timeScale().fitContent()

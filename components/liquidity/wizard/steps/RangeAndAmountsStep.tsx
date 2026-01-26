@@ -343,6 +343,10 @@ export function RangeAndAmountsStep() {
   const FALLBACK_TOKEN0_ADDRESS = '0x0000000000000000000000000000000000000001';
   const FALLBACK_TOKEN1_ADDRESS = '0x0000000000000000000000000000000000000002';
 
+  // Only calculate rehypo prices when tick values are actually available from pool config
+  // This prevents showing wrong prices (from tick 0) before config loads
+  const hasValidRehypoTicks = rehypoTickLower !== null && rehypoTickUpper !== null;
+
   const rehypoPriceOrdering = usePriceOrdering({
     chainId,
     token0: {
@@ -355,21 +359,23 @@ export function RangeAndAmountsStep() {
       symbol: poolConfig?.currency1.symbol || 'TOKEN1',
       decimals: token1Def?.decimals ?? 18,
     },
-    tickLower: rehypoTickLower ?? 0,
-    tickUpper: rehypoTickUpper ?? 0,
+    // Only pass real ticks when available, otherwise use safe values that won't affect display
+    tickLower: hasValidRehypoTicks ? rehypoTickLower : -887220,
+    tickUpper: hasValidRehypoTicks ? rehypoTickUpper : 887220,
   });
 
   const { minPrice: rehypoMinPriceFormatted, maxPrice: rehypoMaxPriceFormatted, isFullRange: rehypoIsFullRange } = useGetRangeDisplay({
     priceOrdering: rehypoPriceOrdering,
     pricesInverted: priceInverted,
     tickSpacing: poolConfig?.tickSpacing,
-    tickLower: rehypoTickLower ?? 0,
-    tickUpper: rehypoTickUpper ?? 0,
+    tickLower: hasValidRehypoTicks ? rehypoTickLower : -887220,
+    tickUpper: hasValidRehypoTicks ? rehypoTickUpper : 887220,
   });
 
   // Parse the formatted strings to numbers for chart usage
   const rehypoPriceRange = useMemo(() => {
-    if (!isRehypoMode || rehypoTickLower === null || rehypoTickUpper === null) {
+    // Only return valid prices when in rehypo mode with valid tick config
+    if (!isRehypoMode || !hasValidRehypoTicks) {
       return { minPrice: undefined, maxPrice: undefined, minPriceFormatted: undefined, maxPriceFormatted: undefined };
     }
 
@@ -386,7 +392,7 @@ export function RangeAndAmountsStep() {
       minPriceFormatted: rehypoMinPriceFormatted,
       maxPriceFormatted: rehypoMaxPriceFormatted,
     };
-  }, [isRehypoMode, rehypoTickLower, rehypoTickUpper, rehypoMinPriceFormatted, rehypoMaxPriceFormatted]);
+  }, [isRehypoMode, hasValidRehypoTicks, rehypoMinPriceFormatted, rehypoMaxPriceFormatted]);
 
   const subgraphPoolId = state.poolId ? (getPoolSubgraphId(state.poolId) || state.poolId) : undefined;
 
@@ -1098,7 +1104,7 @@ export function RangeAndAmountsStep() {
               }
               isFullRange={isRehypoMode ? (poolConfig.rehypoRange?.isFullRange ?? rehypoIsFullRange ?? true) : selectedPreset === 'full'}
               duration={chartDuration}
-              onRangeChange={isRehypoMode ? noopRangeChange : handleChartRangeChange}
+              onRangeChange={noopRangeChange}
             />
             {/* Action buttons below chart */}
             {!isRehypoMode && (

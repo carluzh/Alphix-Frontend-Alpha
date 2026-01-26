@@ -4,7 +4,7 @@ import { memo, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowLeft, Plus, Minus } from "lucide-react";
+import { ChevronRight, Plus, Minus } from "lucide-react";
 import { PointsIcon } from "@/components/PointsIcons";
 import { DenominationToggle } from "@/components/liquidity/DenominationToggle";
 import { CurrencyAmount, Price, Currency } from "@uniswap/sdk-core";
@@ -134,6 +134,8 @@ export interface PositionDetailProps {
   isOwner: boolean;
   // Actions
   refetch: () => void;
+  // Navigation origin (for breadcrumb)
+  fromPage: "overview" | "pool" | null;
 }
 
 // ============================================================================
@@ -305,6 +307,7 @@ function PositionHeader({
   onRemoveLiquidity,
   onCollectFees,
   networkMode,
+  fromPage,
 }: {
   poolConfig: PoolConfig;
   lpType: LPType;
@@ -315,24 +318,36 @@ function PositionHeader({
   onRemoveLiquidity: () => void;
   onCollectFees: () => void;
   networkMode: "mainnet" | "testnet";
+  fromPage: "overview" | "pool" | null;
 }) {
-  const router = useRouter();
   const token0Icon = getTokenIcon(poolConfig.currency0.symbol, networkMode);
   const token1Icon = getTokenIcon(poolConfig.currency1.symbol, networkMode);
+  const poolName = `${poolConfig.currency0.symbol} / ${poolConfig.currency1.symbol}`;
+
+  // Determine breadcrumb based on origin
+  const breadcrumbLink = fromPage === "pool"
+    ? `/liquidity/${poolConfig.id}`
+    : "/overview";
+  const breadcrumbLabel = fromPage === "pool" ? poolName : "Overview";
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Back Link */}
-      <button
-        onClick={() => router.push("/overview")}
-        className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors w-fit"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        <span className="text-sm">Back to Overview</span>
-      </button>
+      {/* Breadcrumb Navigation */}
+      <nav className="flex items-center gap-1.5 text-sm" aria-label="breadcrumb">
+        <Link
+          href={breadcrumbLink}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {breadcrumbLabel}
+        </Link>
+        <ChevronRight className="h-3 w-3 text-muted-foreground" />
+        <span className="text-foreground font-medium">
+          {fromPage === "pool" ? "Position" : poolName}
+        </span>
+      </nav>
 
       {/* Title Row with Actions - spans full width */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mt-1">
         {/* Left side - title */}
         <div className="flex items-center gap-3">
           {/* Token Pair Icons */}
@@ -410,6 +425,10 @@ function PositionHeader({
   );
 }
 
+// Thresholds for detecting full range edge cases
+const MIN_PRICE_THRESHOLD = 1e-20;
+const MAX_PRICE_THRESHOLD = 1e30;
+
 function PriceRangeSection({
   minPrice,
   maxPrice,
@@ -429,12 +448,22 @@ function PriceRangeSection({
 }) {
   const priceLabel = `${tokenASymbol} per ${tokenBSymbol}`;
 
+  // Parse numeric values to detect edge cases (fallback when isFullRange detection fails)
+  const minNum = parseFloat(minPrice);
+  const maxNum = parseFloat(maxPrice);
+  const isMinExtreme = minNum < MIN_PRICE_THRESHOLD || !isFinite(minNum);
+  const isMaxExtreme = maxNum > MAX_PRICE_THRESHOLD || !isFinite(maxNum);
+
+  // Display values with edge case handling
+  const displayMin = isFullRange || isMinExtreme ? "0" : minPrice;
+  const displayMax = isFullRange || isMaxExtreme ? "∞" : maxPrice;
+
   return (
     <div className="flex flex-col gap-4 p-4 bg-container border border-sidebar-border rounded-lg">
       <div className="grid grid-cols-3 gap-4">
         <div className="text-center">
           <div className="text-xs text-muted-foreground mb-1">Min Price</div>
-          <div className="font-semibold text-sm">{isFullRange ? "0" : minPrice}</div>
+          <div className="font-semibold text-sm">{displayMin}</div>
           <div className="text-xs text-muted-foreground">{priceLabel}</div>
         </div>
         <div className="text-center">
@@ -450,7 +479,7 @@ function PriceRangeSection({
         </div>
         <div className="text-center">
           <div className="text-xs text-muted-foreground mb-1">Max Price</div>
-          <div className="font-semibold text-sm">{isFullRange ? "∞" : maxPrice}</div>
+          <div className="font-semibold text-sm">{displayMax}</div>
           <div className="text-xs text-muted-foreground">{priceLabel}</div>
         </div>
       </div>
@@ -634,8 +663,8 @@ const YIELD_INFO: Record<string, { title: string; description: React.ReactNode }
     title: "Swap APR",
     description: "Earned from trading fees when swaps occur through your position's price range. The APR varies based on trading volume and your position's concentration.",
   },
-  unified: {
-    title: "Unified Yield",
+  lending: {
+    title: "Lending Yield",
     description: "Additional yield earned by lending idle liquidity. When your liquidity isn't being used for swaps, it generates lending interest automatically.",
   },
   points: {
@@ -670,9 +699,10 @@ function APRSection({
   lpType: LPType;
   pointsEarned?: number;
 }) {
-  const [selectedInfo, setSelectedInfo] = useState<"swap" | "unified" | "points" | null>(null);
+  const [selectedInfo, setSelectedInfo] = useState<"swap" | "lending" | "points" | null>(null);
+  const isRehypo = lpType === "rehypo";
 
-  const handleRowClick = (row: "swap" | "unified" | "points") => {
+  const handleRowClick = (row: "swap" | "lending" | "points") => {
     setSelectedInfo(selectedInfo === row ? null : row);
   };
 
@@ -694,16 +724,16 @@ function APRSection({
           </span>
         </div>
 
-        {/* Unified Yield - Standard style like other rows */}
-        {lpType === "rehypo" && (
+        {/* Lending Yield - Only shown for rehypo positions */}
+        {isRehypo && (
           <div
             className={cn(
               "flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors cursor-pointer",
-              selectedInfo === "unified" && "bg-muted/40"
+              selectedInfo === "lending" && "bg-muted/40"
             )}
-            onClick={() => handleRowClick("unified")}
+            onClick={() => handleRowClick("lending")}
           >
-            <span className="text-xs text-muted-foreground">Unified Yield</span>
+            <span className="text-xs text-muted-foreground">Lending Yield</span>
             <span className="text-xs font-mono text-foreground">
               {aaveApr !== null ? `${formatNumber(aaveApr, { max: 2 })}%` : "-"}
             </span>
@@ -728,9 +758,11 @@ function APRSection({
         {/* Divider */}
         <div className="border-t border-sidebar-border/40 mx-2 my-1" />
 
-        {/* Total APR - Standard hover */}
+        {/* Total label: "Unified Yield" for rehypo, "Total APR" for v4 */}
         <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors">
-          <span className="text-xs font-medium text-foreground">Total APR</span>
+          <span className="text-xs font-medium text-foreground">
+            {isRehypo ? "Unified Yield" : "Total APR"}
+          </span>
           <span className="text-xs font-mono font-medium text-foreground">
             {totalApr !== null ? `~${formatNumber(totalApr, { max: 2 })}%` : "-"}
           </span>
@@ -811,6 +843,7 @@ export const PositionDetail = memo(function PositionDetail({
   handleDenominationToggle,
   isOwner,
   refetch,
+  fromPage,
 }: PositionDetailProps) {
   const isMobile = useIsMobile();
   const router = useRouter();
@@ -966,6 +999,16 @@ export const PositionDetail = memo(function PositionDetail({
     refetchYieldChart();
   }, [refetch, refetchYieldChart]);
 
+  // Handle decrease modal success - navigate to overview on full burn
+  const handleDecreaseSuccess = useCallback((options?: { isFullBurn?: boolean }) => {
+    if (options?.isFullBurn) {
+      router.push('/overview');
+    } else {
+      refetch();
+      refetchYieldChart();
+    }
+  }, [router, refetch, refetchYieldChart]);
+
   // Loading state
   if (isLoading) {
     return <LoadingSkeleton />;
@@ -1023,6 +1066,7 @@ export const PositionDetail = memo(function PositionDetail({
         onRemoveLiquidity={handleOpenRemoveModal}
         onCollectFees={handleOpenCollectModal}
         networkMode={networkMode}
+        fromPage={fromPage}
       />
 
       {/* Two-column layout - matches PoolDetail pattern */}
@@ -1181,7 +1225,7 @@ export const PositionDetail = memo(function PositionDetail({
             position={processedPosition}
             isOpen={isRemoveModalOpen}
             onClose={handleCloseRemoveModal}
-            onSuccess={handleModalSuccess}
+            onSuccess={handleDecreaseSuccess}
           />
           <CollectFeesModal
             position={processedPosition}

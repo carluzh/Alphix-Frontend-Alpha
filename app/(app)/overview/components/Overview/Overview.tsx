@@ -14,7 +14,6 @@ import { OverviewStatsTiles } from "./StatsTiles";
 const PortfolioChart = dynamic(() => import("../Charts/PortfolioChart").then(mod => mod.PortfolioChart), { ssr: false });
 import { PositionCardCompact, PositionCardCompactLoader } from "@/components/liquidity/PositionCardCompact";
 import { UnifiedYieldPositionCard } from "@/components/liquidity/UnifiedYieldPositionCard";
-import { MiniTokensTable } from "./MiniTokensTable";
 import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
 import { Separator } from "../shared/Separator";
 import { TableSectionHeader } from "../shared/TableSectionHeader";
@@ -22,13 +21,6 @@ import { ViewAllButton } from "../shared/ViewAllButton";
 import { parseSubgraphPosition, type SubgraphPosition, type PositionInfo } from "@/lib/uniswap/liquidity";
 import { useNetwork } from "@/lib/network-context";
 import { getTokenDefinitions } from "@/lib/pools-config";
-
-interface TokenBalance {
-  symbol: string;
-  balance: number;
-  usdValue: number;
-  color: string;
-}
 
 interface Position {
   positionId: string;
@@ -49,7 +41,6 @@ interface Position {
 
 interface OverviewProps {
   totalValue: number;
-  walletBalances: TokenBalance[];
   activePositions: Position[];
   unifiedYieldPositions?: UnifiedYieldPosition[];
   priceMap: Record<string, number>;
@@ -62,22 +53,20 @@ interface OverviewProps {
 
 // Constants
 const OVERVIEW_RIGHT_COLUMN_WIDTH = 380;
-const MAX_TOKENS_ROWS = 8;
 const MAX_POSITIONS_DISPLAYED = 5;
 
 /**
  * Overview
  *
  * Layout Structure:
- * 1. TOP SECTION: Portfolio Chart (left) + Points Earned (right, 320px)
+ * 1. TOP SECTION: Portfolio Chart (left) + Points Earned (right, 380px)
  * 2. Separator
- * 3. BOTTOM SECTION: Pools (left) + Tokens (right) - same ratio as top
+ * 3. BOTTOM SECTION: Your Positions
  *
  * Spacing: gap-10 (40px) between sections
  */
 export const Overview = memo(function Overview({
   totalValue,
-  walletBalances,
   activePositions,
   unifiedYieldPositions = [],
   priceMap,
@@ -94,7 +83,7 @@ export const Overview = memo(function Overview({
 
   // Navigate to position detail page
   const handlePositionClick = useCallback((tokenId: string) => {
-    router.push(`/liquidity/position/${tokenId}`);
+    router.push(`/liquidity/position/${tokenId}?from=overview`);
   }, [router]);
 
   // Testnet stablecoins always priced at $1
@@ -362,17 +351,11 @@ export const Overview = memo(function Overview({
           </div>
         </div>
 
-        {/* TOKENS - Right (380px fixed) */}
+        {/* RIGHT COLUMN - Empty placeholder to maintain layout (same width as top section) */}
         <div
-          className="flex-shrink-0 flex flex-col"
+          className="flex-shrink-0 hidden min-[1200px]:block"
           style={{ width: OVERVIEW_RIGHT_COLUMN_WIDTH }}
-        >
-          <MiniTokensTable
-            tokens={walletBalances}
-            maxRows={MAX_TOKENS_ROWS}
-            isLoading={isLoading}
-          />
-        </div>
+        />
       </div>
     </div>
   );

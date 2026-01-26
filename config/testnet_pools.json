@@ -69,6 +69,32 @@
         "max": "-276324",
         "isFullRange": false
       }
+    },
+    {
+      "id": "eth-atusdc",
+      "name": "ETH/atUSDC",
+      "description": "Volatile pool - Ethereum / Alphix Testnet USDC with Unified Yield",
+      "subgraphId": "0x05a563c016c5af0d61d10ddd7b918ed6d858d6193743b1a3d78777367668a881",
+      "currency0": {
+        "symbol": "ETH",
+        "address": "0x0000000000000000000000000000000000000000"
+      },
+      "currency1": {
+        "symbol": "atUSDC",
+        "address": "0xFADB34a7e6F1D263053d05987408bA5cFF60B4f1"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0x61E7c2a901A1c287AE0faBB1a8A2cc1e71B6a0c0",
+      "enabled": true,
+      "featured": true,
+      "type": "Volatile",
+      "yieldSources": ["aave", "spark"],
+      "rehypoRange": {
+        "min": "-887220",
+        "max": "887220",
+        "isFullRange": true
+      }
     }
   ],
   "fees": {

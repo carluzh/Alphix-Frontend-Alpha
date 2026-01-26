@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { PositionDetail } from "./components/PositionDetail/PositionDetail";
 import { usePositionPageData } from "./hooks";
 
@@ -39,8 +39,17 @@ function normalizeTokenId(rawTokenId: string): string {
  */
 export default function PositionDetailPage() {
   const params = useParams<{ tokenId: string }>();
+  const searchParams = useSearchParams();
   const rawTokenId = params?.tokenId || "";
   const tokenId = useMemo(() => normalizeTokenId(rawTokenId), [rawTokenId]);
+
+  // Track navigation origin for breadcrumb display
+  const fromPage = useMemo(() => {
+    const from = searchParams.get("from");
+    if (from === "pool") return "pool" as const;
+    if (from === "overview") return "overview" as const;
+    return null;
+  }, [searchParams]);
 
   const {
     // Position data
@@ -137,6 +146,7 @@ export default function PositionDetailPage() {
       handleDenominationToggle={handleDenominationToggle}
       isOwner={isOwner}
       refetch={refetch}
+      fromPage={fromPage}
     />
   );
 }

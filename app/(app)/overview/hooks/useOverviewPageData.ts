@@ -3,10 +3,8 @@
 import { useState, useMemo, useEffect } from "react";
 import { useAccount } from "wagmi";
 import { useUserPositions, useAllPrices } from "@/lib/apollo/hooks";
-import { getTokenDefinitions } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useOverview } from "./useOverviewData";
-import { useWalletBalances } from "./useWalletBalances";
 import { fetchUserPoints, DEFAULT_USER_POINTS, type CachedUserPoints } from "@/lib/upstash-points";
 import { fetchUnifiedYieldPositions } from "@/lib/liquidity/unified-yield/fetchUnifiedYieldPositions";
 import { createNetworkClient } from "@/lib/viemClient";
@@ -16,20 +14,14 @@ import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
  * useOverviewPageData - Aggregates all data needed for overview pages
  *
  * This hook combines:
- * - User positions
- * - Wallet balances
+ * - User positions (V4 + Unified Yield)
  * - Prices
+ * - Points data
  * - Loading states
- *
- * Used by all overview route pages (overview, tokens)
  */
 export function useOverviewPageData() {
   const { networkMode } = useNetwork();
-  const tokenDefinitions = useMemo(
-    () => getTokenDefinitions(networkMode),
-    [networkMode]
-  );
-  const [positionsRefresh, setPositionsRefresh] = useState(0);
+  const [positionsRefresh] = useState(0);
   const { address: accountAddress, isConnected } = useAccount();
 
   // User positions data
@@ -55,15 +47,6 @@ export function useOverviewPageData() {
     pricesData,
     isLoadingUserPositions
   );
-
-  // Wallet balances (uses wagmi hooks with batched multicall)
-  const { walletBalances, isLoadingWalletBalances } = useWalletBalances({
-    isConnected,
-    accountAddress,
-    networkMode,
-    tokenDefinitions,
-    setPositionsRefresh,
-  });
 
   // Unified Yield positions (fetched directly from Hook contracts)
   const [unifiedYieldPositions, setUnifiedYieldPositions] = useState<UnifiedYieldPosition[]>([]);
@@ -148,7 +131,7 @@ export function useOverviewPageData() {
 
   // Overall loading state
   const isLoading =
-    isLoadingPositions || isLoadingWalletBalances || isLoadingPoints || isLoadingUYPositions || !readiness.core;
+    isLoadingPositions || isLoadingPoints || isLoadingUYPositions || !readiness.core;
 
   return {
     // Connection state
@@ -157,7 +140,6 @@ export function useOverviewPageData() {
 
     // Overview data
     totalValue: overviewData.totalValue,
-    walletBalances,
     activePositions,
     unifiedYieldPositions,
     priceMap: overviewData.priceMap,
@@ -171,7 +153,6 @@ export function useOverviewPageData() {
 
     // Loading states
     isLoading,
-    isLoadingWalletBalances,
     isLoadingPositions,
     isLoadingUYPositions,
     isLoadingPoints,

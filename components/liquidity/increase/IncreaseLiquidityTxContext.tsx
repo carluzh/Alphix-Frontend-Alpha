@@ -499,6 +499,16 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         return context as ValidatedLiquidityTxContext;
       }
 
+      // Log full API response for debugging
+      console.log('[IncreaseLiquidityTxContext] API response:', {
+        needsApproval: data.needsApproval,
+        approvalType: data.approvalType,
+        hasCreate: !!data.create,
+        hasPermitBatchData: !!data.permitBatchData,
+        hasSignatureDetails: !!data.signatureDetails,
+        fullData: data,
+      });
+
       // Handle Permit2 signature needed
       if (data.needsApproval && data.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
         const permitData = data.permitBatchData;
@@ -555,6 +565,16 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
 
       // Transaction ready - all approvals done
       if (!data.needsApproval && data.create) {
+        console.log('[IncreaseLiquidityTxContext] Building context with:', {
+          needsApproval: data.needsApproval,
+          hasCreate: !!data.create,
+          create: data.create,
+          token0Address: token0Config.address,
+          token1Address: token1Config.address,
+          amount0: data.details?.token0?.amount,
+          amount1: data.details?.token1?.amount,
+        });
+
         const context = buildLiquidityTxContext({
           type: LiquidityTransactionType.Increase,
           apiResponse: {
@@ -580,11 +600,20 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           increasePositionRequestArgs,
         });
 
+        console.log('[IncreaseLiquidityTxContext] Built context:', {
+          type: context.type,
+          hasAction: !!context.action,
+          hasTxRequest: !!(context as any).txRequest,
+          unsigned: (context as any).unsigned,
+          txRequest: (context as any).txRequest,
+        });
+
         setTxContext(context as ValidatedLiquidityTxContext);
         setIsLoading(false);
         return context as ValidatedLiquidityTxContext;
       }
 
+      console.log('[IncreaseLiquidityTxContext] Unexpected API response:', data);
       throw new Error("Unexpected API response");
     } catch (err: any) {
       console.error("[IncreaseLiquidityTxContext] fetchAndBuildContext error:", err);

@@ -149,8 +149,9 @@ export default async function handler(
     }
 
     const isNativeC0 = getAddress(details.poolKey.currency0) === ETHERS_ADDRESS_ZERO;
+    const isNativeC1 = getAddress(details.poolKey.currency1) === ETHERS_ADDRESS_ZERO;
     const currency0 = isNativeC0 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC0.address), defC0.decimals, defC0.symbol);
-    const currency1 = new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
+    const currency1 = isNativeC1 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
 
     // Get pool state
     const keyTuple = [{
@@ -332,7 +333,7 @@ export default async function handler(
       isFullBurn: shouldBurnNFT,
       details: {
         token0: { address: isNativeC0 ? ETHERS_ADDRESS_ZERO : getAddress(defC0.address), symbol: defC0.symbol, amount: finalAmount0.toString() },
-        token1: { address: getAddress(defC1.address), symbol: defC1.symbol, amount: finalAmount1.toString() },
+        token1: { address: isNativeC1 ? ETHERS_ADDRESS_ZERO : getAddress(defC1.address), symbol: defC1.symbol, amount: finalAmount1.toString() },
         liquidityToRemove: liquidityToRemove.toString(),
         tickLower: details.tickLower,
         tickUpper: details.tickUpper,

@@ -2,7 +2,7 @@
  * APRFeeStat
  *
  * Displays APR stat with unified breakdown tooltip.
- * Shows Swap APR, Unified Yield, and Points on hover.
+ * Shows Swap APR, Lending Yield, and Points on hover.
  *
  * @example
  * ```tsx
@@ -40,11 +40,11 @@ function formatAprDisplay(value: number | null | undefined): string {
 
 /**
  * APR fee stat component.
- * Displays total APR (Swap + Unified Yield) with unified breakdown tooltip on hover.
+ * Displays total APR (Swap + Lending Yield) with unified breakdown tooltip on hover.
  *
  * Design:
- * - Shows total APR (Swap + Unified) with dotted underline indicating hover for more info
- * - Hover shows unified breakdown: Swap APR + Unified Yield + Points
+ * - Shows total APR (Swap + Lending) with dotted underline indicating hover for more info
+ * - Hover shows unified breakdown: Swap APR + Lending Yield + Points
  */
 export function APRFeeStat({
   formattedApr,
@@ -61,7 +61,7 @@ export function APRFeeStat({
     return <FeeStatLoader />;
   }
 
-  // Calculate total APR for display (Swap + Unified Yield)
+  // Calculate total APR for display (Swap + Lending Yield)
   // Points are shown in tooltip but not included in main display
   const displayApr = useMemo(() => {
     const swap = swapApr ?? 0;

@@ -700,8 +700,9 @@ export interface PoolPricesHistoryResponse {
   period: string;
   points: Array<{
     timestamp: number;
-    token0Price: number;
-    token1Price: number;
+    token0PriceUsd: number;
+    token1PriceUsd: number;
+    tick?: number;
   }>;
   error?: string;
 }

@@ -5,7 +5,7 @@
  * This context is then passed to generateLPTransactionSteps to create the transaction flow.
  */
 
-import { CurrencyAmount, Token, type Currency } from '@uniswap/sdk-core';
+import { CurrencyAmount, Token, Ether, type Currency } from '@uniswap/sdk-core';
 import type { Address, Hex } from 'viem';
 import type {
   LiquidityTxAndGasInfo,
@@ -153,10 +153,16 @@ export interface BuildLiquidityContextParams {
 // CONTEXT BUILDERS
 // =============================================================================
 
+const NATIVE_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000';
+
 /**
- * Creates an SDK Token from config
+ * Creates an SDK Currency (Token or Ether) from config
  */
-function createToken(config: TokenConfig): Token {
+function createCurrency(config: TokenConfig): Currency {
+  // Native ETH uses Ether class, not Token
+  if (config.address.toLowerCase() === NATIVE_TOKEN_ADDRESS.toLowerCase()) {
+    return Ether.onChain(config.chainId);
+  }
   return new Token(
     config.chainId,
     config.address,
@@ -175,13 +181,13 @@ function buildLiquidityAction(
   amount0: string,
   amount1: string,
 ): LiquidityAction {
-  const sdkToken0 = createToken(token0);
-  const sdkToken1 = createToken(token1);
+  const currency0 = createCurrency(token0);
+  const currency1 = createCurrency(token1);
 
   return {
     type,
-    currency0Amount: CurrencyAmount.fromRawAmount(sdkToken0 as Currency, amount0 || '0'),
-    currency1Amount: CurrencyAmount.fromRawAmount(sdkToken1 as Currency, amount1 || '0'),
+    currency0Amount: CurrencyAmount.fromRawAmount(currency0, amount0 || '0'),
+    currency1Amount: CurrencyAmount.fromRawAmount(currency1, amount1 || '0'),
     liquidityToken: undefined, // For V4, no liquidity token (NFT-based)
   };
 }

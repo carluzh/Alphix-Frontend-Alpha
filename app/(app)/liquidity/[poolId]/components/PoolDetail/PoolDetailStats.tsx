@@ -78,7 +78,7 @@ export const PoolDetailStats = memo(function PoolDetailStats({
   const isLoading = loading || poolStats.tvlFormatted === "Loading...";
   const hasPositiveApr = poolStats.apr !== "0.00%" && poolStats.aprRaw > 0;
 
-  // Fetch Aave rates for Unified Yield display
+  // Fetch Aave rates for Lending Yield display
   const { data: aaveRatesData } = useQuery({
     queryKey: ['aaveRates'],
     queryFn: fetchAaveRates,

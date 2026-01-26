@@ -217,8 +217,8 @@ const ChartLegend = memo(function ChartLegend({
     const base: LegendItem[] = [];
 
     if (isUnifiedYield) {
-      // For Unified Yield: Total APR is solid (main), others are dashed (breakdown)
-      base.push({ key: "totalApr", label: "Total APR", color: CHART_COLORS.totalApr });
+      // For Unified Yield: Unified Yield is solid (main = sum of all), others are dashed (breakdown)
+      base.push({ key: "totalApr", label: "Unified Yield", color: CHART_COLORS.totalApr });
       base.push({ key: "apr", label: "Fees", color: CHART_COLORS.aprMuted, dashed: true });
       if (hasAaveData) {
         base.push({ key: "aaveApy", label: "Aave", color: CHART_COLORS.aaveApy, dashed: true });
