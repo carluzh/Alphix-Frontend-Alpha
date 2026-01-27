@@ -462,12 +462,18 @@ async function buildPlannerDecrease(
   const deadline = Math.floor(Date.now() / 1000) + 60;
   const unlockData = planner.finalize();
 
+  // Use SDK's built-in encoding method (consistent with prepare-decrease-tx.ts)
+  const calldata = V4PositionManager.encodeModifyLiquidities(
+    unlockData as Hex,
+    deadline.toString(),
+  );
+
   return {
-    calldata: unlockData as Hex,
+    calldata: calldata as Hex,
     value: 0n,
     nftTokenId,
     functionName: 'modifyLiquidities',
-    args: [unlockData as Hex, deadline],
+    args: [unlockData as Hex, BigInt(deadline)],
   };
 }
 
@@ -581,11 +587,17 @@ export async function buildCollectFeesTx(
   const deadline = Math.floor(Date.now() / 1000) + 600;
   const unlockData = planner.finalize();
 
+  // Use SDK's built-in encoding method (consistent with prepare-decrease-tx.ts)
+  const calldata = V4PositionManager.encodeModifyLiquidities(
+    unlockData as Hex,
+    deadline.toString(),
+  );
+
   return {
-    calldata: unlockData as Hex,
+    calldata: calldata as Hex,
     value: 0n,
     nftTokenId,
     functionName: 'modifyLiquidities',
-    args: [unlockData as Hex, deadline],
+    args: [unlockData as Hex, BigInt(deadline)],
   };
 }

@@ -360,7 +360,10 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
         </div>
 
         <div className="rounded-lg border border-primary p-4 bg-muted/30">
-          <div className="flex items-center justify-between">
+          <div className={cn(
+            "flex items-center gap-3",
+            amount0 > 0 && amount1 > 0 ? "justify-between" : "justify-center"
+          )}>
             {amount0 > 0 && (
               <div className="flex items-center gap-2">
                 <Image
@@ -385,14 +388,6 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
             )}
             {amount1 > 0 && (
               <div className="flex items-center gap-2">
-                <div className="text-right">
-                  <div className="font-medium text-sm">
-                    {formatTokenDisplayAmount(amount1.toString(), position.token1.symbol as TokenSymbol)} {position.token1.symbol}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {formatCalculatedAmount(usdValue1)}
-                  </div>
-                </div>
                 <Image
                   src={getTokenIcon(position.token1.symbol)}
                   alt=""
@@ -400,6 +395,14 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
                   height={28}
                   className="rounded-full"
                 />
+                <div>
+                  <div className="font-medium text-sm">
+                    {formatTokenDisplayAmount(amount1.toString(), position.token1.symbol as TokenSymbol)} {position.token1.symbol}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatCalculatedAmount(usdValue1)}
+                  </div>
+                </div>
               </div>
             )}
           </div>

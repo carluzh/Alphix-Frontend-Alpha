@@ -380,7 +380,10 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
 
             {/* Collected Summary */}
             <div className="rounded-lg border border-primary p-4 bg-muted/30 mb-4">
-              <div className="flex items-center justify-between">
+              <div className={cn(
+                "flex items-center gap-3",
+                fee0 > 0 && fee1 > 0 ? "justify-between" : "justify-center"
+              )}>
                 {fee0 > 0 && (
                   <div className="flex items-center gap-2">
                     <Image
@@ -401,12 +404,6 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                 {fee0 > 0 && fee1 > 0 && <span className="text-muted-foreground">+</span>}
                 {fee1 > 0 && (
                   <div className="flex items-center gap-2">
-                    <div className="text-right">
-                      <div className="font-medium text-sm">
-                        {formatTokenDisplayAmount(fee1.toString(), position.token1.symbol as TokenSymbol)} {position.token1.symbol}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{formatUSD(usdFee1)}</div>
-                    </div>
                     <Image
                       src={getTokenIcon(position.token1.symbol)}
                       alt=""
@@ -414,6 +411,12 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                       height={28}
                       className="rounded-full"
                     />
+                    <div>
+                      <div className="font-medium text-sm">
+                        {formatTokenDisplayAmount(fee1.toString(), position.token1.symbol as TokenSymbol)} {position.token1.symbol}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{formatUSD(usdFee1)}</div>
+                    </div>
                   </div>
                 )}
               </div>
