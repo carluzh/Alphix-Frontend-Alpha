@@ -18,10 +18,9 @@ interface APRBadgeProps {
   breakdown?: APRBreakdown;
   token0Symbol?: string;
   token1Symbol?: string;
-  yieldSources?: Array<'aave' | 'spark'>;
 }
 
-export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, token1Symbol, yieldSources }: APRBadgeProps) {
+export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, token1Symbol }: APRBadgeProps) {
   if (isLoading) {
     return <div className={cn("h-7 w-[72px] bg-muted/60 rounded animate-pulse", className)} />;
   }
@@ -70,7 +69,6 @@ export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, t
           pointsApr={breakdown?.pointsApr}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
-          yieldSources={yieldSources}
         />
       }
       size={TooltipSize.Small}

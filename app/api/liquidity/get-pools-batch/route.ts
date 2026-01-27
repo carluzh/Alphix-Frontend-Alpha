@@ -41,6 +41,7 @@ const buildPoolsQuery = (poolCount: number, includeHookTVL: boolean) => `
       pool { id }
       periodStartUnix
       volumeToken0
+      volumeToken1
     }
     poolDayDatas(
       first: ${Math.max(poolCount * 8, 20)}
@@ -51,6 +52,7 @@ const buildPoolsQuery = (poolCount: number, includeHookTVL: boolean) => `
       pool { id }
       date
       volumeToken0
+      volumeToken1
     }
   }
 `;
@@ -148,8 +150,8 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
 
   const tvlById = new Map<string, { tvl0: any; tvl1: any }>();
   const hookTvlByPoolId = new Map<string, { totalAmount0: string; totalAmount1: string }>();
-  const hourlyByPoolId = new Map<string, Array<{ periodStartUnix: number; volumeToken0: string }>>();
-  const dailyByPoolId = new Map<string, Array<{ date: number; volumeToken0: string }>>();
+  const hourlyByPoolId = new Map<string, Array<{ periodStartUnix: number; volumeToken0: string; volumeToken1: string }>>();
+  const dailyByPoolId = new Map<string, Array<{ date: number; volumeToken0: string; volumeToken1: string }>>();
   const errors: string[] = [];
   const stateViewAddress = getStateViewAddress(networkMode);
   const client = createNetworkClient(networkMode);
@@ -191,20 +193,20 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
     }
   }
 
-  // Process hourly volume data (for 24h volume)
+  // Process hourly volume data (for 24h volume) - both token0 and token1 for bi-directional volume
   for (const h of combinedResult.data?.data?.poolHourDatas || []) {
     const id = String(h?.pool?.id || '').toLowerCase();
     if (!id) continue;
     if (!hourlyByPoolId.has(id)) hourlyByPoolId.set(id, []);
-    hourlyByPoolId.get(id)!.push({ periodStartUnix: h.periodStartUnix, volumeToken0: h.volumeToken0 });
+    hourlyByPoolId.get(id)!.push({ periodStartUnix: h.periodStartUnix, volumeToken0: h.volumeToken0, volumeToken1: h.volumeToken1 });
   }
 
-  // Process daily volume data (for 7d yield)
+  // Process daily volume data (for 7d yield) - both token0 and token1 for bi-directional volume
   for (const d of combinedResult.data?.data?.poolDayDatas || []) {
     const id = String(d?.pool?.id || '').toLowerCase();
     if (!id) continue;
     if (!dailyByPoolId.has(id)) dailyByPoolId.set(id, []);
-    dailyByPoolId.get(id)!.push({ date: d.date, volumeToken0: d.volumeToken0 });
+    dailyByPoolId.get(id)!.push({ date: d.date, volumeToken0: d.volumeToken0, volumeToken1: d.volumeToken1 });
   }
 
   // Process fee results from multicall
@@ -264,31 +266,35 @@ async function computePoolsBatch(networkMode: NetworkMode): Promise<any> {
         tvlUSD = calculateTotalUSD(amt0, amt1, safeToken0Price, safeToken1Price);
       }
 
-      // Calculate 24h volume from hourly data (true rolling 24h window)
+      // Calculate 24h volume from hourly data (bi-directional: token0 + token1)
       const hourlyData = hourlyByPoolId.get(poolId) || [];
       let volume24hToken0 = 0;
+      let volume24hToken1 = 0;
       for (const h of hourlyData) {
         // Double-check timestamp is within 24h (subgraph already filters, but be safe)
         if (h.periodStartUnix >= hourCutoff) {
           volume24hToken0 += Number(h.volumeToken0) || 0;
+          volume24hToken1 += Number(h.volumeToken1) || 0;
         }
       }
-      const volume24hUSD = volume24hToken0 * safeToken0Price;
+      const volume24hUSD = calculateTotalUSD(volume24hToken0, volume24hToken1, safeToken0Price, safeToken1Price);
 
       // Calculate 24h fees (for display)
       const dynamicFeeBps = dynamicFeesByPoolId.get(poolId) || 30;
       const feeRate = dynamicFeeBps / 10_000;
       const fees24hUSD = volume24hUSD * feeRate;
 
-      // Calculate 7d volume from daily data (for yield calculation)
+      // Calculate 7d volume from daily data (bi-directional: token0 + token1)
       const dailyData = dailyByPoolId.get(poolId) || [];
       let volume7dToken0 = 0;
+      let volume7dToken1 = 0;
       for (const d of dailyData) {
         if (d.date >= dayCutoff) {
           volume7dToken0 += Number(d.volumeToken0) || 0;
+          volume7dToken1 += Number(d.volumeToken1) || 0;
         }
       }
-      const volume7dUSD = volume7dToken0 * safeToken0Price;
+      const volume7dUSD = calculateTotalUSD(volume7dToken0, volume7dToken1, safeToken0Price, safeToken1Price);
       const fees7dUSD = volume7dUSD * feeRate;
 
       // APR: annualized from 7d fees (365/7 ≈ 52.14 weeks per year)

@@ -275,7 +275,19 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   const goBack = useCallback(() => {
     const prevStep = currentStep - 1;
     if (prevStep >= WizardStep.POOL_AND_MODE) {
-      setStep(prevStep as WizardStep);
+      // Reset amounts when going back from Step 2 to Step 1
+      // This ensures fresh state when user changes pool or LP strategy
+      if (currentStep === WizardStep.RANGE_AND_AMOUNTS) {
+        setDepositState(DEFAULT_DEPOSIT_STATE);
+        setState(prev => ({
+          ...prev,
+          currentStep: prevStep as WizardStep,
+          amount0: '',
+          amount1: '',
+        }));
+      } else {
+        setStep(prevStep as WizardStep);
+      }
     }
   }, [currentStep, setStep]);
 

@@ -84,8 +84,9 @@
   * {
     @apply border-border;
   }
-  html, body {
+  html {
     overscroll-behavior: none;
+    overflow-y: scroll;
   }
   .no-scrollbar {
     scrollbar-width: none; /* Firefox */

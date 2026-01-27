@@ -105,6 +105,35 @@ export function isAaveSupported(tokenSymbol: string): boolean {
   return getTokenProtocol(tokenSymbol) !== null;
 }
 
+/**
+ * Get yield sources for a token pair
+ * Derives which lending protocols (aave, spark) are used based on the tokens.
+ * Returns unique protocols in consistent order: aave first, then spark.
+ */
+export function getYieldSourcesForTokens(
+  token0Symbol?: string,
+  token1Symbol?: string
+): Array<'aave' | 'spark'> {
+  const sources = new Set<'aave' | 'spark'>();
+
+  if (token0Symbol) {
+    const mapping = getTokenProtocol(token0Symbol);
+    if (mapping) sources.add(mapping.protocol);
+  }
+
+  if (token1Symbol) {
+    const mapping = getTokenProtocol(token1Symbol);
+    if (mapping) sources.add(mapping.protocol);
+  }
+
+  // Return in consistent order: aave first, then spark
+  const result: Array<'aave' | 'spark'> = [];
+  if (sources.has('aave')) result.push('aave');
+  if (sources.has('spark')) result.push('spark');
+
+  return result.length > 0 ? result : ['aave']; // Default to aave if no tokens matched
+}
+
 // In-memory cache for current rates (5 minute TTL)
 let ratesCache: { data: AaveRatesResponse; timestamp: number } | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -359,6 +388,27 @@ export async function fetchPositionAaveHistory(
     success: true,
     points: mergedPoints,
   };
+}
+
+/**
+ * Calculate lending APR for a token pair from rates data
+ * Returns average if both tokens supported, single token's APY if only one supported, null otherwise
+ */
+export function getLendingAprForPair(
+  ratesData: AaveRatesResponse | undefined,
+  token0Symbol: string,
+  token1Symbol: string
+): number | null {
+  if (!ratesData?.success) return null;
+
+  const key0 = getAaveKey(token0Symbol);
+  const key1 = getAaveKey(token1Symbol);
+
+  const apy0 = key0 && ratesData.data[key0] ? ratesData.data[key0].apy : null;
+  const apy1 = key1 && ratesData.data[key1] ? ratesData.data[key1].apy : null;
+
+  if (apy0 !== null && apy1 !== null) return (apy0 + apy1) / 2;
+  return apy0 ?? apy1 ?? null;
 }
 
 /**

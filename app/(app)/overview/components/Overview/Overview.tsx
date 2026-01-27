@@ -95,6 +95,8 @@ export const Overview = memo(function Overview({
       if (!symbol) return 0;
       // Stablecoins are always $1
       if (STABLECOINS_USD.has(symbol) || STABLECOINS_USD.has(symbol.toUpperCase())) return 1;
+
+      // Direct lookup (case-insensitive)
       return priceMap[symbol] || priceMap[symbol.toUpperCase()] || 0;
     },
     [priceMap]

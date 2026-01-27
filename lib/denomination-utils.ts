@@ -19,8 +19,12 @@ export function getOptimalBaseToken(token0: string, token1: string, currentPrice
   return p1 > p0 ? token1 : token0;
 }
 
-export function getDecimalsForDenomination(baseToken: string, poolType?: string): number {
-  const isUsd = ['USDC', 'USDT', 'atUSDC', 'atDAI'].includes(baseToken);
+/**
+ * Get display decimals for price formatting in the Add Liquidity wizard.
+ * Uses token-aware logic for appropriate precision.
+ */
+export function getDecimalsForDenomination(denomToken: string, poolType?: string): number {
+  const isUsd = ['USDC', 'USDT', 'atUSDC', 'atDAI'].includes(denomToken);
   const isStable = poolType?.toLowerCase() === 'stable';
   return isUsd ? (isStable ? 6 : 2) : 6;
 }

@@ -101,10 +101,6 @@ export interface LiquidityPositionFeeStatsProps extends LiquidityPositionMinMaxR
   formattedMaxPrice?: string;
   /** Whether position is full range */
   isFullRange?: boolean;
-
-  // Yield sources
-  /** Yield sources for multi-source lending display */
-  yieldSources?: Array<'aave' | 'spark'>;
 }
 
 // =============================================================================
@@ -143,8 +139,6 @@ export interface APRFeeStatProps {
   token0Symbol?: string;
   /** Token1 symbol (for tooltip) */
   token1Symbol?: string;
-  /** Yield sources for multi-source lending display */
-  yieldSources?: Array<'aave' | 'spark'>;
 }
 
 /**

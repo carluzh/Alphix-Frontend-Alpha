@@ -347,6 +347,11 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     ETH: extractUsd(allPrices?.ETH, 0),
   }), [allPrices, extractUsd]);
 
+  // Sort positions by USD value descending (same as Overview)
+  const sortedPositions = useMemo(() => {
+    return [...userPositions].sort((a, b) => calculatePositionUsd(b) - calculatePositionUsd(a));
+  }, [userPositions, calculatePositionUsd]);
+
   // Convert tick to price (bound to tokenDefinitions)
   const convertTickToPrice = useCallback(
     (
@@ -420,7 +425,7 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     poolState,
     chartData,
     isLoadingChartData,
-    userPositions,
+    userPositions: sortedPositions,
     isLoadingPositions,
     isDerivingNewPosition,
     optimisticallyClearedFees,

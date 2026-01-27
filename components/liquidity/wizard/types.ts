@@ -44,13 +44,24 @@ export interface WizardState {
   estimatedApr: number | null;
 }
 
-// Price strategies aligned with Uniswap's DefaultPriceStrategy
+// Price strategies - pool-type dependent
+// Stable pools: tick-based (narrow range around peg)
+// Standard pools: percentage-based (wider ranges for volatile pairs)
 export type RangePreset =
-  | 'stable'            // ± 3 ticks - Good for stablecoins or low volatility pairs
-  | 'wide'              // –50% — +100% - Good for volatile pairs
-  | 'one_sided_lower'   // –50% - Supply liquidity if price goes down
-  | 'one_sided_upper'   // +100% - Supply liquidity if price goes up
+  // Stable pool presets (tick-based)
+  | 'stable_narrow'     // ± 1 tick - Tightest range for stablecoins
+  | 'stable_moderate'   // ± 3 ticks - Moderate range for stablecoins
+  | 'stable_wide'       // ± 10 ticks - Wider stable range
+  | 'stable_skewed'     // +3 ticks, -20% - Asymmetric for slight depeg protection
+  // Standard pool presets (percentage-based)
+  | 'narrow'            // ± 1% - Tight range for low volatility
+  | 'moderate'          // ± 5% - Moderate range
+  | 'wide'              // ± 15% - Wide range for volatile pairs
   | 'full'              // Full Range - All prices
+  // Legacy/custom
+  | 'stable'            // Legacy: ± 3 ticks (maps to stable_moderate)
+  | 'one_sided_lower'   // Legacy: –50%
+  | 'one_sided_upper'   // Legacy: +100%
   | 'custom';           // User-defined
 
 export interface WizardNavigationConfig {

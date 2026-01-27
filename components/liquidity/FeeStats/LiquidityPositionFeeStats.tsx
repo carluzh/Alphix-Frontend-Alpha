@@ -98,9 +98,6 @@ export function LiquidityPositionFeeStats({
   formattedMinPrice,
   formattedMaxPrice,
   isFullRange,
-
-  // Yield sources
-  yieldSources,
 }: LiquidityPositionFeeStatsProps) {
   return (
     <div className={cn(
@@ -169,7 +166,6 @@ export function LiquidityPositionFeeStats({
           unifiedYieldApr={unifiedYieldApr ?? pointsData.unifiedYieldApr}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
-          yieldSources={yieldSources}
         />
       ) : (
         <APRFeeStat
@@ -181,7 +177,6 @@ export function LiquidityPositionFeeStats({
           pointsApr={0}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
-          yieldSources={yieldSources}
         />
       )}
     </div>

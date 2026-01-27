@@ -9,14 +9,13 @@
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import Image from "next/image";
-import { ExternalLink as ExternalLinkIcon, AlertCircle } from "lucide-react";
-import { IconBadgeCheck2, IconXmark } from "nucleo-micro-bold-essential";
+import { AlertCircle } from "lucide-react";
+import { IconXmark } from "nucleo-micro-bold-essential";
 import { useAccount } from "wagmi";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import { formatUSD } from "@/lib/format";
-import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { getTokenIcon } from "../liquidity-form-utils";
 import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 import { Token } from "@uniswap/sdk-core";
@@ -105,7 +104,7 @@ function ErrorCallout({
 }
 
 // Modal view types
-type ModalView = "review" | "executing" | "success";
+type ModalView = "review" | "executing";
 
 interface CollectFeesModalProps {
   position: ProcessedPosition;
@@ -125,7 +124,6 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
-  const [txHash, setTxHash] = useState<string | null>(null);
 
   // Get token configs
   const token0Config = getToken(position.token0.symbol as TokenSymbol, networkMode);
@@ -174,10 +172,10 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
 
   // Uniswap step-based executor
   const executor = useLiquidityStepExecutor({
-    onSuccess: async (hash) => {
+    onSuccess: async () => {
       setIsExecuting(false);
-      setTxHash(hash || null);
-      setView("success");
+      onSuccess?.();
+      onClose();
     },
     onFailure: (err) => {
       setIsExecuting(false);
@@ -308,18 +306,11 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
     setError(null);
   }, []);
 
-  // Handle done (success state)
-  const handleDone = useCallback(() => {
-    onSuccess?.();
-    onClose();
-  }, [onSuccess, onClose]);
-
   // Handle close
   const handleClose = useCallback(() => {
     if (!isExecuting) {
       setError(null);
       setView("review");
-      setTxHash(null);
       setExecutorSteps([]);
       setCurrentStepIndex(0);
       setStepAccepted(false);
@@ -336,7 +327,6 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
       setExecutorSteps([]);
       setIsExecuting(false);
       setError(null);
-      setTxHash(null);
     }
   }, [isOpen]);
 
@@ -346,91 +336,6 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
           className="sm:max-w-[420px] bg-container border-sidebar-border p-0 gap-0 [&>button]:hidden"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-        {/* Success View */}
-        {view === "success" && (
-          <div className="flex flex-col p-4">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-base font-medium">Fees Collected!</span>
-              <button
-                onClick={handleClose}
-                className="text-muted-foreground hover:text-white transition-colors"
-              >
-                <IconXmark className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Success Icon */}
-            <div className="text-center py-4">
-              <div className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10">
-                <IconBadgeCheck2 className="h-6 w-6 text-green-500" />
-              </div>
-              {txHash && (
-                <a
-                  href={getExplorerTxUrl(txHash)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline mt-1"
-                >
-                  View on Explorer
-                  <ExternalLinkIcon className="h-3 w-3" />
-                </a>
-              )}
-            </div>
-
-            {/* Collected Summary */}
-            <div className="rounded-lg border border-primary p-4 bg-muted/30 mb-4">
-              <div className={cn(
-                "flex items-center gap-3",
-                fee0 > 0 && fee1 > 0 ? "justify-between" : "justify-center"
-              )}>
-                {fee0 > 0 && (
-                  <div className="flex items-center gap-2">
-                    <Image
-                      src={getTokenIcon(position.token0.symbol)}
-                      alt=""
-                      width={28}
-                      height={28}
-                      className="rounded-full"
-                    />
-                    <div>
-                      <div className="font-medium text-sm">
-                        {formatTokenDisplayAmount(fee0.toString(), position.token0.symbol as TokenSymbol)} {position.token0.symbol}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{formatUSD(usdFee0)}</div>
-                    </div>
-                  </div>
-                )}
-                {fee0 > 0 && fee1 > 0 && <span className="text-muted-foreground">+</span>}
-                {fee1 > 0 && (
-                  <div className="flex items-center gap-2">
-                    <Image
-                      src={getTokenIcon(position.token1.symbol)}
-                      alt=""
-                      width={28}
-                      height={28}
-                      className="rounded-full"
-                    />
-                    <div>
-                      <div className="font-medium text-sm">
-                        {formatTokenDisplayAmount(fee1.toString(), position.token1.symbol as TokenSymbol)} {position.token1.symbol}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{formatUSD(usdFee1)}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <Button
-              onClick={handleDone}
-              className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover:bg-button-primary/90"
-            >
-              Done
-            </Button>
-          </div>
-        )}
-
         {/* Review/Executing View */}
         {(view === "review" || view === "executing") && (
           <div className="flex flex-col">

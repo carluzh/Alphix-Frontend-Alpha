@@ -9,10 +9,11 @@
 
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { getToken } from "@/lib/pools-config";
+import { getYieldSourcesForTokens } from "@/lib/aave-rates";
 import { PointsIcon } from "@/components/PointsIcons/PointsIcon";
 import { YIELD_SOURCES } from "./yield-sources";
 
@@ -27,8 +28,6 @@ export interface APRBreakdownData {
   unifiedYieldApr?: number;
   /** Points APR bonus */
   pointsApr?: number;
-  /** Yield sources for this pool (aave, spark, or both) */
-  yieldSources?: Array<'aave' | 'spark'>;
 }
 
 interface APRBreakdownTooltipProps extends APRBreakdownData {
@@ -189,8 +188,12 @@ export function APRBreakdownTooltip({
   pointsApr,
   token0Symbol,
   token1Symbol,
-  yieldSources = ['aave'],
 }: APRBreakdownTooltipProps) {
+  // Derive yield sources from token symbols - no prop drilling needed
+  const yieldSources = useMemo(
+    () => getYieldSourcesForTokens(token0Symbol, token1Symbol),
+    [token0Symbol, token1Symbol]
+  );
   const hasBothSources = yieldSources.includes('aave') && yieldSources.includes('spark');
   const labelStyle = { color: AAVE_TEXT_COLOR };
   const valueStyle = hasBothSources ? { color: SPARK_TEXT_COLOR } : { color: AAVE_TEXT_COLOR };

@@ -8,7 +8,7 @@ import { getPoolSubgraphId, getAllPools, type NetworkMode } from '@/lib/pools-co
 import { getUniswapV4SubgraphUrl } from '@/lib/subgraph-url-helper';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
 import { poolKeys } from '@/lib/cache/redis-keys';
-import { batchQuotePrices } from '@/lib/swap/quote-prices';
+import { batchQuotePrices, calculateTotalUSD } from '@/lib/swap/quote-prices';
 
 interface ChartDataPoint {
   date: string;
@@ -51,10 +51,15 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
     const sym1 = poolCfg?.currency1?.symbol || 'USDC';
     const hookAddress = poolCfg?.hooks?.toLowerCase() || '';
 
-    // Get token prices for USD conversion
-    const prices = await batchQuotePrices([sym0, sym1]);
-    const p0 = prices[sym0] || 1;
-    const p1 = prices[sym1] || 1;
+    // Get token prices for USD conversion (Redis-cached with stale-while-revalidate)
+    const prices = await batchQuotePrices([sym0, sym1], 8453, networkMode);
+    const p0 = prices[sym0] || 0;
+    const p1 = prices[sym1] || 0;
+
+    // Log warning if prices unavailable (better than silently using wrong values)
+    if (!p0 || !p1) {
+      console.warn('[pool-chart-data] Price fetch returned 0:', { sym0, p0, sym1, p1 });
+    }
 
     // Generate date keys for the past N days
     const end = new Date();
@@ -85,6 +90,7 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       ) {
         periodStartUnix
         volumeToken0
+        volumeToken1
       }
     }`;
 
@@ -158,13 +164,14 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       throw new Error(`hourly query errors: ${JSON.stringify(hourlyJson.errors)}`);
     }
 
-    // Process hourly volume data - aggregate by date
+    // Process hourly volume data - aggregate by date (both token0 and token1 for bi-directional volume)
     const hourlyData = hourlyJson?.data?.poolHourDatas || [];
-    const volByDate = new Map<string, number>();
+    const vol0ByDate = new Map<string, number>();
+    const vol1ByDate = new Map<string, number>();
     for (const h of hourlyData) {
       const date = new Date(h.periodStartUnix * 1000).toISOString().split('T')[0];
-      const vol = (volByDate.get(date) || 0) + Number(h.volumeToken0 || 0);
-      volByDate.set(date, vol);
+      vol0ByDate.set(date, (vol0ByDate.get(date) || 0) + Number(h.volumeToken0 || 0));
+      vol1ByDate.set(date, (vol1ByDate.get(date) || 0) + Number(h.volumeToken1 || 0));
     }
 
     // =============================================================================
@@ -188,7 +195,7 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
           // Calculate TVL from token amounts (already in human-readable format)
           const amt0 = Number(d.totalAmount0) || 0;
           const amt1 = Number(d.totalAmount1) || 0;
-          const totalTvl = (amt0 * p0) + (amt1 * p1);
+          const totalTvl = calculateTotalUSD(amt0, amt1, p0, p1);
           if (totalTvl > 0) {
             tvlByDate.set(dateStr, totalTvl);
           }
@@ -197,8 +204,11 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
         // Get current TVL from alphixHookTVLs for today (more accurate than day data)
         const hookTvl = tvlJson?.data?.alphixHookTVLs?.[0];
         if (hookTvl) {
-          const todayTvl = (Number(hookTvl.totalAmount0) || 0) * p0 +
-                           (Number(hookTvl.totalAmount1) || 0) * p1;
+          const todayTvl = calculateTotalUSD(
+            Number(hookTvl.totalAmount0) || 0,
+            Number(hookTvl.totalAmount1) || 0,
+            p0, p1
+          );
           if (todayTvl > 0) {
             tvlByDate.set(todayKey, todayTvl);
           }
@@ -245,7 +255,7 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
               if (Array.isArray(arr) && arr[0]) {
                 const tvl0 = Number(arr[0]?.totalValueLockedToken0) || 0;
                 const tvl1 = Number(arr[0]?.totalValueLockedToken1) || 0;
-                const tvlUSD = (tvl0 * p0) + (tvl1 * p1);
+                const tvlUSD = calculateTotalUSD(tvl0, tvl1, p0, p1);
                 if (tvlUSD > 0) {
                   tvlByDate.set(key, tvlUSD);
                 }
@@ -269,7 +279,7 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
         if (currentPool) {
           const tvl0 = Number(currentPool.totalValueLockedToken0) || 0;
           const tvl1 = Number(currentPool.totalValueLockedToken1) || 0;
-          const tvlUSD = (tvl0 * p0) + (tvl1 * p1);
+          const tvlUSD = calculateTotalUSD(tvl0, tvl1, p0, p1);
           if (tvlUSD > 0) {
             tvlByDate.set(todayKey, tvlUSD);
           }
@@ -291,9 +301,10 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
     let lastTvlUSD = 0;
 
     for (const dateKey of allDateKeys) {
-      // Volume: token0 amount * price
-      const vol0 = volByDate.get(dateKey) || 0;
-      const volumeUSD = vol0 * p0;
+      // Volume: bi-directional (token0 + token1) for complete swap volume
+      const vol0 = vol0ByDate.get(dateKey) || 0;
+      const vol1 = vol1ByDate.get(dateKey) || 0;
+      const volumeUSD = calculateTotalUSD(vol0, vol1, p0, p1);
 
       // TVL: use pre-computed USD value with forward-fill
       const tvlUSD = tvlByDate.get(dateKey);

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useAccount } from "wagmi";
-import { getAllPools } from "@/lib/pools-config";
+import { getAllPools, getChainId } from "@/lib/pools-config";
 import { batchQuotePrices } from "@/lib/swap/quote-prices";
 
 export interface TokenBalance {
@@ -104,11 +104,12 @@ export function useOverviewData(
           });
         }
 
-        // 3. Resolve prices for all tokens via on-chain quotes
+        // 3. Resolve prices (batchQuotePrices auto-detects client/server for caching)
         const tokenSymbols = Array.from(tokenBalanceMap.keys());
         const priceMap = new Map<string, number>();
+        const chainId = getChainId(networkMode);
         try {
-          const batch = await batchQuotePrices(tokenSymbols);
+          const batch = await batchQuotePrices(tokenSymbols, chainId, networkMode);
           tokenSymbols.forEach((symbol) => {
             const px = batch[symbol];
             if (typeof px === "number" && px > 0) priceMap.set(symbol, px);

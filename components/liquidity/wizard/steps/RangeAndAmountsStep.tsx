@@ -17,6 +17,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAccount, useBalance } from 'wagmi';
 import { useAnimation } from 'framer-motion';
+import { useQuery } from '@tanstack/react-query';
+import { fetchAaveRates, getLendingAprForPair } from '@/lib/aave-rates';
 
 import { useAddLiquidityContext } from '../AddLiquidityContext';
 import { useCreatePositionTxContext } from '../CreatePositionTxContext';
@@ -46,7 +48,7 @@ import { useLiquidityChartData } from '@/hooks/useLiquidityChartData';
 import { getPoolSubgraphId } from '@/lib/pools-config';
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 
-// Price Strategy configurations (aligned with Uniswap's DefaultPriceStrategies)
+// Price Strategy configurations - pool-type dependent
 interface PriceStrategyConfig {
   id: RangePreset;
   title: string;
@@ -54,32 +56,72 @@ interface PriceStrategyConfig {
   description: string;
 }
 
-const PRICE_STRATEGIES: PriceStrategyConfig[] = [
+// Stable pool strategies (tick-based for tight ranges around peg)
+const STABLE_POOL_STRATEGIES: PriceStrategyConfig[] = [
   {
-    id: 'stable',
+    id: 'stable_narrow',
     title: 'Narrow',
-    display: '± ~0.03%',
-    description: 'Tight range for stablecoins or pegged pairs',
+    display: '± 1 tick',
+    description: 'Tightest range, highest fee concentration',
+  },
+  {
+    id: 'stable_moderate',
+    title: 'Moderate',
+    display: '± 3 ticks',
+    description: 'Balanced range for stable pairs',
+  },
+  {
+    id: 'stable_wide',
+    title: 'Wide',
+    display: '± 10 ticks',
+    description: 'Wider range, less impermanent loss risk',
+  },
+  {
+    id: 'stable_skewed',
+    title: 'Skewed',
+    display: '+3 / −20%',
+    description: 'Asymmetric for slight depeg protection',
+  },
+];
+
+// Standard/Volatile pool strategies (percentage-based)
+const STANDARD_POOL_STRATEGIES: PriceStrategyConfig[] = [
+  {
+    id: 'narrow',
+    title: 'Narrow',
+    display: '± 1%',
+    description: 'Tight range, higher fee concentration',
+  },
+  {
+    id: 'moderate',
+    title: 'Moderate',
+    display: '± 5%',
+    description: 'Balanced range for most pairs',
   },
   {
     id: 'wide',
     title: 'Wide',
-    display: '50% / +100%',
-    description: 'Good for volatile pairs',
+    display: '± 15%',
+    description: 'Wide range for volatile pairs',
   },
   {
-    id: 'one_sided_lower',
-    title: 'One-sided lower',
-    display: '50%',
-    description: 'Supply liquidity if price goes down',
-  },
-  {
-    id: 'one_sided_upper',
-    title: 'One-sided upper',
-    display: '+100%',
-    description: 'Supply liquidity if price goes up',
+    id: 'full',
+    title: 'Full Range',
+    display: '0 → ∞',
+    description: 'All prices, like Uniswap V2',
   },
 ];
+
+// Helper: Get default range preset based on pool type
+function getDefaultRangePreset(isStablePool: boolean): RangePreset {
+  return isStablePool ? 'stable_narrow' : 'narrow';
+}
+
+// Helper: Get strategies for pool type
+function getStrategiesForPoolType(isStablePool: boolean): PriceStrategyConfig[] {
+  return isStablePool ? STABLE_POOL_STRATEGIES : STANDARD_POOL_STRATEGIES;
+}
+
 
 // Price Strategy button (Uniswap's DefaultPriceStrategyComponent style)
 interface PriceStrategyButtonProps {
@@ -91,11 +133,12 @@ interface PriceStrategyButtonProps {
 
 function PriceStrategyButton({ strategy, selected, onSelect, disabled }: PriceStrategyButtonProps) {
   const renderDisplay = () => {
-    if (strategy.id === 'one_sided_lower') {
-      return <>−{strategy.display}</>;
+    // Handle special formatting for different strategy types
+    if (strategy.id === 'stable_skewed') {
+      return <>+3 <span className="text-muted-foreground/50">/</span> −20%</>;
     }
-    if (strategy.id === 'wide') {
-      return <>−50% <span className="text-muted-foreground/50">/</span> +100%</>;
+    if (strategy.id === 'full') {
+      return <>0 <span className="text-muted-foreground/50">→</span> ∞</>;
     }
     return strategy.display;
   };
@@ -314,6 +357,23 @@ export function RangeAndAmountsStep() {
   const isStablePool = poolConfig?.type === 'Stable';
   const isRehypoMode = state.mode === 'rehypo';
 
+  // Select strategies based on pool type
+  const priceStrategies = useMemo(() => getStrategiesForPoolType(isStablePool), [isStablePool]);
+
+  // Fetch lending APR for Unified Yield callout (same data source as Step 1)
+  const { data: aaveRatesData } = useQuery({
+    queryKey: ['aaveRates'],
+    queryFn: fetchAaveRates,
+    staleTime: 5 * 60_000,
+    enabled: !isRehypoMode && !!poolConfig, // Only fetch when showing callout possibility
+  });
+
+  // Calculate lending APR for the selected pool using shared utility
+  const lendingApr = useMemo(() => {
+    if (!poolConfig) return null;
+    return getLendingAprForPair(aaveRatesData, poolConfig.currency0.symbol, poolConfig.currency1.symbol);
+  }, [aaveRatesData, poolConfig]);
+
   // For Unified Yield, never disable deposit fields - users always provide both tokens
   const deposit0Disabled = isRehypoMode ? false : deposit0DisabledRaw;
   const deposit1Disabled = isRehypoMode ? false : deposit1DisabledRaw;
@@ -455,7 +515,7 @@ export function RangeAndAmountsStep() {
 
     // Format with locale-aware number formatting
     return displayPrice.toLocaleString('en-US', {
-      minimumFractionDigits: Math.min(2, displayDecimals),
+      minimumFractionDigits: displayDecimals,
       maximumFractionDigits: displayDecimals,
     });
   }, [currentPriceRaw, priceInverted, token0Symbol, token1Symbol, poolConfig?.type]);
@@ -557,12 +617,13 @@ export function RangeAndAmountsStep() {
   }, [sdkPool]);
 
   // Helper: Format price for display based on pool type and inversion
+  // Uses consistent decimal places for both min and max prices
   const formatPriceForDisplay = useCallback((price: number, inverted: boolean = false): string => {
     // When inverted, the denomination token changes
     const denomToken = inverted ? token0Symbol : token1Symbol;
     const decimals = getDecimalsForDenomination(denomToken || '', poolConfig?.type);
     return price.toLocaleString('en-US', {
-      minimumFractionDigits: 2,
+      minimumFractionDigits: decimals,
       maximumFractionDigits: decimals,
       useGrouping: false,
     });
@@ -641,7 +702,7 @@ export function RangeAndAmountsStep() {
     setRange(alignedTickLower, alignedTickUpper);
   }, [sdkPool, priceInverted, poolConfig?.tickSpacing, priceToTick, tickToPrice, formatPriceForDisplay, setRangePreset, setRange]);
 
-  // Price strategy selection
+  // Price strategy selection - pool-type dependent
   const handleSelectStrategy = useCallback((strategy: RangePreset) => {
     setRangePreset(strategy);
 
@@ -661,22 +722,47 @@ export function RangeAndAmountsStep() {
     let tickUpper: number;
 
     switch (strategy) {
-      case 'stable':
-        // ±3 tick spacings from current tick
+      // Stable pool strategies (tick-based)
+      case 'stable_narrow':
+        // ± 1 tick spacing from current tick
+        tickLower = nearestUsableTick(poolCurrentTick - 1 * tickSpacingVal, tickSpacingVal);
+        tickUpper = nearestUsableTick(poolCurrentTick + 1 * tickSpacingVal, tickSpacingVal);
+        break;
+      case 'stable_moderate':
+      case 'stable': // Legacy support
+        // ± 3 tick spacings from current tick
         tickLower = nearestUsableTick(poolCurrentTick - 3 * tickSpacingVal, tickSpacingVal);
         tickUpper = nearestUsableTick(poolCurrentTick + 3 * tickSpacingVal, tickSpacingVal);
         break;
-      case 'wide':
-        // -50% to +100%
-        [tickLower, tickUpper] = calculateTicksFromPercentage(50, 100, poolCurrentTick, tickSpacingVal);
+      case 'stable_wide':
+        // ± 10 tick spacings from current tick
+        tickLower = nearestUsableTick(poolCurrentTick - 10 * tickSpacingVal, tickSpacingVal);
+        tickUpper = nearestUsableTick(poolCurrentTick + 10 * tickSpacingVal, tickSpacingVal);
         break;
+      case 'stable_skewed':
+        // +3 ticks upper, -20% lower (asymmetric for depeg protection)
+        tickUpper = nearestUsableTick(poolCurrentTick + 3 * tickSpacingVal, tickSpacingVal);
+        [tickLower] = calculateTicksFromPercentage(20, 0, poolCurrentTick, tickSpacingVal);
+        break;
+      // Standard pool strategies (percentage-based)
+      case 'narrow':
+        // ± 1% from current price
+        [tickLower, tickUpper] = calculateTicksFromPercentage(1, 1, poolCurrentTick, tickSpacingVal);
+        break;
+      case 'moderate':
+        // ± 5% from current price
+        [tickLower, tickUpper] = calculateTicksFromPercentage(5, 5, poolCurrentTick, tickSpacingVal);
+        break;
+      case 'wide':
+        // ± 15% from current price
+        [tickLower, tickUpper] = calculateTicksFromPercentage(15, 15, poolCurrentTick, tickSpacingVal);
+        break;
+      // Legacy strategies (kept for backward compatibility)
       case 'one_sided_lower':
-        // -50% to one tick below current
         [tickLower] = calculateTicksFromPercentage(50, 0, poolCurrentTick, tickSpacingVal);
         tickUpper = nearestUsableTick(poolCurrentTick - tickSpacingVal, tickSpacingVal);
         break;
       case 'one_sided_upper':
-        // One tick above current to +100%
         tickLower = nearestUsableTick(poolCurrentTick + tickSpacingVal, tickSpacingVal);
         [, tickUpper] = calculateTicksFromPercentage(0, 100, poolCurrentTick, tickSpacingVal);
         break;
@@ -711,14 +797,14 @@ export function RangeAndAmountsStep() {
     setRange(tickLower, tickUpper);
   }, [setRangePreset, setRange, currentTick, priceInverted, formatPriceForDisplay, poolConfig?.tickSpacing, tickToPrice]);
 
-  // Token selection for price denomination - resets to Stable on switch
+  // Token selection for price denomination - resets to default strategy on switch
   const handleSelectToken = useCallback((token: string) => {
     const shouldInvert = token === token1Symbol;
     if (shouldInvert === priceInverted) return;
 
     setPriceInverted(shouldInvert);
-    setRangePreset('stable');
-  }, [token1Symbol, priceInverted, setRangePreset]);
+    setRangePreset(getDefaultRangePreset(isStablePool));
+  }, [token1Symbol, priceInverted, setRangePreset, isStablePool]);
 
   // Handle manual price input
   const handleMinPriceChange = useCallback((value: string) => {
@@ -755,13 +841,14 @@ export function RangeAndAmountsStep() {
     token1: sdkPool?.token1,
   });
 
-  // Helper: Convert canonical price to display price (inverts if needed)
-  // useRangeHopCallbacks returns canonical prices (from tick), but when inverted we need to display 1/price
+  // Helper: Convert canonical price to display price (inverts and formats consistently)
+  // useRangeHopCallbacks returns canonical prices (from tick) - always apply formatting for consistent decimals
   const toDisplayPrice = useCallback((canonicalPrice: string): string => {
-    if (!priceInverted) return canonicalPrice;
     const price = parseFloat(canonicalPrice);
     if (!isFinite(price) || price === 0) return canonicalPrice;
-    return formatPriceForDisplay(1 / price, true);
+    return priceInverted
+      ? formatPriceForDisplay(1 / price, true)
+      : formatPriceForDisplay(price, false);
   }, [priceInverted, formatPriceForDisplay]);
 
   // Left input (min price) handlers - swap based on isSorted (Uniswap RangeSelector pattern)
@@ -982,7 +1069,7 @@ export function RangeAndAmountsStep() {
     }
   }, [isRehypoMode, rehypoTickLower, rehypoTickUpper, setRange]);
 
-  // Initialize with stable strategy for Custom Range mode
+  // Initialize with appropriate strategy for Custom Range mode based on pool type
   // Runs when: not rehypo mode, no range set yet, and either liquidity data loaded or loading completed (testnet may have no data)
   const rangeInitialized = useRef(false);
   useEffect(() => {
@@ -990,7 +1077,7 @@ export function RangeAndAmountsStep() {
       // Wait for liquidity data if loading, otherwise initialize immediately (testnet fallback)
       if (liquidityData.length > 0 || !isLiquidityLoading) {
         rangeInitialized.current = true;
-        handleSelectStrategy('stable');
+        handleSelectStrategy(getDefaultRangePreset(isStablePool));
       }
     }
     // Reset ref when switching to rehypo mode
@@ -998,7 +1085,7 @@ export function RangeAndAmountsStep() {
       rangeInitialized.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liquidityData.length, isLiquidityLoading, sdkPool, isRehypoMode]); // Run when data loads OR loading finishes
+  }, [liquidityData.length, isLiquidityLoading, sdkPool, isRehypoMode, isStablePool]); // Run when data loads OR loading finishes
 
   // Re-apply strategy when inversion changes (for Custom Range mode only)
   const prevPriceInverted = useRef(priceInverted);
@@ -1009,6 +1096,29 @@ export function RangeAndAmountsStep() {
       prevPriceInverted.current = priceInverted;
     }
   }, [priceInverted, sdkPool, selectedPreset, handleSelectStrategy, isRehypoMode]);
+
+  // Check if current custom range matches the rehypo range (for Unified Yield callout)
+  const rangeMatchesRehypo = useMemo(() => {
+    // Only check in concentrated mode
+    if (isRehypoMode || !poolConfig) return false;
+
+    const rehypoIsFullRange = poolConfig.rehypoRange?.isFullRange ?? false;
+    const userIsFullRange = selectedPreset === 'full' || (state.tickLower === null && state.tickUpper === null);
+
+    // If rehypo is full range, match when user selects full range
+    if (rehypoIsFullRange) {
+      return userIsFullRange;
+    }
+
+    // For non-full-range rehypo, check tick values
+    if (!hasValidRehypoTicks || state.tickLower === null || state.tickUpper === null) return false;
+
+    const tickSpacingVal = poolConfig.tickSpacing || DEFAULT_TICK_SPACING;
+    const lowerMatch = Math.abs(state.tickLower - (rehypoTickLower ?? 0)) <= tickSpacingVal;
+    const upperMatch = Math.abs(state.tickUpper - (rehypoTickUpper ?? 0)) <= tickSpacingVal;
+
+    return lowerMatch && upperMatch;
+  }, [isRehypoMode, poolConfig, selectedPreset, state.tickLower, state.tickUpper, hasValidRehypoTicks, rehypoTickLower, rehypoTickUpper]);
 
   // Validation
   const isValidRange = useMemo(() => {
@@ -1159,7 +1269,7 @@ export function RangeAndAmountsStep() {
           </div>
         </div>
 
-        {/* Concentrated mode only: Invalid range warning & Price strategies */}
+        {/* Concentrated mode only: Invalid range warning, Unified Yield callout & Price strategies */}
         {!isRehypoMode && (
           <>
             {/* Invalid range warning */}
@@ -1170,13 +1280,23 @@ export function RangeAndAmountsStep() {
               </div>
             )}
 
-            {/* Price Strategies (below inputs - Uniswap-aligned) */}
+            {/* Unified Yield callout - shown when custom range matches rehypo range */}
+            {rangeMatchesRehypo && (
+              <div className="flex flex-row items-center gap-3 p-3 rounded-lg border border-[#9896FF]/30 bg-[#9896FF]/10">
+                <IconCircleInfo className="w-4 h-4 text-[#9896FF] shrink-0" />
+                <span className="text-sm text-muted-foreground">
+                  This range qualifies for <span className="text-white font-medium">Unified Yield</span>. Go back to earn an additional {lendingApr !== null ? `${lendingApr.toFixed(1)}%` : 'lending yield'}!
+                </span>
+              </div>
+            )}
+
+            {/* Price Strategies (below inputs - pool-type dependent) */}
             <div className="flex flex-col gap-4">
               <span className="text-sm font-medium text-muted-foreground">
-                Price strategies
+                {isStablePool ? 'Stable pair strategies' : 'Price strategies'}
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {PRICE_STRATEGIES.map(strategy => (
+                {priceStrategies.map(strategy => (
                   <PriceStrategyButton
                     key={strategy.id}
                     strategy={strategy}

@@ -3,13 +3,14 @@ import { PriceOrdering } from '../types'
 import useIsTickAtLimit from './useIsTickAtLimit'
 import { Bound } from '@/lib/liquidity/hooks/range'
 
-// Simple number formatter (replaces Uniswap's LocalizationContext)
-// Note: Do NOT use toLocaleString here as it adds commas which break parseFloat later
+// Simple number formatter with consistent decimal rules
+// price < 10: 6 decimals (e.g., 0.999803, 1.000200)
+// price >= 10: 2 decimals (e.g., 2951.88)
 function formatNumberOrString(value: string): string {
   const num = parseFloat(value)
   if (!isFinite(num)) return value
-  // Use toPrecision for significant digits without locale formatting
-  return num.toPrecision(6)
+  const decimals = num < 10 ? 6 : 2
+  return num.toFixed(decimals)
 }
 
 function calculateInvertedValues({

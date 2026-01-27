@@ -350,30 +350,35 @@ function PositionHeader({
       {/* Title Row with Actions - spans full width */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mt-1">
         {/* Left side - title */}
-        <div className="flex items-center gap-3">
-          {/* Token Pair Icons */}
-          <div className="flex -space-x-3">
-            <Image
-              src={token0Icon}
-              alt={poolConfig.currency0.symbol}
-              width={40}
-              height={40}
-              className="rounded-full bg-background border-2 border-background"
-            />
-            <Image
-              src={token1Icon}
-              alt={poolConfig.currency1.symbol}
-              width={40}
-              height={40}
-              className="rounded-full bg-background border-2 border-background"
-            />
+        <div className="flex items-center gap-4">
+          {/* Double Token Logo - 44px like PoolDetail header */}
+          <div className="relative w-[68px] h-11 flex-shrink-0">
+            <div className="absolute top-0 left-0 w-11 h-11 rounded-full overflow-hidden bg-background border border-sidebar-border z-10">
+              <Image
+                src={token0Icon}
+                alt={poolConfig.currency0.symbol}
+                width={44}
+                height={44}
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <div className="absolute top-0 left-6 w-11 h-11 rounded-full overflow-hidden bg-background border border-sidebar-border z-20">
+              <Image
+                src={token1Icon}
+                alt={poolConfig.currency1.symbol}
+                width={44}
+                height={44}
+                className="w-full h-full object-cover"
+              />
+            </div>
           </div>
 
-          {/* Token Pair Name and Status */}
+          {/* Token Pair Name and Badge - Stacked vertically like PoolDetail */}
           <div className="flex flex-col gap-1">
             <Link
               href={`/liquidity/${poolConfig.id}`}
-              className="text-2xl font-semibold hover:text-muted-foreground transition-colors"
+              className="text-xl font-semibold hover:text-muted-foreground transition-colors"
+              style={{ fontFamily: 'Inter, sans-serif' }}
             >
               {poolConfig.currency0.symbol} / {poolConfig.currency1.symbol}
             </Link>

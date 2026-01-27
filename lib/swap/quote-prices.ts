@@ -1,8 +1,14 @@
 // Quote-based pricing utility
 // Uses on-chain V4 Quoter for real prices from pool liquidity
+// Now with Redis caching to reduce RPC calls and prevent rate limiting
 
 import type { NetworkMode } from '@/lib/pools-config'
 import { MAINNET_CHAIN_ID } from '@/lib/network-mode'
+import { cacheService } from '@/lib/cache/CacheService'
+import { priceKeys } from '@/lib/cache/redis-keys'
+
+// Price cache TTL: 60s fresh, 5min stale (allows background refresh)
+const PRICE_TTL = { fresh: 60, stale: 300 }
 
 // Stablecoins that are always priced at $1.00
 const STABLECOINS_USD = new Set([
@@ -22,20 +28,16 @@ function getBaseUrl(): string {
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
 }
 
-export async function getQuotePrice(
-  symbol: string | null | undefined,
-  chainId: number = 8453,
-  networkMode?: NetworkMode
+/**
+ * Fetch price from V4 Quoter (internal - no caching)
+ * Returns 0 on failure (caller handles caching/fallback)
+ */
+async function fetchPriceFromQuoter(
+  symbol: string,
+  chainId: number,
+  networkMode: NetworkMode
 ): Promise<number> {
-  if (!symbol || typeof symbol !== 'string' || symbol.trim() === '') return 0
-  if (isStablecoinUSD(symbol)) return 1
-
-  // Derive networkMode from chainId if not explicitly provided
-  const resolvedNetworkMode: NetworkMode = networkMode ?? (chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet')
-
-  // Use USDC for mainnet, atUSDC for testnet
-  const quoteToken = resolvedNetworkMode === 'mainnet' ? 'USDC' : 'atUSDC'
-
+  const quoteToken = networkMode === 'mainnet' ? 'USDC' : 'atUSDC'
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 5000)
 
@@ -50,7 +52,7 @@ export async function getQuotePrice(
         amountDecimalsStr: '1',
         swapType: 'ExactIn',
         chainId,
-        network: resolvedNetworkMode,
+        network: networkMode,
       }),
       signal: controller.signal,
     })
@@ -61,10 +63,69 @@ export async function getQuotePrice(
     if (!data.success) return 0
     // Use midPrice (fair price from tick) instead of toAmount (execution price with slippage)
     const price = parseFloat(data.midPrice || data.toAmount)
-    return Number.isFinite(price) && price >= 0 ? price : 0
+    return Number.isFinite(price) && price > 0 ? price : 0
   } catch {
     return 0
   }
+}
+
+/**
+ * Get token price in USD with Redis caching
+ * Uses stale-while-revalidate pattern to reduce RPC calls
+ * Auto-detects client/server: client uses API endpoint, server uses Redis directly
+ */
+export async function getQuotePrice(
+  symbol: string | null | undefined,
+  chainId: number = 8453,
+  networkMode?: NetworkMode
+): Promise<number> {
+  if (!symbol || typeof symbol !== 'string' || symbol.trim() === '') return 0
+  if (isStablecoinUSD(symbol)) return 1
+
+  // Client-side: use cached API endpoint (Redis unavailable on client)
+  if (typeof window !== 'undefined') {
+    try {
+      const res = await fetch(`/api/prices/get-token-price?symbol=${encodeURIComponent(symbol)}&chainId=${chainId}`)
+      if (!res.ok) return 0
+      const data = await res.json()
+      return data.price > 0 ? data.price : 0
+    } catch {
+      return 0
+    }
+  }
+
+  // Server-side: use Redis cache with stale-while-revalidate
+  const resolvedNetworkMode: NetworkMode = networkMode ?? (chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet')
+  const cacheKey = priceKeys.token(symbol, resolvedNetworkMode)
+
+  try {
+    const cached = await cacheService.getWithStale<number>(cacheKey, PRICE_TTL)
+
+    if (cached.data && cached.data > 0) {
+      if (cached.isStale) {
+        // Background refresh - fire and forget
+        fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+          .then(price => {
+            if (price > 0) {
+              cacheService.set(cacheKey, price, PRICE_TTL.stale).catch(() => {})
+            }
+          })
+          .catch(() => {})
+      }
+      return cached.data
+    }
+  } catch {
+    // Cache lookup failed, continue to fetch fresh
+  }
+
+  // No cache or cache miss - fetch fresh
+  const price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+
+  if (price > 0) {
+    cacheService.set(cacheKey, price, PRICE_TTL.stale).catch(() => {})
+  }
+
+  return price
 }
 
 export async function batchQuotePrices(

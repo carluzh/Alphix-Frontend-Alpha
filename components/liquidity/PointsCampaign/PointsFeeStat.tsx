@@ -37,8 +37,6 @@ interface PointsFeeStatProps {
   token0Symbol?: string;
   /** Token1 symbol (for tooltip) */
   token1Symbol?: string;
-  /** Yield sources for multi-source lending display */
-  yieldSources?: Array<'aave' | 'spark'>;
   /** Additional CSS classes */
   className?: string;
 }
@@ -58,7 +56,6 @@ export function PointsFeeStat({
   unifiedYieldApr,
   token0Symbol,
   token1Symbol,
-  yieldSources,
   className,
 }: PointsFeeStatProps) {
   // Format total APR for display
@@ -88,7 +85,6 @@ export function PointsFeeStat({
           pointsApr={pointsApr}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
-          yieldSources={yieldSources}
         />
       }
       size={TooltipSize.Small}

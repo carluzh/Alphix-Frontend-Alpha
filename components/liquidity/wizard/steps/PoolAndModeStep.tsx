@@ -16,7 +16,7 @@ import { TokenStack } from '@/components/liquidity/TokenStack';
 import { APRBadge } from '@/components/liquidity/APRBadge';
 import { useAccount } from 'wagmi';
 import { useQuery } from '@tanstack/react-query';
-import { fetchAaveRates, getAaveKey } from '@/lib/aave-rates';
+import { fetchAaveRates, getLendingAprForPair } from '@/lib/aave-rates';
 import { OverviewConnectWalletBanner } from '@/app/(app)/overview/components/ConnectWalletBanner/ConnectWalletBanner';
 
 // Animation config using framer-motion's easeOut
@@ -377,26 +377,12 @@ export function PoolAndModeStep() {
     staleTime: 5 * 60_000, // 5 minutes
   });
 
-  // Calculate Aave APY for all pools
+  // Calculate lending APR for all pools using shared utility
   const poolAaveAprs = useMemo(() => {
-    if (!aaveRatesData?.success) return {};
-
     const aprs: Record<string, number> = {};
     pools.forEach(pool => {
-      const key0 = getAaveKey(pool.currency0.symbol);
-      const key1 = getAaveKey(pool.currency1.symbol);
-
-      const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
-      const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
-
-      // Average if both tokens supported, otherwise use single token's APY
-      if (apy0 !== null && apy1 !== null) {
-        aprs[pool.id] = (apy0 + apy1) / 2;
-      } else if (apy0 !== null) {
-        aprs[pool.id] = apy0;
-      } else if (apy1 !== null) {
-        aprs[pool.id] = apy1;
-      }
+      const apr = getLendingAprForPair(aaveRatesData, pool.currency0.symbol, pool.currency1.symbol);
+      if (apr !== null) aprs[pool.id] = apr;
     });
     return aprs;
   }, [pools, aaveRatesData]);

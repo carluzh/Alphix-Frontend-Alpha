@@ -7,9 +7,9 @@ import { useQuery } from '@tanstack/react-query'
 import { getStablecoin, PollingInterval, type PollingIntervalValue } from '../config'
 import { MAINNET_CHAIN_ID } from '@/lib/network-mode'
 import { getToken, type NetworkMode } from '@/lib/pools-config'
+import { getQuotePrice } from '@/lib/swap/quote-prices'
 
 // USDC variants are the base quote currency, so they're always $1.00
-// Other stablecoins with hardcoded usdPrice in config are also treated as stable
 const QUOTE_CURRENCY_SYMBOLS = new Set(['usdc', 'ausdc', 'atusdc'])
 
 function isQuoteCurrency(symbol?: string): boolean {
@@ -28,32 +28,6 @@ function getHardcodedUsdPrice(symbol: string, chainId: number): number | null {
     return parseFloat(tokenConfig.usdPrice)
   }
   return null
-}
-
-async function fetchQuotePrice(symbol: string, chainId: number): Promise<number | null> {
-  const networkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet'
-  // Use USDC for mainnet, atUSDC for testnet (matching quote-prices.ts)
-  const quoteToken = networkMode === 'mainnet' ? 'USDC' : 'atUSDC'
-
-  const response = await fetch('/api/swap/get-quote', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      fromTokenSymbol: symbol,
-      toTokenSymbol: quoteToken,
-      amountDecimalsStr: '1',
-      swapType: 'ExactIn',
-      chainId,
-      network: networkMode,
-    }),
-  })
-
-  if (!response.ok) return null
-
-  const data = await response.json()
-  if (!data.success) return null
-
-  return parseFloat(data.toAmount)
 }
 
 export function useUSDCPrice(
@@ -75,7 +49,7 @@ export function useUSDCPrice(
 
   const { data: usdPrice, isLoading } = useQuery({
     queryKey: ['quote-price', symbol, chainId],
-    queryFn: () => fetchQuotePrice(symbol!, chainId!),
+    queryFn: () => getQuotePrice(symbol!, chainId!),
     enabled: shouldFetchQuote,
     refetchInterval: pollInterval,
     staleTime: pollInterval / 2,
