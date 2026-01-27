@@ -11,6 +11,7 @@
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+import { useAccount } from 'wagmi';
 import { Pool as V4Pool } from '@uniswap/v4-sdk';
 import { Price, Currency } from '@uniswap/sdk-core';
 
@@ -149,6 +150,7 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { isConnected } = useAccount();
 
   // Parse navigation source from URL or entry config
   const navigationSource = useMemo((): NavigationSource | null => {
@@ -250,15 +252,15 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   const canGoForward = useMemo(() => {
     switch (currentStep) {
       case WizardStep.POOL_AND_MODE:
-        // Require: pool selected, mode selected, pool state loaded
-        return !!state.poolId && !!state.mode && !!poolStateData && !poolLoading;
+        // Require: wallet connected, pool selected, mode selected, pool state loaded
+        return isConnected && !!state.poolId && !!state.mode && !!poolStateData && !poolLoading;
       case WizardStep.RANGE_AND_AMOUNTS:
         // Can't go forward from step 2 - use review modal instead
         return false;
       default:
         return false;
     }
-  }, [currentStep, state.poolId, state.mode, poolStateData, poolLoading]);
+  }, [currentStep, isConnected, state.poolId, state.mode, poolStateData, poolLoading]);
 
   // Step navigation
   const setStep = useCallback((step: WizardStep) => {
