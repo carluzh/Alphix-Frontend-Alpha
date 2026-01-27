@@ -36,10 +36,21 @@ function AnimatedAprValue({ value }: { value: number }) {
   );
 }
 
-const YIELD_SOURCE = {
+const AAVE_CONFIG = {
   name: 'Aave',
   textLogo: '/aave/Logo-light.png',
   bgPurple: '/aave/purple-rings.png',
+  bgColor: '#1e1a2e',
+  pillBg: '#9896FF',
+  pillText: '#E2E0FF',
+};
+
+const SPARK_CONFIG = {
+  name: 'Spark',
+  logo: '/spark/Spark-Logomark-RGB.svg',
+  gradient: 'linear-gradient(135deg, #FA43BD 0%, #FFCD4D 100%)',
+  pillBg: 'linear-gradient(135deg, #FA43BD 0%, #FFCD4D 100%)',
+  pillText: '#FFFFFF',
 };
 
 function PoolCard({ pool, selected, onSelect, apr, lendingApr, aprLoading }: {
@@ -72,24 +83,97 @@ function PoolCard({ pool, selected, onSelect, apr, lendingApr, aprLoading }: {
   );
 }
 
-function RehypoModeCard({ selected, onSelect, extraApr }: { selected: boolean; onSelect: () => void; extraApr?: number }) {
+// Spark decorative SVG pattern (rotated 90deg left, centered, scaled up)
+function SparkPattern() {
+  return (
+    <svg
+      className="absolute inset-0 w-full h-full opacity-30"
+      viewBox="-100 100 550 400"
+      preserveAspectRatio="xMidYMid slice"
+      style={{ transform: 'rotate(-90deg) scale(1.4)' }}
+    >
+      <path
+        d="M593.095 300.902L231.194 172.579C190.342 158.094 145.753 158.094 104.901 172.579L-257 300.902M369.4 304.132L218.526 188.579C188.743 165.769 147.364 165.769 117.581 188.579L-33.293 304.132M354.765 375.253L219.979 207.607C193.31 174.436 142.801 174.436 116.132 207.607L-18.6543 375.253M354.766 485.147L214.311 221.752C194.576 184.741 141.528 184.741 121.792 221.752L-18.6621 485.147M345.064 601.849L199.624 226.891C188.446 198.072 147.669 198.072 136.491 226.891L-8.94922 601.849"
+        stroke="white"
+        strokeWidth="6"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
+// Animated "Powered by" pill that cycles between Aave and Spark
+function AnimatedPoweredBy() {
+  const [showAave, setShowAave] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setShowAave(prev => !prev);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="relative h-7 overflow-hidden" style={{ minWidth: 145 }}>
+      {/* Aave pill */}
+      <motion.div
+        animate={{ y: showAave ? 0 : -28 }}
+        transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+        className="absolute inset-0 flex items-center"
+      >
+        <div
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+          style={{ backgroundColor: AAVE_CONFIG.pillBg }}
+        >
+          <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
+          <Image src={AAVE_CONFIG.textLogo} alt="Aave" width={44} height={12} />
+        </div>
+      </motion.div>
+      {/* Spark pill */}
+      <motion.div
+        animate={{ y: showAave ? 28 : 0 }}
+        transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+        className="absolute inset-0 flex items-center"
+      >
+        <div
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+          style={{ background: SPARK_CONFIG.gradient }}
+        >
+          <span className="text-xs font-medium text-white">Powered by</span>
+          <Image src="/spark/Spark-Logo-Horizontal-Dark_Background-RGB.svg" alt="Spark" width={52} height={14} style={{ filter: 'brightness(0) saturate(100%) invert(100%)' }} />
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { selected: boolean; onSelect: () => void; extraApr?: number; yieldSources?: Array<'aave' | 'spark'> }) {
+  const hasSpark = yieldSources?.includes('spark');
+  const hasAave = yieldSources?.includes('aave') ?? true; // Default to Aave if not specified
+  const hasBoth = hasAave && hasSpark;
+
+  // Border gradient - always Aave purple (loops seamlessly)
+  const borderGradient = hasSpark && !hasAave
+    ? 'linear-gradient(90deg, #FA43BD 0%, #FFCD4D 50%, #FA43BD 100%)'
+    : 'linear-gradient(90deg, #AAA8FF 0%, #9896FF 50%, #AAA8FF 100%)';
+
   return (
     <div className="group relative">
       <div
         className={cn(
-          'absolute -inset-[1px] rounded-lg pointer-events-none animate-gradient-flow transition-opacity',
+          'absolute -inset-[1px] rounded-lg pointer-events-none animate-gradient-flow transition-opacity duration-200',
           selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
         )}
         style={{
-          background: 'linear-gradient(45deg, #AAA8FF, #BDBBFF 25%, #9896FF 50%, #BDBBFF 75%, #AAA8FF 100%)',
-          backgroundSize: '300% 100%',
+          background: borderGradient,
+          backgroundSize: '200% 100%',
         }}
       />
       <button
         onClick={onSelect}
         className={cn(
           'relative flex flex-row rounded-lg transition-all w-full text-left overflow-hidden bg-[#141414] p-3 border',
-          selected ? 'border-transparent' : 'border-sidebar-border/60'
+          selected ? 'border-transparent' : 'border-sidebar-border/60 group-hover:border-transparent'
         )}
       >
         <div className="absolute right-4 top-4 z-20">
@@ -105,20 +189,15 @@ function RehypoModeCard({ selected, onSelect, extraApr }: { selected: boolean; o
                   <h4 className="font-semibold text-sm text-foreground">How it works</h4>
                   <p className="text-xs text-muted-foreground">
                     Your liquidity is deployed with an optimized price range. When funds are idle,
-                    they&apos;re automatically deposited into Aave to earn additional lending yield.
+                    they&apos;re automatically rehypothecated to earn additional lending yield.
                   </p>
                   <div className="border-t border-sidebar-border pt-2 mt-1 flex flex-col gap-1.5">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">Vault Standard</span>
-                      <span className="text-foreground font-mono">ERC-4626</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
+                    <div className="flex justify-between items-center text-xs">
                       <span className="text-muted-foreground">Lending Protocol</span>
-                      <span className="text-foreground">Aave V3</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">Range Strategy</span>
-                      <span className="text-foreground">Managed</span>
+                      <div className="flex items-center gap-1.5">
+                        {hasAave && <Image src="/aave/Logomark-light.png" alt="Aave" width={16} height={16} />}
+                        {hasSpark && <Image src="/spark/Spark-Logomark-RGB.svg" alt="Spark" width={16} height={16} />}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -132,21 +211,82 @@ function RehypoModeCard({ selected, onSelect, extraApr }: { selected: boolean; o
             <h3 className="text-base font-semibold text-foreground">Unified Yield</h3>
             <p className="text-sm text-muted-foreground">Earn additional yield on top of swap fees by lending out idle liquidity</p>
           </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ backgroundColor: '#9896FF' }}>
-            <span className="text-xs font-medium" style={{ color: '#E2E0FF' }}>Powered by</span>
-            <Image src={YIELD_SOURCE.textLogo} alt={YIELD_SOURCE.name} width={44} height={12} />
-          </div>
+          {/* Powered by section */}
+          {hasBoth ? (
+            <AnimatedPoweredBy />
+          ) : hasAave ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ backgroundColor: AAVE_CONFIG.pillBg }}>
+              <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
+              <Image src={AAVE_CONFIG.textLogo} alt="Aave" width={44} height={12} />
+            </div>
+          ) : hasSpark ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ background: SPARK_CONFIG.gradient }}>
+              <span className="text-xs font-medium text-white">Powered by</span>
+              <Image src="/spark/Spark-Logo-Horizontal-Dark_Background-RGB.svg" alt="Spark" width={52} height={14} />
+            </div>
+          ) : null}
         </div>
 
-        <div className="relative z-10 flex items-center justify-center w-[25%] min-w-[140px] rounded-lg overflow-hidden" style={{ background: '#1e1a2e' }}>
-          <div className="absolute inset-0" style={{ backgroundImage: `url(${YIELD_SOURCE.bgPurple})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
-          {extraApr !== undefined ? (
-            <AnimatedAprValue value={extraApr} />
+        {/* APR visualization section */}
+        <div className="relative z-10 flex w-[25%] min-w-[140px] rounded-lg overflow-hidden">
+          {hasBoth ? (
+            // Both sources: left Aave purple rings, right Spark gradient with SVG
+            <>
+              <div
+                className="flex-1"
+                style={{
+                  backgroundImage: `url(${AAVE_CONFIG.bgPurple})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                }}
+              />
+              <div
+                className="relative flex-1 overflow-hidden"
+                style={{ background: 'linear-gradient(135deg, #FA43BD 0%, #FFCD4D 100%)' }}
+              >
+                <SparkPattern />
+              </div>
+              {/* Centered +X% overlay */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                {extraApr !== undefined ? (
+                  <AnimatedAprValue value={extraApr} />
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <span className="text-white text-2xl font-bold">+</span>
+                    <div className="h-7 w-14 bg-white/20 rounded animate-pulse" />
+                    <span className="text-white text-2xl font-bold">%</span>
+                  </div>
+                )}
+              </div>
+            </>
           ) : (
-            <div className="relative z-10 flex items-center gap-1">
-              <span className="text-white text-2xl font-bold">+</span>
-              <div className="h-7 w-14 bg-white/20 rounded animate-pulse" />
-              <span className="text-white text-2xl font-bold">%</span>
+            // Single source: Aave purple rings or Spark gradient
+            <div
+              className="relative flex items-center justify-center flex-1"
+              style={hasSpark
+                ? { background: SPARK_CONFIG.gradient }
+                : { backgroundColor: AAVE_CONFIG.bgColor }
+              }
+            >
+              {hasAave && (
+                <div
+                  className="absolute inset-0"
+                  style={{
+                    backgroundImage: `url(${AAVE_CONFIG.bgPurple})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                  }}
+                />
+              )}
+              {extraApr !== undefined ? (
+                <AnimatedAprValue value={extraApr} />
+              ) : (
+                <div className="relative z-10 flex items-center gap-1">
+                  <span className="text-white text-2xl font-bold">+</span>
+                  <div className="h-7 w-14 bg-white/20 rounded animate-pulse" />
+                  <span className="text-white text-2xl font-bold">%</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -173,7 +313,7 @@ function CustomRangeModeCard({ selected, onSelect }: { selected: boolean; onSele
   );
 }
 
-function LPModeSection({ mode, onSelectMode, extraAaveApr }: { mode: LPMode; onSelectMode: (mode: LPMode) => void; extraAaveApr?: number }) {
+function LPModeSection({ mode, onSelectMode, extraAaveApr, yieldSources }: { mode: LPMode; onSelectMode: (mode: LPMode) => void; extraAaveApr?: number; yieldSources?: Array<'aave' | 'spark'> }) {
   return (
     <div className="flex flex-col gap-4 pt-4 border-t border-sidebar-border/40">
       <div className="flex flex-col gap-1">
@@ -181,7 +321,7 @@ function LPModeSection({ mode, onSelectMode, extraAaveApr }: { mode: LPMode; onS
         <p className="text-sm text-muted-foreground">Select how you want to provide liquidity</p>
       </div>
       <div className="flex flex-col gap-3">
-        <RehypoModeCard selected={mode === 'rehypo'} onSelect={() => onSelectMode('rehypo')} extraApr={extraAaveApr} />
+        <RehypoModeCard selected={mode === 'rehypo'} onSelect={() => onSelectMode('rehypo')} extraApr={extraAaveApr} yieldSources={yieldSources} />
         <CustomRangeModeCard selected={mode === 'concentrated'} onSelect={() => onSelectMode('concentrated')} />
       </div>
     </div>
@@ -307,7 +447,7 @@ export function PoolAndModeStep() {
             transition={FADE_TRANSITION}
             className="flex flex-col gap-4"
           >
-            <LPModeSection mode={state.mode} onSelectMode={setMode} extraAaveApr={extraAaveApr} />
+            <LPModeSection mode={state.mode} onSelectMode={setMode} extraAaveApr={extraAaveApr} yieldSources={selectedPool?.yieldSources} />
             <Button
               onClick={goNext}
               disabled={!canGoForward}

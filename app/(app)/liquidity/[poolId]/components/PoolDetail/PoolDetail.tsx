@@ -19,7 +19,60 @@ import { PoolDetailStats } from "./PoolDetailStats";
 import { PoolDetailPositions } from "./PoolDetailPositions";
 import { PoolDetailSidebar } from "./PoolDetailSidebar";
 
-const ChartSection = dynamic(() => import("../ChartSection").then(mod => mod.ChartSection), { ssr: false });
+// Chart loading skeleton - matches ChartSection dimensions (300px height)
+const CHART_HEIGHT = 300;
+const TIME_SCALE_HEIGHT = 26;
+const PRICE_SCALE_WIDTH = 55;
+
+function ChartLoadingSkeleton() {
+  const dotPattern = `radial-gradient(circle, #333333 1px, transparent 1px)`;
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Chart type tabs skeleton */}
+      <div className="flex flex-row items-center gap-1 opacity-50">
+        {["Fee", "Volume", "TVL"].map((tab) => (
+          <div key={tab} className="h-7 px-2.5 text-xs rounded-md bg-muted/20 text-muted-foreground">
+            {tab}
+          </div>
+        ))}
+      </div>
+      <div className="relative" style={{ height: CHART_HEIGHT }}>
+        {/* Pattern overlay */}
+        <div
+          className="absolute pointer-events-none"
+          style={{
+            top: 0,
+            left: 0,
+            right: PRICE_SCALE_WIDTH,
+            bottom: TIME_SCALE_HEIGHT,
+            backgroundImage: dotPattern,
+            backgroundSize: "24px 24px",
+          }}
+        />
+        {/* Header skeleton */}
+        <div className="flex flex-row absolute w-full gap-2 items-start z-10">
+          <div className="flex flex-col gap-1 p-3 pointer-events-none bg-background rounded-xl">
+            <div className="h-9 w-20 bg-muted/20 animate-pulse rounded" />
+            <div className="h-4 w-32 bg-muted/10 animate-pulse rounded" />
+          </div>
+        </div>
+      </div>
+      {/* Time period selector skeleton */}
+      <div className="flex flex-row items-center gap-1 opacity-50">
+        {["1W", "1M", "All"].map((opt) => (
+          <div key={opt} className="h-7 px-2.5 text-xs rounded-md bg-muted/20 text-muted-foreground">
+            {opt}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const ChartSection = dynamic(
+  () => import("../ChartSection").then(mod => mod.ChartSection),
+  { ssr: false, loading: () => <ChartLoadingSkeleton /> }
+);
 import type {
   PoolConfig,
   PoolStats,

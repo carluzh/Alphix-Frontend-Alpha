@@ -254,7 +254,7 @@ export function UnifiedYieldPositionCard({
                 hideFees
                 token0Amount={position.token0Amount}
                 token1Amount={position.token1Amount}
-                apr={undefined}
+                apr={0}
                 formattedApr={formattedApr}
                 isAprFallback={false}
                 unifiedYieldApr={aaveApr}

@@ -146,6 +146,7 @@ export function AnnouncementCard() {
                 sizes="(max-width: 640px) 100vw, 420px"
                 className={cn("object-cover", a.imageClassName)}
                 unoptimized
+                priority
               />
             </div>
           )
@@ -196,6 +197,7 @@ export function AnnouncementCard() {
             height={16}
             className="mb-2 opacity-90"
             unoptimized
+            priority
           />
         )}
         {announcement.title && <h3 className={cn(ui.title, "text-foreground")}>{announcement.title}</h3>}

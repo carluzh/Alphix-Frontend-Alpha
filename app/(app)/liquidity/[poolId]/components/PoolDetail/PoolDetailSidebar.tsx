@@ -959,6 +959,57 @@ function YieldBreakdownSection({
 }
 
 /**
+ * Lending source URLs for external links
+ */
+const LENDING_URLS: Record<string, string> = {
+  aave: "https://app.aave.com/",
+  spark: "https://app.spark.fi/savings/base/susdc",
+};
+
+/**
+ * Interactive lending logo - white by default, colored on hover, clickable
+ * Uses CSS classes for smooth transitions. The parent anchor has group class.
+ */
+function InteractiveLendingLogo({ source }: { source: 'aave' | 'spark' }) {
+  const href = LENDING_URLS[source];
+  const config = YIELD_SOURCES[source];
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group relative flex items-center"
+    >
+      {/* White version (default) - fades out on hover */}
+      <Image
+        src={config?.textLogo}
+        alt={config?.name}
+        width={44}
+        height={14}
+        loading="eager"
+        className="object-contain transition-opacity duration-200 opacity-60 group-hover:opacity-0"
+        style={{ filter: "brightness(0) invert(1)" }}
+      />
+      {/* Colored version - fades in on hover */}
+      <Image
+        src={config?.textLogo}
+        alt=""
+        width={44}
+        height={14}
+        loading="eager"
+        className={cn(
+          "absolute inset-0 object-contain transition-opacity duration-200 opacity-0 group-hover:opacity-100",
+          // Aave: Apply purple tint filter (sepia + hue-rotate to get #9896FF purple)
+          source === 'aave' && "[filter:sepia(1)_hue-rotate(210deg)_saturate(2)_brightness(0.95)]"
+          // Spark: Shows original orange color (no filter needed)
+        )}
+      />
+    </a>
+  );
+}
+
+/**
  * Contracts Section
  * Shows copyable contract addresses - matches Yield Breakdown styling
  */
@@ -980,20 +1031,13 @@ function ContractsSection({ poolConfig }: { poolConfig: PoolConfig }) {
           <CopyableRow label="Lending Vault" value={poolConfig.hooks} />
         )}
       </div>
-      {/* Lending protocol info - show yield source logos */}
+      {/* Lending protocol info - interactive logos with links */}
       {poolConfig.yieldSources && poolConfig.yieldSources.length > 0 && (
         <div className="flex items-center justify-between py-1.5 px-2 text-xs text-muted-foreground">
           <span>Lending via</span>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             {poolConfig.yieldSources.map((source) => (
-              <Image
-                key={source}
-                src={YIELD_SOURCES[source]?.textLogo}
-                alt={YIELD_SOURCES[source]?.name}
-                width={44}
-                height={14}
-                className="object-contain"
-              />
+              <InteractiveLendingLogo key={source} source={source} />
             ))}
           </div>
         </div>

@@ -345,7 +345,6 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
   const priceMap = useMemo(() => ({
     USDC: extractUsd(allPrices?.USDC, 1),
     ETH: extractUsd(allPrices?.ETH, 0),
-    BTC: extractUsd(allPrices?.BTC, 0),
   }), [allPrices, extractUsd]);
 
   // Convert tick to price (bound to tokenDefinitions)

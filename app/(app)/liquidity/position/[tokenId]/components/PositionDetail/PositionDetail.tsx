@@ -869,15 +869,16 @@ export const PositionDetail = memo(function PositionDetail({
     }
   }, []);
 
+  // Detect if this is a Unified Yield position (derived from lpType prop)
+  const isUnifiedYield = lpType === "rehypo";
+
   // Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isRemoveModalOpen, setIsRemoveModalOpen] = useState(false);
   const [isCollectModalOpen, setIsCollectModalOpen] = useState(false);
-  const [chartTab, setChartTab] = useState<"price" | "yield">("price");
+  // Default to Yield chart for Unified Yield positions, Price chart for V4
+  const [chartTab, setChartTab] = useState<"price" | "yield">(isUnifiedYield ? "yield" : "price");
   const [feeChartPeriod, setFeeChartPeriod] = useState<ChartPeriod>("1W");
-
-  // Detect if this is a Unified Yield position
-  const isUnifiedYield = lpType === "rehypo";
 
   // Fee chart data for V4 positions - pass current uncollected fees for "live now" point
   const {

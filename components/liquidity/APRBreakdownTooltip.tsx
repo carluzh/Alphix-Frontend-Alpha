@@ -121,6 +121,7 @@ export function LendingSourceIcons({ sources }: { sources: Array<'aave' | 'spark
           height={14}
           className="absolute left-0 rounded-full ring-1 ring-popover"
           style={{ zIndex: 1 }}
+          loading="eager"
         />
         <Image
           src={YIELD_SOURCES.aave.logo}
@@ -129,6 +130,7 @@ export function LendingSourceIcons({ sources }: { sources: Array<'aave' | 'spark
           height={14}
           className="absolute left-2 rounded-full ring-1 ring-popover"
           style={{ zIndex: 2 }}
+          loading="eager"
         />
       </div>
     );
@@ -142,6 +144,7 @@ export function LendingSourceIcons({ sources }: { sources: Array<'aave' | 'spark
       width={14}
       height={14}
       className="rounded-full"
+      loading="eager"
     />
   );
 }
