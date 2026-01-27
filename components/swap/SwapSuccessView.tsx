@@ -41,11 +41,14 @@ export function SwapSuccessView({
           <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={32} height={32} className="rounded-full"/>
           <div className="text-left flex flex-col">
             <div className="font-medium flex items-baseline">
-              {(swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0") === "< 0.001" ? (
-                <span className="text-xs text-muted-foreground">{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0"}</span>
-              ) : (
-                <span className="text-sm">{swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0"}</span>
-              )}
+              {(() => {
+                const formattedAmount = swapTxInfo?.fromAmount ? formatTokenAmountDisplay(swapTxInfo.fromAmount, displayFromToken) : "0";
+                return formattedAmount.startsWith("< ") ? (
+                  <span className="text-xs text-muted-foreground">{formattedAmount}</span>
+                ) : (
+                  <span className="text-sm">{formattedAmount}</span>
+                );
+              })()}
               <span className="ml-1 text-xs text-muted-foreground">{swapTxInfo?.fromSymbol || displayFromToken.symbol}</span>
             </div>
             <div className="text-xs text-muted-foreground">{trade.calculatedValues.fromTokenValue}</div>
@@ -55,11 +58,14 @@ export function SwapSuccessView({
         <div className="flex items-center gap-3">
           <div className="text-right flex flex-col">
             <div className="font-medium flex items-baseline">
-              {(swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0") === "< 0.001" ? (
-                <span className="text-xs text-muted-foreground">{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0"}</span>
-              ) : (
-                <span className="text-sm">{swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0"}</span>
-              )}
+              {(() => {
+                const formattedAmount = swapTxInfo?.toAmount ? formatTokenAmountDisplay(swapTxInfo.toAmount, displayToToken) : "0";
+                return formattedAmount.startsWith("< ") ? (
+                  <span className="text-xs text-muted-foreground">{formattedAmount}</span>
+                ) : (
+                  <span className="text-sm">{formattedAmount}</span>
+                );
+              })()}
               <span className="ml-1 text-xs text-muted-foreground">{swapTxInfo?.toSymbol || displayToToken.symbol}</span>
             </div>
             <div className="text-xs text-muted-foreground">{trade.calculatedValues.toTokenValue}</div>

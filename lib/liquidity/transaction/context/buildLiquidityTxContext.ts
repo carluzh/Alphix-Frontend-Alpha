@@ -35,6 +35,9 @@ export interface MintTxApiResponse {
   approvalAmount?: string;
   // Flag indicating ERC20 approval to Permit2 is needed (included with PERMIT2_BATCH_SIGNATURE)
   erc20ApprovalNeeded?: boolean;
+  // Explicit flags for which tokens need approval (handles both tokens needing approval)
+  needsToken0Approval?: boolean;
+  needsToken1Approval?: boolean;
 
   // Permit batch data
   permitBatchData?: {

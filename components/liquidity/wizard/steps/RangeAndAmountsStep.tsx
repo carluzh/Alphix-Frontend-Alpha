@@ -42,7 +42,7 @@ import {
   priceNumberToTick,
   tickToPriceSmart,
 } from '@/lib/liquidity/utils/tick-price';
-import { D3LiquidityRangeChart, LiquidityRangeActionButtons, LiquidityChartSkeleton, CHART_DIMENSIONS, type D3LiquidityRangeChartHandle } from '@/components/liquidity/d3-chart';
+import { D3LiquidityRangeChart, LiquidityChartSkeleton, CHART_DIMENSIONS } from '@/components/liquidity/d3-chart';
 import { HistoryDuration, usePoolPriceChartData } from '@/lib/chart';
 import { useLiquidityChartData } from '@/hooks/useLiquidityChartData';
 import { getPoolSubgraphId } from '@/lib/pools-config';
@@ -61,26 +61,26 @@ const STABLE_POOL_STRATEGIES: PriceStrategyConfig[] = [
   {
     id: 'stable_narrow',
     title: 'Narrow',
-    display: '± 1 tick',
-    description: 'Tightest range, highest fee concentration',
+    display: '1 tick',
+    description: 'Single tick at current price',
   },
   {
-    id: 'stable_moderate',
-    title: 'Moderate',
-    display: '± 3 ticks',
-    description: 'Balanced range for stable pairs',
+    id: 'stable_standard',
+    title: 'Standard',
+    display: '± 1 tick',
+    description: 'Optimized for lending yield',
   },
   {
     id: 'stable_wide',
     title: 'Wide',
-    display: '± 10 ticks',
-    description: 'Wider range, less impermanent loss risk',
+    display: '± 2 ticks',
+    description: 'Balanced range for stable pairs',
   },
   {
     id: 'stable_skewed',
     title: 'Skewed',
-    display: '+3 / −20%',
-    description: 'Asymmetric for slight depeg protection',
+    display: '+1 / −3 ticks',
+    description: 'Asymmetric for depeg protection',
   },
 ];
 
@@ -89,26 +89,26 @@ const STANDARD_POOL_STRATEGIES: PriceStrategyConfig[] = [
   {
     id: 'narrow',
     title: 'Narrow',
-    display: '± 1%',
-    description: 'Tight range, higher fee concentration',
-  },
-  {
-    id: 'moderate',
-    title: 'Moderate',
     display: '± 5%',
-    description: 'Balanced range for most pairs',
+    description: 'Tight range, higher fee concentration',
   },
   {
     id: 'wide',
     title: 'Wide',
-    display: '± 15%',
+    display: '± 25%',
     description: 'Wide range for volatile pairs',
+  },
+  {
+    id: 'skewed',
+    title: 'Skewed',
+    display: '+10 / −30%',
+    description: 'Asymmetric for directional exposure',
   },
   {
     id: 'full',
     title: 'Full Range',
     display: '0 → ∞',
-    description: 'All prices, like Uniswap V2',
+    description: 'Optimized for lending yield',
   },
 ];
 
@@ -135,7 +135,10 @@ function PriceStrategyButton({ strategy, selected, onSelect, disabled }: PriceSt
   const renderDisplay = () => {
     // Handle special formatting for different strategy types
     if (strategy.id === 'stable_skewed') {
-      return <>+3 <span className="text-muted-foreground/50">/</span> −20%</>;
+      return <>+1 <span className="text-muted-foreground/50">/</span> −3 ticks</>;
+    }
+    if (strategy.id === 'skewed') {
+      return <>+10% <span className="text-muted-foreground/50">/</span> −30%</>;
     }
     if (strategy.id === 'full') {
       return <>0 <span className="text-muted-foreground/50">→</span> ∞</>;
@@ -290,6 +293,7 @@ export function RangeAndAmountsStep() {
     setRange,
     setAmounts,
     setInputSide,
+    setMode,
     openReviewModal,
     goBack,
     // NEW: Get pool data from context (Uniswap pattern)
@@ -308,9 +312,6 @@ export function RangeAndAmountsStep() {
     isCalculating: txIsCalculating,
     inputError,
   } = useCreatePositionTxContext();
-
-  // Chart ref for imperative actions (Uniswap pattern)
-  const chartRef = useRef<D3LiquidityRangeChartHandle>(null);
 
   // Local state
   const [minPrice, setMinPrice] = useState('');
@@ -724,8 +725,29 @@ export function RangeAndAmountsStep() {
     switch (strategy) {
       // Stable pool strategies (tick-based)
       case 'stable_narrow':
-        // ± 1 tick spacing from current tick
-        tickLower = nearestUsableTick(poolCurrentTick - 1 * tickSpacingVal, tickSpacingVal);
+        // Single tick at current price (1 tick spacing range)
+        tickLower = nearestUsableTick(poolCurrentTick, tickSpacingVal);
+        tickUpper = tickLower + tickSpacingVal;
+        break;
+      case 'stable_standard':
+        // Use rehypo range from pool config (optimized for lending yield)
+        if (rehypoTickLower !== null && rehypoTickUpper !== null) {
+          tickLower = rehypoTickLower;
+          tickUpper = rehypoTickUpper;
+        } else {
+          // Fallback to ± 3 ticks if no rehypo range configured
+          tickLower = nearestUsableTick(poolCurrentTick - 3 * tickSpacingVal, tickSpacingVal);
+          tickUpper = nearestUsableTick(poolCurrentTick + 3 * tickSpacingVal, tickSpacingVal);
+        }
+        break;
+      case 'stable_wide':
+        // ± 2 tick spacings from current tick
+        tickLower = nearestUsableTick(poolCurrentTick - 2 * tickSpacingVal, tickSpacingVal);
+        tickUpper = nearestUsableTick(poolCurrentTick + 2 * tickSpacingVal, tickSpacingVal);
+        break;
+      case 'stable_skewed':
+        // +1 tick upper, -3 ticks lower (asymmetric for depeg protection)
+        tickLower = nearestUsableTick(poolCurrentTick - 3 * tickSpacingVal, tickSpacingVal);
         tickUpper = nearestUsableTick(poolCurrentTick + 1 * tickSpacingVal, tickSpacingVal);
         break;
       case 'stable_moderate':
@@ -734,28 +756,22 @@ export function RangeAndAmountsStep() {
         tickLower = nearestUsableTick(poolCurrentTick - 3 * tickSpacingVal, tickSpacingVal);
         tickUpper = nearestUsableTick(poolCurrentTick + 3 * tickSpacingVal, tickSpacingVal);
         break;
-      case 'stable_wide':
-        // ± 10 tick spacings from current tick
-        tickLower = nearestUsableTick(poolCurrentTick - 10 * tickSpacingVal, tickSpacingVal);
-        tickUpper = nearestUsableTick(poolCurrentTick + 10 * tickSpacingVal, tickSpacingVal);
-        break;
-      case 'stable_skewed':
-        // +3 ticks upper, -20% lower (asymmetric for depeg protection)
-        tickUpper = nearestUsableTick(poolCurrentTick + 3 * tickSpacingVal, tickSpacingVal);
-        [tickLower] = calculateTicksFromPercentage(20, 0, poolCurrentTick, tickSpacingVal);
-        break;
-      // Standard pool strategies (percentage-based)
+      // Standard/Volatile pool strategies (percentage-based)
       case 'narrow':
-        // ± 1% from current price
-        [tickLower, tickUpper] = calculateTicksFromPercentage(1, 1, poolCurrentTick, tickSpacingVal);
-        break;
-      case 'moderate':
         // ± 5% from current price
         [tickLower, tickUpper] = calculateTicksFromPercentage(5, 5, poolCurrentTick, tickSpacingVal);
         break;
       case 'wide':
-        // ± 15% from current price
-        [tickLower, tickUpper] = calculateTicksFromPercentage(15, 15, poolCurrentTick, tickSpacingVal);
+        // ± 25% from current price
+        [tickLower, tickUpper] = calculateTicksFromPercentage(25, 25, poolCurrentTick, tickSpacingVal);
+        break;
+      case 'skewed':
+        // +10% upper, -30% lower (asymmetric for directional exposure)
+        [tickLower, tickUpper] = calculateTicksFromPercentage(30, 10, poolCurrentTick, tickSpacingVal);
+        break;
+      case 'moderate':
+        // Legacy: ± 5% from current price
+        [tickLower, tickUpper] = calculateTicksFromPercentage(5, 5, poolCurrentTick, tickSpacingVal);
         break;
       // Legacy strategies (kept for backward compatibility)
       case 'one_sided_lower':
@@ -795,7 +811,7 @@ export function RangeAndAmountsStep() {
     }
 
     setRange(tickLower, tickUpper);
-  }, [setRangePreset, setRange, currentTick, priceInverted, formatPriceForDisplay, poolConfig?.tickSpacing, tickToPrice]);
+  }, [setRangePreset, setRange, currentTick, priceInverted, formatPriceForDisplay, poolConfig?.tickSpacing, tickToPrice, rehypoTickLower, rehypoTickUpper]);
 
   // Token selection for price denomination - resets to default strategy on switch
   const handleSelectToken = useCallback((token: string) => {
@@ -1097,28 +1113,34 @@ export function RangeAndAmountsStep() {
     }
   }, [priceInverted, sdkPool, selectedPreset, handleSelectStrategy, isRehypoMode]);
 
-  // Check if current custom range matches the rehypo range (for Unified Yield callout)
-  const rangeMatchesRehypo = useMemo(() => {
-    // Only check in concentrated mode
+  // Check if current range (preset or manual) qualifies for Unified Yield callout
+  // - Stable pools: matches rehypo tick range (via preset or manual input)
+  // - Volatile pools: full range when pool's rehypo is also full range
+  const showUnifiedYieldCallout = useMemo(() => {
+    // Only show in concentrated mode
     if (isRehypoMode || !poolConfig) return false;
 
-    const rehypoIsFullRange = poolConfig.rehypoRange?.isFullRange ?? false;
-    const userIsFullRange = selectedPreset === 'full' || (state.tickLower === null && state.tickUpper === null);
+    // Check if current ticks match the rehypo range (handles both preset and manual entry)
+    const currentTicksMatchRehypo =
+      hasValidRehypoTicks &&
+      state.tickLower !== null &&
+      state.tickUpper !== null &&
+      state.tickLower === rehypoTickLower &&
+      state.tickUpper === rehypoTickUpper;
 
-    // If rehypo is full range, match when user selects full range
-    if (rehypoIsFullRange) {
-      return userIsFullRange;
+    // Stable pools: show callout when ticks match rehypo range
+    if (isStablePool) {
+      return selectedPreset === 'stable_standard' || currentTicksMatchRehypo;
     }
 
-    // For non-full-range rehypo, check tick values
-    if (!hasValidRehypoTicks || state.tickLower === null || state.tickUpper === null) return false;
+    // Volatile pools: show callout for 'full' range when pool's rehypo is also full range
+    const rehypoIsFullRange = poolConfig.rehypoRange?.isFullRange ?? false;
+    if (rehypoIsFullRange && (selectedPreset === 'full' || (state.tickLower === null && state.tickUpper === null))) {
+      return true;
+    }
 
-    const tickSpacingVal = poolConfig.tickSpacing || DEFAULT_TICK_SPACING;
-    const lowerMatch = Math.abs(state.tickLower - (rehypoTickLower ?? 0)) <= tickSpacingVal;
-    const upperMatch = Math.abs(state.tickUpper - (rehypoTickUpper ?? 0)) <= tickSpacingVal;
-
-    return lowerMatch && upperMatch;
-  }, [isRehypoMode, poolConfig, selectedPreset, state.tickLower, state.tickUpper, hasValidRehypoTicks, rehypoTickLower, rehypoTickUpper]);
+    return false;
+  }, [isRehypoMode, poolConfig, selectedPreset, isStablePool, hasValidRehypoTicks, state.tickLower, state.tickUpper, rehypoTickLower, rehypoTickUpper]);
 
   // Validation
   const isValidRange = useMemo(() => {
@@ -1190,16 +1212,14 @@ export function RangeAndAmountsStep() {
           </div>
         )}
 
-        {/* D3 Interactive Range Chart - show chart OR skeleton (Uniswap pattern) */}
+        {/* D3 Range Chart (view-only) - show chart OR skeleton (Uniswap pattern) */}
         {/* Show skeleton only while actively loading; once done, show chart (even without data on testnet) */}
         <div className={cn(
           "border border-sidebar-border rounded-lg overflow-hidden",
-          isRehypoMode && "opacity-60 pointer-events-none"
+          isRehypoMode && "opacity-60"
         )}>
           {(!isLiquidityLoading || isRehypoMode || liquidityData.length > 0) ? (
-            <>
             <D3LiquidityRangeChart
-              ref={chartRef}
               liquidityData={liquidityData}
               priceData={priceData}
               currentPrice={chartCurrentPrice}
@@ -1215,20 +1235,8 @@ export function RangeAndAmountsStep() {
               isFullRange={isRehypoMode ? (poolConfig.rehypoRange?.isFullRange ?? rehypoIsFullRange ?? true) : selectedPreset === 'full'}
               duration={chartDuration}
               onRangeChange={noopRangeChange}
+              viewOnly
             />
-            {/* Action buttons below chart */}
-            {!isRehypoMode && (
-              <LiquidityRangeActionButtons
-                selectedDuration={chartDuration}
-                onDurationChange={setChartDuration}
-                onZoomIn={() => chartRef.current?.zoomIn()}
-                onZoomOut={() => chartRef.current?.zoomOut()}
-                onCenterRange={() => chartRef.current?.centerRange()}
-                onReset={() => chartRef.current?.reset()}
-                isFullRange={selectedPreset === 'full'}
-              />
-            )}
-          </>
           ) : (
             <LiquidityChartSkeleton height={CHART_DIMENSIONS.CHART_HEIGHT + CHART_DIMENSIONS.TIMESCALE_HEIGHT} />
           )}
@@ -1280,20 +1288,24 @@ export function RangeAndAmountsStep() {
               </div>
             )}
 
-            {/* Unified Yield callout - shown when custom range matches rehypo range */}
-            {rangeMatchesRehypo && (
-              <div className="flex flex-row items-center gap-3 p-3 rounded-lg border border-[#9896FF]/30 bg-[#9896FF]/10">
+            {/* Unified Yield callout - shown for Standard (stable) or Full Range (volatile) */}
+            {/* Clickable to switch to Unified Yield mode */}
+            {showUnifiedYieldCallout && (
+              <button
+                onClick={() => setMode('rehypo')}
+                className="flex flex-row items-center gap-3 p-3 rounded-lg border border-[#9896FF]/30 bg-[#9896FF]/10 hover:bg-[#9896FF]/20 hover:border-[#9896FF]/50 transition-colors cursor-pointer text-left w-full"
+              >
                 <IconCircleInfo className="w-4 h-4 text-[#9896FF] shrink-0" />
                 <span className="text-sm text-muted-foreground">
-                  This range qualifies for <span className="text-white font-medium">Unified Yield</span>. Go back to earn an additional {lendingApr !== null ? `${lendingApr.toFixed(1)}%` : 'lending yield'}!
+                  This range qualifies for <span className="text-white font-medium">Unified Yield</span>. Click to earn an additional {lendingApr !== null ? `${lendingApr.toFixed(1)}%` : 'lending yield'}!
                 </span>
-              </div>
+              </button>
             )}
 
             {/* Price Strategies (below inputs - pool-type dependent) */}
             <div className="flex flex-col gap-4">
               <span className="text-sm font-medium text-muted-foreground">
-                {isStablePool ? 'Stable pair strategies' : 'Price strategies'}
+                Price strategies
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {priceStrategies.map(strategy => (

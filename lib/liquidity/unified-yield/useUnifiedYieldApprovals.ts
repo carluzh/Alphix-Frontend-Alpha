@@ -8,6 +8,14 @@
  */
 
 import { useMemo } from 'react';
+import { maxUint256 } from 'viem';
+
+/**
+ * Safely add 1 wei buffer to an amount, capped at maxUint256 to prevent overflow
+ */
+function safeAddBuffer(amount: bigint): bigint {
+  return amount >= maxUint256 ? maxUint256 : amount + 1n;
+}
 import { useReadContract } from 'wagmi';
 import { type Address } from 'viem';
 import { ERC20_ABI } from '@/lib/abis/erc20';
@@ -130,17 +138,19 @@ export function useUnifiedYieldApprovals(
   });
 
   // Build approval status
+  // Add +1 wei buffer to handle rounding edge cases (consistent with buildApprovalCalldata)
   const data = useMemo((): UnifiedYieldApprovalStatus | null => {
     if (!params || !hookAddress) return null;
 
     const t0Allowance = (token0Allowance as bigint) ?? 0n;
     const t1Allowance = (token1Allowance as bigint) ?? 0n;
 
+    // Check with +1 wei buffer to catch edge cases where existing approval is exactly 1 wei short
     const token0NeedsApproval =
-      !isToken0Native && amount0Wei > 0n && t0Allowance < amount0Wei;
+      !isToken0Native && amount0Wei > 0n && t0Allowance < safeAddBuffer(amount0Wei);
 
     const token1NeedsApproval =
-      !isToken1Native && amount1Wei > 0n && t1Allowance < amount1Wei;
+      !isToken1Native && amount1Wei > 0n && t1Allowance < safeAddBuffer(amount1Wei);
 
     return {
       token0NeedsApproval,
@@ -179,10 +189,11 @@ export function useUnifiedYieldApprovals(
     const checkAmount0 = overrideAmounts?.amount0Wei ?? amount0Wei;
     const checkAmount1 = overrideAmounts?.amount1Wei ?? amount1Wei;
 
+    // Check with +1 wei buffer to catch edge cases (consistent with useMemo above)
     const token0NeedsApproval =
-      !isToken0Native && checkAmount0 > 0n && t0Allowance < checkAmount0;
+      !isToken0Native && checkAmount0 > 0n && t0Allowance < safeAddBuffer(checkAmount0);
     const token1NeedsApproval =
-      !isToken1Native && checkAmount1 > 0n && t1Allowance < checkAmount1;
+      !isToken1Native && checkAmount1 > 0n && t1Allowance < safeAddBuffer(checkAmount1);
 
     return {
       token0NeedsApproval,

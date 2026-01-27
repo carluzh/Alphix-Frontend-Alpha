@@ -25,6 +25,10 @@ export const DEFAULT_SWAP_SLIPPAGE = 0.5;             // 0.5%
 export const DEFAULT_LP_SLIPPAGE = 2.5;               // 2.5%
 export const DEFAULT_V4_NATIVE_LP_SLIPPAGE = 0.05;    // 0.05%
 
+// Minimum slippage to prevent MEV sandwich attacks (in basis points)
+// Zero-slippage transactions are vulnerable to MEV - enforce minimum
+export const MINIMUM_SLIPPAGE_BPS = 5;                // 5 bps = 0.05%
+
 // Slippage validation result
 export enum SlippageValidationResult {
   TooLow = 0,

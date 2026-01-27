@@ -21,22 +21,11 @@
 
 import React, { useMemo } from 'react';
 import { cn } from '@/lib/utils';
+import { formatAprPercent } from '@/lib/format';
 import { FeeStat, FeeStatLoader } from './FeeStat';
 import { PointsTooltip, TooltipSize } from '../PointsCampaign/PointsTooltip';
 import { APRBreakdownTooltip } from '../APRBreakdownTooltip';
 import type { APRFeeStatProps } from './types';
-
-/**
- * Format APR value for display
- */
-function formatAprDisplay(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return '-';
-  if (value === 0) return '0.00%';
-  if (value >= 1000) return `${(value / 1000).toFixed(2)}K%`;
-  if (value >= 100) return `${value.toFixed(0)}%`;
-  if (value >= 10) return `${value.toFixed(1)}%`;
-  return `${value.toFixed(2)}%`;
-}
 
 /**
  * APR fee stat component.
@@ -73,7 +62,7 @@ export function APRFeeStat({
       return formattedApr;
     }
 
-    return formatAprDisplay(total);
+    return formatAprPercent(total);
   }, [swapApr, unifiedYieldApr, formattedApr]);
 
   const content = (

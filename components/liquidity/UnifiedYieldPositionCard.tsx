@@ -43,10 +43,12 @@ interface UnifiedYieldPositionCardProps {
     valueUSD: number;
     /** Click handler for position navigation */
     onClick: () => void;
-    /** Pool context for loading states */
+    /** Pool context for loading states and APR */
     poolContext: {
         currentPrice: string | null;
         isLoadingPrices: boolean;
+        /** Pool swap APR (optional - for tooltip breakdown) */
+        poolAPR?: number | null;
     };
     /** Additional CSS classes */
     className?: string;
@@ -63,7 +65,7 @@ export function UnifiedYieldPositionCard({
     const [pricesInverted, setPricesInverted] = useState(false);
     const { networkMode, chainId } = useNetwork();
 
-    const { currentPrice, isLoadingPrices } = poolContext;
+    const { currentPrice, isLoadingPrices, poolAPR } = poolContext;
 
     // Token info directly from position
     const token0Symbol = position.token0Symbol;
@@ -254,7 +256,7 @@ export function UnifiedYieldPositionCard({
                 hideFees
                 token0Amount={position.token0Amount}
                 token1Amount={position.token1Amount}
-                apr={0}
+                apr={poolAPR ?? undefined}
                 formattedApr={formattedApr}
                 isAprFallback={false}
                 unifiedYieldApr={aaveApr}

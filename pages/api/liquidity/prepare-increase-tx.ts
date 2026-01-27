@@ -322,7 +322,13 @@ export default async function handler(
     const erc20TokensToCheck = tokensToCheck.filter(t => !t.isNative && t.requiredAmount > 0n);
 
     // Track which tokens need ERC20 approval to Permit2
+    // Fix: Track BOTH tokens separately to handle cases where both need approval
     let erc20ApprovalNeeded: { address: string; symbol: string } | null = null;
+    let needsToken0Approval = false;
+    let needsToken1Approval = false;
+
+    // Token0 address from pool key for comparison (used in both ERC20 and Permit2 checks)
+    const token0Address = getAddress(details.poolKey.currency0);
 
     // Check ERC20 allowances to Permit2
     if (erc20TokensToCheck.length > 0) {
@@ -337,14 +343,25 @@ export default async function handler(
         allowFailure: false,
       });
 
+      // Use permitAmount (slippage-adjusted) for the check to ensure approval covers actual transfer
       for (let i = 0; i < erc20TokensToCheck.length; i++) {
         const t = erc20TokensToCheck[i];
         const allowance = erc20AllowanceResults[i] as bigint;
 
-        if (allowance < t.requiredAmount) {
-          // Track that approval is needed, but continue to generate permit data
-          erc20ApprovalNeeded = { address: t.address, symbol: t.symbol };
-          break; // Only report first token needing approval
+        if (allowance < t.permitAmount) {
+          // Track which specific token needs approval
+          const isToken0 = getAddress(t.address).toLowerCase() === token0Address.toLowerCase();
+          if (isToken0) {
+            needsToken0Approval = true;
+          } else {
+            needsToken1Approval = true;
+          }
+
+          // Keep backwards compatibility: store first token info for legacy clients
+          if (!erc20ApprovalNeeded) {
+            erc20ApprovalNeeded = { address: t.address, symbol: t.symbol };
+          }
+          // Continue checking all tokens - don't break
         }
       }
     }
@@ -387,11 +404,11 @@ export default async function handler(
           const [permitAmt, permitExp, permitNonce] = permit2AllowanceResults[i] as readonly [bigint, number, number];
           const hasValidPermit = permitAmt >= t.permitAmount && permitExp > currentTimestamp;
 
-          // If ERC20 approval is needed, always include permit data regardless of existing Permit2 allowance.
+          // If ERC20 approval is needed for this token, always include permit data regardless of existing Permit2 allowance.
           // This ensures the frontend step flow works correctly: [approval] -> [permit] -> [tx]
-          // After ERC20 approval, user will sign a fresh permit which is fine even if they had existing allowance.
-          const isTokenNeedingApproval = erc20ApprovalNeeded &&
-            t.address.toLowerCase() === erc20ApprovalNeeded.address.toLowerCase();
+          // Fix: Use the new per-token flags instead of legacy single-token check
+          const isToken0 = getAddress(t.address).toLowerCase() === token0Address.toLowerCase();
+          const isTokenNeedingApproval = isToken0 ? needsToken0Approval : needsToken1Approval;
 
           if (hasValidPermit && !isTokenNeedingApproval) return;
 
@@ -473,6 +490,9 @@ export default async function handler(
         approvalTokenSymbol: erc20ApprovalNeeded.symbol,
         approveToAddress: PERMIT2_ADDRESS,
         approvalAmount: maxUint256.toString(),
+        // New flags: explicitly indicate which tokens need approval
+        needsToken0Approval,
+        needsToken1Approval,
         // Include permit data so frontend can build complete step list
         permitBatchData: permitBatchDataResponse,
         signatureDetails: signatureDetailsResponse,

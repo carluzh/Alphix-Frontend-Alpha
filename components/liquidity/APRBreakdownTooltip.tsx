@@ -14,6 +14,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { getToken } from "@/lib/pools-config";
 import { getYieldSourcesForTokens } from "@/lib/aave-rates";
+import { formatAprPercent } from "@/lib/format";
 import { PointsIcon } from "@/components/PointsIcons/PointsIcon";
 import { YIELD_SOURCES } from "./yield-sources";
 
@@ -40,14 +41,6 @@ interface APRBreakdownTooltipProps extends APRBreakdownData {
 // =============================================================================
 // HELPERS
 // =============================================================================
-
-function formatPercent(value: number | undefined): string {
-  if (value === undefined || value === null) return "-";
-  if (!Number.isFinite(value)) return "-";
-  if (value === 0) return "0.00%";
-  if (value >= 1000) return `${(value / 1000).toFixed(2)}K%`;
-  return `${value.toFixed(2)}%`;
-}
 
 /** Aave purple color for label text */
 const AAVE_TEXT_COLOR = "#B8B6FF";
@@ -204,7 +197,7 @@ export function APRBreakdownTooltip({
       <TooltipRow
         icon={<TokenPairLogo token0Symbol={token0Symbol} token1Symbol={token1Symbol} />}
         label="Swap APR"
-        value={formatPercent(swapApr)}
+        value={formatAprPercent(swapApr)}
       />
 
       {/* Lending Yield Row - only show for positions that can earn it */}
@@ -225,7 +218,7 @@ export function APRBreakdownTooltip({
             <span className="text-xs" style={labelStyle}>Lending APY</span>
           </div>
           <span className="text-xs flex-shrink-0 font-mono" style={valueStyle}>
-            {formatPercent(unifiedYieldApr)}
+            {formatAprPercent(unifiedYieldApr)}
           </span>
         </div>
       )}

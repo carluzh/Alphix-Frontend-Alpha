@@ -49,15 +49,17 @@ export interface WizardState {
 // Standard pools: percentage-based (wider ranges for volatile pairs)
 export type RangePreset =
   // Stable pool presets (tick-based)
-  | 'stable_narrow'     // ± 1 tick - Tightest range for stablecoins
-  | 'stable_moderate'   // ± 3 ticks - Moderate range for stablecoins
-  | 'stable_wide'       // ± 10 ticks - Wider stable range
-  | 'stable_skewed'     // +3 ticks, -20% - Asymmetric for slight depeg protection
-  // Standard pool presets (percentage-based)
-  | 'narrow'            // ± 1% - Tight range for low volatility
-  | 'moderate'          // ± 5% - Moderate range
-  | 'wide'              // ± 15% - Wide range for volatile pairs
-  | 'full'              // Full Range - All prices
+  | 'stable_narrow'     // 1 tick - Single tick at current price
+  | 'stable_standard'   // Rehypo range - Optimized for lending yield
+  | 'stable_wide'       // ± 2 ticks - Balanced range for stable pairs
+  | 'stable_skewed'     // +1 / -3 ticks - Asymmetric for depeg protection
+  | 'stable_moderate'   // Legacy: ± 3 ticks
+  // Standard/Volatile pool presets (percentage-based)
+  | 'narrow'            // ± 5% - Tight range
+  | 'wide'              // ± 25% - Wide range for volatile pairs
+  | 'skewed'            // +10 / -30% - Asymmetric for directional exposure
+  | 'full'              // Full Range - Optimized for lending yield
+  | 'moderate'          // Legacy: ± 5%
   // Legacy/custom
   | 'stable'            // Legacy: ± 3 ticks (maps to stable_moderate)
   | 'one_sided_lower'   // Legacy: –50%

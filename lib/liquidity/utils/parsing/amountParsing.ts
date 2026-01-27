@@ -8,6 +8,72 @@
 import { parseUnits, formatUnits } from 'viem';
 
 /**
+ * Result type for explicit error handling in amount parsing.
+ * Use this when you need to know WHY parsing failed (e.g., to show user errors).
+ */
+export type SafeParseResult =
+  | { success: true; value: bigint }
+  | { success: false; error: string };
+
+/**
+ * Parse amount string to bigint with explicit success/failure.
+ * Returns a discriminated union so callers can handle errors appropriately.
+ *
+ * Use this instead of safeParseUnits when:
+ * - You need to show error messages to users
+ * - Silent zero-amount transactions would be problematic
+ *
+ * @param amount - Amount string to parse
+ * @param decimals - Token decimals
+ * @returns SafeParseResult with either success+value or error message
+ */
+export function safeParseUnitsResult(amount: string, decimals: number): SafeParseResult {
+  const cleaned = (amount || '').toString().replace(/,/g, '').trim();
+
+  if (!cleaned || cleaned === '.') {
+    return { success: false, error: 'Amount is empty' };
+  }
+
+  if (cleaned === '< 0.0001') {
+    return { success: false, error: 'Amount is too small to parse' };
+  }
+
+  // Handle scientific notation
+  if (cleaned.includes('e') || cleaned.includes('E')) {
+    const numericValue = parseFloat(cleaned);
+    if (isNaN(numericValue) || !isFinite(numericValue)) {
+      return { success: false, error: 'Invalid scientific notation' };
+    }
+    const fullDecimalString = numericValue.toFixed(decimals);
+    const trimmedString = fullDecimalString.replace(/\.?0+$/, '');
+    const finalString = trimmedString === '.' || trimmedString === '' ? '0' : trimmedString;
+    try {
+      return { success: true, value: parseUnits(finalString, decimals) };
+    } catch (e) {
+      return { success: false, error: `Failed to parse: ${e instanceof Error ? e.message : 'unknown error'}` };
+    }
+  }
+
+  // Validate it's a valid number
+  const numericCheck = parseFloat(cleaned);
+  if (isNaN(numericCheck)) {
+    return { success: false, error: 'Not a valid number' };
+  }
+  if (!isFinite(numericCheck)) {
+    return { success: false, error: 'Number is infinite' };
+  }
+  if (numericCheck < 0) {
+    return { success: false, error: 'Amount cannot be negative' };
+  }
+
+  try {
+    return { success: true, value: parseUnits(cleaned, decimals) };
+  } catch (e) {
+    return { success: false, error: `Failed to parse: ${e instanceof Error ? e.message : 'unknown error'}` };
+  }
+}
+
+/**
  * Safely parse amount string to bigint, handling:
  * - Scientific notation (e.g., "1e-10")
  * - Commas in numbers

@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { Token, SwapProgressState } from './swap-interface';
-import { formatTokenAmount } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
 import type { SwapTradeModel, PriceImpactWarning } from "./useSwapTrade";
 
@@ -187,10 +186,10 @@ export function SwapReviewView({
           <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={32} height={32} className="rounded-full"/>
           <div className="text-left flex flex-col">
             <div className="font-medium flex items-baseline">
-              {trade.calculatedValues.fromTokenAmount === "< 0.001" ? (
+              {trade.calculatedValues.fromTokenAmount.startsWith("< ") ? (
                 <span className="text-xs text-muted-foreground">{trade.calculatedValues.fromTokenAmount}</span>
               ) : (
-                <span className="text-sm">{formatTokenAmount(trade.calculatedValues.fromTokenAmount)}</span>
+                <span className="text-sm">{trade.calculatedValues.fromTokenAmount}</span>
               )}
               <span className="ml-1 text-xs text-muted-foreground">{displayFromToken.symbol}</span>
             </div>
@@ -201,10 +200,10 @@ export function SwapReviewView({
         <div className="flex items-center gap-3">
           <div className="text-right flex flex-col">
             <div className="font-medium flex items-baseline">
-              {trade.calculatedValues.toTokenAmount === "< 0.001" ? (
+              {trade.calculatedValues.toTokenAmount.startsWith("< ") ? (
                 <span className="text-xs text-muted-foreground">{trade.calculatedValues.toTokenAmount}</span>
               ) : (
-                <span className="text-sm">{formatTokenAmount(trade.calculatedValues.toTokenAmount)}</span>
+                <span className="text-sm">{trade.calculatedValues.toTokenAmount}</span>
               )}
               <span className="ml-1 text-xs text-muted-foreground">{displayToToken.symbol}</span>
             </div>

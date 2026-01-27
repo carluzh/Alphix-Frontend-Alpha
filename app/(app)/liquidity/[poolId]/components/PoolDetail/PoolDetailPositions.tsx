@@ -162,6 +162,7 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
                 poolContext={{
                   currentPrice: poolState.currentPrice,
                   isLoadingPrices,
+                  poolAPR: poolAPR > 0 ? poolAPR : null,
                 }}
                 onClick={() => onPositionClick(position)}
               />

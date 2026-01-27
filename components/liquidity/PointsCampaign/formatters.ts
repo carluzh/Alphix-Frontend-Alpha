@@ -38,8 +38,8 @@ export type PercentNumberDecimals = 1 | 2 | 3 | 4;
  * formatPercent(12.5)  // "12.5%" (trailing zero suppressed for >= 1%)
  * formatPercent(5)     // "5%" (not "5.00%")
  * formatPercent(0.5)   // "0.50%" (small value, decimals preserved)
- * formatPercent(null)  // "-"
- * formatPercent(NaN)   // "-"
+ * formatPercent(null)  // "0.00%"
+ * formatPercent(NaN)   // "0.00%"
  * ```
  */
 export function formatPercent(
@@ -47,9 +47,9 @@ export function formatPercent(
   locale: string = 'en-US',
   maxDecimals: PercentNumberDecimals = 2
 ): string {
-  // Handle null/undefined - mirrors Uniswap's null check
+  // Handle null/undefined - return 0.00% for missing APR values
   if (rawPercentage === null || rawPercentage === undefined) {
-    return PLACEHOLDER_TEXT;
+    return '0.00%';
   }
 
   // Parse to number if string - mirrors Uniswap's string handling
@@ -58,9 +58,9 @@ export function formatPercent(
       ? parseFloat(rawPercentage)
       : parseFloat(rawPercentage.toString());
 
-  // Handle NaN cases - mirrors Uniswap's NaN check
+  // Handle NaN cases - return 0.00% for invalid values
   if (isNaN(percentage)) {
-    return PLACEHOLDER_TEXT;
+    return '0.00%';
   }
 
   // Format using Intl.NumberFormat with percent style
@@ -86,8 +86,8 @@ export function formatPercent(
  * Convenience wrapper that handles undefined pool APR.
  *
  * @param apr - APR value or undefined
- * @returns Formatted string or placeholder
+ * @returns Formatted string (0.00% for undefined)
  */
 export function formatAprForTooltip(apr: number | undefined): string {
-  return apr !== undefined ? formatPercent(apr) : PLACEHOLDER_TEXT;
+  return apr !== undefined ? formatPercent(apr) : '0.00%';
 }

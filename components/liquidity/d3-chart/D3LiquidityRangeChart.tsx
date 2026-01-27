@@ -35,6 +35,8 @@ export interface D3LiquidityRangeChartProps {
   duration?: HistoryDuration;
   onRangeChange: (minPrice: number, maxPrice: number) => void;
   className?: string;
+  /** When true, disables all interactions (zoom, pan, drag). Chart becomes view-only. */
+  viewOnly?: boolean;
 }
 
 export interface D3LiquidityRangeChartHandle {
@@ -55,6 +57,7 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
   duration = HistoryDuration.MONTH,
   onRangeChange,
   className,
+  viewOnly = false,
 }, ref) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -519,6 +522,7 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
         getYToPrice,
         getLiquidityData,
         onRangeChange,
+        viewOnly,
       }),
       currentPrice: createCurrentPriceRenderer({
         g: mainGroup,
@@ -533,6 +537,7 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
         getYToPrice,
         getLiquidityData,
         onRangeChange,
+        viewOnly,
       }),
       // Overlay must be last for event handling
       overlay: createLiquidityBarsOverlayRenderer({
@@ -543,6 +548,7 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
         getTickScale,
         getYToPrice,
         onRangeChange,
+        viewOnly,
       }),
       // Timescale (X-axis date labels) at the bottom
       timescale: createTimescaleRenderer({
@@ -559,7 +565,7 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
     return () => {
       renderersRef.current = {};
     };
-  }, [isInitialized, liquidityData, dimensions, createPriceToY, createYToPrice, drawAll, onRangeChange, currentPrice, propMinPrice, propMaxPrice, duration]);
+  }, [isInitialized, liquidityData, dimensions, createPriceToY, createYToPrice, drawAll, onRangeChange, currentPrice, propMinPrice, propMaxPrice, duration, viewOnly]);
 
   // Redraw when props change
   useEffect(() => {
@@ -569,9 +575,10 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
   }, [propMinPrice, propMaxPrice, isFullRange, priceData, drawAll]);
 
   // Handle wheel zoom and pan - attached to container for better event capture
+  // Skip when viewOnly is true (chart becomes non-interactive)
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || viewOnly) return;
 
     // Wheel zoom handler
     const handleWheel = (event: WheelEvent) => {
@@ -711,7 +718,7 @@ export const D3LiquidityRangeChart = forwardRef<D3LiquidityRangeChartHandle, D3L
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, []);
+  }, [viewOnly]);
 
   // Total height includes chart + timescale
   const totalHeight = CHART_DIMENSIONS.CHART_HEIGHT + CHART_DIMENSIONS.TIMESCALE_HEIGHT;

@@ -447,7 +447,12 @@ export async function preparePermit2BatchForPosition(
                     nonce: nonce.toString(),
                 });
             });
-        } catch {}
+        } catch (error) {
+            console.error('[preparePermit2BatchForPosition] Permit2 allowance check failed:', error);
+            throw new Error(
+                `Failed to check Permit2 allowances for position ${tokenId}: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
     }
 
     return {
@@ -525,7 +530,12 @@ export async function preparePermit2BatchForNewPosition(
                     nonce: nonce.toString(),
                 });
             });
-        } catch {}
+        } catch (error) {
+            console.error('[preparePermit2BatchForNewPosition] Permit2 allowance check failed:', error);
+            throw new Error(
+                `Failed to check Permit2 allowances for ${token0Symbol}/${token1Symbol}: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
     }
 
     return {

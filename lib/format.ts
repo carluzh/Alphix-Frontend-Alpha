@@ -31,4 +31,7 @@ export {
   maxDecimalsReached,
   addFiatSymbolToNumber,
   getFiatCurrencyComponents,
+
+  // APR formatting
+  formatAprPercent,
 } from './format/index'

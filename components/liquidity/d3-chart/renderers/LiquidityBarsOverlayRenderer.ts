@@ -17,6 +17,8 @@ export interface LiquidityBarsOverlayRendererConfig {
   getTickScale: () => TickScale;
   getYToPrice: () => YToPriceFn;
   onRangeChange: (minPrice: number, maxPrice: number) => void;
+  /** When true, disables all drag interactions */
+  viewOnly?: boolean;
 }
 
 export function createLiquidityBarsOverlayRenderer({
@@ -27,6 +29,7 @@ export function createLiquidityBarsOverlayRenderer({
   getTickScale,
   getYToPrice,
   onRangeChange,
+  viewOnly = false,
 }: LiquidityBarsOverlayRendererConfig): Renderer {
   let liquidityOverlay: d3.Selection<SVGRectElement, unknown, null, undefined> | null = null;
 
@@ -98,7 +101,8 @@ export function createLiquidityBarsOverlayRenderer({
       });
 
     // Set cursor based on mode
-    if (isFullRange) {
+    // In viewOnly mode or full range, no interactions
+    if (viewOnly || isFullRange) {
       liquidityOverlay.attr('cursor', 'default');
       return;
     }

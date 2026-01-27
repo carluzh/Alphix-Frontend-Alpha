@@ -453,13 +453,18 @@ export default async function handler(
             t => !t.isNative && t.requiredAmount > 0n
         );
 
-        // Track ERC20 approval needs - don't return early, we need to compute permit data too
+        // Track ERC20 approval needs for BOTH tokens - don't return early, we need to compute permit data too
+        // Fix: Track each token separately to handle cases where both tokens need approval
         let erc20ApprovalNeeded: {
             approvalTokenAddress: string;
             approvalTokenSymbol: string;
             approveToAddress: string;
             approvalAmount: string;
         } | null = null;
+
+        // Track which specific tokens need approval (for frontend to build approval requests)
+        let needsToken0Approval = false;
+        let needsToken1Approval = false;
 
         // Batch all ERC20 allowance checks into single multicall
         if (erc20TokensToCheck.length > 0) {
@@ -474,19 +479,31 @@ export default async function handler(
                 allowFailure: false,
             });
 
-            // Check results and note first token that needs approval (don't return early)
+            // Check results and note ALL tokens that need approval (don't return early)
+            // Use permitAmount (slippage-adjusted) for the check to ensure approval covers actual transfer
             for (let i = 0; i < erc20TokensToCheck.length; i++) {
                 const t = erc20TokensToCheck[i];
                 const erc20Allowance = erc20AllowanceResults[i] as bigint;
 
-                if (erc20Allowance < t.requiredAmount && !erc20ApprovalNeeded) {
-                    erc20ApprovalNeeded = {
-                        approvalTokenAddress: t.sdkToken.address,
-                        approvalTokenSymbol: t.symbol,
-                        approveToAddress: PERMIT2_ADDRESS,
-                        approvalAmount: maxUint256.toString(),
-                    };
-                    // Don't return early - continue to compute permit data
+                if (erc20Allowance < t.permitAmount) {
+                    // Track which specific token needs approval (for frontend)
+                    const isToken0 = getAddress(t.sdkToken.address).toLowerCase() === getAddress(sortedToken0.address).toLowerCase();
+                    if (isToken0) {
+                        needsToken0Approval = true;
+                    } else {
+                        needsToken1Approval = true;
+                    }
+
+                    // Keep backwards compatibility: store first token info for legacy clients
+                    if (!erc20ApprovalNeeded) {
+                        erc20ApprovalNeeded = {
+                            approvalTokenAddress: t.sdkToken.address,
+                            approvalTokenSymbol: t.symbol,
+                            approveToAddress: PERMIT2_ADDRESS,
+                            approvalAmount: maxUint256.toString(),
+                        };
+                    }
+                    // Don't return early - continue to check all tokens and compute permit data
                 }
             }
         }
@@ -535,8 +552,9 @@ export default async function handler(
 
                     // If ERC20 approval is needed for this token, always include permit data regardless of existing Permit2 allowance.
                     // This ensures the frontend step flow works correctly: [approval] -> [permit] -> [tx]
-                    const isTokenNeedingApproval = erc20ApprovalNeeded &&
-                        getAddress(t.sdkToken.address).toLowerCase() === erc20ApprovalNeeded.approvalTokenAddress.toLowerCase();
+                    // Fix: Use the new per-token flags instead of legacy single-token check
+                    const isToken0 = getAddress(t.sdkToken.address).toLowerCase() === getAddress(sortedToken0.address).toLowerCase();
+                    const isTokenNeedingApproval = isToken0 ? needsToken0Approval : needsToken1Approval;
 
                     if (hasValidPermit && !isTokenNeedingApproval) return;
 
@@ -608,6 +626,9 @@ export default async function handler(
                             approvalTokenSymbol: erc20ApprovalNeeded.approvalTokenSymbol,
                             approveToAddress: erc20ApprovalNeeded.approveToAddress,
                             approvalAmount: erc20ApprovalNeeded.approvalAmount,
+                            // New flags: explicitly indicate which tokens need approval
+                            needsToken0Approval,
+                            needsToken1Approval,
                         }),
                     });
             }
@@ -695,6 +716,9 @@ export default async function handler(
                         approvalTokenSymbol: erc20ApprovalNeeded.approvalTokenSymbol,
                         approveToAddress: erc20ApprovalNeeded.approveToAddress,
                         approvalAmount: erc20ApprovalNeeded.approvalAmount,
+                        // New flags: explicitly indicate which tokens need approval
+                        needsToken0Approval,
+                        needsToken1Approval,
                     });
                 }
             }

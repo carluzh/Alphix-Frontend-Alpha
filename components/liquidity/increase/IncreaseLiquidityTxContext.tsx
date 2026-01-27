@@ -423,16 +423,20 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
 
       // Handle ERC20 approval needed (API now includes permit data for complete step generation)
       if (data.needsApproval && data.approvalType === 'ERC20_TO_PERMIT2') {
-        const approvalTokenAddress = data.approvalTokenAddress as Address;
-        const isToken0 = approvalTokenAddress.toLowerCase() === token0Config.address.toLowerCase();
+        // Use the new needsToken0Approval/needsToken1Approval flags from API to handle both tokens
+        // Fallback to legacy address comparison for backwards compatibility
+        const needsToken0 = data.needsToken0Approval ??
+          (data.approvalTokenAddress?.toLowerCase() === token0Config.address.toLowerCase());
+        const needsToken1 = data.needsToken1Approval ??
+          (data.approvalTokenAddress?.toLowerCase() === token1Config.address.toLowerCase());
 
         // Build approval transaction request using shared modular helper
         // Respects user's approval mode setting (exact vs infinite)
         const rawAmount0 = parseUnits(amount0 || "0", token0Config.decimals);
         const rawAmount1 = parseUnits(amount1 || "0", token1Config.decimals);
         const approvals = buildApprovalRequests({
-          needsToken0: isToken0,
-          needsToken1: !isToken0,
+          needsToken0,
+          needsToken1,
           token0Address: token0Config.address as Address,
           token1Address: token1Config.address as Address,
           spender: PERMIT2_ADDRESS,

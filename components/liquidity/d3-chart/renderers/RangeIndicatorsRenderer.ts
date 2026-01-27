@@ -23,6 +23,8 @@ export interface RangeIndicatorsRendererConfig {
   getYToPrice: () => YToPriceFn;
   getLiquidityData: () => ChartEntry[];
   onRangeChange: (minPrice: number, maxPrice: number) => void;
+  /** When true, disables all drag interactions */
+  viewOnly?: boolean;
 }
 
 export function createRangeIndicatorsRenderer({
@@ -33,6 +35,7 @@ export function createRangeIndicatorsRenderer({
   getYToPrice,
   getLiquidityData,
   onRangeChange,
+  viewOnly = false,
 }: RangeIndicatorsRendererConfig): Renderer {
   // Create a group for range indicator elements
   const indicatorsGroup = g.append('g').attr('class', CHART_CLASSES.RANGE_INDICATORS_GROUP);
@@ -89,8 +92,8 @@ export function createRangeIndicatorsRenderer({
     const constrainedMaxY = maxY - heightDiff / 2;
     const constrainedMinY = minY + heightDiff / 2;
 
-    // Create drag behaviors
-    const minDragBehavior = createHandleDragBehavior({
+    // Create drag behaviors (only when not in viewOnly mode)
+    const minDragBehavior = viewOnly ? null : createHandleDragBehavior({
       handleType: 'min',
       getState,
       getActions,
@@ -101,7 +104,7 @@ export function createRangeIndicatorsRenderer({
       onRangeChange,
     });
 
-    const maxDragBehavior = createHandleDragBehavior({
+    const maxDragBehavior = viewOnly ? null : createHandleDragBehavior({
       handleType: 'max',
       getState,
       getActions,
@@ -112,7 +115,7 @@ export function createRangeIndicatorsRenderer({
       onRangeChange,
     });
 
-    const centerDragBehavior = createCenterDragBehavior({
+    const centerDragBehavior = viewOnly ? null : createCenterDragBehavior({
       getState,
       getActions,
       priceToY,
@@ -123,7 +126,7 @@ export function createRangeIndicatorsRenderer({
     });
 
     // Draw the active range indicator bar (inside the background)
-    indicatorsGroup
+    const rangeBar = indicatorsGroup
       .append('rect')
       .attr('class', CHART_CLASSES.RANGE_INDICATOR)
       .attr('x', sidebarX)
@@ -132,12 +135,14 @@ export function createRangeIndicatorsRenderer({
       .attr('height', constrainedHeight)
       .attr('fill', CHART_COLORS.rangeActive)
       .attr('rx', 8)
-      .attr('ry', 8)
-      .attr('cursor', 'move')
-      .call(centerDragBehavior as any);
+      .attr('ry', 8);
+
+    if (centerDragBehavior) {
+      rangeBar.attr('cursor', 'move').call(centerDragBehavior as any);
+    }
 
     // Max handle (top circle)
-    indicatorsGroup
+    const maxHandle = indicatorsGroup
       .append('circle')
       .attr('class', `price-range-element ${CHART_CLASSES.MAX_HANDLE}`)
       .attr('cx', indicatorCenterX)
@@ -146,12 +151,14 @@ export function createRangeIndicatorsRenderer({
       .attr('fill', CHART_COLORS.handleFill)
       .attr('stroke', CHART_COLORS.handleStroke)
       .attr('stroke-width', 1)
-      .style('filter', CHART_COLORS.handleShadow)
-      .attr('cursor', 'ns-resize')
-      .call(maxDragBehavior as any);
+      .style('filter', CHART_COLORS.handleShadow);
+
+    if (maxDragBehavior) {
+      maxHandle.attr('cursor', 'ns-resize').call(maxDragBehavior as any);
+    }
 
     // Min handle (bottom circle)
-    indicatorsGroup
+    const minHandle = indicatorsGroup
       .append('circle')
       .attr('class', `price-range-element ${CHART_CLASSES.MIN_HANDLE}`)
       .attr('cx', indicatorCenterX)
@@ -160,13 +167,15 @@ export function createRangeIndicatorsRenderer({
       .attr('fill', CHART_COLORS.handleFill)
       .attr('stroke', CHART_COLORS.handleStroke)
       .attr('stroke-width', 1)
-      .style('filter', CHART_COLORS.handleShadow)
-      .attr('cursor', 'ns-resize')
-      .call(minDragBehavior as any);
+      .style('filter', CHART_COLORS.handleShadow);
+
+    if (minDragBehavior) {
+      minHandle.attr('cursor', 'ns-resize').call(minDragBehavior as any);
+    }
 
     // Center handle (rectangle in middle)
     const centerY = (constrainedMaxY + constrainedMinY) / 2;
-    indicatorsGroup
+    const centerHandle = indicatorsGroup
       .append('rect')
       .attr('class', `price-range-element ${CHART_CLASSES.CENTER_HANDLE}`)
       .attr('x', indicatorCenterX - CHART_DIMENSIONS.CENTER_HANDLE_WIDTH / 2)
@@ -178,9 +187,11 @@ export function createRangeIndicatorsRenderer({
       .attr('stroke-width', 1)
       .attr('rx', 2)
       .attr('ry', 2)
-      .style('filter', CHART_COLORS.handleShadow)
-      .attr('cursor', 'move')
-      .call(centerDragBehavior as any);
+      .style('filter', CHART_COLORS.handleShadow);
+
+    if (centerDragBehavior) {
+      centerHandle.attr('cursor', 'move').call(centerDragBehavior as any);
+    }
 
     // Add 3 grip lines inside the center handle
     for (let i = 0; i < 3; i++) {

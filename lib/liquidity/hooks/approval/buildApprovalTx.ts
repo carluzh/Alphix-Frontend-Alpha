@@ -34,7 +34,14 @@ export function buildApprovalCalldata(
     approvalAmount = maxUint256;
   } else {
     const userSettings = getStoredUserSettings();
-    approvalAmount = userSettings.approvalMode === 'infinite' ? maxUint256 : (amount ?? maxUint256);
+    if (userSettings.approvalMode === 'infinite' || !amount) {
+      approvalAmount = maxUint256;
+    } else {
+      // For exact mode, add 1 wei buffer to account for slippage/rounding differences
+      // Cap at maxUint256 to prevent overflow for very large amounts
+      const bufferedAmount = amount + 1n;
+      approvalAmount = bufferedAmount > maxUint256 ? maxUint256 : bufferedAmount;
+    }
   }
 
   const paddedAmount = approvalAmount.toString(16).padStart(64, '0');

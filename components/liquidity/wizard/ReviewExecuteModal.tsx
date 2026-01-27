@@ -635,11 +635,17 @@ export function ReviewExecuteModal() {
     };
 
     // Build ERC20 approval requests using shared helper (same as Unified Yield)
-    const approvalTokenLower = apiResponse.approvalTokenAddress?.toLowerCase();
+    // Use the new needsToken0Approval/needsToken1Approval flags from API to handle both tokens
+    // Fallback to legacy address comparison for backwards compatibility
+    const needsToken0 = apiResponse.needsToken0Approval ??
+      (apiResponse.approvalTokenAddress?.toLowerCase() === token0.address.toLowerCase());
+    const needsToken1 = apiResponse.needsToken1Approval ??
+      (apiResponse.approvalTokenAddress?.toLowerCase() === token1.address.toLowerCase());
+
     const v4Approvals = apiResponse.erc20ApprovalNeeded && apiResponse.approveToAddress
       ? buildApprovalRequests({
-          needsToken0: token0.address.toLowerCase() === approvalTokenLower,
-          needsToken1: token1.address.toLowerCase() === approvalTokenLower,
+          needsToken0,
+          needsToken1,
           token0Address: token0.address as Address,
           token1Address: token1.address as Address,
           spender: apiResponse.approveToAddress as Address,

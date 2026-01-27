@@ -7,6 +7,7 @@ import {
   MINIMUM_RECOMMENDED_SLIPPAGE,
   MAXIMUM_RECOMMENDED_SLIPPAGE,
   SLIPPAGE_CRITICAL_TOLERANCE,
+  MINIMUM_SLIPPAGE_BPS,
   SlippageValidationResult,
 } from './slippage-constants';
 
@@ -91,4 +92,15 @@ export function parseSlippageInput(value: string): number | null {
  */
 export function formatSlippageDisplay(slippage: number): string {
   return slippage.toFixed(2);
+}
+
+/**
+ * Enforces minimum slippage to prevent MEV sandwich attacks.
+ * Zero-slippage transactions are vulnerable - this ensures a minimum is always applied.
+ *
+ * @param slippageBps - User-provided slippage in basis points
+ * @returns Slippage in basis points, at least MINIMUM_SLIPPAGE_BPS
+ */
+export function enforceMinimumSlippageBps(slippageBps: number): number {
+  return Math.max(MINIMUM_SLIPPAGE_BPS, Math.min(10_000, slippageBps));
 }

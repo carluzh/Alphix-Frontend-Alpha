@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -166,8 +166,11 @@ export const Overview = memo(function Overview({
     | { type: 'v4'; position: PositionInfo; usdValue: number }
     | { type: 'uy'; position: UnifiedYieldPosition; usdValue: number };
 
-  // Combine all positions, sort by USD value descending, limit to MAX_POSITIONS_DISPLAYED
-  const { displayedPositions, hasMorePositions, totalPositionsValue } = useMemo(() => {
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+
+  // Combine all positions, sort by USD value descending
+  const { allSortedPositions, hasMorePositions, totalPositionsValue, totalPages } = useMemo(() => {
     const allPositions: DisplayPosition[] = [
       ...v4PositionsWithValue.map(p => ({ type: 'v4' as const, ...p })),
       ...unifiedYieldPositions.map(pos => ({
@@ -180,13 +183,21 @@ export const Overview = memo(function Overview({
     // Sort by USD value descending
     const sorted = allPositions.sort((a, b) => b.usdValue - a.usdValue);
     const totalValue = sorted.reduce((sum, p) => sum + p.usdValue, 0);
+    const pages = Math.ceil(sorted.length / MAX_POSITIONS_DISPLAYED);
 
     return {
-      displayedPositions: sorted.slice(0, MAX_POSITIONS_DISPLAYED),
+      allSortedPositions: sorted,
       hasMorePositions: totalPositionCount > MAX_POSITIONS_DISPLAYED,
       totalPositionsValue: totalValue,
+      totalPages: pages,
     };
   }, [v4PositionsWithValue, unifiedYieldPositions, getUYPositionValueUSD, totalPositionCount]);
+
+  // Get positions for current page
+  const displayedPositions = useMemo(() => {
+    const startIndex = currentPage * MAX_POSITIONS_DISPLAYED;
+    return allSortedPositions.slice(startIndex, startIndex + MAX_POSITIONS_DISPLAYED);
+  }, [allSortedPositions, currentPage]);
 
   // Get pool context for a position (with APR from aprByPoolId)
   const getPoolContext = useCallback(
@@ -328,10 +339,7 @@ export const Overview = memo(function Overview({
                           position={item.position}
                           valueUSD={item.usdValue}
                           onClick={() => handlePositionClick(item.position.positionId)}
-                          poolContext={{
-                            currentPrice: null,
-                            isLoadingPrices: isLoading ?? false,
-                          }}
+                          poolContext={getPoolContext(item.position.poolId)}
                         />
                       )}
                     </motion.div>
@@ -346,7 +354,22 @@ export const Overview = memo(function Overview({
               )}
             </TableSectionHeader>
             {hasMorePositions ? (
-              <ViewAllButton href="/liquidity" label="View all positions" />
+              <div className="flex items-center gap-1 py-2">
+                {Array.from({ length: totalPages }).map((_, index) => (
+                  <button
+                    key={index}
+                    onClick={() => setCurrentPage(index)}
+                    className={cn(
+                      "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+                      currentPage === index
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    )}
+                  >
+                    {index + 1}
+                  </button>
+                ))}
+              </div>
             ) : (
               <ViewAllButton href="/liquidity" label="View all pools" />
             )}

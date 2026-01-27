@@ -235,3 +235,37 @@ export function formatTokenAmount(value: number, displayDecimals = 6): string {
 
 // Export the default locale for reference
 export const NUMBER_LOCALE = DEFAULT_LOCALE
+
+// ============================================================================
+// APR-specific formatting (returns "0.00%" for missing/invalid values)
+// ============================================================================
+
+/**
+ * Format an APR percentage value with adaptive precision.
+ * Returns "0.00%" for null, undefined, NaN, or zero values.
+ * Uses K% notation for values >= 1000%.
+ *
+ * @example
+ * formatAprPercent(12.345) // "12.35%"
+ * formatAprPercent(0) // "0.00%"
+ * formatAprPercent(null) // "0.00%"
+ * formatAprPercent(1234.5) // "1.23K%"
+ */
+export function formatAprPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return '0.00%'
+  }
+  if (value === 0) {
+    return '0.00%'
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(2)}K%`
+  }
+  if (value >= 100) {
+    return `${value.toFixed(0)}%`
+  }
+  if (value >= 10) {
+    return `${value.toFixed(1)}%`
+  }
+  return `${value.toFixed(2)}%`
+}

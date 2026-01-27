@@ -21,6 +21,8 @@ export interface MinMaxLinesRendererConfig {
   getYToPrice: () => YToPriceFn;
   getLiquidityData: () => ChartEntry[];
   onRangeChange: (minPrice: number, maxPrice: number) => void;
+  /** When true, disables all drag interactions */
+  viewOnly?: boolean;
 }
 
 export function createMinMaxLinesRenderer({
@@ -31,6 +33,7 @@ export function createMinMaxLinesRenderer({
   getYToPrice,
   getLiquidityData,
   onRangeChange,
+  viewOnly = false,
 }: MinMaxLinesRendererConfig): Renderer {
   // Create a group for min/max line elements
   const linesGroup = g.append('g').attr('class', CHART_CLASSES.MIN_MAX_LINES_GROUP);
@@ -54,8 +57,8 @@ export function createMinMaxLinesRenderer({
     const minY = priceToY({ price: minPrice, tickAlignment: 'bottom' });
     const maxY = priceToY({ price: maxPrice, tickAlignment: 'top' });
 
-    // Create drag behaviors
-    const minDragBehavior = createHandleDragBehavior({
+    // Create drag behaviors (only when not in viewOnly mode)
+    const minDragBehavior = viewOnly ? null : createHandleDragBehavior({
       handleType: 'min',
       getState,
       getActions,
@@ -66,7 +69,7 @@ export function createMinMaxLinesRenderer({
       onRangeChange,
     });
 
-    const maxDragBehavior = createHandleDragBehavior({
+    const maxDragBehavior = viewOnly ? null : createHandleDragBehavior({
       handleType: 'max',
       getState,
       getActions,
@@ -92,8 +95,8 @@ export function createMinMaxLinesRenderer({
       .attr('stroke-width', CHART_DIMENSIONS.SOLID_LINE_HEIGHT)
       .attr('opacity', 0.08);
 
-    // Transparent drag target (wide invisible line)
-    linesGroup
+    // Transparent drag target (wide invisible line) - only interactive when not viewOnly
+    const minDragLine = linesGroup
       .append('line')
       .attr('class', `price-range-element ${CHART_CLASSES.MIN_LINE}-drag`)
       .attr('x1', 0)
@@ -102,9 +105,11 @@ export function createMinMaxLinesRenderer({
       .attr('y2', minY)
       .attr('stroke', CHART_COLORS.rangeActive)
       .attr('stroke-width', CHART_DIMENSIONS.TRANSPARENT_LINE_HEIGHT)
-      .attr('opacity', 0)
-      .attr('cursor', 'ns-resize')
-      .call(minDragBehavior as any);
+      .attr('opacity', 0);
+
+    if (minDragBehavior) {
+      minDragLine.attr('cursor', 'ns-resize').call(minDragBehavior as any);
+    }
 
     // === MAX PRICE LINE ===
     // Solid visible line
@@ -119,8 +124,8 @@ export function createMinMaxLinesRenderer({
       .attr('stroke-width', CHART_DIMENSIONS.SOLID_LINE_HEIGHT)
       .attr('opacity', 0.08);
 
-    // Transparent drag target (wide invisible line)
-    linesGroup
+    // Transparent drag target (wide invisible line) - only interactive when not viewOnly
+    const maxDragLine = linesGroup
       .append('line')
       .attr('class', `price-range-element ${CHART_CLASSES.MAX_LINE}-drag`)
       .attr('x1', 0)
@@ -129,9 +134,11 @@ export function createMinMaxLinesRenderer({
       .attr('y2', maxY)
       .attr('stroke', CHART_COLORS.rangeActive)
       .attr('stroke-width', CHART_DIMENSIONS.TRANSPARENT_LINE_HEIGHT)
-      .attr('opacity', 0)
-      .attr('cursor', 'ns-resize')
-      .call(maxDragBehavior as any);
+      .attr('opacity', 0);
+
+    if (maxDragBehavior) {
+      maxDragLine.attr('cursor', 'ns-resize').call(maxDragBehavior as any);
+    }
   };
 
   return { draw };
