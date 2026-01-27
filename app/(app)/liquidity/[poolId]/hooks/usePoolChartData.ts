@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { RetryUtility } from "@/lib/retry-utility";
 import { toast } from "sonner";
 
@@ -120,12 +120,20 @@ export function usePoolChartData({
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
 
+  // Refs to prevent redundant fetches and avoid useCallback identity changes
+  const hasFetchedForPoolRef = useRef<string | null>(null);
+  const windowWidthRef = useRef(windowWidth);
+  useEffect(() => { windowWidthRef.current = windowWidth; }, [windowWidth]);
+
   const fetchChartData = useCallback(async (force?: boolean) => {
     if (!poolId || !subgraphId) return;
 
-    if (chartData.length === 0 || force) {
-      setIsLoadingChartData(true);
-    }
+    // Guard against redundant fetches - poolKey auto-resets when pool changes
+    const poolKey = `${poolId}-${subgraphId}`;
+    if (hasFetchedForPoolRef.current === poolKey && !force) return;
+
+    hasFetchedForPoolRef.current = poolKey;
+    setIsLoadingChartData(true);
 
     try {
       const targetDays = 60;
@@ -134,8 +142,8 @@ export function usePoolChartData({
       const chartResult = await RetryUtility.fetchJson(
         `/api/liquidity/pool-chart-data?poolId=${encodeURIComponent(poolId)}&days=${targetDays}`,
         {
-          attempts: 4,
-          baseDelay: 700,
+          attempts: 2,
+          baseDelay: 300,
           validate: (j) => j?.success && Array.isArray(j?.data) && j.data.length > 0,
           throwOnFailure: true,
         }
@@ -191,8 +199,9 @@ export function usePoolChartData({
         };
       });
 
-      setChartData(processChartDataForScreenSize(merged, windowWidth));
+      setChartData(processChartDataForScreenSize(merged, windowWidthRef.current));
     } catch (error: unknown) {
+      hasFetchedForPoolRef.current = null;
       console.error('Failed to fetch chart data:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       toast.error('Chart Data Failed', {
@@ -205,7 +214,8 @@ export function usePoolChartData({
     } finally {
       setIsLoadingChartData(false);
     }
-  }, [poolId, subgraphId, chartData.length, windowWidth]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poolId, subgraphId]);
 
   const updateTodayTvl = useCallback((tvl: number) => {
     if (!Number.isFinite(tvl)) return;

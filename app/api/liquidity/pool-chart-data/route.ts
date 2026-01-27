@@ -99,7 +99,7 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       // Testnet: Use alphixHookTVLDayDatas for combined TVL (pool + rehypothecated)
       // Note: The subgraph's USD fields are not populated, so we use token amounts
       // and convert to USD using our price data.
-      // Hook address is used as filter (testnet only has one hook currently)
+      // Hook address filter is critical - without it we get wrong pool's TVL
       tvlDayDataQuery = `{
         alphixHookTVLDayDatas(
           where: { hook: "${hookAddress}" }
@@ -112,7 +112,7 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
           totalAmount0
           totalAmount1
         }
-        alphixHookTVLs(first: 1) {
+        alphixHookTVLs(where: { hook: "${hookAddress}" }) {
           totalAmount0
           totalAmount1
         }

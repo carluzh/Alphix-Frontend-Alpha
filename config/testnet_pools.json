@@ -89,7 +89,7 @@
       "enabled": true,
       "featured": true,
       "type": "Volatile",
-      "yieldSources": ["aave", "spark"],
+      "yieldSources": ["aave"],
       "rehypoRange": {
         "min": "-887220",
         "max": "887220",

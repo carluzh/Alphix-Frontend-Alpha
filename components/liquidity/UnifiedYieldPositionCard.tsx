@@ -173,7 +173,7 @@ export function UnifiedYieldPositionCard({
 
     // Format APR display
     const formattedApr = useMemo(() => {
-        if (aaveApr === undefined) return '-';
+        if (aaveApr === undefined || aaveApr === 0) return '0.00%';
         return `${aaveApr.toFixed(2)}%`;
     }, [aaveApr]);
 
@@ -274,6 +274,7 @@ export function UnifiedYieldPositionCard({
                 formattedMinPrice={isFullRange ? '0' : minPrice}
                 formattedMaxPrice={isFullRange ? '∞' : maxPrice}
                 isFullRange={isFullRange}
+                yieldSources={poolConfig?.yieldSources}
             />
         </div>
     );

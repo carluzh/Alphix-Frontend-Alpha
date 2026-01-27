@@ -86,8 +86,8 @@ export const Overview = memo(function Overview({
     router.push(`/liquidity/position/${tokenId}?from=overview`);
   }, [router]);
 
-  // Testnet stablecoins always priced at $1
-  const STABLECOINS_USD = new Set(['USDC', 'USDT', 'DAI', 'aUSDC', 'aDAI', 'atUSDC', 'atDAI']);
+  // Stablecoins always priced at $1
+  const STABLECOINS_USD = new Set(['USDC', 'USDT', 'atUSDC', 'atDAI']);
 
   // Get USD price for a symbol from priceMap (with stablecoin fallback)
   const getUsdPriceForSymbol = useCallback(

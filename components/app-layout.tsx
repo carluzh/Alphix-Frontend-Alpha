@@ -10,6 +10,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import { useAccount } from "wagmi";
 import { ANNOUNCEMENTS, isAnnouncementActive } from "@/lib/announcements";
+import { NavigationProgressBar } from "@/lib/navigation-progress";
 
 function VersionBadge() {
   const version = process.env.NEXT_PUBLIC_APP_VERSION || '0.0.0';
@@ -96,6 +97,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       <SidebarInset
         className={isMobile === true ? MOBILE_HEADER_PADDING_CLASS : ""}
       >
+        <NavigationProgressBar />
         <div className="flex flex-1 flex-col">
           {children}
         </div>

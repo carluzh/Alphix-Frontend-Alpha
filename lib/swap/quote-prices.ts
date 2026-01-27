@@ -5,12 +5,9 @@ import type { NetworkMode } from '@/lib/pools-config'
 import { MAINNET_CHAIN_ID } from '@/lib/network-mode'
 
 // Stablecoins that are always priced at $1.00
-// Mainnet: USDC is the quote currency
-// Testnet: atDAI and atUSDC are mock stablecoins (always $1)
 const STABLECOINS_USD = new Set([
-  'USDC', 'USDT', 'DAI',           // Mainnet stablecoins
-  'AUSDC', 'aUSDC', 'aDAI',        // Aave wrapped
-  'atUSDC', 'atDAI',               // Testnet mock stablecoins
+  'USDC', 'USDT',      // Mainnet
+  'atUSDC', 'atDAI',   // Testnet
 ])
 
 function isStablecoinUSD(symbol: string | null | undefined): boolean {

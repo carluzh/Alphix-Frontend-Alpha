@@ -117,8 +117,8 @@ export function useGasFeeEstimate({
       };
     }
 
-    // Get ETH price - try ETH first, then aETH
-    const ethPriceUSD = prices?.ETH ?? prices?.aETH;
+    // Get ETH price
+    const ethPriceUSD = prices?.ETH;
     if (!ethPriceUSD) {
       return {
         gasFeeUSD: undefined,

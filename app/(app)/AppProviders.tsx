@@ -10,6 +10,7 @@ import { SpeedInsights } from '@vercel/speed-insights/next'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { SSEProvider } from "@/lib/realtime"
+import { NavigationProgressProvider } from "@/lib/navigation-progress"
 
 export default function AppProviders({
   children,
@@ -44,9 +45,11 @@ export default function AppProviders({
       <AppKitProvider cookies={cookieString}>
         <SSEProvider>
           <ErrorBoundary>
-            <SidebarProvider>
-              {children}
-            </SidebarProvider>
+            <NavigationProgressProvider>
+              <SidebarProvider>
+                {children}
+              </SidebarProvider>
+            </NavigationProgressProvider>
           </ErrorBoundary>
         </SSEProvider>
       </AppKitProvider>

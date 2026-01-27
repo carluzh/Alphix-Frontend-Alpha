@@ -217,7 +217,7 @@ export function PositionCardCompact({
         }
 
         if (valueUSD <= 0) {
-            return { formattedAPR: '-', rawSwapApr: undefined, isFallback: false, isLoading: false };
+            return { formattedAPR: '0.00%', rawSwapApr: 0, isFallback: false, isLoading: false };
         }
 
         if (position.status === PositionStatus.CLOSED) {

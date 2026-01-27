@@ -202,8 +202,8 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     dependentField,
     reset: resetCalculation,
   } = useAddLiquidityCalculation({
-    token0Symbol: token0Symbol || 'aUSDC' as TokenSymbol,
-    token1Symbol: token1Symbol || 'aUSDT' as TokenSymbol,
+    token0Symbol: token0Symbol || 'atUSDC' as TokenSymbol,
+    token1Symbol: token1Symbol || 'atDAI' as TokenSymbol,
     chainId,
   });
 

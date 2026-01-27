@@ -5,12 +5,11 @@ import {
 } from '@/lib/liquidity/utils/tick-price';
 
 // Quote token priority for determining base token in price display
-// Includes both mainnet (USDC, USDT, etc.) and testnet (aUSDC, aUSDT, etc.) symbols
 const QUOTE_TOKEN_PRIORITY: Record<string, number> = {
-  // Mainnet symbols
-  'USDC': 10, 'USDT': 9, 'DAI': 8, 'BTC': 5, 'ETH': 4,
-  // Testnet symbols (same priority as mainnet counterparts)
-  'aUSDC': 10, 'aUSDT': 9, 'aDAI': 8, 'aBTC': 5, 'aETH': 4
+  // Mainnet
+  'USDC': 10, 'USDT': 9, 'ETH': 4,
+  // Testnet
+  'atUSDC': 10, 'atDAI': 9, 'atETH': 4,
 };
 
 export function getOptimalBaseToken(token0: string, token1: string, currentPrice?: number): string {
@@ -21,7 +20,7 @@ export function getOptimalBaseToken(token0: string, token1: string, currentPrice
 }
 
 export function getDecimalsForDenomination(baseToken: string, poolType?: string): number {
-  const isUsd = ['aUSDT', 'aUSDC', 'USDT', 'USDC', 'aDAI', 'DAI'].includes(baseToken);
+  const isUsd = ['USDC', 'USDT', 'atUSDC', 'atDAI'].includes(baseToken);
   const isStable = poolType?.toLowerCase() === 'stable';
   return isUsd ? (isStable ? 6 : 2) : 6;
 }

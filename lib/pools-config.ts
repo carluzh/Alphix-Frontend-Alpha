@@ -168,21 +168,14 @@ export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverr
 
   // Prefer canonical aliases if multiple pools match
   const priority: Record<string, number> = {
-    // USDC family
-    'aUSDC': 100,
-    'USDC': 80,
-    'yUSDC': 60,
-    'YUSD': 50,
-    // USDT family
-    'mUSDT': 100,
-    'aUSDT': 90,
-    'USDT': 80,
-    // ETH family
-    'aETH': 90,
+    // Mainnet
+    'USDC': 100,
+    'USDT': 90,
     'ETH': 80,
-    // BTC family
-    'aBTC': 90,
-    'BTC': 80,
+    // Testnet
+    'atUSDC': 100,
+    'atDAI': 90,
+    'atETH': 80,
   };
 
   const rank = (pool: PoolConfig) => (priority[pool.currency0.symbol] || 0) + (priority[pool.currency1.symbol] || 0);

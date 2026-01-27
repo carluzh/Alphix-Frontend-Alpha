@@ -50,7 +50,7 @@ const INPUT_GRADIENT_STYLES = `
 interface TokenInputCardProps {
   /** Unique ID for the input element */
   id: string;
-  /** Token symbol (e.g., "aETH", "aUSDC") */
+  /** Token symbol (e.g., "ETH", "USDC", "atETH", "atUSDC") */
   tokenSymbol: string;
   /** Current input value */
   value: string;

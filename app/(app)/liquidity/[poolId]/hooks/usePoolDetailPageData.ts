@@ -55,6 +55,7 @@ export interface PoolConfig {
   tickSpacing: number;
   type?: string;
   hooks?: string;
+  yieldSources?: Array<'aave' | 'spark'>;
 }
 
 export interface PoolStats {
@@ -153,6 +154,7 @@ function getPoolConfiguration(poolId: string): PoolConfig | null {
     tickSpacing: poolConfig.tickSpacing || DEFAULT_TICK_SPACING,
     type: poolConfig.type,
     hooks: poolConfig.hooks,
+    yieldSources: poolConfig.yieldSources,
   };
 }
 
@@ -305,14 +307,12 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
   const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
     const symbol = (symbolRaw || '').toUpperCase();
     if (!symbol) return 0;
-    if (['USDC', 'AUSDC', 'USDT', 'AUSDT', 'MUSDT', 'YUSD', 'DAI', 'ADAI'].includes(symbol)) {
+    // Stablecoins (mainnet + testnet)
+    if (['USDC', 'USDT', 'ATUSDC', 'ATDAI'].includes(symbol)) {
       return extractUsd(allPrices?.USDC, 1);
     }
-    if (['ETH', 'AETH'].includes(symbol)) {
+    if (['ETH', 'ATETH'].includes(symbol)) {
       return extractUsd(allPrices?.ETH, 0);
-    }
-    if (['BTC', 'ABTC'].includes(symbol)) {
-      return extractUsd(allPrices?.BTC, 0);
     }
     return 0;
   }, [allPrices, extractUsd]);
@@ -398,7 +398,6 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
             fees24hFormatted: formatUSD(fees24hUSD),
           });
 
-          // Update today's TVL in chart
           updateTodayTvl(tvlUSD);
         }
       } catch (error) {

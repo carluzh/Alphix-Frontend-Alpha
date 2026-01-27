@@ -29,16 +29,15 @@ const CACHE_TTL = { fresh: 900, stale: 1800 }
 // CoinGecko fallback configuration (temporary - goal is to remove)
 const COINGECKO_IDS: Record<string, string> = {
   'ETH': 'ethereum',
-  'aETH': 'ethereum',
+  'atETH': 'ethereum',
   'USDC': 'usd-coin',
-  'aUSDC': 'usd-coin',
+  'atUSDC': 'usd-coin',
   'USDT': 'tether',
-  'aUSDT': 'tether',
-  'mUSDT': 'tether',
+  'atDAI': 'dai',
 }
 
-// Only USDC is the quote currency ($1.00) - USDT uses actual on-chain prices
-const STABLECOINS = ['USDC', 'aUSDC']
+// Only USDC is the quote currency ($1.00)
+const STABLECOINS = ['USDC', 'USDT', 'atUSDC', 'atDAI']
 
 interface UniswapPriceHistoryResponse {
   data?: {

@@ -6,13 +6,9 @@ import Image from "next/image";
 import { cn, shortenAddress } from "@/lib/utils";
 import { IconClone2, IconCheck } from "nucleo-micro-bold-essential";
 import { PointsIcon } from "@/components/PointsIcons/PointsIcon";
+import { YIELD_SOURCES } from "@/components/liquidity/yield-sources";
+import { LendingSourceIcons } from "@/components/liquidity/APRBreakdownTooltip";
 import type { PoolConfig } from "../../hooks";
-
-// Yield source branding
-const YIELD_SOURCE = {
-  name: "Aave",
-  textLogo: "/aave/Logo-light.png",
-};
 
 /**
  * Copyable text row with hover-to-reveal copy icon
@@ -915,10 +911,12 @@ function YieldBreakdownSection({
   poolApr,
   aaveApr,
   pointsMultiplier,
+  yieldSources = ['aave'],
 }: {
   poolApr?: number;
   aaveApr?: number;
   pointsMultiplier?: number;
+  yieldSources?: Array<'aave' | 'spark'>;
 }) {
   const totalApr = (poolApr ?? 0) + (aaveApr ?? 0);
 
@@ -933,7 +931,10 @@ function YieldBreakdownSection({
           </span>
         </div>
         <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors">
-          <span className="text-xs text-muted-foreground">Lending Yield</span>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <LendingSourceIcons sources={yieldSources} />
+            Lending APY
+          </span>
           <span className="text-xs font-mono text-foreground">
             {aaveApr !== undefined ? `${aaveApr.toFixed(2)}%` : "—"}
           </span>
@@ -979,11 +980,24 @@ function ContractsSection({ poolConfig }: { poolConfig: PoolConfig }) {
           <CopyableRow label="Lending Vault" value={poolConfig.hooks} />
         )}
       </div>
-      {/* Lending protocol info */}
-      <div className="flex items-center justify-between py-1.5 px-2 text-xs text-muted-foreground">
-        <span>Lending via</span>
-        <span className="font-medium text-foreground">Aave V3</span>
-      </div>
+      {/* Lending protocol info - show yield source logos */}
+      {poolConfig.yieldSources && poolConfig.yieldSources.length > 0 && (
+        <div className="flex items-center justify-between py-1.5 px-2 text-xs text-muted-foreground">
+          <span>Lending via</span>
+          <div className="flex items-center gap-1.5">
+            {poolConfig.yieldSources.map((source) => (
+              <Image
+                key={source}
+                src={YIELD_SOURCES[source]?.textLogo}
+                alt={YIELD_SOURCES[source]?.name}
+                width={44}
+                height={14}
+                className="object-contain"
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -993,6 +1007,7 @@ interface PoolDetailSidebarProps {
   poolApr?: number;
   aaveApr?: number;
   pointsMultiplier?: number;
+  yieldSources?: Array<'aave' | 'spark'>;
 }
 
 /**
@@ -1044,7 +1059,11 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
   poolApr,
   aaveApr,
   pointsMultiplier,
+  yieldSources,
 }: PoolDetailSidebarProps) {
+  // Use pool config's yieldSources if not explicitly passed
+  const effectiveYieldSources = yieldSources ?? poolConfig.yieldSources ?? ['aave'];
+
   return (
     <div className="flex flex-col gap-4">
       {/* Pool Details Section */}
@@ -1053,7 +1072,12 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
           Pool Details
         </h3>
         <div className="flex flex-col gap-3">
-          <YieldBreakdownSection poolApr={poolApr} aaveApr={aaveApr} pointsMultiplier={pointsMultiplier} />
+          <YieldBreakdownSection
+            poolApr={poolApr}
+            aaveApr={aaveApr}
+            pointsMultiplier={pointsMultiplier}
+            yieldSources={effectiveYieldSources}
+          />
           <ContractsSection poolConfig={poolConfig} />
         </div>
       </div>

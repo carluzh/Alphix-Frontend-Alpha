@@ -7,6 +7,7 @@ import { CustomLockIcon } from "./CustomLockIcon"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { FaucetClaimModal } from "@/components/faucet"
+import { useNavigationProgress } from "@/lib/navigation-progress"
 
 import {
   SidebarMenu,
@@ -35,6 +36,7 @@ export function NavMain({
   const router = useRouter()
   const [, startTransition] = useTransition()
   const { setOpenMobile, isMobile } = useSidebar()
+  const { startNavigation } = useNavigationProgress()
 
   useEffect(() => {
     if (optimisticPath && pathname === optimisticPath) {
@@ -55,10 +57,11 @@ export function NavMain({
       setOpenMobile(false)
     }
     setOptimisticPath(url)
+    startNavigation(url)
     startTransition(() => {
       router.push(url)
     })
-  }, [router, startTransition, isMobile, setOpenMobile])
+  }, [router, startTransition, isMobile, setOpenMobile, startNavigation])
 
   // Faucet modal state
   const [isFaucetModalOpen, setIsFaucetModalOpen] = useState(false)

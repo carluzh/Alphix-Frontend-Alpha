@@ -53,19 +53,16 @@ const TARGET_CHAIN_ID = activeChainId;
 
 const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
   switch (tokenSymbol) {
-    case 'aBTC':
-      return 'BTC';
-    case 'aUSDC':
-    case 'aUSDT':
-      return 'USDC'; // Using USDC price for all USD stablecoins
-    case 'aDAI':
-    case 'DAI':
-      return 'DAI';
-    case 'aETH':
+    case 'atUSDC':
+    case 'atDAI':
+    case 'USDC':
+    case 'USDT':
+      return 'USDC';
+    case 'atETH':
     case 'ETH':
       return 'ETH';
     default:
-      return 'USDC'; // Default fallback
+      return 'USDC';
   }
 };
 
@@ -111,12 +108,12 @@ export interface Token {
   usdPrice: number; // Fixed USD price
 }
 
-    // Initialize default tokens (aUSDC and aUSDT as defaults)
+// Initialize default tokens
 const getInitialTokens = (prices?: { BTC: number; USDC: number; ETH: number }) => {
   const availableTokens = getAvailableTokens(prices);
-  const defaultFrom = availableTokens.find(t => t.symbol === 'aUSDC') || availableTokens[0];
-  const defaultTo = availableTokens.find(t => t.symbol === 'aUSDT') || availableTokens[1];
-  
+  const defaultFrom = availableTokens.find(t => t.symbol === 'atUSDC' || t.symbol === 'USDC') || availableTokens[0];
+  const defaultTo = availableTokens.find(t => t.symbol === 'atDAI' || t.symbol === 'USDT') || availableTokens[1];
+
   return { defaultFrom, defaultTo, availableTokens };
 };
 
@@ -449,8 +446,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     const tempLogicalToken = fromToken; // This is just swapping our state for YUSD/BTCRL
     const tempDisplayAmount = fromAmount;
 
-    setFromToken(toToken); // e.g. aUSDC becomes aUSDT
-    setToToken(tempLogicalToken); // e.g. aUSDT becomes aUSDC
+    setFromToken(toToken);
+    setToToken(tempLogicalToken);
     
     swapStore.actions.setFromAmount(toAmount); // Old toAmount becomes new fromAmount for input field
     // toAmount will be recalculated by useEffect based on the new fromAmount and swapped tokens
@@ -510,10 +507,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const handleConfirmSwap = () => swapActions.handleConfirmSwap();
 
 
-  // --- RENDER LOGIC --- 
-        // Determine which token is aUSDC and which is aUSDT for display purposes, regardless of from/to state
-  const displayFromToken = fromToken; // This is what's in the 'Sell' slot
-  const displayToToken = toToken;   // This is what's in the 'Buy' slot
+  // --- RENDER LOGIC ---
+  const displayFromToken = fromToken;
+  const displayToToken = toToken;
 
   // isLoading for balances - now using dynamic loading states
   const isLoadingCurrentFromTokenBalance = isLoadingFromTokenBalance;

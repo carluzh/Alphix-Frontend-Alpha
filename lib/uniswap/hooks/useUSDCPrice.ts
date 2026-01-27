@@ -64,7 +64,7 @@ export function useUSDCPrice(
   const symbol = currency?.symbol
   const stablecoin = chainId ? getStablecoin(chainId) : undefined
 
-  // Check for hardcoded price in config (for stablecoins like aUSDT, aDAI, atUSDC, atDAI)
+  // Check for hardcoded price in config (for stablecoins like atUSDC, atDAI)
   const hardcodedPrice = useMemo(() => {
     if (!symbol || !chainId) return null
     return getHardcodedUsdPrice(symbol, chainId)

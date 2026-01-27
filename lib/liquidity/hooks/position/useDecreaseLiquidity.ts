@@ -864,8 +864,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       try {
         const nftTokenId = await getTokenIdFromPosition({
           tokenId: tokenIdLike,
-          token0Symbol: 'aUSDC' as any,
-          token1Symbol: 'aUSDT' as any,
+          token0Symbol: 'atUSDC' as any,
+          token1Symbol: 'atDAI' as any,
           decreaseAmount0: '0',
           decreaseAmount1: '0',
           isFullBurn: false,

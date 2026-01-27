@@ -27,15 +27,8 @@ function normalizeTokenId(rawTokenId: string): string {
 }
 
 /**
- * Position Detail Page
- *
- * Thin entry point that:
- * 1. Gets tokenId from route params (supports short hex, full hex, or decimal)
- * 2. Fetches all data via usePositionPageData hook
- * 3. Passes data to PositionDetail component
- *
- * All data fetching logic is in hooks/usePositionPageData.ts
- * All UI logic is in components/PositionDetail/PositionDetail.tsx
+ * Position Detail Page - thin entry point that extracts tokenId and delegates to content.
+ * Key prop on PositionDetailContent forces remount on position change, ensuring fresh state.
  */
 export default function PositionDetailPage() {
   const params = useParams<{ tokenId: string }>();
@@ -51,6 +44,10 @@ export default function PositionDetailPage() {
     return null;
   }, [searchParams]);
 
+  return <PositionDetailContent key={tokenId} tokenId={tokenId} fromPage={fromPage} />;
+}
+
+function PositionDetailContent({ tokenId, fromPage }: { tokenId: string; fromPage: "pool" | "overview" | null }) {
   const {
     // Position data
     position,

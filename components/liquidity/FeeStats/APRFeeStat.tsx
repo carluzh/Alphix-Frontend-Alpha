@@ -55,6 +55,7 @@ export function APRFeeStat({
   pointsApr,
   token0Symbol,
   token1Symbol,
+  yieldSources,
 }: APRFeeStatProps) {
   // Show loader when loading
   if (isLoading) {
@@ -102,6 +103,7 @@ export function APRFeeStat({
           pointsApr={pointsApr}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
+          yieldSources={yieldSources}
         />
       }
       size={TooltipSize.Small}

@@ -5,45 +5,32 @@ import { PoolDetail } from "./components/PoolDetail/PoolDetail";
 import { usePoolDetailPageData } from "./hooks";
 
 /**
- * Pool Detail Page
- *
- * Thin entry point that:
- * 1. Gets poolId from route params
- * 2. Fetches all data via usePoolDetailPageData hook
- * 3. Passes data to PoolDetail component
- *
- * All data fetching logic is in hooks/usePoolDetailPageData.ts
- * All UI logic is in components/PoolDetail/PoolDetail.tsx
- *
- * @see interface/apps/web/src/pages/PoolDetails/index.tsx (Uniswap pattern)
+ * Pool Detail Page - thin entry point that extracts poolId and delegates to content.
+ * Key prop on PoolDetailContent forces remount on pool change, ensuring fresh state.
  */
 export default function PoolDetailPage() {
   const params = useParams<{ poolId: string }>();
   const poolId = params?.poolId || "";
 
+  return <PoolDetailContent key={poolId} poolId={poolId} />;
+}
+
+function PoolDetailContent({ poolId }: { poolId: string }) {
   const {
-    // Pool data
     poolConfig,
     poolStats,
     poolState,
-    // Chart data
     chartData,
     isLoadingChartData,
-    // Positions
     userPositions,
     isLoadingPositions,
     isDerivingNewPosition,
     optimisticallyClearedFees,
-    // Prices
     priceMap,
     isLoadingPrices,
-    // Token definitions
     tokenDefinitions,
-    // Responsive
     windowWidth,
-    // Tick utilities
     convertTickToPrice,
-    // USD calculations
     calculatePositionUsd,
   } = usePoolDetailPageData(poolId);
 

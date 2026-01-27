@@ -36,7 +36,7 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
   }, [currentRoute, selectedPoolIndexForChart])
 
   const fallbackPoolInfo: PoolInfo = useMemo(() => {
-    const fallback = getPoolByTokens("aUSDC", "aUSDT")
+    const fallback = getPoolByTokens("atUSDC", "atDAI")
     if (!fallback) return undefined
     return {
       token0Symbol: fallback.currency0.symbol,
@@ -48,7 +48,7 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
   const feeHistoryKey = useMemo(() => {
     if (!isMounted) return null
     if (!isConnected) {
-      const fallback = getPoolByTokens("aUSDC", "aUSDT")
+      const fallback = getPoolByTokens("atUSDC", "atDAI")
       return fallback ? `${fallback.subgraphId}_fallback` : null
     }
     if (!currentRoute) return null
@@ -69,7 +69,7 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
         const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1)
         poolIdForFeeHistory = currentRoute.pools[poolIndex]?.subgraphId
       } else {
-        const fallback = getPoolByTokens("aUSDC", "aUSDT")
+        const fallback = getPoolByTokens("atUSDC", "atDAI")
         poolIdForFeeHistory = fallback?.subgraphId
       }
 

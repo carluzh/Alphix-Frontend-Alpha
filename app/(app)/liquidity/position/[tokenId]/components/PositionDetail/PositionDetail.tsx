@@ -7,6 +7,7 @@ import Image from "next/image";
 import { ChevronRight, Plus, Minus } from "lucide-react";
 import { PointsIcon } from "@/components/PointsIcons";
 import { DenominationToggle } from "@/components/liquidity/DenominationToggle";
+import { LendingSourceIcons } from "@/components/liquidity/APRBreakdownTooltip";
 import { CurrencyAmount, Price, Currency } from "@uniswap/sdk-core";
 import { Position as V4Position } from "@uniswap/v4-sdk";
 import { Button } from "@/components/ui/button";
@@ -664,7 +665,7 @@ const YIELD_INFO: Record<string, { title: string; description: React.ReactNode }
     description: "Earned from trading fees when swaps occur through your position's price range. The APR varies based on trading volume and your position's concentration.",
   },
   lending: {
-    title: "Lending Yield",
+    title: "Lending APY",
     description: "Additional yield earned by lending idle liquidity. When your liquidity isn't being used for swaps, it generates lending interest automatically.",
   },
   points: {
@@ -692,12 +693,14 @@ function APRSection({
   totalApr,
   lpType,
   pointsEarned = 220,
+  yieldSources = ['aave'],
 }: {
   poolApr: number | null;
   aaveApr: number | null;
   totalApr: number | null;
   lpType: LPType;
   pointsEarned?: number;
+  yieldSources?: Array<'aave' | 'spark'>;
 }) {
   const [selectedInfo, setSelectedInfo] = useState<"swap" | "lending" | "points" | null>(null);
   const isRehypo = lpType === "rehypo";
@@ -724,7 +727,7 @@ function APRSection({
           </span>
         </div>
 
-        {/* Lending Yield - Only shown for rehypo positions */}
+        {/* Lending APY - Only shown for rehypo positions */}
         {isRehypo && (
           <div
             className={cn(
@@ -733,7 +736,10 @@ function APRSection({
             )}
             onClick={() => handleRowClick("lending")}
           >
-            <span className="text-xs text-muted-foreground">Lending Yield</span>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <LendingSourceIcons sources={yieldSources} />
+              Lending APY
+            </span>
             <span className="text-xs font-mono text-foreground">
               {aaveApr !== null ? `${formatNumber(aaveApr, { max: 2 })}%` : "-"}
             </span>
@@ -1187,6 +1193,7 @@ export const PositionDetail = memo(function PositionDetail({
             aaveApr={aaveApr}
             totalApr={totalApr}
             lpType={lpType}
+            yieldSources={poolConfig?.yieldSources}
           />
         </div>
       </div>
