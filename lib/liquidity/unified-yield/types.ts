@@ -51,6 +51,9 @@ export interface UnifiedYieldPosition {
   /** Hook contract address - this IS the ERC-4626 vault */
   hookAddress: Address;
 
+  /** User's wallet address (owner of this position) */
+  userAddress: Address;
+
   /** User's share balance (Hook shares) */
   shareBalance: bigint;
 

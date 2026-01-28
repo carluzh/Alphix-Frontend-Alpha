@@ -853,3 +853,284 @@ export async function fetchSparkRatesHistory(
     };
   }
 }
+
+// =============================================================================
+// UNIFIED YIELD COMPOUNDED FEES
+// =============================================================================
+
+/**
+ * Compounded fees response for a Unified Yield position
+ */
+export interface UnifiedYieldCompoundedFeesResponse {
+  success: boolean;
+  network?: string;
+  positionId: string;
+  hookAddress?: string;
+  poolId?: string;
+  poolName?: string;
+  /** Estimated lifetime yield (swap fees + lending) */
+  compoundedFeesUSD: number;
+  /** Total deposits minus withdrawals */
+  netDepositUSD?: number;
+  /** Latest snapshot value */
+  currentValueUSD?: number;
+  /** Unix timestamp of first deposit */
+  createdAtTimestamp?: number;
+  /** Calculation method used */
+  calculationMethod?: string;
+  error?: string;
+}
+
+/**
+ * Fetch compounded fees for a Unified Yield position
+ *
+ * Position ID format: "{hookAddress}-{userAddress}"
+ *
+ * @param hookAddress - Hook contract address
+ * @param userAddress - User wallet address
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
+ */
+export async function fetchUnifiedYieldPositionCompoundedFees(
+  hookAddress: string,
+  userAddress: string,
+  networkMode: NetworkMode = 'mainnet'
+): Promise<UnifiedYieldCompoundedFeesResponse> {
+  const positionId = `${hookAddress.toLowerCase()}-${userAddress.toLowerCase()}`;
+
+  try {
+    const url = buildBackendUrl(
+      `/unified-yield/position/${encodeURIComponent(positionId)}/compounded-fees`,
+      networkMode
+    );
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      positionId,
+      compoundedFeesUSD: 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+// =============================================================================
+// WEBSOCKET REST ENDPOINTS (Initial Load)
+// =============================================================================
+// These endpoints are used for initial data load before WebSocket updates.
+// Pattern: Fetch initial data via REST, then apply WebSocket updates on top.
+
+/**
+ * User positions with compounded fees (for WebSocket initial load)
+ */
+export interface UserPositionsWithFeesResponse {
+  success: boolean;
+  network: string;
+  address: string;
+  positions: Array<{
+    positionId: string;
+    hookAddress: string;
+    poolId: string;
+    poolName?: string;
+    compoundedFeesUSD: number;
+    netDepositUSD: number;
+    currentValueUSD: number;
+    createdAtTimestamp: number;
+    calculationMethod?: string;
+  }>;
+  totals: {
+    compoundedFeesUSD: number;
+    netDepositUSD: number;
+    currentValueUSD: number;
+  };
+  error?: string;
+}
+
+/**
+ * Fetch all positions for a user with compounded fees
+ *
+ * Used for WebSocket initial load - fetches all positions at once.
+ *
+ * @param address - User's wallet address
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
+ */
+export async function fetchUserPositionsWithFees(
+  address: string,
+  networkMode: NetworkMode = 'mainnet'
+): Promise<UserPositionsWithFeesResponse> {
+  try {
+    const url = buildBackendUrl(
+      `/unified-yield/user/${encodeURIComponent(address)}/compounded-fees`,
+      networkMode
+    );
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      network: getNetworkParam(networkMode),
+      address,
+      positions: [],
+      totals: {
+        compoundedFeesUSD: 0,
+        netDepositUSD: 0,
+        currentValueUSD: 0,
+      },
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * WebSocket connection stats response
+ */
+export interface WSStatsResponse {
+  success: boolean;
+  connectedClients: number;
+  totalSubscriptions: number;
+  channels: Record<string, number>;
+  uptime: number;
+  error?: string;
+}
+
+/**
+ * Get WebSocket server stats (for debugging/monitoring)
+ */
+export async function fetchWSStats(): Promise<WSStatsResponse> {
+  try {
+    const url = `${getBackendUrl()}/ws/stats`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      connectedClients: 0,
+      totalSubscriptions: 0,
+      channels: {},
+      uptime: 0,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Get the WebSocket URL based on environment
+ *
+ * Returns:
+ * - Development/Testnet: ws://34.60.82.34:3001/ws
+ * - Production: wss://api.alphix.fi/ws
+ */
+export function getWebSocketUrl(): string {
+  const wsUrl = process.env.NEXT_PUBLIC_ALPHIX_WS_URL;
+  if (wsUrl) return wsUrl;
+
+  // In browser, check hostname
+  if (typeof window !== 'undefined') {
+    if (window.location.hostname === 'localhost') {
+      return 'ws://34.60.82.34:3001/ws';
+    }
+    // Production - use secure WebSocket
+    return 'wss://api.alphix.fi/ws';
+  }
+
+  // Server-side default (testnet)
+  return 'ws://34.60.82.34:3001/ws';
+}
+
+// =============================================================================
+// POOL METRICS (Initial load for WebSocket)
+// =============================================================================
+
+/**
+ * Pool metrics data (matches WebSocket pools:metrics format)
+ */
+export interface PoolMetrics {
+  poolId: string;
+  name: string;
+  network: string;
+  tvlUsd: number;
+  volume24hUsd: number;
+  fees24hUsd: number;
+  lpFee: number;
+  token0Price: number;
+  token1Price: number;
+  timestamp: number;
+}
+
+/**
+ * Response for fetching all pool metrics
+ */
+export interface PoolsMetricsResponse {
+  success: boolean;
+  network: string;
+  pools: PoolMetrics[];
+  timestamp: number;
+  error?: string;
+}
+
+/**
+ * Fetch all pool metrics from backend
+ *
+ * Used for initial load before WebSocket updates.
+ * Returns the same data structure as WebSocket pools:metrics channel.
+ *
+ * @param networkMode - Network mode ('mainnet' | 'testnet')
+ */
+export async function fetchPoolsMetrics(
+  networkMode: NetworkMode = 'mainnet'
+): Promise<PoolsMetricsResponse> {
+  try {
+    const url = buildBackendUrl('/pools/metrics', networkMode);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      network: getNetworkParam(networkMode),
+      pools: [],
+      timestamp: Date.now(),
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+

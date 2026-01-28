@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { getOptimalBaseToken } from '@/lib/denomination-utils';
 import { useQuery } from '@tanstack/react-query';
 import { fetchAaveRates, getAaveKey } from '@/lib/aave-rates';
+import { fetchUnifiedYieldPositionCompoundedFees } from '@/lib/backend-client';
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 import {
     StatusIndicatorCircle,
@@ -84,6 +85,17 @@ export function UnifiedYieldPositionCard({
     const { data: aaveRatesData } = useQuery({
         queryKey: ['aaveRates'],
         queryFn: fetchAaveRates,
+        staleTime: 5 * 60_000, // 5 minutes
+    });
+
+    // Fetch compounded fees from backend
+    const { data: compoundedFeesData, isLoading: isLoadingCompoundedFees } = useQuery({
+        queryKey: ['unifiedYieldCompoundedFees', position.hookAddress, position.userAddress, networkMode],
+        queryFn: () => fetchUnifiedYieldPositionCompoundedFees(
+            position.hookAddress,
+            position.userAddress,
+            networkMode
+        ),
         staleTime: 5 * 60_000, // 5 minutes
     });
 
@@ -173,6 +185,19 @@ export function UnifiedYieldPositionCard({
         }).format(valueUSD);
     }, [valueUSD]);
 
+    // Formatted compounded fees
+    const formattedCompoundedFees = useMemo(() => {
+        if (!compoundedFeesData?.success || !Number.isFinite(compoundedFeesData.compoundedFeesUSD)) {
+            return '$0.00';
+        }
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(compoundedFeesData.compoundedFeesUSD);
+    }, [compoundedFeesData]);
+
     // Format APR display
     const formattedApr = useMemo(() => {
         if (aaveApr === undefined || aaveApr === 0) return '0.00%';
@@ -253,7 +278,9 @@ export function UnifiedYieldPositionCard({
             {/* Stats row - use LiquidityPositionFeeStats for consistency */}
             <LiquidityPositionFeeStats
                 formattedUsdValue={formattedUsdValue}
-                hideFees
+                formattedUsdFees={formattedCompoundedFees}
+                feesLabel="Compounded Fees"
+                hideRangeContent
                 token0Amount={position.token0Amount}
                 token1Amount={position.token1Amount}
                 apr={poolAPR ?? undefined}
@@ -264,7 +291,7 @@ export function UnifiedYieldPositionCard({
                 token0Symbol={token0Symbol}
                 token1Symbol={token1Symbol}
                 cardHovered={isHovered}
-                isLoading={isLoadingPrices}
+                isLoading={isLoadingPrices || isLoadingCompoundedFees}
                 isLoadingApr={!aaveRatesData}
                 tickSpacing={poolConfig?.tickSpacing}
                 tickLower={tickLower}
@@ -276,7 +303,6 @@ export function UnifiedYieldPositionCard({
                 formattedMinPrice={isFullRange ? '0' : minPrice}
                 formattedMaxPrice={isFullRange ? '∞' : maxPrice}
                 isFullRange={isFullRange}
-                yieldSources={poolConfig?.yieldSources}
             />
         </div>
     );

@@ -4,6 +4,8 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useAccount } from "wagmi";
 import { useNetwork } from "@/lib/network-context";
 import { usePoolState, useAllPrices } from "@/lib/apollo/hooks";
+import { useWSPool } from "@/lib/websocket";
+import { fetchPoolsMetrics } from "@/lib/backend-client";
 import { getPoolById, getToken, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { usePoolChartData, type ChartDataPoint } from "./usePoolChartData";
 import { usePoolPositions } from "./usePoolPositions";
@@ -238,14 +240,26 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
   const poolConfig = useMemo(() => getPoolConfiguration(poolId), [poolId]);
   const subgraphId = poolConfig?.subgraphId || '';
 
-  // Pool state from real-time hook
+  // Pool state from real-time WebSocket (with Apollo as fallback)
+  const { pool: wsPool, isConnected: wsConnected } = useWSPool(subgraphId || poolId);
   const { data: poolStateRaw } = usePoolState(subgraphId);
-  const poolState: PoolStateData = useMemo(() => ({
-    currentPrice: poolStateRaw?.currentPrice ? String(poolStateRaw.currentPrice) : null,
-    currentPoolTick: typeof poolStateRaw?.currentPoolTick === 'number' ? poolStateRaw.currentPoolTick : null,
-    sqrtPriceX96: poolStateRaw?.sqrtPriceX96 ? String(poolStateRaw.sqrtPriceX96) : null,
-    liquidity: poolStateRaw?.liquidity ? String(poolStateRaw.liquidity) : null,
-  }), [poolStateRaw]);
+
+  // Pool state from Apollo (WebSocket only provides metrics, not tick/liquidity state)
+  const poolState: PoolStateData = useMemo(() => {
+    // Compute current price from WebSocket token prices if available
+    const wsCurrentPrice = wsConnected && wsPool && wsPool.token0Price > 0
+      ? String(wsPool.token1Price / wsPool.token0Price)
+      : null;
+
+    return {
+      // Prefer WS-derived price, fall back to Apollo
+      currentPrice: wsCurrentPrice ?? (poolStateRaw?.currentPrice ? String(poolStateRaw.currentPrice) : null),
+      // Pool state data (tick, liquidity) comes from Apollo only
+      currentPoolTick: typeof poolStateRaw?.currentPoolTick === 'number' ? poolStateRaw.currentPoolTick : null,
+      sqrtPriceX96: poolStateRaw?.sqrtPriceX96 ? String(poolStateRaw.sqrtPriceX96) : null,
+      liquidity: poolStateRaw?.liquidity ? String(poolStateRaw.liquidity) : null,
+    };
+  }, [wsConnected, wsPool, poolStateRaw]);
 
   // Pool stats state
   const [poolStats, setPoolStats] = useState<PoolStats>({
@@ -365,52 +379,90 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     [tokenDefinitions]
   );
 
-  // Fetch pool stats
+  // Update pool stats from WebSocket data when available
+  useEffect(() => {
+    if (wsConnected && wsPool) {
+      const tvlUSD = wsPool.tvlUsd || 0;
+      const volume24hUSD = wsPool.volume24hUsd || 0;
+      const fees24hUSD = wsPool.fees24hUsd || 0;
+      // apr24h is calculated in useWSPool from fees24hUsd/tvlUsd
+      const aprRaw = wsPool.apr24h || 0;
+      const dynamicFeeBps = wsPool.lpFee || null;
+
+      const aprFormatted = Number.isFinite(aprRaw) && aprRaw > 0
+        ? (aprRaw < 1000 ? `${aprRaw.toFixed(2)}%` : `${(aprRaw / 1000).toFixed(2)}K%`)
+        : '0.00%';
+
+      setPoolStats({
+        tvlUSD,
+        volume24hUSD,
+        fees24hUSD,
+        apr: aprFormatted,
+        aprRaw,
+        dynamicFeeBps,
+        tvlFormatted: formatUSD(tvlUSD),
+        volume24hFormatted: formatUSD(volume24hUSD),
+        fees24hFormatted: formatUSD(fees24hUSD),
+      });
+
+      updateTodayTvl(tvlUSD);
+    }
+  }, [wsConnected, wsPool, updateTodayTvl]);
+
+  // Fetch pool stats from REST as fallback (initial load or when WS disconnected)
   useEffect(() => {
     if (!poolId || !subgraphId) return;
+    // Skip REST fetch if WebSocket data is available
+    if (wsConnected && wsPool) return;
 
     const fetchPoolStats = async () => {
       try {
-        const resp = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
-        if (!resp.ok) return;
+        // Fetch all pools and filter for this one (backend only has /pools/metrics, not /pools/{id}/metrics)
+        const response = await fetchPoolsMetrics(networkMode);
 
-        const data = await resp.json();
-        const poolIdLc = subgraphId.toLowerCase();
-        const pools = Array.isArray(data?.pools) ? data.pools : [];
-        const match = pools.find((p: { poolId?: string }) => String(p.poolId || '').toLowerCase() === poolIdLc);
-
-        if (match) {
-          const tvlUSD = Number(match.tvlUSD) || 0;
-          const volume24hUSD = Number(match.volume24hUSD) || 0;
-          const fees24hUSD = Number(match.fees24hUSD) || 0;
-          const aprRaw = Number(match.apr) || 0;
-          const dynamicFeeBps = typeof match.dynamicFeeBps === 'number' ? match.dynamicFeeBps : null;
-
-          const aprFormatted = Number.isFinite(aprRaw) && aprRaw > 0
-            ? (aprRaw < 1000 ? `${aprRaw.toFixed(2)}%` : `${(aprRaw / 1000).toFixed(2)}K%`)
-            : '0.00%';
-
-          setPoolStats({
-            tvlUSD,
-            volume24hUSD,
-            fees24hUSD,
-            apr: aprFormatted,
-            aprRaw,
-            dynamicFeeBps,
-            tvlFormatted: formatUSD(tvlUSD),
-            volume24hFormatted: formatUSD(volume24hUSD),
-            fees24hFormatted: formatUSD(fees24hUSD),
-          });
-
-          updateTodayTvl(tvlUSD);
+        if (!response.success || !response.pools) {
+          console.warn('[usePoolDetailPageData] Failed to fetch pool metrics:', response.error);
+          return;
         }
+
+        // Find this pool in the response
+        const pool = response.pools.find(p => p.poolId.toLowerCase() === subgraphId.toLowerCase());
+        if (!pool) {
+          console.warn('[usePoolDetailPageData] Pool not found in metrics:', subgraphId);
+          return;
+        }
+
+        const tvlUSD = pool.tvlUsd || 0;
+        const volume24hUSD = pool.volume24hUsd || 0;
+        const fees24hUSD = pool.fees24hUsd || 0;
+        // Calculate APR same as WebSocket: (fees24h / tvl) * 365 * 100
+        const aprRaw = tvlUSD > 0 ? (fees24hUSD / tvlUSD) * 365 * 100 : 0;
+        const dynamicFeeBps = pool.lpFee || null;
+
+        const aprFormatted = Number.isFinite(aprRaw) && aprRaw > 0
+          ? (aprRaw < 1000 ? `${aprRaw.toFixed(2)}%` : `${(aprRaw / 1000).toFixed(2)}K%`)
+          : '0.00%';
+
+        setPoolStats({
+          tvlUSD,
+          volume24hUSD,
+          fees24hUSD,
+          apr: aprFormatted,
+          aprRaw,
+          dynamicFeeBps,
+          tvlFormatted: formatUSD(tvlUSD),
+          volume24hFormatted: formatUSD(volume24hUSD),
+          fees24hFormatted: formatUSD(fees24hUSD),
+        });
+
+        updateTodayTvl(tvlUSD);
       } catch (error) {
         console.error('[usePoolDetailPageData] Failed to fetch pool stats:', error);
       }
     };
 
     fetchPoolStats();
-  }, [poolId, subgraphId, networkMode, updateTodayTvl]);
+  }, [poolId, subgraphId, networkMode, updateTodayTvl, wsConnected, wsPool]);
 
   // Fetch chart data on mount
   useEffect(() => {

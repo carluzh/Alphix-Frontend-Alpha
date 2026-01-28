@@ -1,5 +1,6 @@
 import { getAllPools } from './pools-config';
 import { getStoredNetworkMode } from './network-mode';
+import { fetchPoolsMetrics } from './backend-client';
 
 /** Time to keep prefetched pools in memory before allowing re-prefetch (5 minutes) */
 const PREFETCH_CACHE_TTL = 5 * 60 * 1000;
@@ -21,16 +22,12 @@ class SimplePrefetchService {
 
   /**
    * Simple pool data prefetch
-   * Cache checks removed - Redis handles all server-side caching
+   * Uses backend /pools/metrics endpoint
    */
   static async prefetchPoolData(poolId: string): Promise<void> {
     try {
       const networkMode = getStoredNetworkMode();
-      const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
-
-      if (response.ok) {
-        await response.json(); // Just fetch, let API handle caching
-      }
+      await fetchPoolsMetrics(networkMode); // Just fetch, caching handled by backend
     } catch (error) {
       // Silent failure - prefetch is not critical
     }
@@ -55,8 +52,8 @@ class SimplePrefetchService {
 
       // Prefetch pool chart data in parallel
       await Promise.all([
-        // Pool batch data (includes TVL, volume, fees, APR)
-        fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`).catch(() => {}),
+        // Pool batch data (includes TVL, volume, fees, APR) - from backend
+        fetchPoolsMetrics(networkMode).catch(() => {}),
         // Pool chart data (60 days of history)
         fetch(`/api/liquidity/pool-chart-data?poolId=${poolId}&days=60`).catch(() => {}),
       ]);

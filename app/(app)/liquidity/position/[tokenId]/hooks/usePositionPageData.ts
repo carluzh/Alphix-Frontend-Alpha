@@ -13,7 +13,7 @@ import { usePoolPriceChartData } from "@/lib/chart/hooks/usePoolPriceChartData";
 import { HistoryDuration } from "@/lib/chart/types";
 import { useNetwork } from "@/lib/network-context";
 import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
-import { fetchPositionApr } from "@/lib/backend-client";
+import { fetchPositionApr, fetchPoolsMetrics } from "@/lib/backend-client";
 import {
   fetchSingleUnifiedYieldPosition,
   parseUnifiedYieldPositionId,
@@ -488,19 +488,19 @@ export function usePositionPageData(tokenId: string): PositionPageData {
     return currentTick >= tickLower && currentTick < tickUpper;
   }, [isUnifiedYieldPosition, pool, tickLower, tickUpper]);
 
-  // Fetch pool APR from pools batch endpoint (fallback for pool-wide APR)
+  // Fetch pool APR from backend (fallback for pool-wide APR)
   const { data: poolStatsData } = useQuery({
     queryKey: ["poolStats", poolConfig?.subgraphId, networkMode],
     queryFn: async () => {
-      const resp = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
-      if (!resp.ok) return null;
-      const data = await resp.json();
-      const pools = Array.isArray(data?.pools) ? data.pools : [];
-      const poolIdLc = (poolConfig?.subgraphId || "").toLowerCase();
-      const match = pools.find((p: { poolId?: string }) =>
-        String(p.poolId || "").toLowerCase() === poolIdLc
-      );
-      return match ? { apr: Number(match.apr) || 0 } : null;
+      const poolId = poolConfig?.subgraphId || "";
+      // Fetch all pools and filter (backend only has /pools/metrics, not /pools/{id}/metrics)
+      const response = await fetchPoolsMetrics(networkMode);
+      if (!response.success || !response.pools) return null;
+      const pool = response.pools.find(p => p.poolId.toLowerCase() === poolId.toLowerCase());
+      if (!pool) return null;
+      // Calculate APR same as WebSocket: (fees24h / tvl) * 365 * 100
+      const apr = pool.tvlUsd > 0 ? (pool.fees24hUsd / pool.tvlUsd) * 365 * 100 : 0;
+      return { apr };
     },
     enabled: !!poolConfig?.subgraphId,
     staleTime: 60_000, // Cache for 1 minute

@@ -178,6 +178,7 @@ async function fetchPoolUnifiedYieldPosition(
     id: positionId,
     positionId, // Alias for compatibility with V4ProcessedPosition
     hookAddress,
+    userAddress,
     shareBalance,
     shareBalanceFormatted: formatUnits(shareBalance, shareDecimals),
     token0Amount: formatUnits(token0AmountRaw, token0Decimals),

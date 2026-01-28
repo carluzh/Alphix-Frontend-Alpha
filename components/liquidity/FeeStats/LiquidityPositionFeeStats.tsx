@@ -60,6 +60,8 @@ export function LiquidityPositionFeeStats({
   formattedUsdValue,
   formattedUsdFees,
   hideFees,
+  feesLabel = 'Fees',
+  hideRangeContent,
   token0Amount,
   token1Amount,
 
@@ -134,14 +136,14 @@ export function LiquidityPositionFeeStats({
               )}>
                 {formattedUsdFees || '-'}
               </span>
-              <span className="text-xs text-muted-foreground">Fees</span>
+              <span className="text-xs text-muted-foreground">{feesLabel}</span>
             </>
           )}
         </FeeStat>
       )}
 
       {/* Range - uses pre-formatted prices (hidden for Unified Yield positions) */}
-      {!hideFees && (
+      {!hideFees && !hideRangeContent && (
         <MinMaxRange
           tickSpacing={tickSpacing}
           tickLower={tickLower}
@@ -155,6 +157,9 @@ export function LiquidityPositionFeeStats({
           isFullRange={isFullRange}
         />
       )}
+
+      {/* Empty range placeholder for Unified Yield - maintains layout spacing */}
+      {!hideFees && hideRangeContent && <FeeStat />}
 
       {/* APR - Conditional: PointsFeeStat or APRFeeStat */}
       {/* Both now use unified APRBreakdownTooltip with Swap APR, Unified Yield, Points */}

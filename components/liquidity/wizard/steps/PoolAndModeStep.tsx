@@ -12,6 +12,7 @@ import { Container } from '../shared/Container';
 import { LPMode } from '../types';
 import { getEnabledPools, getPoolById, getPoolSubgraphId, type PoolConfig } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
+import { fetchPoolsMetrics } from '@/lib/backend-client';
 import { TokenStack } from '@/components/liquidity/TokenStack';
 import { APRBadge } from '@/components/liquidity/APRBadge';
 import { useAccount } from 'wagmi';
@@ -342,17 +343,17 @@ export function PoolAndModeStep() {
     const fetchAprs = async () => {
       setAprsLoading(true);
       try {
-        const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
-        if (!response.ok) throw new Error(`API failed: ${response.status}`);
-        const batchData = await response.json();
-        if (!batchData.success) throw new Error(`API error: ${batchData.message}`);
+        const response = await fetchPoolsMetrics(networkMode);
+        if (!response.success) throw new Error(`API error: ${response.error}`);
 
         const aprs: Record<string, number> = {};
         pools.forEach(pool => {
           const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-          const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
-          if (batchPoolData && typeof batchPoolData.apr === 'number') {
-            aprs[pool.id] = batchPoolData.apr;
+          const poolData = response.pools.find((p) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
+          if (poolData) {
+            // Calculate APR same as WebSocket: (fees24h / tvl) * 365 * 100
+            const apr = poolData.tvlUsd > 0 ? (poolData.fees24hUsd / poolData.tvlUsd) * 365 * 100 : 0;
+            aprs[pool.id] = apr;
           }
         });
         setPoolAprs(aprs);

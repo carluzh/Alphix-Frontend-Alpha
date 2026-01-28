@@ -57,6 +57,10 @@ export interface LiquidityPositionFeeStatsProps extends LiquidityPositionMinMaxR
   formattedUsdFees?: string;
   /** Hide the fees stat entirely (for Unified Yield positions) */
   hideFees?: boolean;
+  /** Custom label for the fees stat (default: "Fees") */
+  feesLabel?: string;
+  /** Hide range content but keep the column for spacing (Unified Yield) */
+  hideRangeContent?: boolean;
 
   // Token amounts (for Unified Yield positions - shown instead of fees)
   /** Formatted token0 amount (e.g., "500.00") */

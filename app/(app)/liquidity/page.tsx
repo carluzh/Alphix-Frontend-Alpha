@@ -17,18 +17,17 @@ import { usePrefetchOnHover } from "@/hooks/usePrefetchOnHover";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import { useAccount } from "wagmi";
-import { toast as sonnerToast } from "sonner";
 import { getEnabledPools, getToken, getPoolSubgraphId } from "@/lib/pools-config";
 import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps } from "@/lib/client-cache";
 import { Pool } from "@/types";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IconCircleInfo } from "nucleo-micro-bold-essential";
 import { useNetwork } from "@/lib/network-context";
 import { prefetchService } from "@/lib/prefetch-service";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 import { APRBadge } from "@/components/liquidity/APRBadge";
 import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
+import { useWSPools } from "@/lib/websocket";
 
 /**
  * PoolRowPrefetchWrapper - Wraps pool table rows with hover prefetch and stagger animation
@@ -131,8 +130,37 @@ export default function LiquidityPage() {
   const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const { networkMode } = useNetwork();
 
-  const initialPools = useMemo(() => generatePoolsFromConfig(), [networkMode]);
-  const [poolsData, setPoolsData] = useState<Pool[]>([]);
+  // Pool config (static: tokens, icons, pair names)
+  const poolConfigs = useMemo(() => generatePoolsFromConfig(), [networkMode]);
+
+  // Pool metrics from WebSocket (real-time: TVL, volume, fees, APR)
+  // Pattern: Initial REST from api.alphix.fi → WebSocket updates
+  const { pools: wsPoolsData, poolsMap: wsPoolsMap, isLoading: isLoadingPools } = useWSPools();
+
+  // Merge pool config with WebSocket metrics
+  const poolsData = useMemo(() => {
+    return poolConfigs.map(poolConfig => {
+      const subgraphId = (getPoolSubgraphId(poolConfig.id) || poolConfig.id).toLowerCase();
+      const wsPool = wsPoolsMap.get(subgraphId);
+
+      if (wsPool) {
+        // Format APR string
+        const aprValue = wsPool.apr24h;
+        const aprStr = Number.isFinite(aprValue) && aprValue > 0
+          ? (aprValue < 1000 ? `${aprValue.toFixed(2)}%` : `${(aprValue / 1000).toFixed(2)}K%`)
+          : '0.00%';
+
+        return {
+          ...poolConfig,
+          tvlUSD: wsPool.tvlUsd,
+          volume24hUSD: wsPool.volume24hUsd,
+          fees24hUSD: wsPool.fees24hUsd,
+          apr: aprStr,
+        };
+      }
+      return poolConfig;
+    });
+  }, [poolConfigs, wsPoolsMap]);
 
   // Fetch Aave rates for Unified Yield display
   const { data: aaveRatesData } = useQuery({
@@ -157,10 +185,6 @@ export default function LiquidityPage() {
     }
     return apy0 ?? apy1 ?? undefined;
   }, [aaveRatesData]);
-
-  useEffect(() => {
-    setPoolsData(initialPools);
-  }, [initialPools]);
 
   const isMobile = useIsMobile();
   const { address: accountAddress, isConnected, chainId } = useAccount();
@@ -211,91 +235,6 @@ export default function LiquidityPage() {
     );
   };
 
-  const fetchAllPoolStatsBatch = useCallback(async () => {
-      try {
-        // Fetch from API - Redis cache handles caching on server side
-        const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
-        if (!response.ok) throw new Error(`Batch API failed: ${response.status}`);
-        const batchData = await response.json();
-        if (!batchData.success) throw new Error(`Batch API error: ${batchData.message}`);
-
-        const updatedPools = initialPools.map((pool) => {
-          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-          const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
-
-          if (batchPoolData) {
-            const { tvlUSD, volume24hUSD, fees24hUSD, apr } = batchPoolData;
-
-            // Handle APR: show 0.00% for pools with no volume, Loading... only if undefined
-            let aprStr = 'Loading...';
-            if (typeof apr === 'number') {
-              aprStr = apr > 0 ? formatAPR(apr) : '0.00%';
-            }
-
-            return {
-              ...pool,
-              tvlUSD,
-              volume24hUSD,
-              fees24hUSD,
-              apr: aprStr,
-            };
-          }
-          return pool;
-        });
-
-        setPoolsData(updatedPools as Pool[]);
-
-      } catch (error) {
-        console.error("[LiquidityPage] Batch fetch failed:", error);
-        sonnerToast("Pool data may be delayed", {
-          description: "The team has been notified. Data will refresh automatically.",
-          icon: <IconCircleInfo className="h-4 w-4" />,
-        });
-      }
-    }, [initialPools, networkMode]);
-
-  const forceRefreshAllPoolStatsBatch = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}&v=${Date.now()}`);
-      if (!response.ok) return;
-      const batchData = await response.json();
-      if (!batchData?.success || !Array.isArray(batchData?.pools)) return;
-
-      const updatedPools = initialPools.map((pool) => {
-        const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-        const batchPoolData = batchData.pools.find((p: any) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
-
-        if (batchPoolData) {
-          const { tvlUSD, volume24hUSD, fees24hUSD, apr } = batchPoolData;
-          let aprStr = 'Loading...';
-          if (typeof apr === 'number') {
-            aprStr = apr > 0 ? formatAPR(apr) : '0.00%';
-          }
-          return {
-            ...pool,
-            tvlUSD,
-            volume24hUSD,
-            fees24hUSD,
-            apr: aprStr,
-          };
-        }
-        return pool;
-      });
-
-      setPoolsData(updatedPools as Pool[]);
-    } catch {}
-  }, [initialPools, networkMode]);
-
-  useEffect(() => {
-    fetchAllPoolStatsBatch();
-  }, [fetchAllPoolStatsBatch]);
-
-  useEffect(() => {
-    if (!isConnected || !accountAddress) return;
-    return prefetchService.addPositionsListener(accountAddress, () => {
-      void forceRefreshAllPoolStatsBatch();
-    });
-  }, [isConnected, accountAddress, forceRefreshAllPoolStatsBatch]);
 
   useEffect(() => {
     if (isConnected && accountAddress && chainId) {
@@ -358,7 +297,7 @@ export default function LiquidityPage() {
     return [...poolsWithLinks].sort((a, b) => {
       const aVal = getSortValue(a);
       const bVal = getSortValue(b);
-      return sortAscending ? aVal - bVal : bVal - aVal;
+      return sortAscending ? bVal - aVal : aVal - bVal;
     });
   }, [poolsWithPositionCounts, sortMethod, sortAscending, tokenSearch]);
 
@@ -513,7 +452,6 @@ export default function LiquidityPage() {
     let totalTVL = 0;
     let totalVol24h = 0;
     let totalFees24h = 0;
-    let counted = 0;
     for (const p of poolsData || []) {
       const tvl = (p as any).tvlUSD;
       const vol = (p as any).volume24hUSD;
@@ -521,11 +459,9 @@ export default function LiquidityPage() {
       if (typeof tvl === 'number' && isFinite(tvl)) totalTVL += tvl;
       if (typeof vol === 'number' && isFinite(vol)) totalVol24h += vol;
       if (typeof fees === 'number' && isFinite(fees)) totalFees24h += fees;
-      if (typeof tvl === 'number' || typeof vol === 'number' || typeof fees === 'number') counted++;
     }
-    const isLoading = counted === 0;
-    return { totalTVL, totalVol24h, totalFees24h, isLoading };
-  }, [poolsData]);
+    return { totalTVL, totalVol24h, totalFees24h, isLoading: isLoadingPools };
+  }, [poolsData, isLoadingPools]);
 
   // Prefetch wrapper for pool rows - prefetches data on hover with stagger animation
   const poolRowWrapper = useCallback(

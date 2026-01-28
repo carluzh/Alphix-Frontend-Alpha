@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useAccount } from "wagmi";
 import { getAllPools, getChainId } from "@/lib/pools-config";
 import { batchQuotePrices } from "@/lib/swap/quote-prices";
+import { fetchPoolsMetrics } from "@/lib/backend-client";
 
 export interface TokenBalance {
   symbol: string;
@@ -276,21 +277,20 @@ export function useOverview(
     }
   }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions, networkMode]);
 
-  // Fetch APR data
+  // Fetch APR data from backend
   useEffect(() => {
     const fetchApr = async () => {
       try {
-        const response = await fetch(`/api/liquidity/get-pools-batch?network=${networkMode}`);
-        if (!response.ok) return;
-        const data = await response.json();
-        if (!data?.success || !Array.isArray(data.pools)) return;
+        const response = await fetchPoolsMetrics(networkMode);
+        if (!response.success || !Array.isArray(response.pools)) return;
         const map: Record<string, string> = {};
-        for (const p of data.pools as any[]) {
-          const apr =
-            typeof p.apr === "number" && isFinite(p.apr) && p.apr > 0
-              ? `${p.apr.toFixed(2)}%`
-              : "N/A";
-          if (p.poolId) map[String(p.poolId).toLowerCase()] = apr;
+        for (const pool of response.pools) {
+          // Calculate APR same as WebSocket: (fees24h / tvl) * 365 * 100
+          const aprValue = pool.tvlUsd > 0 ? (pool.fees24hUsd / pool.tvlUsd) * 365 * 100 : 0;
+          const apr = isFinite(aprValue) && aprValue > 0
+            ? `${aprValue.toFixed(2)}%`
+            : "N/A";
+          if (pool.poolId) map[String(pool.poolId).toLowerCase()] = apr;
         }
         setAprByPoolId(map);
       } catch {}
