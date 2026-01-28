@@ -53,6 +53,7 @@ const BASE_CSP: Record<string, string[]> = {
     "https://*.uniswap.org",
     // AlphixBackend API
     "https://api.alphix.fi",
+    "wss://api.alphix.fi",
     "https://*.ingest.de.sentry.io", "https://*.sentry.io",
     // IPFS
     "https://ipfs.io", "https://gateway.ipfs.io", "https://cloudflare-ipfs.com",
