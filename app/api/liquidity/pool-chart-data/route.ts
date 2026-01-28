@@ -32,6 +32,7 @@ interface ChartDataResponse {
   feeEvents: DynamicFeeEvent[];
   timestamp?: number;
   isStale?: boolean;
+  message?: string;
 }
 
 /**
@@ -228,7 +229,10 @@ export async function GET(request: Request) {
     // Invalidated cache: blocking fetch (user just did an action)
     if (cachedData && isInvalidated) {
       const payload = await computeChartData(poolId, days, networkMode, baseUrl);
-      await setCachedData(cacheKey, payload, 3600); // 1 hour TTL
+      // Only cache successful responses
+      if (payload.success) {
+        await setCachedData(cacheKey, payload, 3600); // 1 hour TTL
+      }
       return NextResponse.json({ ...payload, isStale: false });
     }
 
@@ -236,7 +240,12 @@ export async function GET(request: Request) {
     if (cachedData && isStale) {
       // Trigger background revalidation (fire-and-forget)
       void computeChartData(poolId, days, networkMode, baseUrl)
-        .then((payload) => setCachedData(cacheKey, payload, 3600))
+        .then((payload) => {
+          // Only cache successful responses
+          if (payload.success) {
+            return setCachedData(cacheKey, payload, 3600);
+          }
+        })
         .catch((error) => {
           console.error('[pool-chart-data] Background revalidation failed:', error);
         });
@@ -248,8 +257,10 @@ export async function GET(request: Request) {
     // Cache miss: fetch fresh data
     const payload = await computeChartData(poolId, days, networkMode, baseUrl);
 
-    // Cache the result
-    await setCachedData(cacheKey, payload, 3600); // 1 hour
+    // Only cache successful responses
+    if (payload.success) {
+      await setCachedData(cacheKey, payload, 3600); // 1 hour
+    }
 
     return NextResponse.json(payload);
 

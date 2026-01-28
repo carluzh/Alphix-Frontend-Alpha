@@ -80,7 +80,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         return (data.data?.ticks || []) as TickRow[];
-      }
+      },
+      // Only cache if we have actual data - empty ticks can be valid but often indicates issue
+      { shouldCache: (data: any) => Array.isArray(data) && data.length > 0 }
     );
 
     // Tick data is semi-static - use Uniswap multi-layer caching pattern

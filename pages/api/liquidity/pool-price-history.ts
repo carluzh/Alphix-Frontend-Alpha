@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { cacheService } from '@/lib/cache/CacheService'
 import { HistoryDuration, TimestampedPoolPrice } from '@/lib/chart/types'
-import { fetchPoolPricesHistory, type NetworkMode } from '@/lib/backend-client'
+import { fetchPoolPricesHistory } from '@/lib/backend-client'
+import type { NetworkMode } from '@/lib/network-mode'
 
 /**
  * Pool Price History API
@@ -411,7 +412,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const result = await cacheService.cachedApiCall(
       cacheKey,
       CACHE_TTL,
-      () => fetchPriceHistoryWithOptionalFallback(poolId, hasTokens ? token0 as string : null, hasTokens ? token1 as string : null, historyDuration, networkMode)
+      () => fetchPriceHistoryWithOptionalFallback(poolId, hasTokens ? token0 as string : null, hasTokens ? token1 as string : null, historyDuration, networkMode),
+      // Only cache if we have actual data - prevents caching failed/empty responses
+      { shouldCache: (data: any) => data?.data && data.data.length > 0 }
     )
 
     res.setHeader('Cache-Control', 'no-store')

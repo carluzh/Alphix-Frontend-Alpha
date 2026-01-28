@@ -13,6 +13,34 @@
 import { redis, getCachedDataWithStale, setCachedData, deleteCachedData, invalidateCachedData, CachedDataWrapper } from '@/lib/cache/redis'
 import type { TTLConfig, CacheOptions, CacheResult, CacheApiResult } from './types'
 
+/**
+ * Default cache guard - prevents caching common failure patterns.
+ * Checks for:
+ * - Objects with `success: false`
+ * - Objects with `error` property
+ * - Objects with only `message` property (error responses)
+ *
+ * This runs BEFORE any custom shouldCache, acting as a safety net.
+ */
+function isValidCachePayload(data: unknown): boolean {
+  if (data === null || data === undefined) return false
+
+  if (typeof data === 'object' && !Array.isArray(data)) {
+    const obj = data as Record<string, unknown>
+
+    // Explicit failure flag
+    if (obj.success === false) return false
+
+    // Has error property
+    if ('error' in obj && obj.error) return false
+
+    // Looks like an error response (has message but no data/success)
+    if ('message' in obj && !('data' in obj) && !('success' in obj)) return false
+  }
+
+  return true
+}
+
 export class CacheService {
   // NOTE: In-memory request deduplication removed for serverless compatibility
   // Redis handles concurrent request coordination via atomic operations
@@ -32,7 +60,10 @@ export class CacheService {
     // If fetch function provided and cache miss, fetch and cache
     if (!result.data && fetchFn) {
       const freshData = await fetchFn()
-      await this.set(key, freshData, ttl.stale)
+      // Only cache valid payloads
+      if (isValidCachePayload(freshData)) {
+        await this.set(key, freshData, ttl.stale)
+      }
       return { data: freshData, isStale: false, isInvalidated: false }
     }
 
@@ -115,7 +146,10 @@ export class CacheService {
       const freshData = await fetchFn()
       const isInCooldown = noCacheUntil && Date.now() < noCacheUntil
       if (!isInCooldown) {
-        if (!options?.shouldCache || options.shouldCache(freshData)) {
+        // Default guard + custom guard
+        const passesDefaultGuard = isValidCachePayload(freshData)
+        const passesCustomGuard = !options?.shouldCache || options.shouldCache(freshData)
+        if (passesDefaultGuard && passesCustomGuard) {
           await this.set(key, freshData, ttl.stale)
         }
       }
@@ -126,7 +160,10 @@ export class CacheService {
       // Background refresh - stale-while-revalidate pattern
       fetchFn()
         .then(freshData => {
-          if (!options?.shouldCache || options.shouldCache(freshData)) {
+          // Default guard + custom guard
+          const passesDefaultGuard = isValidCachePayload(freshData)
+          const passesCustomGuard = !options?.shouldCache || options.shouldCache(freshData)
+          if (passesDefaultGuard && passesCustomGuard) {
             return this.set(key, freshData, ttl.stale)
           }
         })
@@ -137,7 +174,10 @@ export class CacheService {
 
     // No cached data - fetch fresh
     const freshData = await fetchFn()
-    if (!options?.shouldCache || options.shouldCache(freshData)) {
+    // Default guard + custom guard
+    const passesDefaultGuard = isValidCachePayload(freshData)
+    const passesCustomGuard = !options?.shouldCache || options.shouldCache(freshData)
+    if (passesDefaultGuard && passesCustomGuard) {
       await this.set(key, freshData, ttl.stale)
     }
     return { data: freshData, isStale: false }

@@ -55,9 +55,11 @@ export const resolvers = {
 
     // Token queries
     tokenPrices: async (_: unknown, args: { chain: string }, ctx: Context) => {
-      const chainId = ctx.networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID
-      const symbols = getAllTokenSymbols(ctx.networkMode)
-      const prices = await batchQuotePrices(symbols, chainId, ctx.networkMode)
+      // Use network from chain argument, not cookie
+      const networkMode = chainToNetworkMode(args.chain);
+      const chainId = networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID
+      const symbols = getAllTokenSymbols(networkMode)
+      const prices = await batchQuotePrices(symbols, chainId, networkMode)
       return { ...prices, timestamp: Math.floor(Date.now() / 1000) }
     },
 
@@ -188,9 +190,11 @@ export const resolvers = {
       args: { chain: string; poolId: string; duration: string },
       ctx: Context
     ) => {
+      // Use network from chain argument, not cookie - ensures correct data for the specific pool
+      const networkMode = chainToNetworkMode(args.chain);
       const data = await fetchInternal(
         ctx,
-        `/api/liquidity/pool-price-history?poolId=${encodeURIComponent(args.poolId)}&duration=${args.duration}&network=${ctx.networkMode}`
+        `/api/liquidity/pool-price-history?poolId=${encodeURIComponent(args.poolId)}&duration=${args.duration}&network=${networkMode}`
       )
 
       // Transform to TimestampedPoolPrice format
@@ -289,9 +293,11 @@ export const resolvers = {
     ) => {
       if (!parent.poolId) return []
 
+      // Use network from parent chain, not cookie
+      const networkMode = parent.chain ? chainToNetworkMode(parent.chain) : ctx.networkMode;
       const data = await fetchInternal(
         ctx,
-        `/api/liquidity/pool-price-history?poolId=${encodeURIComponent(parent.poolId)}&duration=${args.duration}&network=${ctx.networkMode}`
+        `/api/liquidity/pool-price-history?poolId=${encodeURIComponent(parent.poolId)}&duration=${args.duration}&network=${networkMode}`
       )
 
       if (!data.data || !Array.isArray(data.data)) {

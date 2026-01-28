@@ -260,7 +260,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           },
           dayData: dayDatas
         };
-      }
+      },
+      // Only cache if we have actual data - prevents caching failed/empty responses
+      { shouldCache: (data: any) => data?.pool !== null || data?.dayData?.length > 0 }
     );
 
     // Uniswap multi-layer caching pattern for dynamic data
