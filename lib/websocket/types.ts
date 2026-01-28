@@ -53,19 +53,23 @@ export interface WSDataMessage<T = unknown> {
 
 /**
  * Subscription confirmation
+ * Server may send either 'channel' (singular) or 'channels' (array)
  */
 export interface WSSubscribedMessage {
   type: 'subscribed';
-  channels: string[];
+  channel?: string;
+  channels?: string[];
   timestamp: number;
 }
 
 /**
  * Unsubscription confirmation
+ * Server may send either 'channel' (singular) or 'channels' (array)
  */
 export interface WSUnsubscribedMessage {
   type: 'unsubscribed';
-  channels: string[];
+  channel?: string;
+  channels?: string[];
   timestamp: number;
 }
 

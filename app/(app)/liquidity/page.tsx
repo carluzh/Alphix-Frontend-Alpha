@@ -287,8 +287,14 @@ export default function LiquidityPage() {
         case 'volume24h': return pool.volume24hUSD || 0;
         case 'fees24h': return pool.fees24hUSD || 0;
         case 'apr': {
+          // Use unified yield (pool APR + lending APR) for sorting
           const aprStr = pool.apr || '0';
-          return parseFloat(aprStr.replace(/[~%]/g, '')) || 0;
+          const isK = aprStr.includes('K%');
+          const poolApr = parseFloat(aprStr.replace(/[~%K]/g, '')) || 0;
+          const normalizedPoolApr = isK ? poolApr * 1000 : poolApr;
+          const tokens = pool.tokens || [];
+          const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '') || 0;
+          return normalizedPoolApr + lendingApr;
         }
         default: return 0;
       }
@@ -297,9 +303,10 @@ export default function LiquidityPage() {
     return [...poolsWithLinks].sort((a, b) => {
       const aVal = getSortValue(a);
       const bVal = getSortValue(b);
-      return sortAscending ? bVal - aVal : aVal - bVal;
+      // sortAscending=false means descending (highest first), arrow points down
+      return sortAscending ? aVal - bVal : bVal - aVal;
     });
-  }, [poolsWithPositionCounts, sortMethod, sortAscending, tokenSearch]);
+  }, [poolsWithPositionCounts, sortMethod, sortAscending, tokenSearch, getPoolAaveApy]);
 
   const [mobileSortBy, setMobileSortBy] = useState<"apr" | "tvl" | "volume">("tvl");
 

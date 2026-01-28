@@ -273,14 +273,19 @@ export class WebSocketManager {
           this.handleDataMessage(message);
           break;
 
-        case 'subscribed':
-          console.log('[WS] Subscribed to:', message.channels);
-          message.channels.forEach((c) => this.pendingSubscriptions.delete(c));
+        case 'subscribed': {
+          // Handle both singular 'channel' and plural 'channels' from server
+          const subscribedChannels = message.channels || (message.channel ? [message.channel] : []);
+          console.log('[WS] Subscribed to:', subscribedChannels);
+          subscribedChannels.forEach((c) => this.pendingSubscriptions.delete(c));
           break;
+        }
 
-        case 'unsubscribed':
-          console.log('[WS] Unsubscribed from:', message.channels);
+        case 'unsubscribed': {
+          const unsubscribedChannels = message.channels || (message.channel ? [message.channel] : []);
+          console.log('[WS] Unsubscribed from:', unsubscribedChannels);
           break;
+        }
 
         case 'error':
           console.error('[WS] Server error:', message.error);
