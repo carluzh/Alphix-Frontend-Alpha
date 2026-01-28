@@ -37,22 +37,27 @@ import {
   isSwapData,
   isPriceData,
 } from './types';
+import { getWebSocketUrl } from '@/lib/backend-client';
 
-// Default WebSocket URL from environment
-// Testnet: ws://34.60.82.34:3001/ws
-// Production: wss://api.alphix.fi/ws
-const DEFAULT_WS_URL =
-  process.env.NEXT_PUBLIC_ALPHIX_WS_URL ||
-  'ws://34.60.82.34:3001/ws';
-
-// Default configuration
-const DEFAULT_CONFIG: Required<WSConfig> = {
-  url: DEFAULT_WS_URL,
+// Default configuration (without url - resolved at runtime)
+const DEFAULT_CONFIG_BASE = {
   reconnectDelay: 1000,
   maxReconnectDelay: 30000,
   maxReconnectAttempts: Infinity,
   reconnectMultiplier: 2,
 };
+
+/**
+ * Get default config with runtime-resolved WebSocket URL.
+ * This ensures the URL is determined at runtime (not build time),
+ * properly detecting localhost vs production environments.
+ */
+function getDefaultConfig(): Required<WSConfig> {
+  return {
+    url: getWebSocketUrl(),
+    ...DEFAULT_CONFIG_BASE,
+  };
+}
 
 /**
  * WebSocket connection manager with automatic reconnection
@@ -70,7 +75,8 @@ export class WebSocketManager {
 
   constructor(handlers: WSEventHandlers = {}, config: WSConfig = {}) {
     this.handlers = handlers;
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    // Resolve URL at runtime to handle localhost vs production correctly
+    this.config = { ...getDefaultConfig(), ...config };
   }
 
   // ===========================================================================
