@@ -139,17 +139,33 @@ export function usePoolChartData({
       const targetDays = 60;
       const todayKey = new Date().toISOString().split('T')[0];
 
-      const chartResult = await RetryUtility.fetchJson(
+      const chartResult = await RetryUtility.fetchJson<{
+        success: boolean;
+        message?: string;
+        data?: any[];
+        feeEvents?: any[];
+      }>(
         `/api/liquidity/pool-chart-data?poolId=${encodeURIComponent(poolId)}&days=${targetDays}`,
         {
           attempts: 2,
           baseDelay: 300,
-          validate: (j) => j?.success && Array.isArray(j?.data) && j.data.length > 0,
+          // Only validate response structure, handle success/failure separately
+          validate: (j) => j && typeof j.success === 'boolean',
           throwOnFailure: true,
         }
       );
 
       const rawData = chartResult.data!;
+
+      // Check if API returned an error
+      if (!rawData.success) {
+        throw new Error(rawData.message || 'Failed to fetch chart data from backend');
+      }
+
+      // Check if we have data
+      if (!Array.isArray(rawData.data) || rawData.data.length === 0) {
+        throw new Error('No chart data available for this pool');
+      }
       const dayData = Array.isArray(rawData.data) ? rawData.data : [];
       const feeEvents = Array.isArray(rawData.feeEvents) ? rawData.feeEvents : [];
 

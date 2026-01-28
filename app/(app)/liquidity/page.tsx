@@ -59,8 +59,8 @@ function PoolRowPrefetchWrapper({
 
   return (
     <motion.div
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
+      onHoverStart={onMouseEnter}
+      onHoverEnd={onMouseLeave}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{

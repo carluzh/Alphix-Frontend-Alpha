@@ -57,9 +57,11 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
     ]);
 
     if (!historyResponse.success || !historyResponse.snapshots) {
-      console.error('[pool-chart-data] Backend history fetch failed:', historyResponse.error);
+      const errorMsg = historyResponse.error || 'Backend history fetch failed';
+      console.error('[pool-chart-data] Backend history fetch failed:', errorMsg);
       return {
         success: false,
+        message: errorMsg,
         poolId,
         data: [],
         feeEvents: [],
