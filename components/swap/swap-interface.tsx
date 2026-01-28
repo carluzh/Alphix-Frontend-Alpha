@@ -21,6 +21,15 @@ import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
 import { useUserSlippageTolerance } from "@/hooks/useSlippage";
 import { getAutoSlippage } from "@/lib/slippage/slippage-api";
 import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
+import { usePriceDeviation, requiresDeviationAcknowledgment } from "@/hooks/usePriceDeviation";
+import {
+  HighRiskConfirmModal,
+  createPriceImpactWarning,
+  createSlippageWarning,
+  createPriceDeviationWarning,
+  type WarningPage,
+} from "@/components/ui/HighRiskConfirmModal";
+import { isSlippageCritical } from "@/lib/slippage/slippage-validation";
 
 import {
   getAllTokens,
@@ -481,10 +490,54 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   };
 
   const handleSwap = async () => {
+    // Collect ALL high-severity warnings for multi-page modal
+    const warnings: WarningPage[] = [];
+
+    // 1. Price Impact (highest priority - direct loss)
+    if (trade.priceImpactWarning?.severity === 'high' && trade.priceImpact !== null) {
+      warnings.push(createPriceImpactWarning({ priceImpact: trade.priceImpact }));
+    }
+
+    // 2. Slippage (high risk of loss)
+    if (!isAutoSlippage && isSlippageCritical(currentSlippage)) {
+      warnings.push(createSlippageWarning({ slippage: currentSlippage }));
+    }
+
+    // 3. Price Deviation (pool vs market price mismatch)
+    if (requiresDeviationAcknowledgment(priceDeviation.severity)) {
+      warnings.push(createPriceDeviationWarning({
+        poolPrice: priceDeviation.poolPrice,
+        marketPrice: priceDeviation.marketPrice,
+        deviationPercent: priceDeviation.absoluteDeviation || 0,
+        direction: priceDeviation.direction || 'below',
+        token0Symbol: fromToken.symbol,
+        token1Symbol: toToken.symbol,
+      }));
+    }
+
+    // If any high-severity warnings, show modal with all pages
+    if (warnings.length > 0) {
+      setHighRiskWarnings(warnings);
+      setShowHighRiskModal(true);
+      return;
+    }
+
+    await proceedWithSwap();
+  };
+
+  // Actual swap logic after all checks pass
+  const proceedWithSwap = async () => {
     // Uniswap-style: perform a fresh "binding" quote at review time.
     const ok = await trade.refreshBindingQuote().catch(() => false)
     if (!ok) return
     swapActions.handleSwap()
+  };
+
+  // Handle high-risk modal confirmation (after all pages acknowledged)
+  const handleHighRiskConfirm = async () => {
+    setShowHighRiskModal(false);
+    setHighRiskWarnings([]);
+    await proceedWithSwap();
   };
 
   // Wrapper function to handle percentage selection for both tokens
@@ -731,6 +784,30 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   
   // priceImpactWarning is derived inside `useSwapTrade`
 
+  // High-risk warning modal state (supports multiple warnings)
+  const [showHighRiskModal, setShowHighRiskModal] = useState(false);
+  const [highRiskWarnings, setHighRiskWarnings] = useState<WarningPage[]>([]);
+
+  // Calculate execution rate from swap amounts for price deviation check
+  const swapExecutionRate = useMemo(() => {
+    const fromAmountNum = parseFloat(fromAmount || "0");
+    const toAmountNum = parseFloat(toAmount || "0");
+    if (fromAmountNum <= 0 || toAmountNum <= 0) return null;
+    // Execution rate: how many toTokens per fromToken
+    return toAmountNum / fromAmountNum;
+  }, [fromAmount, toAmount]);
+
+  // Price deviation check - compare swap execution rate against CoinGecko market rate
+  const priceDeviation = usePriceDeviation({
+    token0Symbol: fromToken?.symbol,
+    token1Symbol: toToken?.symbol,
+    // For swaps, we compare execution rate vs market rate
+    // Market rate = fromTokenUSD / toTokenUSD (how many toTokens per fromToken at market)
+    // We pass execution rate as "pool price" for comparison
+    poolPrice: swapExecutionRate,
+    priceInverted: false,
+  });
+
   const containerRef = useRef<HTMLDivElement>(null); // Ref for the entire swap container (card + chart)
   const [combinedRect, setCombinedRect] = useState({
     top: 0, left: 0, width: 0, height: 0
@@ -895,6 +972,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 onClearFromAmount={() => {
                   swapStore.actions.setAmounts("", "")
                 }}
+                priceDeviation={priceDeviation}
               />
             )}
 
@@ -1008,6 +1086,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       </div>
       </div>
 
+      {/* High Risk Confirmation Modal (handles all warning types with pagination) */}
+      <HighRiskConfirmModal
+        isOpen={showHighRiskModal}
+        onClose={() => {
+          setShowHighRiskModal(false);
+          setHighRiskWarnings([]);
+        }}
+        onConfirm={handleHighRiskConfirm}
+        warnings={highRiskWarnings}
+        confirmText="Swap Anyway"
+      />
     </div> /* Ensure this closing div is correct */
   );
 }

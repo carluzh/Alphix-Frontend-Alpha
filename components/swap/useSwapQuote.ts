@@ -2,7 +2,6 @@ import { createElement, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential"
 import { MAINNET_CHAIN_ID } from "@/lib/network-mode"
-import { POLLING_INTERVAL_L2_MS } from "@/hooks/usePollingIntervalByChain"
 
 export type QuoteMode = "indicative" | "binding"
 
@@ -248,8 +247,7 @@ export function useSwapQuote({
     return () => clearTimeout(handler)
   }, [toAmount, fetchQuote])
 
-  // S10: Quote polling - refresh every 3s (L2) like Uniswap
-  // @see interface/packages/uniswap/src/features/transactions/swap/hooks/useTrade/useTradeQuery.ts
+  // Quote polling - refresh every 10s
   useEffect(() => {
     // Skip polling if no tokens or loading
     if (!fromToken || !toToken) return
@@ -261,7 +259,7 @@ export function useSwapQuote({
 
     const interval = setInterval(() => {
       fetchQuote(amountStr, "indicative")
-    }, POLLING_INTERVAL_L2_MS) // 3000ms for L2 (Base)
+    }, 10000) // 10 seconds between quote refreshes
 
     return () => clearInterval(interval)
   }, [fromToken, toToken, fromAmount, toAmount, fetchQuote, quoteLoading])

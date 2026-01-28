@@ -77,6 +77,9 @@ import {
   type UnifiedYieldPosition,
 } from "@/lib/liquidity/unified-yield";
 import { useNetwork } from "@/lib/network-context";
+import { usePriceDeviation, requiresDeviationAcknowledgment } from "@/hooks/usePriceDeviation";
+import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
+import { HighRiskConfirmModal, createPriceDeviationWarning } from "@/components/ui/HighRiskConfirmModal";
 
 // ============================================================================
 // Types
@@ -881,9 +884,27 @@ export const PositionDetail = memo(function PositionDetail({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isRemoveModalOpen, setIsRemoveModalOpen] = useState(false);
   const [isCollectModalOpen, setIsCollectModalOpen] = useState(false);
+  const [showPriceDeviationModal, setShowPriceDeviationModal] = useState(false);
   // Default to Yield chart for Unified Yield positions, Price chart for V4
   const [chartTab, setChartTab] = useState<"price" | "yield">(isUnifiedYield ? "yield" : "price");
   const [feeChartPeriod, setFeeChartPeriod] = useState<ChartPeriod>("1W");
+
+  // Price deviation check - compare pool price vs market price
+  const poolPriceValue = useMemo(() => {
+    if (!currentPrice) return null;
+    try {
+      return priceInverted ? currentPrice.invert().toSignificant(8) : currentPrice.toSignificant(8);
+    } catch {
+      return null;
+    }
+  }, [currentPrice, priceInverted]);
+
+  const priceDeviation = usePriceDeviation({
+    token0Symbol: poolConfig?.currency0?.symbol,
+    token1Symbol: poolConfig?.currency1?.symbol,
+    poolPrice: poolPriceValue,
+    priceInverted,
+  });
 
   // Fee chart data for V4 positions - pass current uncollected fees for "live now" point
   const {
@@ -998,12 +1019,25 @@ export const PositionDetail = memo(function PositionDetail({
   }, [position, poolConfig, positionInfo, tokenId, currency0Amount, currency1Amount, isInRange, fee0Amount, fee1Amount, isUnifiedYield, unifiedYieldPosition, networkMode]);
 
   // Modal handlers
-  const handleOpenAddModal = useCallback(() => setIsAddModalOpen(true), []);
+  const handleOpenAddModal = useCallback(() => {
+    // Check if high price deviation requires acknowledgment first
+    if (requiresDeviationAcknowledgment(priceDeviation.severity)) {
+      setShowPriceDeviationModal(true);
+    } else {
+      setIsAddModalOpen(true);
+    }
+  }, [priceDeviation.severity]);
   const handleCloseAddModal = useCallback(() => setIsAddModalOpen(false), []);
   const handleOpenRemoveModal = useCallback(() => setIsRemoveModalOpen(true), []);
   const handleCloseRemoveModal = useCallback(() => setIsRemoveModalOpen(false), []);
   const handleOpenCollectModal = useCallback(() => setIsCollectModalOpen(true), []);
   const handleCloseCollectModal = useCallback(() => setIsCollectModalOpen(false), []);
+
+  // Price deviation confirmation handler - opens the add modal after acknowledgment
+  const handlePriceDeviationConfirm = useCallback(() => {
+    setShowPriceDeviationModal(false);
+    setIsAddModalOpen(true);
+  }, []);
 
   // Handle modal success - refetch position data
   const handleModalSuccess = useCallback(() => {
@@ -1193,6 +1227,16 @@ export const PositionDetail = memo(function PositionDetail({
             networkMode={networkMode}
           />
 
+          {/* Price Deviation Warning */}
+          {priceDeviation.severity !== 'none' && poolConfig && (
+            <PriceDeviationCallout
+              deviation={priceDeviation}
+              token0Symbol={token0Symbol}
+              token1Symbol={token1Symbol}
+              variant="card"
+            />
+          )}
+
           {/* APR */}
           <APRSection
             poolApr={poolApr}
@@ -1247,6 +1291,24 @@ export const PositionDetail = memo(function PositionDetail({
             onSuccess={handleModalSuccess}
           />
         </>
+      )}
+
+      {/* Price Deviation Confirmation Modal */}
+      {poolConfig && priceDeviation.absoluteDeviation !== null && (
+        <HighRiskConfirmModal
+          isOpen={showPriceDeviationModal}
+          onClose={() => setShowPriceDeviationModal(false)}
+          onConfirm={handlePriceDeviationConfirm}
+          warnings={[createPriceDeviationWarning({
+            poolPrice: priceDeviation.poolPrice,
+            marketPrice: priceDeviation.marketPrice,
+            deviationPercent: priceDeviation.absoluteDeviation,
+            direction: priceDeviation.direction ?? 'below',
+            token0Symbol: poolConfig.currency0.symbol,
+            token1Symbol: poolConfig.currency1.symbol,
+          })]}
+          confirmText="Proceed with Add Liquidity"
+        />
       )}
     </div>
   );

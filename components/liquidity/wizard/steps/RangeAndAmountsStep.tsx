@@ -30,6 +30,9 @@ import { getDecimalsForDenomination } from '@/lib/denomination-utils';
 import { usePercentageInput } from '@/hooks/usePercentageInput';
 import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
 import { useRangeHopCallbacks } from '@/hooks/useRangeHopCallbacks';
+import { usePriceDeviation, requiresDeviationAcknowledgment } from '@/hooks/usePriceDeviation';
+import { PriceDeviationCallout } from '@/components/ui/PriceDeviationCallout';
+import { HighRiskConfirmModal, createPriceDeviationWarning } from '@/components/ui/HighRiskConfirmModal';
 import { TokenInputCard, TokenInputStyles } from '@/components/liquidity/TokenInputCard';
 import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
 import { formatCalculatedAmount } from '@/components/liquidity/liquidity-form-utils';
@@ -322,6 +325,7 @@ export function RangeAndAmountsStep() {
   const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
   const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
   const [chartDuration, setChartDuration] = useState<HistoryDuration>(HistoryDuration.MONTH);
+  const [showPriceDeviationModal, setShowPriceDeviationModal] = useState(false);
 
   // Use isCalculating from TxContext
   const isCalculating = txIsCalculating;
@@ -393,6 +397,14 @@ export function RangeAndAmountsStep() {
   // Current price from context (real on-chain data via usePoolState)
   const currentPriceRaw = poolStateData?.currentPrice || '1.00';
   const currentTick = poolStateData?.currentPoolTick;
+
+  // Price deviation check - compare pool price against CoinGecko market price
+  const priceDeviation = usePriceDeviation({
+    token0Symbol: token0Symbol ?? null,
+    token1Symbol: token1Symbol ?? null,
+    poolPrice: currentPriceRaw,
+    priceInverted,
+  });
 
   // For Unified Yield: Convert tick range from config to prices
   // rehypoRange stores tick values (e.g., min: "-276326", max: "-276324"), NOT prices
@@ -1055,6 +1067,18 @@ export function RangeAndAmountsStep() {
 
   // Handle review button click
   const handleReview = useCallback(() => {
+    // Check for high price deviation - require acknowledgment before proceeding
+    if (requiresDeviationAcknowledgment(priceDeviation.severity)) {
+      setShowPriceDeviationModal(true);
+      return;
+    }
+    setAmounts(amount0, amount1);
+    openReviewModal();
+  }, [amount0, amount1, setAmounts, openReviewModal, priceDeviation.severity]);
+
+  // Handle modal confirmation for high price deviation
+  const handlePriceDeviationConfirm = useCallback(() => {
+    setShowPriceDeviationModal(false);
     setAmounts(amount0, amount1);
     openReviewModal();
   }, [amount0, amount1, setAmounts, openReviewModal]);
@@ -1200,16 +1224,14 @@ export function RangeAndAmountsStep() {
           onSelectToken={handleSelectToken}
         />
 
-        {/* Unified Yield info - show immediately after current price for visibility */}
-        {isRehypoMode && (
-          <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent hover:border-muted-foreground/30 transition-colors">
-            <IconCircleInfo className="w-5 h-5 text-muted-foreground shrink-0" />
-            <span className="text-sm text-muted-foreground">
-              {poolConfig.rehypoRange?.isFullRange
-                ? 'Full range position for maximum Aave lending yield'
-                : 'Unified Yield uses an optimized range to offer lending yield'}
-            </span>
-          </div>
+        {/* Price Deviation Warning - prominent display under current price */}
+        {priceDeviation.severity !== 'none' && poolConfig && (
+          <PriceDeviationCallout
+            deviation={priceDeviation}
+            token0Symbol={poolConfig.currency0.symbol}
+            token1Symbol={poolConfig.currency1.symbol}
+            variant="large"
+          />
         )}
 
         {/* D3 Range Chart (view-only) - show chart OR skeleton (Uniswap pattern) */}
@@ -1277,14 +1299,39 @@ export function RangeAndAmountsStep() {
           </div>
         </div>
 
+        {/* Unified Yield info - show after range inputs */}
+        {isRehypoMode && (
+          <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent hover:border-muted-foreground/30 transition-colors">
+            <IconCircleInfo className="w-5 h-5 text-muted-foreground shrink-0" />
+            <span className="text-sm text-muted-foreground">
+              Unified Yield uses an optimized range to offer lending yield
+            </span>
+          </div>
+        )}
+
         {/* Concentrated mode only: Invalid range warning, Unified Yield callout & Price strategies */}
         {!isRehypoMode && (
           <>
             {/* Invalid range warning */}
             {!isValidRange && selectedPreset !== 'full' && (
-              <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-red-500/10 border border-transparent hover:border-red-500/30 transition-colors">
-                <IconTriangleWarningFilled className="w-5 h-5 text-red-500 shrink-0" />
-                <span className="text-sm text-red-500">Invalid range selected</span>
+              <div
+                className="flex items-center gap-2 rounded-lg border p-2 transition-colors"
+                style={{
+                  backgroundColor: 'rgba(255, 89, 60, 0.08)',
+                  borderColor: 'rgba(255, 89, 60, 0.2)',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(255, 89, 60, 0.4)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255, 89, 60, 0.2)'; }}
+              >
+                <div
+                  className="flex items-center justify-center p-1.5 rounded-md shrink-0"
+                  style={{ backgroundColor: 'rgba(255, 89, 60, 0.12)' }}
+                >
+                  <IconTriangleWarningFilled className="h-3.5 w-3.5" style={{ color: '#FF593C' }} />
+                </div>
+                <span className="text-xs font-medium" style={{ color: '#FF593C' }}>
+                  Invalid range selected
+                </span>
               </div>
             )}
 
@@ -1374,11 +1421,27 @@ export function RangeAndAmountsStep() {
 
         {/* Insufficient balance warning */}
         {hasInsufficientBalance && (
-          <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-red-500/10 border border-transparent hover:border-red-500/30 transition-colors">
-            <IconTriangleWarningFilled className="w-5 h-5 text-red-500 shrink-0" />
-            <span className="text-sm text-red-500">Insufficient balance for this deposit</span>
+          <div
+            className="flex items-center gap-2 rounded-lg border p-2 transition-colors"
+            style={{
+              backgroundColor: 'rgba(255, 89, 60, 0.08)',
+              borderColor: 'rgba(255, 89, 60, 0.2)',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(255, 89, 60, 0.4)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255, 89, 60, 0.2)'; }}
+          >
+            <div
+              className="flex items-center justify-center p-1.5 rounded-md shrink-0"
+              style={{ backgroundColor: 'rgba(255, 89, 60, 0.12)' }}
+            >
+              <IconTriangleWarningFilled className="h-3.5 w-3.5" style={{ color: '#FF593C' }} />
+            </div>
+            <span className="text-xs font-medium" style={{ color: '#FF593C' }}>
+              Insufficient balance for this deposit
+            </span>
           </div>
         )}
+
       </div>
 
       {/* Review button */}
@@ -1395,6 +1458,24 @@ export function RangeAndAmountsStep() {
       >
         Review
       </Button>
+
+      {/* Price Deviation Confirmation Modal */}
+      {poolConfig && priceDeviation.absoluteDeviation !== null && (
+        <HighRiskConfirmModal
+          isOpen={showPriceDeviationModal}
+          onClose={() => setShowPriceDeviationModal(false)}
+          onConfirm={handlePriceDeviationConfirm}
+          warnings={[createPriceDeviationWarning({
+            poolPrice: priceDeviation.poolPrice,
+            marketPrice: priceDeviation.marketPrice,
+            deviationPercent: priceDeviation.absoluteDeviation,
+            direction: priceDeviation.direction ?? 'below',
+            token0Symbol: poolConfig.currency0.symbol,
+            token1Symbol: poolConfig.currency1.symbol,
+          })]}
+          confirmText="Proceed with Deposit"
+        />
+      )}
     </Container>
   );
 }

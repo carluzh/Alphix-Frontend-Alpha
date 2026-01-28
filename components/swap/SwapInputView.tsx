@@ -24,6 +24,8 @@ import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
 import { useSlippageValidation } from '@/hooks/useSlippage';
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { SwapTradeModel } from "./useSwapTrade";
+import type { PriceDeviationResult } from "@/hooks/usePriceDeviation";
+import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
 
 interface SwapInputViewProps {
   displayFromToken: Token;
@@ -63,6 +65,7 @@ interface SwapInputViewProps {
   onRouteHoverChange?: (hover: boolean) => void;
   onNetworkSwitch?: () => void;
   onClearFromAmount?: () => void;
+  priceDeviation?: PriceDeviationResult;
 }
 
 export function SwapInputView({
@@ -103,6 +106,7 @@ export function SwapInputView({
   onRouteHoverChange,
   onNetworkSwitch,
   onClearFromAmount,
+  priceDeviation,
 }: SwapInputViewProps) {
   const isMobile = useIsMobile();
   const [hoveredRouteIndex, setHoveredRouteIndex] = React.useState<number | null>(null);
@@ -824,29 +828,78 @@ export function SwapInputView({
         )}
       </div>
 
+      {/* Warning Cards - compact card style with tinted bg, border, icon container */}
       {/* Price Impact Warning */}
-      {trade.priceImpactWarning && (
-        <div className={cn(
-          "mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-xs",
-          trade.priceImpactWarning.severity === 'high'
-            ? "bg-red-500/10 text-red-500 border border-red-500/20"
-            : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
-        )}>
-          <IconTriangleWarningFilled className="h-3 w-3 shrink-0" />
-          <span className="font-medium">{trade.priceImpactWarning.message}</span>
-        </div>
-      )}
+      {trade.priceImpactWarning && (() => {
+        const isHigh = trade.priceImpactWarning.severity === 'high';
+        const isLoading = trade.quoteLoading;
+        const color = isHigh ? '#FF593C' : '#FFBF17';
+        const bgColor = isHigh ? 'rgba(255, 89, 60, 0.08)' : 'rgba(255, 191, 23, 0.08)';
+        const borderColor = isHigh ? 'rgba(255, 89, 60, 0.2)' : 'rgba(255, 191, 23, 0.2)';
+        const borderHoverColor = isHigh ? 'rgba(255, 89, 60, 0.4)' : 'rgba(255, 191, 23, 0.4)';
+        const iconBgColor = isHigh ? 'rgba(255, 89, 60, 0.12)' : 'rgba(255, 191, 23, 0.12)';
+        return (
+          <div
+            className="mt-3 flex items-center gap-2 rounded-lg border p-2 transition-colors"
+            style={{ backgroundColor: bgColor, borderColor }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = borderHoverColor; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = borderColor; }}
+          >
+            <div
+              className="flex items-center justify-center p-1.5 rounded-md shrink-0"
+              style={{ backgroundColor: iconBgColor }}
+            >
+              <IconTriangleWarningFilled className="h-3.5 w-3.5" style={{ color }} />
+            </div>
+            {isLoading ? (
+              <div className="h-4 w-32 rounded animate-pulse" style={{ backgroundColor: iconBgColor }} />
+            ) : (
+              <span className="text-xs font-medium" style={{ color }}>
+                {trade.priceImpactWarning.message}
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Slippage Warning */}
-      {showSlippageWarning && !isAutoSlippage && slippageWarningMessage && (
-        <div className={cn(
-          "mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-xs",
-          isSlippageCritical
-            ? "bg-red-500/10 text-red-500 border border-red-500/20"
-            : "bg-orange-500/10 text-orange-500 border border-orange-500/20"
-        )}>
-          <IconTriangleWarningFilled className="h-3 w-3 shrink-0" />
-          <span className="font-medium">{slippageWarningMessage}</span>
+      {showSlippageWarning && !isAutoSlippage && slippageWarningMessage && (() => {
+        const isHigh = isSlippageCritical;
+        const color = isHigh ? '#FF593C' : '#FFBF17';
+        const bgColor = isHigh ? 'rgba(255, 89, 60, 0.08)' : 'rgba(255, 191, 23, 0.08)';
+        const borderColor = isHigh ? 'rgba(255, 89, 60, 0.2)' : 'rgba(255, 191, 23, 0.2)';
+        const borderHoverColor = isHigh ? 'rgba(255, 89, 60, 0.4)' : 'rgba(255, 191, 23, 0.4)';
+        const iconBgColor = isHigh ? 'rgba(255, 89, 60, 0.12)' : 'rgba(255, 191, 23, 0.12)';
+        return (
+          <div
+            className="mt-3 flex items-center gap-2 rounded-lg border p-2 transition-colors"
+            style={{ backgroundColor: bgColor, borderColor }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = borderHoverColor; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = borderColor; }}
+          >
+            <div
+              className="flex items-center justify-center p-1.5 rounded-md shrink-0"
+              style={{ backgroundColor: iconBgColor }}
+            >
+              <IconTriangleWarningFilled className="h-3.5 w-3.5" style={{ color }} />
+            </div>
+            <span className="text-xs font-medium" style={{ color }}>
+              {slippageWarningMessage}
+            </span>
+          </div>
+        );
+      })()}
+
+      {/* Price Deviation Warning */}
+      {priceDeviation && priceDeviation.severity !== 'none' && (
+        <div className="mt-3">
+          <PriceDeviationCallout
+            deviation={priceDeviation}
+            token0Symbol={displayFromToken.symbol}
+            token1Symbol={displayToToken.symbol}
+            variant="card"
+            isQuoteLoading={trade.quoteLoading}
+          />
         </div>
       )}
 

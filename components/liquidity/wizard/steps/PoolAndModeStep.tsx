@@ -103,51 +103,6 @@ function SparkPattern() {
   );
 }
 
-// Animated "Powered by" pill that cycles between Aave and Spark
-function AnimatedPoweredBy() {
-  const [showAave, setShowAave] = useState(true);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setShowAave(prev => !prev);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  return (
-    <div className="relative h-7 overflow-hidden" style={{ minWidth: 145 }}>
-      {/* Aave pill */}
-      <motion.div
-        animate={{ y: showAave ? 0 : -28 }}
-        transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
-        className="absolute inset-0 flex items-center"
-      >
-        <div
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
-          style={{ backgroundColor: AAVE_CONFIG.pillBg }}
-        >
-          <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
-          <Image src={AAVE_CONFIG.textLogo} alt="Aave" width={44} height={12} />
-        </div>
-      </motion.div>
-      {/* Spark pill */}
-      <motion.div
-        animate={{ y: showAave ? 28 : 0 }}
-        transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
-        className="absolute inset-0 flex items-center"
-      >
-        <div
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
-          style={{ background: SPARK_CONFIG.gradient }}
-        >
-          <span className="text-xs font-medium text-white">Powered by</span>
-          <Image src="/spark/Spark-Logo-Horizontal-Dark_Background-RGB.svg" alt="Spark" width={52} height={14} style={{ filter: 'brightness(0) saturate(100%) invert(100%)' }} />
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
 function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { selected: boolean; onSelect: () => void; extraApr?: number; yieldSources?: Array<'aave' | 'spark'> }) {
   const hasSpark = yieldSources?.includes('spark');
   const hasAave = yieldSources?.includes('aave') ?? true; // Default to Aave if not specified
@@ -214,7 +169,16 @@ function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { select
           </div>
           {/* Powered by section */}
           {hasBoth ? (
-            <AnimatedPoweredBy />
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ backgroundColor: AAVE_CONFIG.pillBg }}>
+                <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
+                <Image src={AAVE_CONFIG.textLogo} alt="Aave" width={44} height={12} />
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: SPARK_CONFIG.gradient }}>
+                <span className="text-xs font-medium text-white">Powered by</span>
+                <Image src="/spark/Spark-Logo-Horizontal-White-RGB.svg" alt="Spark" width={52} height={14} />
+              </div>
+            </div>
           ) : hasAave ? (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ backgroundColor: AAVE_CONFIG.pillBg }}>
               <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
@@ -223,7 +187,7 @@ function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { select
           ) : hasSpark ? (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ background: SPARK_CONFIG.gradient }}>
               <span className="text-xs font-medium text-white">Powered by</span>
-              <Image src="/spark/Spark-Logo-Horizontal-Dark_Background-RGB.svg" alt="Spark" width={52} height={14} />
+              <Image src="/spark/Spark-Logo-Horizontal-White-RGB.svg" alt="Spark" width={52} height={14} />
             </div>
           ) : null}
         </div>

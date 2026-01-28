@@ -331,7 +331,15 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
   }, [isOpen]);
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()} modal={false}>
+      {/* Custom overlay to prevent layout shift */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80"
+          onClick={handleClose}
+          aria-hidden="true"
+        />
+      )}
       <DialogContent
           className="sm:max-w-[420px] bg-container border-sidebar-border p-0 gap-0 [&>button]:hidden"
           onOpenAutoFocus={(e) => e.preventDefault()}

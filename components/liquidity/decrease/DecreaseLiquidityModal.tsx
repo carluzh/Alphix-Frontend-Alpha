@@ -33,7 +33,15 @@ export function DecreaseLiquidityModal({
   onSuccess,
 }: DecreaseLiquidityModalProps) {
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()} modal={false}>
+      {/* Custom overlay to prevent layout shift */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
       <DialogContent
           className="sm:max-w-[440px] bg-container border-sidebar-border"
           onOpenAutoFocus={(e) => e.preventDefault()}

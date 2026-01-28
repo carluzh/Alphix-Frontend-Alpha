@@ -362,8 +362,8 @@ export function useSwapTrade({
 
   const priceImpactWarning: PriceImpactWarning = useMemo(() => {
     if (priceImpact === null) return null
-    if (priceImpact >= 5) return { severity: "high", message: `Very high price impact: ${priceImpact.toFixed(2)}%` }
-    if (priceImpact >= 3) return { severity: "medium", message: `High price impact: ${priceImpact.toFixed(2)}%` }
+    if (priceImpact >= 5) return { severity: "high", message: `Very high price impact (${priceImpact.toFixed(2)}%)` }
+    if (priceImpact >= 3) return { severity: "medium", message: `High price impact (${priceImpact.toFixed(2)}%)` }
     return null
   }, [priceImpact])
 
