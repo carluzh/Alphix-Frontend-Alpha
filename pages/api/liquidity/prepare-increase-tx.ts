@@ -482,7 +482,8 @@ export default async function handler(
     }
 
     // Return ERC20 approval needed response (now includes permit data for complete step generation)
-    if (erc20ApprovalNeeded) {
+    // Skip this check if we already have a permit signature - the permit will handle the allowance
+    if (erc20ApprovalNeeded && !hasBatchPermit) {
       return res.status(200).json({
         needsApproval: true,
         approvalType: 'ERC20_TO_PERMIT2' as const,

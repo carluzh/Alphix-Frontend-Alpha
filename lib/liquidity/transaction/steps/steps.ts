@@ -239,7 +239,14 @@ export function createIncreasePositionAsyncStep(
         // Validate and transform the response
         const txData = data.create || data.transaction;
         if (!txData) {
-          return { txRequest: undefined, sqrtRatioX96: data.sqrtRatioX96 };
+          // API returned approval-needed response instead of transaction data
+          if (data.needsApproval) {
+            const errorMsg = data.approvalType === 'ERC20_TO_PERMIT2'
+              ? 'ERC20 approval is still required. Please try again.'
+              : 'Permit signature was not accepted. Please try again.';
+            throw new Error(errorMsg);
+          }
+          throw new Error('Failed to prepare transaction: no transaction data returned');
         }
 
         // Safely parse bigint values - handle potential decimal strings
@@ -309,7 +316,14 @@ export function createCreatePositionAsyncStep(
         // Validate and transform the response
         const txData = data.create || data.transaction;
         if (!txData) {
-          return { txRequest: undefined, sqrtRatioX96: data.sqrtRatioX96 };
+          // API returned approval-needed response instead of transaction data
+          if (data.needsApproval) {
+            const errorMsg = data.approvalType === 'ERC20_TO_PERMIT2'
+              ? 'ERC20 approval is still required. Please try again.'
+              : 'Permit signature was not accepted. Please try again.';
+            throw new Error(errorMsg);
+          }
+          throw new Error('Failed to prepare transaction: no transaction data returned');
         }
 
         // Safely parse bigint values - handle potential decimal strings

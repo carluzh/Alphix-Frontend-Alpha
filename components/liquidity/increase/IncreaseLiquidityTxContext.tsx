@@ -463,7 +463,8 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         }
 
         // Include permitBatchData in request args so async step can send it with signature
-        const increasePositionRequestArgsWithPermit = permit ? {
+        // Always include if API returned permit data, even if permit step fields weren't fully built
+        const increasePositionRequestArgsWithPermit = permitData ? {
           ...increasePositionRequestArgs,
           permitBatchData: permitData.values || permitData,
         } : increasePositionRequestArgs;
