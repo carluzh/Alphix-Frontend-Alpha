@@ -1044,27 +1044,39 @@ export async function fetchWSStats(): Promise<WSStatsResponse> {
 }
 
 /**
- * Get the WebSocket URL based on environment
+ * Get the WebSocket URL based on environment and network mode
  *
  * Returns:
- * - Development/Testnet: ws://34.60.82.34:3001/ws
- * - Production: wss://api.alphix.fi/ws
+ * - Development: ws://34.60.82.34:3001/ws?network=base|base-sepolia
+ * - Production: wss://api.alphix.fi/ws?network=base|base-sepolia
+ *
+ * @param networkMode - Optional network mode ('mainnet' | 'testnet'). If not provided, returns base URL without network param.
  */
-export function getWebSocketUrl(): string {
-  const wsUrl = process.env.NEXT_PUBLIC_ALPHIX_WS_URL;
-  if (wsUrl) return wsUrl;
+export function getWebSocketUrl(networkMode?: 'mainnet' | 'testnet'): string {
+  let baseUrl: string;
 
-  // In browser, check hostname
-  if (typeof window !== 'undefined') {
+  const wsUrl = process.env.NEXT_PUBLIC_ALPHIX_WS_URL;
+  if (wsUrl) {
+    baseUrl = wsUrl;
+  } else if (typeof window !== 'undefined') {
     if (window.location.hostname === 'localhost') {
-      return 'ws://34.60.82.34:3001/ws';
+      baseUrl = 'ws://34.60.82.34:3001/ws';
+    } else {
+      // Production - use secure WebSocket
+      baseUrl = 'wss://api.alphix.fi/ws';
     }
-    // Production - use secure WebSocket
-    return 'wss://api.alphix.fi/ws';
+  } else {
+    // Server-side default
+    baseUrl = 'ws://34.60.82.34:3001/ws';
   }
 
-  // Server-side default (testnet)
-  return 'ws://34.60.82.34:3001/ws';
+  // Append network param if provided
+  if (networkMode) {
+    const networkParam = networkMode === 'mainnet' ? 'base' : 'base-sepolia';
+    return `${baseUrl}?network=${networkParam}`;
+  }
+
+  return baseUrl;
 }
 
 // =============================================================================

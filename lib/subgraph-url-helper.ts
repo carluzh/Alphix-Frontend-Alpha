@@ -5,9 +5,12 @@
  * - TESTNET (Base Sepolia): Single unified subgraph (SUBGRAPH_URL)
  *   Contains: Pool, HookPosition, UnifiedYieldPosition, AlphixHook, AlphixHookTVL, etc.
  *
- * - MAINNET (Base): Dual subgraph architecture
- *   1. SUBGRAPH_URL_MAINNET_ALPHIX → Alphix-specific entities (HookPosition, AlphixHook)
- *   2. UNISWAP_V4_SUBGRAPH_URL → Uniswap public subgraph (Pool, PoolDayData, Token)
+ * - MAINNET (Base): Single unified subgraph (SUBGRAPH_URL_MAINNET_ALPHIX)
+ *   Contains all entities like testnet - Pool, PoolDayData, HookPosition,
+ *   UnifiedYieldPosition, AlphixHook, AlphixHookTVL, etc.
+ *
+ * Note: UNISWAP_V4_SUBGRAPH_URL is only needed if querying non-Alphix pools.
+ * Since we only query Alphix pools, the Alphix subgraph is used for all queries.
  */
 
 import { getStoredNetworkMode, type NetworkMode } from './network-mode';
@@ -41,16 +44,21 @@ export function getAlphixSubgraphUrl(networkModeOverride?: NetworkMode): string 
 }
 
 /**
- * Returns the Uniswap v4 subgraph URL for Pool/PoolDayData queries.
- * - Testnet: Uses SUBGRAPH_URL (our full subgraph has these entities)
- * - Mainnet: Uses UNISWAP_V4_SUBGRAPH_URL (public Uniswap subgraph)
+ * Returns the subgraph URL for Pool/PoolDayData queries.
+ * - Testnet: Uses SUBGRAPH_URL (unified subgraph)
+ * - Mainnet: Uses SUBGRAPH_URL_MAINNET_ALPHIX (unified subgraph with all entities)
+ *
+ * Note: Both networks now use a unified Alphix subgraph that contains
+ * Pool, PoolDayData, and all other entities. The Uniswap public subgraph
+ * (UNISWAP_V4_SUBGRAPH_URL) is only needed for non-Alphix pool data.
  */
 export function getUniswapV4SubgraphUrl(networkModeOverride?: NetworkMode): string {
   const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') {
-    return process.env.UNISWAP_V4_SUBGRAPH_URL || '';
+    // Unified Alphix subgraph contains Pool/PoolDayData for Alphix pools
+    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || '';
   }
-  // Testnet: our full subgraph has Pool/PoolDayData entities
+  // Testnet: unified subgraph has all entities
   return process.env.SUBGRAPH_URL || '';
 }
 

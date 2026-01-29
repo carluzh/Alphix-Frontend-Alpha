@@ -13,7 +13,7 @@
     "stateView": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71"
   },
   "hooks": {
-    "alphixHookId": "0xc025186214711638070aF4e27B57B3D4B10B7Fff"
+    "alphixHookId": "TODO_HOOK_ADDRESS_FROM_DEPLOYMENT"
   },
   "tokens": {
     "ETH": {
@@ -47,8 +47,8 @@
     {
       "id": "usdc-usdt",
       "name": "USDC/USDT",
-      "description": "Stablecoin pair with dynamic fees",
-      "subgraphId": "0x7f9704e6f22b3aaf8315c7bceffb63c8a1b06de964020efe6be2cb27ea20e632",
+      "description": "Stablecoin pair with dynamic fees and rehypothecated liquidity",
+      "subgraphId": "TODO_POOL_ID_FROM_DEPLOYMENT",
       "currency0": {
         "symbol": "USDC",
         "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
@@ -59,21 +59,22 @@
       },
       "fee": 8388608,
       "tickSpacing": 1,
-      "hooks": "0xc025186214711638070aF4e27B57B3D4B10B7Fff",
+      "hooks": "TODO_HOOK_ADDRESS_FROM_DEPLOYMENT",
       "enabled": true,
       "featured": true,
       "type": "Stable",
+      "yieldSources": ["aave", "spark"],
       "rehypoRange": {
-        "min": "1.001",
-        "max": "1.001601",
+        "min": "TODO_TICK_LOWER",
+        "max": "TODO_TICK_UPPER",
         "isFullRange": false
       }
     },
     {
       "id": "eth-usdc",
       "name": "ETH/USDC",
-      "description": "ETH/USDC pair with dynamic fees",
-      "subgraphId": "0xa92784c3030d9c4743dfdbc4da540d3f0f9d2742a47b83304d6d2d5eee45fb3b",
+      "description": "ETH/USDC pair with dynamic fees and rehypothecated liquidity",
+      "subgraphId": "TODO_POOL_ID_FROM_DEPLOYMENT",
       "currency0": {
         "symbol": "ETH",
         "address": "0x0000000000000000000000000000000000000000"
@@ -84,13 +85,14 @@
       },
       "fee": 8388608,
       "tickSpacing": 10,
-      "hooks": "0xc025186214711638070aF4e27B57B3D4B10B7Fff",
+      "hooks": "TODO_HOOK_ADDRESS_FROM_DEPLOYMENT",
       "enabled": true,
       "featured": true,
       "type": "Volatile",
+      "yieldSources": ["aave"],
       "rehypoRange": {
-        "min": "0",
-        "max": "∞",
+        "min": "-887220",
+        "max": "887220",
         "isFullRange": true
       }
     }

@@ -39,6 +39,9 @@ import {
 } from './types';
 import { getWebSocketUrl } from '@/lib/backend-client';
 
+/** Network mode for WebSocket filtering */
+export type WSNetworkMode = 'mainnet' | 'testnet';
+
 // Default configuration (without url - resolved at runtime)
 const DEFAULT_CONFIG_BASE = {
   reconnectDelay: 1000,
@@ -51,10 +54,12 @@ const DEFAULT_CONFIG_BASE = {
  * Get default config with runtime-resolved WebSocket URL.
  * This ensures the URL is determined at runtime (not build time),
  * properly detecting localhost vs production environments.
+ *
+ * @param networkMode - Optional network mode for filtering ('mainnet' | 'testnet')
  */
-function getDefaultConfig(): Required<WSConfig> {
+function getDefaultConfig(networkMode?: WSNetworkMode): Required<WSConfig> {
   return {
-    url: getWebSocketUrl(),
+    url: getWebSocketUrl(networkMode),
     ...DEFAULT_CONFIG_BASE,
   };
 }
@@ -72,11 +77,13 @@ export class WebSocketManager {
   private subscribedChannels = new Set<string>();
   private pendingSubscriptions = new Set<string>();
   private isIntentionalDisconnect = false;
+  private networkMode: WSNetworkMode | undefined;
 
-  constructor(handlers: WSEventHandlers = {}, config: WSConfig = {}) {
+  constructor(handlers: WSEventHandlers = {}, config: WSConfig = {}, networkMode?: WSNetworkMode) {
     this.handlers = handlers;
+    this.networkMode = networkMode;
     // Resolve URL at runtime to handle localhost vs production correctly
-    this.config = { ...getDefaultConfig(), ...config };
+    this.config = { ...getDefaultConfig(networkMode), ...config };
   }
 
   // ===========================================================================
@@ -215,6 +222,48 @@ export class WebSocketManager {
     }
 
     this.connect();
+  }
+
+  /**
+   * Get current network mode
+   */
+  getNetworkMode(): WSNetworkMode | undefined {
+    return this.networkMode;
+  }
+
+  /**
+   * Switch to a different network
+   *
+   * Disconnects from current WebSocket, updates URL with new network param,
+   * and reconnects. Subscribed channels are preserved and re-subscribed on connect.
+   *
+   * @param networkMode - New network mode ('mainnet' | 'testnet')
+   */
+  switchNetwork(networkMode: WSNetworkMode): void {
+    if (this.networkMode === networkMode) {
+      console.log('[WS] Already on network:', networkMode);
+      return;
+    }
+
+    console.log('[WS] Switching network from', this.networkMode, 'to', networkMode);
+    this.networkMode = networkMode;
+
+    // Update URL with new network mode
+    this.config.url = getWebSocketUrl(networkMode);
+
+    // If connected, reconnect with new URL (subscriptions preserved in subscribedChannels)
+    if (this.ws) {
+      // Close old connection (don't clear subscriptions - they'll be re-sent on connect)
+      this.isIntentionalDisconnect = true;
+      this.clearReconnectTimeout();
+      this.ws.close(1000, 'Network switch');
+      this.ws = null;
+
+      // Reconnect with new URL
+      this.isIntentionalDisconnect = false;
+      this.reconnectAttempts = 0;
+      this.connect();
+    }
   }
 
   // ===========================================================================
@@ -400,12 +449,18 @@ export class WebSocketManager {
  * Create a singleton WebSocket manager instance
  *
  * Use this in contexts where you need a shared connection across the app.
+ * Optionally provide a network mode to filter events by network.
+ *
+ * @param networkMode - Optional network mode ('mainnet' | 'testnet')
  */
 let sharedInstance: WebSocketManager | null = null;
 
-export function getSharedWebSocketManager(): WebSocketManager {
+export function getSharedWebSocketManager(networkMode?: WSNetworkMode): WebSocketManager {
   if (!sharedInstance) {
-    sharedInstance = new WebSocketManager();
+    sharedInstance = new WebSocketManager({}, {}, networkMode);
+  } else if (networkMode && sharedInstance.getNetworkMode() !== networkMode) {
+    // Switch network on existing instance
+    sharedInstance.switchNetwork(networkMode);
   }
   return sharedInstance;
 }

@@ -30,36 +30,48 @@ export const UNIFIED_YIELD_HOOK_ABI = [
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Add rehypothecated liquidity
+   * Add rehypothecated liquidity with slippage protection
    *
    * Deposits assets into yield sources and mints shares to sender.
    * Pool must be active. Native ETH should be sent as msg.value.
    *
    * @param shares - Number of shares to mint
+   * @param expectedSqrtPriceX96 - Expected price (pass 0 to skip slippage check)
+   * @param maxPriceSlippage - Max allowed price deviation, same scale as LP fee (1000000 = 100%)
    * @returns delta - BalanceDelta (packed int256: int128 amount0, int128 amount1)
    */
   {
     name: 'addReHypothecatedLiquidity',
     type: 'function',
     stateMutability: 'payable',
-    inputs: [{ name: 'shares', type: 'uint256' }],
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'expectedSqrtPriceX96', type: 'uint160' },
+      { name: 'maxPriceSlippage', type: 'uint24' },
+    ],
     outputs: [{ name: 'delta', type: 'int256' }],
   },
 
   /**
-   * Remove rehypothecated liquidity
+   * Remove rehypothecated liquidity with slippage protection
    *
    * Burns shares and withdraws assets from yield sources to sender.
    * Pool must be active.
    *
    * @param shares - Number of shares to burn
+   * @param expectedSqrtPriceX96 - Expected price (pass 0 to skip slippage check)
+   * @param maxPriceSlippage - Max allowed price deviation, same scale as LP fee (1000000 = 100%)
    * @returns delta - BalanceDelta (packed int256: int128 amount0, int128 amount1)
    */
   {
     name: 'removeReHypothecatedLiquidity',
     type: 'function',
     stateMutability: 'nonpayable',
-    inputs: [{ name: 'shares', type: 'uint256' }],
+    inputs: [
+      { name: 'shares', type: 'uint256' },
+      { name: 'expectedSqrtPriceX96', type: 'uint160' },
+      { name: 'maxPriceSlippage', type: 'uint24' },
+    ],
     outputs: [{ name: 'delta', type: 'int256' }],
   },
 

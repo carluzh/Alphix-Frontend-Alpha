@@ -159,11 +159,18 @@ export interface UnifiedYieldDepositParams {
   chainId: number;
 
   /**
-   * Slippage tolerance in basis points
-   * Note: Contract doesn't support slippage protection,
-   * but this can be used for UI warnings
+   * Expected sqrt price for slippage protection
+   * Pass 0n to skip slippage check at contract level
+   * Obtained from pool state (sqrtPriceX96)
    */
-  slippageBps?: number;
+  expectedSqrtPriceX96?: bigint;
+
+  /**
+   * Max price slippage tolerance
+   * Same scale as LP fee: 1000000 = 100%, 10000 = 1%
+   * Pass 0 to skip slippage check at contract level
+   */
+  maxPriceSlippage?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -316,11 +323,18 @@ export interface UnifiedYieldWithdrawParams {
   chainId: number;
 
   /**
-   * Slippage tolerance in basis points
-   * Note: Current Hook doesn't support slippage at contract level,
-   * but this can be used for UI warnings
+   * Expected sqrt price for slippage protection
+   * Pass 0n to skip slippage check at contract level
+   * Obtained from pool state (sqrtPriceX96)
    */
-  slippageBps?: number;
+  expectedSqrtPriceX96?: bigint;
+
+  /**
+   * Max price slippage tolerance
+   * Same scale as LP fee: 1000000 = 100%, 10000 = 1%
+   * Pass 0 to skip slippage check at contract level
+   */
+  maxPriceSlippage?: number;
 }
 
 /**

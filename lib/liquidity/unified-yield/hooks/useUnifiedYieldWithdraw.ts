@@ -38,6 +38,17 @@ export interface UseUnifiedYieldWithdrawParams {
   poolId?: string;
   /** Chain ID */
   chainId?: number;
+  /**
+   * Current pool sqrtPriceX96 for slippage protection
+   * Pass undefined or '0' to skip slippage check
+   */
+  sqrtPriceX96?: string;
+  /**
+   * Max price slippage tolerance
+   * Same scale as LP fee: 1000000 = 100%, 10000 = 1%
+   * Default: 10000 (1%)
+   */
+  maxPriceSlippage?: number;
 }
 
 export interface UseUnifiedYieldWithdrawResult {
@@ -209,13 +220,17 @@ export function useUnifiedYieldWithdraw(
         // Build transaction
         const txData = buildUnifiedYieldWithdrawTx(withdrawParams);
 
-        // Execute withdrawal: removeReHypothecatedLiquidity(shares)
+        // Parse slippage params
+        const expectedSqrtPriceX96 = params.sqrtPriceX96 ? BigInt(params.sqrtPriceX96) : 0n;
+        const maxPriceSlippage = params.maxPriceSlippage ?? 0;
+
+        // Execute withdrawal: removeReHypothecatedLiquidity(shares, expectedSqrtPriceX96, maxPriceSlippage)
         // Use writeContractAsync to properly await the transaction submission
         const hash = await writeContractAsync({
           address: txData.to,
           abi: UNIFIED_YIELD_HOOK_ABI,
           functionName: 'removeReHypothecatedLiquidity',
-          args: [shares],
+          args: [shares, expectedSqrtPriceX96, maxPriceSlippage],
         });
 
         return hash;

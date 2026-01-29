@@ -168,7 +168,7 @@ export function WebSocketProvider({
     }
   }, []);
 
-  // Initialize WebSocket manager
+  // Initialize WebSocket manager (only once on mount)
   useEffect(() => {
     const manager = new WebSocketManager(
       {
@@ -191,7 +191,8 @@ export function WebSocketProvider({
         },
         onMessage: handlePoolMetricsMessage,
       },
-      config
+      config,
+      networkMode // Pass initial network mode
     );
 
     wsManagerRef.current = manager;
@@ -206,16 +207,19 @@ export function WebSocketProvider({
       manager.disconnect();
       wsManagerRef.current = null;
     };
+    // Only run on mount - network changes handled separately
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoConnect, config, handlePoolMetricsMessage]);
 
-  // Clear data on network change
+  // Handle network mode changes - switch WebSocket connection
   useEffect(() => {
-    if (wsManagerRef.current && state === 'connected') {
+    if (wsManagerRef.current) {
+      // Clear pool data for new network
       setPools(new Map());
-      // Re-subscribe after clearing
-      wsManagerRef.current.subscribe(POOLS_METRICS_CHANNEL);
+      // Switch to new network (reconnects with ?network= param)
+      wsManagerRef.current.switchNetwork(networkMode);
     }
-  }, [networkMode, state]);
+  }, [networkMode]);
 
   // ===========================================================================
   // Context Methods

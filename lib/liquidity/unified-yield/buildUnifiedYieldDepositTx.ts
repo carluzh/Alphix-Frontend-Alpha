@@ -8,15 +8,16 @@
  * 1. User specifies one token amount (e.g., 1 ETH)
  * 2. Call previewAddFromAmount0(amount0) → (required_amount1, shares_to_mint)
  * 3. Approve both tokens to Hook
- * 4. Call addReHypothecatedLiquidity(shares) with msg.value if native ETH
+ * 4. Call addReHypothecatedLiquidity(shares, expectedSqrtPriceX96, maxPriceSlippage)
  *
  * The contract function:
- *   addReHypothecatedLiquidity(uint256 shares) external payable returns (BalanceDelta)
+ *   addReHypothecatedLiquidity(uint256 shares, uint160 expectedSqrtPriceX96, uint24 maxPriceSlippage)
+ *     external payable returns (BalanceDelta)
  *
  * Features:
  * - Native ETH sent as msg.value, Hook wraps internally
  * - Both tokens deposited together (proportionally based on current pool state)
- * - No slippage protection at contract level
+ * - Slippage protection via expectedSqrtPriceX96 and maxPriceSlippage (pass 0 to skip)
  */
 
 import { encodeFunctionData, type PublicClient, type Address, formatUnits } from 'viem';
@@ -32,7 +33,7 @@ import { UNIFIED_YIELD_HOOK_ABI } from './abi/unifiedYieldHookABI';
 /**
  * Build a Unified Yield deposit transaction
  *
- * Calls addReHypothecatedLiquidity(shares) on the Hook contract.
+ * Calls addReHypothecatedLiquidity(shares, expectedSqrtPriceX96, maxPriceSlippage) on the Hook contract.
  * Native ETH should be sent as msg.value.
  *
  * @param params - Deposit parameters (must include sharesToMint from preview)
@@ -48,6 +49,8 @@ export function buildUnifiedYieldDepositTx(
     amount0Wei,
     amount1Wei,
     sharesToMint,
+    expectedSqrtPriceX96 = 0n, // Default to 0 to skip slippage check
+    maxPriceSlippage = 0, // Default to 0 to skip slippage check
   } = params;
 
   // Calculate ETH value if either token is native
@@ -56,11 +59,11 @@ export function buildUnifiedYieldDepositTx(
   const isToken1Native = token1Address.toLowerCase() === NATIVE_TOKEN_ADDRESS.toLowerCase();
   const value = (isToken0Native ? amount0Wei : 0n) + (isToken1Native ? amount1Wei : 0n);
 
-  // Build calldata for Hook.addReHypothecatedLiquidity(shares)
+  // Build calldata for Hook.addReHypothecatedLiquidity(shares, expectedSqrtPriceX96, maxPriceSlippage)
   const calldata = encodeFunctionData({
     abi: UNIFIED_YIELD_HOOK_ABI,
     functionName: 'addReHypothecatedLiquidity',
-    args: [sharesToMint],
+    args: [sharesToMint, expectedSqrtPriceX96, maxPriceSlippage],
   });
 
   return {

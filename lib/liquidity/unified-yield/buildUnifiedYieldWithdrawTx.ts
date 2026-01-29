@@ -5,13 +5,14 @@
  * Users burn Hook shares and receive underlying tokens (token0 + token1).
  *
  * The contract function:
- *   removeReHypothecatedLiquidity(uint256 shares) external returns (BalanceDelta)
+ *   removeReHypothecatedLiquidity(uint256 shares, uint160 expectedSqrtPriceX96, uint24 maxPriceSlippage)
+ *     external returns (BalanceDelta)
  *
  * Features:
  * - Partial withdrawals supported (any share amount)
  * - Returns both tokens proportionally based on current pool state
  * - Native ETH is unwrapped by Hook and sent to user
- * - No slippage protection at contract level
+ * - Slippage protection via expectedSqrtPriceX96 and maxPriceSlippage (pass 0 to skip)
  */
 
 import { encodeFunctionData, type Address, type PublicClient, formatUnits } from 'viem';
@@ -25,7 +26,7 @@ import { UNIFIED_YIELD_HOOK_ABI } from './abi/unifiedYieldHookABI';
 /**
  * Build a Unified Yield withdraw transaction
  *
- * Calls removeReHypothecatedLiquidity(shares) on the Hook contract.
+ * Calls removeReHypothecatedLiquidity(shares, expectedSqrtPriceX96, maxPriceSlippage) on the Hook contract.
  * Burns user's shares and returns underlying tokens to sender.
  *
  * @param params - Withdraw parameters
@@ -34,13 +35,18 @@ import { UNIFIED_YIELD_HOOK_ABI } from './abi/unifiedYieldHookABI';
 export function buildUnifiedYieldWithdrawTx(
   params: UnifiedYieldWithdrawParams
 ): UnifiedYieldWithdrawTxResult {
-  const { hookAddress, shares } = params;
+  const {
+    hookAddress,
+    shares,
+    expectedSqrtPriceX96 = 0n, // Default to 0 to skip slippage check
+    maxPriceSlippage = 0, // Default to 0 to skip slippage check
+  } = params;
 
-  // Build calldata for Hook.removeReHypothecatedLiquidity(shares)
+  // Build calldata for Hook.removeReHypothecatedLiquidity(shares, expectedSqrtPriceX96, maxPriceSlippage)
   const calldata = encodeFunctionData({
     abi: UNIFIED_YIELD_HOOK_ABI,
     functionName: 'removeReHypothecatedLiquidity',
-    args: [shares],
+    args: [shares, expectedSqrtPriceX96, maxPriceSlippage],
   });
 
   return {

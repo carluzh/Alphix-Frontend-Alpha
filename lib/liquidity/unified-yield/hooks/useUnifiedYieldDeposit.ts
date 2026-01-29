@@ -44,6 +44,17 @@ export interface UseUnifiedYieldDepositParams {
   poolId?: string;
   /** Chain ID */
   chainId?: number;
+  /**
+   * Current pool sqrtPriceX96 for slippage protection
+   * Pass undefined or '0' to skip slippage check
+   */
+  sqrtPriceX96?: string;
+  /**
+   * Max price slippage tolerance
+   * Same scale as LP fee: 1000000 = 100%, 10000 = 1%
+   * Default: 10000 (1%)
+   */
+  maxPriceSlippage?: number;
 }
 
 export interface UseUnifiedYieldDepositResult {
@@ -254,13 +265,17 @@ export function useUnifiedYieldDeposit(
         // Build transaction data
         const txData = buildUnifiedYieldDepositTx(depositParams);
 
-        // Execute: addReHypothecatedLiquidity(shares)
+        // Parse slippage params
+        const expectedSqrtPriceX96 = params.sqrtPriceX96 ? BigInt(params.sqrtPriceX96) : 0n;
+        const maxPriceSlippage = params.maxPriceSlippage ?? 0;
+
+        // Execute: addReHypothecatedLiquidity(shares, expectedSqrtPriceX96, maxPriceSlippage)
         // Use writeContractAsync to properly await the transaction submission
         const hash = await writeContractAsync({
           address: txData.to,
           abi: UNIFIED_YIELD_HOOK_ABI,
           functionName: 'addReHypothecatedLiquidity',
-          args: [preview.shares],
+          args: [preview.shares, expectedSqrtPriceX96, maxPriceSlippage],
           value: txData.value,
         });
 
