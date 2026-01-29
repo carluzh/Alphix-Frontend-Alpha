@@ -510,7 +510,7 @@ export function ReviewExecuteModal() {
         token0.address as Address,
         token1.address as Address,
         address,
-        state.poolId,
+        state.poolId!,
         chainId
       );
 
@@ -551,7 +551,7 @@ export function ReviewExecuteModal() {
         // Unified Yield specific fields
         isUnifiedYield: true,
         hookAddress,
-        poolId: state.poolId,
+        poolId: state.poolId!,
         sharesToMint: depositPreview.shares,
       });
 

@@ -71,7 +71,7 @@ export function isMainnetSubgraphMode(networkModeOverride?: NetworkMode): boolea
 }
 
 // Goldsky fallback for mainnet (free public endpoint)
-const GOLDSKY_MAINNET_URL = 'https://api.goldsky.com/api/public/project_cmh0hxyiq007sw2p20wxl5s79/subgraphs/alphix-mainnet/1.0.0/gn';
+const GOLDSKY_MAINNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-mainnet/1.0.0/gn';
 
 /**
  * Returns an array of subgraph URLs to try in order (primary + fallbacks).

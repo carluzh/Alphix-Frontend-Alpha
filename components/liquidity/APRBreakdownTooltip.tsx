@@ -201,7 +201,7 @@ export function APRBreakdownTooltip({
       />
 
       {/* Lending Yield Row - only show for positions that can earn it */}
-      {unifiedYieldApr > 0 && (
+      {(unifiedYieldApr ?? 0) > 0 && (
         <div
           className={cn(
             "flex items-center justify-between px-2.5 py-1.5 gap-3 rounded-lg mx-1 mt-1",

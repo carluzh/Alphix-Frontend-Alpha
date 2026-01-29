@@ -15,8 +15,8 @@ import { useMemo } from "react";
 import {
   fetchUnifiedYieldPoolAprHistory,
   fetchSparkRatesHistory,
-  type NetworkMode,
 } from "@/lib/backend-client";
+import type { NetworkMode } from "@/lib/network-mode";
 import { fetchAaveHistory } from "@/lib/aave-rates";
 import { useNetwork } from "@/lib/network-context";
 import type { YieldSource } from "@/lib/pools-config";

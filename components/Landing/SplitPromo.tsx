@@ -15,7 +15,7 @@ interface SplitPromoProps {
   reverse?: boolean
   badge?: {
     text: string
-    variant?: 'default' | 'muted'
+    variant?: 'default' | 'muted' | 'active'
   }
 }
 

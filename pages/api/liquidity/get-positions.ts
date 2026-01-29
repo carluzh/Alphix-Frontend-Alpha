@@ -116,6 +116,11 @@ export interface V4ProcessedPosition {
     isPending?: boolean; // Position is being minted (show skeleton)
     isRemoving?: boolean; // Position is being burned (fade out)
     isOptimisticallyUpdating?: boolean; // Position has optimistic updates (show loading indicator)
+
+    // Unified Yield metadata (set by positionAdapter for display compatibility)
+    isUnifiedYield?: boolean;
+    hookAddress?: string;
+    shareBalance?: string;
 }
 
 /**

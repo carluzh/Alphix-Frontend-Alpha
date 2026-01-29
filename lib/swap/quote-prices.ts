@@ -12,8 +12,8 @@ const PRICE_TTL = { fresh: 60, stale: 300 }
 
 // Stablecoins that are always priced at $1.00
 const STABLECOINS_USD = new Set([
-  'USDC', 'USDT',      // Mainnet
-  'atUSDC', 'atDAI',   // Testnet
+  'USDC', 'USDT', 'USDS',  // Mainnet
+  'atUSDC', 'atDAI',       // Testnet
 ])
 
 function isStablecoinUSD(symbol: string | null | undefined): boolean {

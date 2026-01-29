@@ -89,9 +89,9 @@ export interface PositionPageData {
   // Range display
   minPrice: string;
   maxPrice: string;
-  tokenASymbol: string;
-  tokenBSymbol: string;
-  isFullRange: boolean;
+  tokenASymbol: string | undefined;
+  tokenBSymbol: string | undefined;
+  isFullRange: boolean | undefined;
   isInRange: boolean;
   // APR data
   poolApr: number | null;

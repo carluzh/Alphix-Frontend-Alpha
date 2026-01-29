@@ -23,12 +23,13 @@ export const COINGECKO_IDS: Record<string, string> = {
   'atUSDC': 'usd-coin',
   'aUSDC': 'usd-coin',
   'USDT': 'tether',
+  'USDS': 'usds',
   'atDAI': 'dai',
   'DAI': 'dai',
 };
 
 // Stablecoins always return $1.00
-const STABLECOINS = new Set(['USDC', 'USDT', 'atUSDC', 'atDAI', 'aUSDC', 'DAI']);
+const STABLECOINS = new Set(['USDC', 'USDT', 'USDS', 'atUSDC', 'atDAI', 'aUSDC', 'DAI']);
 
 interface PriceCache {
   price: number;

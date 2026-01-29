@@ -57,7 +57,7 @@ const { handleRequest } = createYoga({
 async function rateLimitedHandler(request: Request) {
   const rateLimited = await checkRateLimit(request)
   if (rateLimited) return rateLimited
-  return handleRequest(request)
+  return handleRequest(request, {})
 }
 
 export { rateLimitedHandler as GET, rateLimitedHandler as POST }

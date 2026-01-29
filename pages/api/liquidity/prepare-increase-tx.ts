@@ -89,6 +89,9 @@ interface ApprovalNeededResponse {
   approvalTokenSymbol?: string;
   approveToAddress?: string;
   approvalAmount?: string;
+  // Per-token approval flags
+  needsToken0Approval?: boolean;
+  needsToken1Approval?: boolean;
   // Permit data is included for BOTH types - ERC20_TO_PERMIT2 includes it for after approval
   permitBatchData?: any;
   signatureDetails?: {

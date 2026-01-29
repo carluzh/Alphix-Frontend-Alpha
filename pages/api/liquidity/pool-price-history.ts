@@ -34,11 +34,12 @@ const COINGECKO_IDS: Record<string, string> = {
   'USDC': 'usd-coin',
   'atUSDC': 'usd-coin',
   'USDT': 'tether',
+  'USDS': 'usds',
   'atDAI': 'dai',
 }
 
 // Only USDC is the quote currency ($1.00)
-const STABLECOINS = ['USDC', 'USDT', 'atUSDC', 'atDAI']
+const STABLECOINS = ['USDC', 'USDT', 'USDS', 'atUSDC', 'atDAI']
 
 interface UniswapPriceHistoryResponse {
   data?: {

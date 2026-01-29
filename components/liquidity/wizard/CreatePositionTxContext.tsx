@@ -40,10 +40,8 @@ import { useNetwork } from '@/lib/network-context';
 
 // Unified Yield imports for 'rehypo' mode
 import { useCheckMintApprovalsWithMode } from '@/lib/liquidity/hooks/approval/useModeAwareApprovals';
-import {
-  previewDeposit,
-  type DepositPreviewResult,
-} from '@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx';
+import { previewDeposit } from '@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx';
+import type { DepositPreviewResult } from '@/lib/liquidity/unified-yield/types';
 import { usePublicClient } from 'wagmi';
 
 // =============================================================================
@@ -106,7 +104,7 @@ interface CreatePositionTxContextType {
   /** Whether calculation is in progress */
   isCalculating: boolean;
   /** Approval data from hook */
-  approvalData: ReturnType<typeof useCheckMintApprovals>['data'];
+  approvalData: ReturnType<typeof useCheckMintApprovalsWithMode>['data'];
   /** Whether approvals are being checked */
   isCheckingApprovals: boolean;
   /** Refetch approvals */
@@ -412,6 +410,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     needsToken0ERC20Approval: modeAwareApprovalData?.needsToken0ERC20Approval ?? false,
     needsToken1ERC20Approval: modeAwareApprovalData?.needsToken1ERC20Approval ?? false,
     needsPermit2Signature: modeAwareApprovalData?.needsPermit2Signature ?? false,
+    needsAnyApproval: modeAwareApprovalData?.needsAnyApproval ?? false,
     isUnifiedYield,
     approvalTarget: modeAwareApprovalData?.approvalTarget ?? null,
   }), [modeAwareApprovalData, isUnifiedYield]);

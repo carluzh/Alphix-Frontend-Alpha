@@ -116,7 +116,7 @@ export interface LiquidityPositionFeeStatsProps extends LiquidityPositionMinMaxR
  * Mirrors Uniswap's FeeStat: Flex flex={1} flexBasis={0}
  */
 export interface FeeStatProps {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   className?: string;
 }
 

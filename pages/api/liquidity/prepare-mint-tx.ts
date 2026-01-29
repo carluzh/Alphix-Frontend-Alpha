@@ -84,6 +84,10 @@ interface ApprovalNeededResponse {
     approvalTokenSymbol?: TokenSymbol;
     approveToAddress?: string; // Will be PERMIT2_ADDRESS
     approvalAmount?: string; // Will be maxUint256.toString()
+    erc20ApprovalNeeded?: boolean;
+    // Per-token approval flags
+    needsToken0Approval?: boolean;
+    needsToken1Approval?: boolean;
 
     // For PERMIT2_BATCH_SIGNATURE (batch permit signature)
     permitBatchData?: {

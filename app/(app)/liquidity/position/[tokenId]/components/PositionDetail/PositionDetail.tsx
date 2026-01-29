@@ -116,9 +116,9 @@ export interface PositionDetailProps {
   // Range display
   minPrice: string;
   maxPrice: string;
-  tokenASymbol: string;
-  tokenBSymbol: string;
-  isFullRange: boolean;
+  tokenASymbol?: string;
+  tokenBSymbol?: string;
+  isFullRange?: boolean;
   isInRange: boolean;
   // APR data
   poolApr: number | null;
@@ -991,6 +991,7 @@ export const PositionDetail = memo(function PositionDetail({
     if (!position || !positionInfo) return null;
 
     return {
+      type: 'v4' as const,
       positionId: tokenId,
       owner: positionInfo.owner,
       poolId: poolConfig.id,
@@ -1093,8 +1094,9 @@ export const PositionDetail = memo(function PositionDetail({
     );
   }
 
-  const token0Symbol = poolConfig.currency0.symbol;
-  const token1Symbol = poolConfig.currency1.symbol;
+  // poolConfig is guaranteed non-null after the hasValidData guard above
+  const token0Symbol = poolConfig!.currency0.symbol;
+  const token1Symbol = poolConfig!.currency1.symbol;
 
   // For Unified Yield positions, fees auto-compound so no manual collection needed
   const hasFees = !isUnifiedYield && totalFeesValue !== null && totalFeesValue > 0;
@@ -1103,7 +1105,7 @@ export const PositionDetail = memo(function PositionDetail({
     <div className="flex flex-col gap-6 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto pb-20 sm:pb-6">
       {/* Header with Action Buttons */}
       <PositionHeader
-        poolConfig={poolConfig}
+        poolConfig={poolConfig!}
         lpType={lpType}
         isInRange={isInRange}
         isOwner={isOwner}
@@ -1191,9 +1193,9 @@ export const PositionDetail = memo(function PositionDetail({
           <PriceRangeSection
             minPrice={minPrice}
             maxPrice={maxPrice}
-            tokenASymbol={tokenASymbol}
-            tokenBSymbol={tokenBSymbol}
-            isFullRange={isFullRange}
+            tokenASymbol={tokenASymbol ?? ''}
+            tokenBSymbol={tokenBSymbol ?? ''}
+            isFullRange={isFullRange ?? false}
             currentPrice={currentPrice}
             priceInverted={priceInverted}
           />

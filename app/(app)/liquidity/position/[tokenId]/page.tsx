@@ -38,7 +38,7 @@ export default function PositionDetailPage() {
 
   // Track navigation origin for breadcrumb display
   const fromPage = useMemo(() => {
-    const from = searchParams.get("from");
+    const from = searchParams?.get("from");
     if (from === "pool") return "pool" as const;
     if (from === "overview") return "overview" as const;
     return null;
