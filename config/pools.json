@@ -13,7 +13,7 @@
     "stateView": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71"
   },
   "hooks": {
-    "alphixHookId": "TODO_HOOK_ADDRESS_FROM_DEPLOYMENT"
+    "alphixHookId": "0xF31de090d650919B1Fd9deBfCb20701d5D5460c0"
   },
   "tokens": {
     "ETH": {
@@ -33,6 +33,15 @@
       "usdPrice": "1.0",
       "color": "#2775CA"
     },
+    "USDS": {
+      "symbol": "USDS",
+      "name": "USDS",
+      "address": "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc",
+      "decimals": 18,
+      "icon": "/tokens/USDS.png",
+      "usdPrice": "1.0",
+      "color": "#1BAF6A"
+    },
     "USDT": {
       "symbol": "USDT",
       "name": "Tether USD",
@@ -45,28 +54,28 @@
   },
   "pools": [
     {
-      "id": "usdc-usdt",
-      "name": "USDC/USDT",
+      "id": "usds-usdc",
+      "name": "USDS/USDC",
       "description": "Stablecoin pair with dynamic fees and rehypothecated liquidity",
-      "subgraphId": "TODO_POOL_ID_FROM_DEPLOYMENT",
+      "subgraphId": "0xb90ac48b0f87826ce215f42b734a154d3a958cfc281151a30520083ea7b063ba",
       "currency0": {
+        "symbol": "USDS",
+        "address": "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc"
+      },
+      "currency1": {
         "symbol": "USDC",
         "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
       },
-      "currency1": {
-        "symbol": "USDT",
-        "address": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2"
-      },
       "fee": 8388608,
       "tickSpacing": 1,
-      "hooks": "TODO_HOOK_ADDRESS_FROM_DEPLOYMENT",
+      "hooks": "0xe562971e8f8753120029Ed9D5cA31c569f7020c0",
       "enabled": true,
       "featured": true,
       "type": "Stable",
-      "yieldSources": ["aave", "spark"],
+      "yieldSources": ["spark", "aave"],
       "rehypoRange": {
-        "min": "TODO_TICK_LOWER",
-        "max": "TODO_TICK_UPPER",
+        "min": "-276326",
+        "max": "-276324",
         "isFullRange": false
       }
     },
@@ -74,7 +83,7 @@
       "id": "eth-usdc",
       "name": "ETH/USDC",
       "description": "ETH/USDC pair with dynamic fees and rehypothecated liquidity",
-      "subgraphId": "TODO_POOL_ID_FROM_DEPLOYMENT",
+      "subgraphId": "0x6c4166b0023482b3c174fc08cb5edc1addb28d7252c0374d1507c1a78593998a",
       "currency0": {
         "symbol": "ETH",
         "address": "0x0000000000000000000000000000000000000000"
@@ -85,7 +94,7 @@
       },
       "fee": 8388608,
       "tickSpacing": 10,
-      "hooks": "TODO_HOOK_ADDRESS_FROM_DEPLOYMENT",
+      "hooks": "0xF31de090d650919B1Fd9deBfCb20701d5D5460c0",
       "enabled": true,
       "featured": true,
       "type": "Volatile",
@@ -105,6 +114,8 @@
   "_comments": {
     "note": "Base Mainnet configuration for Alphix V4 pools.",
     "subgraphId": "CRITICAL: The 'subgraphId' field contains the ACTUAL on-chain poolId (bytes32). DO NOT recalculate this value using keccak256 or any other method.",
-    "fee": "The fee value 8388608 is the dynamic fee flag (0x800000). This indicates the pool uses dynamic fees managed by the hook contract."
+    "fee": "The fee value 8388608 is the dynamic fee flag (0x800000). This indicates the pool uses dynamic fees managed by the hook contract.",
+    "hooks": "Each pool has its own hook contract address. The global alphixHookId is set to ETH/USDC hook for legacy compatibility (V4_POOL_HOOKS constant).",
+    "usds": "USDS icon (/tokens/USDS.png) needs to be added to public/tokens/"
   }
 }

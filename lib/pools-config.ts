@@ -170,6 +170,7 @@ export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverr
   const priority: Record<string, number> = {
     // Mainnet
     'USDC': 100,
+    'USDS': 95,
     'USDT': 90,
     'ETH': 80,
     // Testnet
