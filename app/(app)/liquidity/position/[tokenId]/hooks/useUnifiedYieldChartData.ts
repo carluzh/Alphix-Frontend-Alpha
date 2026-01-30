@@ -5,9 +5,12 @@
  *
  * For UY positions, we show:
  * - Swap APR (pool-level, from backend)
- * - Yield source APRs (Aave, Spark) based on pool config
+ * - Per-token yield source APRs (e.g., "Aave ETH", "Aave USDC", "Spark USDS")
  *
  * Unlike V4 positions, UY positions don't show individual fees (they auto-compound).
+ *
+ * Data model: Each token has its own yield line (currency0Apy, currency1Apy),
+ * labeled with the protocol name + token symbol (e.g., "Aave USDC").
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -16,8 +19,7 @@ import {
   fetchUnifiedYieldPoolAprHistory,
   fetchSparkRatesHistory,
 } from "@/lib/backend-client";
-import type { NetworkMode } from "@/lib/network-mode";
-import { fetchAaveHistory } from "@/lib/aave-rates";
+import { fetchAaveHistory, getTokenProtocol } from "@/lib/aave-rates";
 import { useNetwork } from "@/lib/network-context";
 import type { YieldSource } from "@/lib/pools-config";
 
@@ -27,10 +29,10 @@ export interface UnifiedYieldChartPoint {
   timestamp: number;
   /** Swap APR from pool trading fees (%) */
   swapApr: number;
-  /** Aave lending APY (%) - only if pool uses Aave */
-  aaveApy?: number;
-  /** Spark lending APY (%) - only if pool uses Spark */
-  sparkApy?: number;
+  /** Yield APY for currency0 (from its yield source, e.g., Aave ETH or Spark USDS) */
+  currency0Apy?: number;
+  /** Yield APY for currency1 (from its yield source, e.g., Aave USDC) */
+  currency1Apy?: number;
   /** Combined total APR (swap + yield sources) */
   totalApr: number;
 }
@@ -48,6 +50,10 @@ interface UseUnifiedYieldChartDataParams {
 
 interface UseUnifiedYieldChartDataResult {
   data: UnifiedYieldChartPoint[] | undefined;
+  /** Protocol used for currency0 yield (for label/color in chart) */
+  currency0Protocol?: 'aave' | 'spark';
+  /** Protocol used for currency1 yield (for label/color in chart) */
+  currency1Protocol?: 'aave' | 'spark';
   isLoading: boolean;
   isPending: boolean;
   isError: boolean;
@@ -69,7 +75,30 @@ function mapPeriodToBackend(period: ChartPeriod): 'DAY' | 'WEEK' | 'MONTH' {
 }
 
 /**
+ * Fetch yield history for a single token from its protocol (Aave or Spark)
+ */
+async function fetchTokenYieldHistory(
+  tokenSymbol: string,
+  protocol: 'aave' | 'spark',
+  frontendPeriod: ChartPeriod,
+  backendPeriod: 'DAY' | 'WEEK' | 'MONTH',
+): Promise<Array<{ timestamp: number; apy: number }>> {
+  if (protocol === 'spark') {
+    const mapping = getTokenProtocol(tokenSymbol);
+    const key = mapping?.key ?? tokenSymbol;
+    const result = await fetchSparkRatesHistory(key, backendPeriod);
+    return result.success ? result.points.map(p => ({ timestamp: p.timestamp, apy: p.apy })) : [];
+  } else {
+    const result = await fetchAaveHistory(tokenSymbol, frontendPeriod);
+    return result.success ? result.points.map(p => ({ timestamp: p.timestamp, apy: p.apy })) : [];
+  }
+}
+
+/**
  * Hook to fetch chart data for Unified Yield positions
+ *
+ * Fetches per-token yield rates (not per-protocol averaged), enabling labels like
+ * "Aave ETH" and "Aave USDC" instead of a single "Aave" line.
  */
 export function useUnifiedYieldChartData({
   poolId,
@@ -82,8 +111,20 @@ export function useUnifiedYieldChartData({
   const { networkMode } = useNetwork();
   const backendPeriod = mapPeriodToBackend(period);
 
-  const hasAave = yieldSources.includes('aave');
-  const hasSpark = yieldSources.includes('spark');
+  // Determine which protocol each token uses
+  const token0Protocol = useMemo(
+    () => token0Symbol ? getTokenProtocol(token0Symbol)?.protocol : undefined,
+    [token0Symbol]
+  );
+  const token1Protocol = useMemo(
+    () => token1Symbol ? getTokenProtocol(token1Symbol)?.protocol : undefined,
+    [token1Symbol]
+  );
+
+  // Only enable per-token queries if the pool uses that token's protocol
+  const hasYieldSources = yieldSources.length > 0;
+  const token0HasYield = hasYieldSources && !!token0Protocol && yieldSources.includes(token0Protocol);
+  const token1HasYield = hasYieldSources && !!token1Protocol && yieldSources.includes(token1Protocol);
 
   // Fetch swap APR history
   const swapAprQuery = useQuery({
@@ -97,69 +138,38 @@ export function useUnifiedYieldChartData({
     staleTime: 5 * 60 * 1000,
   });
 
-  // Fetch Aave rates history (if pool uses Aave)
-  const aaveQuery = useQuery({
-    queryKey: ["aave-history", token0Symbol, token1Symbol, period],
+  // Fetch yield history for token0 (e.g., Aave ETH or Spark USDS)
+  const token0YieldQuery = useQuery({
+    queryKey: ["token-yield-history", token0Symbol, token0Protocol, period],
     queryFn: async () => {
-      if (!token0Symbol || !token1Symbol) return null;
-      // Fetch for both tokens, average them
-      const [h0, h1] = await Promise.all([
-        fetchAaveHistory(token0Symbol, period),
-        fetchAaveHistory(token1Symbol, period),
-      ]);
-      // Merge and average
-      const map = new Map<number, { apy0?: number; apy1?: number }>();
-      if (h0.success) {
-        for (const p of h0.points) {
-          map.set(p.timestamp, { apy0: p.apy });
-        }
-      }
-      if (h1.success) {
-        for (const p of h1.points) {
-          const existing = map.get(p.timestamp) || {};
-          map.set(p.timestamp, { ...existing, apy1: p.apy });
-        }
-      }
-      return Array.from(map.entries())
-        .map(([timestamp, { apy0, apy1 }]) => ({
-          timestamp,
-          apy: apy0 !== undefined && apy1 !== undefined
-            ? (apy0 + apy1) / 2
-            : apy0 ?? apy1 ?? 0,
-        }))
-        .sort((a, b) => a.timestamp - b.timestamp);
+      if (!token0Symbol || !token0Protocol) return null;
+      return fetchTokenYieldHistory(token0Symbol, token0Protocol, period, backendPeriod);
     },
-    enabled: enabled && hasAave && !!token0Symbol && !!token1Symbol,
+    enabled: enabled && token0HasYield && !!token0Symbol,
     staleTime: 5 * 60 * 1000,
   });
 
-  // Fetch Spark rates history (if pool uses Spark)
-  // Spark typically uses DAI/USDS
-  const sparkQuery = useQuery({
-    queryKey: ["spark-history", token0Symbol, token1Symbol, period],
+  // Fetch yield history for token1 (e.g., Aave USDC)
+  const token1YieldQuery = useQuery({
+    queryKey: ["token-yield-history", token1Symbol, token1Protocol, period],
     queryFn: async () => {
-      if (!token0Symbol || !token1Symbol) return null;
-      // Try DAI first, then USDS
-      const token = ['DAI', 'USDS'].find(t =>
-        token0Symbol.toUpperCase().includes(t) || token1Symbol.toUpperCase().includes(t)
-      ) || 'DAI';
-      const result = await fetchSparkRatesHistory(token, backendPeriod);
-      return result.success ? result.points : [];
+      if (!token1Symbol || !token1Protocol) return null;
+      return fetchTokenYieldHistory(token1Symbol, token1Protocol, period, backendPeriod);
     },
-    enabled: enabled && hasSpark && !!token0Symbol && !!token1Symbol,
+    enabled: enabled && token1HasYield && !!token1Symbol,
     staleTime: 5 * 60 * 1000,
   });
 
   // Merge all data sources - use UNION of all timestamps with forward-fill
   const mergedData = useMemo((): UnifiedYieldChartPoint[] | undefined => {
     const swapData = swapAprQuery.data;
-    const aaveData = aaveQuery.data;
-    const sparkData = sparkQuery.data;
+    const token0Data = token0YieldQuery.data;
+    const token1Data = token1YieldQuery.data;
 
     // Convert each source to sorted arrays for forward-fill lookup
     const swapSorted: Array<{ ts: number; val: number }> = [];
-    const aaveSorted: Array<{ ts: number; val: number }> = [];
-    const sparkSorted: Array<{ ts: number; val: number }> = [];
+    const token0Sorted: Array<{ ts: number; val: number }> = [];
+    const token1Sorted: Array<{ ts: number; val: number }> = [];
 
     if (swapData) {
       for (const p of swapData) {
@@ -168,24 +178,24 @@ export function useUnifiedYieldChartData({
       }
       swapSorted.sort((a, b) => a.ts - b.ts);
     }
-    if (aaveData) {
-      for (const p of aaveData) {
-        aaveSorted.push({ ts: p.timestamp, val: p.apy });
+    if (token0Data) {
+      for (const p of token0Data) {
+        token0Sorted.push({ ts: p.timestamp, val: p.apy });
       }
-      aaveSorted.sort((a, b) => a.ts - b.ts);
+      token0Sorted.sort((a, b) => a.ts - b.ts);
     }
-    if (sparkData) {
-      for (const p of sparkData) {
-        sparkSorted.push({ ts: p.timestamp, val: p.apy });
+    if (token1Data) {
+      for (const p of token1Data) {
+        token1Sorted.push({ ts: p.timestamp, val: p.apy });
       }
-      sparkSorted.sort((a, b) => a.ts - b.ts);
+      token1Sorted.sort((a, b) => a.ts - b.ts);
     }
 
     // Collect ALL unique timestamps from all sources
     const allTimestamps = new Set<number>();
     for (const p of swapSorted) allTimestamps.add(p.ts);
-    for (const p of aaveSorted) allTimestamps.add(p.ts);
-    for (const p of sparkSorted) allTimestamps.add(p.ts);
+    for (const p of token0Sorted) allTimestamps.add(p.ts);
+    for (const p of token1Sorted) allTimestamps.add(p.ts);
 
     // If no data from any source, return undefined
     if (allTimestamps.size === 0) return undefined;
@@ -219,27 +229,29 @@ export function useUnifiedYieldChartData({
     // Build merged chart points with forward-filled values
     return sortedTimestamps.map((timestamp) => {
       const swapApr = forwardFill(swapSorted, timestamp) ?? 0;
-      const aaveApy = hasAave ? forwardFill(aaveSorted, timestamp) : undefined;
-      const sparkApy = hasSpark ? forwardFill(sparkSorted, timestamp) : undefined;
+      const currency0Apy = token0HasYield ? forwardFill(token0Sorted, timestamp) : undefined;
+      const currency1Apy = token1HasYield ? forwardFill(token1Sorted, timestamp) : undefined;
 
-      const totalApr = swapApr + (aaveApy ?? 0) + (sparkApy ?? 0);
+      const totalApr = swapApr + (currency0Apy ?? 0) + (currency1Apy ?? 0);
 
       return {
         timestamp,
         swapApr,
-        aaveApy,
-        sparkApy,
+        currency0Apy,
+        currency1Apy,
         totalApr,
       };
     });
-  }, [swapAprQuery.data, aaveQuery.data, sparkQuery.data, hasAave, hasSpark]);
+  }, [swapAprQuery.data, token0YieldQuery.data, token1YieldQuery.data, token0HasYield, token1HasYield]);
 
   const isLoading = swapAprQuery.isLoading ||
-    (hasAave && aaveQuery.isLoading) ||
-    (hasSpark && sparkQuery.isLoading);
+    (token0HasYield && token0YieldQuery.isLoading) ||
+    (token1HasYield && token1YieldQuery.isLoading);
 
   return {
     data: mergedData,
+    currency0Protocol: token0HasYield ? token0Protocol : undefined,
+    currency1Protocol: token1HasYield ? token1Protocol : undefined,
     isLoading,
     isPending: swapAprQuery.isPending,
     isError: swapAprQuery.isError,

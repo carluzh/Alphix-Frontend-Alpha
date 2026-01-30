@@ -1,19 +1,21 @@
 /**
  * Subgraph URL Helper
  *
- * Architecture:
- * - TESTNET (Base Sepolia): Single unified subgraph (SUBGRAPH_URL)
- *   Contains: Pool, HookPosition, UnifiedYieldPosition, AlphixHook, AlphixHookTVL, etc.
+ * Primary source: Goldsky-hosted Alphix subgraphs (both networks).
+ * Env vars (SUBGRAPH_URL / SUBGRAPH_URL_MAINNET_ALPHIX) override Goldsky if set.
  *
- * - MAINNET (Base): Single unified subgraph (SUBGRAPH_URL_MAINNET_ALPHIX)
- *   Contains all entities like testnet - Pool, PoolDayData, HookPosition,
- *   UnifiedYieldPosition, AlphixHook, AlphixHookTVL, etc.
+ * - TESTNET (Base Sepolia): Goldsky alphix-hook-testnet
+ * - MAINNET (Base):         Goldsky alphix-hook-mainnet
  *
- * Note: UNISWAP_V4_SUBGRAPH_URL is only needed if querying non-Alphix pools.
- * Since we only query Alphix pools, the Alphix subgraph is used for all queries.
+ * Both contain all entities: Pool, PoolDayData, HookPosition,
+ * UnifiedYieldPosition, AlphixHook, AlphixHookTVL, etc.
  */
 
 import { getStoredNetworkMode, type NetworkMode } from './network-mode';
+
+// Goldsky-hosted subgraph URLs (primary source for both networks)
+const GOLDSKY_MAINNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-mainnet/1.0.0/gn';
+const GOLDSKY_TESTNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-testnet/0.0.7/gn';
 
 /**
  * Get the default network mode for this module.
@@ -22,44 +24,34 @@ import { getStoredNetworkMode, type NetworkMode } from './network-mode';
  */
 function getDefaultNetworkMode(): NetworkMode {
   if (typeof window === 'undefined') {
-    // Server-side: use env var default
     const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
     return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
   }
-  // Client-side: use full logic with localStorage
   return getStoredNetworkMode();
 }
 
 /**
  * Returns the Alphix subgraph URL for HookPosition and AlphixHook queries.
- * - Testnet: Uses SUBGRAPH_URL (full subgraph)
- * - Mainnet: Uses SUBGRAPH_URL_MAINNET_ALPHIX (minimal subgraph)
+ * Falls back to Goldsky if env var is not set.
  */
 export function getAlphixSubgraphUrl(networkModeOverride?: NetworkMode): string {
   const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') {
-    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || '';
+    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || GOLDSKY_MAINNET_URL;
   }
-  return process.env.SUBGRAPH_URL || '';
+  return process.env.SUBGRAPH_URL || GOLDSKY_TESTNET_URL;
 }
 
 /**
  * Returns the subgraph URL for Pool/PoolDayData queries.
- * - Testnet: Uses SUBGRAPH_URL (unified subgraph)
- * - Mainnet: Uses SUBGRAPH_URL_MAINNET_ALPHIX (unified subgraph with all entities)
- *
- * Note: Both networks now use a unified Alphix subgraph that contains
- * Pool, PoolDayData, and all other entities. The Uniswap public subgraph
- * (UNISWAP_V4_SUBGRAPH_URL) is only needed for non-Alphix pool data.
+ * Both networks use the unified Alphix Goldsky subgraph.
  */
 export function getUniswapV4SubgraphUrl(networkModeOverride?: NetworkMode): string {
   const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') {
-    // Unified Alphix subgraph contains Pool/PoolDayData for Alphix pools
-    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || '';
+    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || GOLDSKY_MAINNET_URL;
   }
-  // Testnet: unified subgraph has all entities
-  return process.env.SUBGRAPH_URL || '';
+  return process.env.SUBGRAPH_URL || GOLDSKY_TESTNET_URL;
 }
 
 /**
@@ -69,9 +61,6 @@ export function isMainnetSubgraphMode(networkModeOverride?: NetworkMode): boolea
   const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   return networkMode === 'mainnet';
 }
-
-// Goldsky fallback for mainnet (free public endpoint)
-const GOLDSKY_MAINNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-mainnet/1.0.0/gn';
 
 /**
  * Returns an array of subgraph URLs to try in order (primary + fallbacks).
@@ -88,6 +77,7 @@ export function getSubgraphUrlsWithFallback(networkModeOverride?: NetworkMode): 
   } else {
     const primary = process.env.SUBGRAPH_URL;
     if (primary) urls.push(primary);
+    urls.push(GOLDSKY_TESTNET_URL);
   }
 
   return urls.filter(Boolean);

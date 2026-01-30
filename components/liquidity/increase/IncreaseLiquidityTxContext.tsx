@@ -40,6 +40,9 @@ import { PERMIT2_ADDRESS } from "../liquidity-form-utils";
 // Shared approval utilities
 import { buildApprovalRequests, buildApprovalCalldata } from "@/lib/liquidity/hooks/approval";
 
+// Pool state for slippage protection (sqrtPriceX96)
+import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
+
 // Unified Yield deposit hook for ReHypothecation positions
 import { useUnifiedYieldDeposit } from "@/lib/liquidity/unified-yield/hooks/useUnifiedYieldDeposit";
 import { useUnifiedYieldApprovals } from "@/lib/liquidity/unified-yield/useUnifiedYieldApprovals";
@@ -93,6 +96,9 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     return position.poolId ? getPoolById(position.poolId, networkMode) : null;
   }, [position.poolId, networkMode]);
 
+  // Pool state for slippage protection (sqrtPriceX96)
+  const { data: poolStateData } = usePoolState(poolConfig?.subgraphId ?? '');
+
   // Unified Yield deposit hook - only active for ReHypothecation positions
   const unifiedYieldDeposit = useUnifiedYieldDeposit({
     hookAddress: poolConfig?.hooks as Address | undefined,
@@ -102,6 +108,8 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     token1Decimals: tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals ?? 18,
     poolId: position.poolId,
     chainId,
+    sqrtPriceX96: poolStateData?.sqrtPriceX96,
+    maxPriceSlippage: 500, // 0.05%
   });
 
   // Unified Yield approval checking hook - uses preview from deposit hook
@@ -314,7 +322,8 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           };
         }
 
-        // Build deposit params from preview
+        // Build deposit params from preview (with slippage protection)
+        const sqrtPriceX96 = poolStateData?.sqrtPriceX96 ? BigInt(poolStateData.sqrtPriceX96) : undefined;
         const depositParams = buildDepositParamsFromPreview(
           preview,
           hookAddress,
@@ -322,7 +331,9 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           token1Config.address as Address,
           accountAddress,
           position.poolId,
-          chainId
+          chainId,
+          sqrtPriceX96,
+          500, // 0.05% slippage
         );
 
         // Build deposit transaction
@@ -626,7 +637,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       setIsLoading(false);
       return null;
     }
-  }, [accountAddress, chainId, position, derivedIncreaseLiquidityInfo.formattedAmounts, tokenDefinitions, parseTokenId, isUnifiedYield, poolConfig, unifiedYieldDeposit, refetchApprovals]);
+  }, [accountAddress, chainId, position, derivedIncreaseLiquidityInfo.formattedAmounts, tokenDefinitions, parseTokenId, isUnifiedYield, poolConfig, unifiedYieldDeposit, refetchApprovals, poolStateData]);
 
   const refetchBalances = useCallback(() => {
     refetchToken0Balance();

@@ -921,9 +921,11 @@ export const PositionDetail = memo(function PositionDetail({
     isRehypo: false, // V4 positions only
   });
 
-  // Unified Yield chart data - shows Swap APR + yield source APRs (Aave/Spark)
+  // Unified Yield chart data - shows Swap APR + per-token yield source APRs
   const {
     data: uyChartData,
+    currency0Protocol: uyC0Protocol,
+    currency1Protocol: uyC1Protocol,
     isLoading: isLoadingUyChart,
     refetch: refetchUyChart,
   } = useUnifiedYieldChartData({
@@ -945,32 +947,39 @@ export const PositionDetail = memo(function PositionDetail({
     const token0Weight = totalValue > 0 ? (fiatValue0 ?? 0) / totalValue : 0.5;
     const token1Weight = totalValue > 0 ? (fiatValue1 ?? 0) / totalValue : 0.5;
 
-    // Determine which token uses which yield source
-    // DAI/USDS tokens use Spark, others (USDC, WETH, etc.) use Aave
-    const token0Symbol = poolConfig?.currency0?.symbol?.toUpperCase() ?? "";
-    const token1Symbol = poolConfig?.currency1?.symbol?.toUpperCase() ?? "";
-    const token0UsesSpark = token0Symbol.includes("DAI") || token0Symbol.includes("USDS");
-    const token1UsesSpark = token1Symbol.includes("DAI") || token1Symbol.includes("USDS");
-
     return uyChartData.map((point) => {
-      // Calculate weighted yield based on token allocations
-      // Each token earns yield from its specific source (Spark for DAI, Aave for USDC)
-      const token0Yield = token0UsesSpark ? (point.sparkApy ?? 0) : (point.aaveApy ?? 0);
-      const token1Yield = token1UsesSpark ? (point.sparkApy ?? 0) : (point.aaveApy ?? 0);
-      const weightedYield = (token0Weight * token0Yield) + (token1Weight * token1Yield);
+      // Per-token yield is already separated in the data model
+      const weightedYield = (token0Weight * (point.currency0Apy ?? 0)) + (token1Weight * (point.currency1Apy ?? 0));
       const weightedTotalApr = point.swapApr + weightedYield;
 
       return {
         timestamp: point.timestamp,
         apr: point.swapApr,
-        aaveApy: point.aaveApy,
-        sparkApy: point.sparkApy,
+        currency0Apy: point.currency0Apy,
+        currency1Apy: point.currency1Apy,
         feesUsd: 0, // UY positions don't show individual fees
         accumulatedFeesUsd: 0,
         totalApr: weightedTotalApr,
       };
     });
-  }, [uyChartData, fiatValue0, fiatValue1, poolConfig?.currency0?.symbol, poolConfig?.currency1?.symbol]);
+  }, [uyChartData, fiatValue0, fiatValue1]);
+
+  // Compute yield source labels and colors for chart legend
+  const { c0YieldLabel, c1YieldLabel, c0YieldColor, c1YieldColor } = useMemo(() => {
+    const token0Sym = poolConfig?.currency0?.symbol ?? "";
+    const token1Sym = poolConfig?.currency1?.symbol ?? "";
+    const protocolName = (p?: 'aave' | 'spark') => p === 'spark' ? 'Spark' : 'Aave';
+
+    const c0Label = uyC0Protocol ? `${protocolName(uyC0Protocol)} ${token0Sym}` : `Yield ${token0Sym}`;
+    const c1Label = uyC1Protocol ? `${protocolName(uyC1Protocol)} ${token1Sym}` : `Yield ${token1Sym}`;
+
+    // Colors: protocol-specific, with a lighter shade when both tokens use the same protocol
+    const bothAave = uyC0Protocol === 'aave' && uyC1Protocol === 'aave';
+    const c0Color = uyC0Protocol === 'spark' ? "#F5AC37" : "#9896FF";
+    const c1Color = uyC1Protocol === 'spark' ? "#F5AC37" : (bothAave ? "#C4C2FF" : "#9896FF");
+
+    return { c0YieldLabel: c0Label, c1YieldLabel: c1Label, c0YieldColor: c0Color, c1YieldColor: c1Color };
+  }, [poolConfig?.currency0?.symbol, poolConfig?.currency1?.symbol, uyC0Protocol, uyC1Protocol]);
 
   // Select the appropriate chart data based on position type
   const yieldChartData = isUnifiedYield ? transformedUyChartData : (feeChartData ?? []);
@@ -1186,6 +1195,10 @@ export const PositionDetail = memo(function PositionDetail({
               timePeriod={feeChartPeriod}
               onTimePeriodChange={(period) => setFeeChartPeriod(period)}
               isUnifiedYield={isUnifiedYield}
+              currency0YieldLabel={c0YieldLabel}
+              currency1YieldLabel={c1YieldLabel}
+              currency0YieldColor={c0YieldColor}
+              currency1YieldColor={c1YieldColor}
             />
           )}
 

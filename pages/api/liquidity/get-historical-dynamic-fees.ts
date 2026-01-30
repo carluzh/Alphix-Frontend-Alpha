@@ -1,29 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getUniswapV4SubgraphUrl, isMainnetSubgraphMode } from '../../../lib/subgraph-url-helper';
+import { getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '../../../lib/cache/CacheService';
 import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
 
-// Mainnet query: uses poolId filter (minimal subgraph stores poolId as String, not Pool relation)
-const GET_LAST_HOOK_EVENTS_MAINNET = `
-  query GetLastHookEvents($poolId: String!) {
-    alphixHooks(
-      where: { poolId: $poolId }
-      orderBy: timestamp
-      orderDirection: desc
-      first: 500
-    ) {
-      timestamp
-      newFeeBps
-      currentRatio
-      newTargetRatio
-      oldTargetRatio
-    }
-  }
-`;
-
-// Testnet query: uses pool filter (Bytes type)
-// Fetch up to 500 events to cover 60+ days of data
-const GET_LAST_HOOK_EVENTS_TESTNET = `
+// Unified query: Both networks use Goldsky subgraph with pool (Bytes) filter
+const GET_LAST_HOOK_EVENTS = `
   query GetLastHookEvents($poolId: Bytes!) {
     alphixHooks(
       where: { pool: $poolId }
@@ -49,14 +30,6 @@ type HookEvent = {
 };
 
 type HookResp = { data?: { alphixHooks?: HookEvent[] }, errors?: any[] };
-
-// Select the appropriate query based on network mode
-function selectQuery(networkMode?: NetworkMode): string {
-  if (isMainnetSubgraphMode(networkMode)) {
-    return GET_LAST_HOOK_EVENTS_MAINNET;
-  }
-  return GET_LAST_HOOK_EVENTS_TESTNET;
-}
 
 export default async function handler(
   req: NextApiRequest,
@@ -90,7 +63,7 @@ export default async function handler(
       { fresh: 6 * 60 * 60, stale: 24 * 60 * 60 }, // 6h fresh, 24h stale
       async () => {
         const SUBGRAPH_URL = getUniswapV4SubgraphUrl(networkMode);
-        const query = selectQuery(networkMode);
+        const query = GET_LAST_HOOK_EVENTS;
 
         // AbortController timeout pattern for subgraph fetch
         const controller = new AbortController();

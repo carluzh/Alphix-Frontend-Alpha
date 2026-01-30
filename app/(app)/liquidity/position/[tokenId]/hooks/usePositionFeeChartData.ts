@@ -26,9 +26,9 @@ export interface FeeChartPoint {
   feesUsd: number;
   accumulatedFeesUsd: number;
   apr: number;
-  /** Aave APY (for rehypo positions) */
-  aaveApy?: number;
-  /** Combined APR (swap APR + Aave APY) */
+  /** Yield APY for currency0 (for rehypo positions) */
+  currency0Apy?: number;
+  /** Combined APR (swap APR + yield APY) */
   totalApr?: number;
 }
 
@@ -113,7 +113,7 @@ export function usePositionFeeChartData({
     if (!aaveData?.success || !aaveData.points.length) {
       return historicalData.map(point => ({
         ...point,
-        aaveApy: undefined,
+        currency0Apy: undefined,
         totalApr: point.apr,
       }));
     }
@@ -127,25 +127,25 @@ export function usePositionFeeChartData({
     // Merge: for each fee point, find the closest Aave point
     return historicalData.map(feePoint => {
       // Find exact match first
-      let aaveApy = aaveByTimestamp.get(feePoint.timestamp);
+      let currency0Apy = aaveByTimestamp.get(feePoint.timestamp);
 
       // If no exact match, find closest Aave point within 1 hour
-      if (aaveApy === undefined) {
+      if (currency0Apy === undefined) {
         const oneHour = 3600;
         let closestDiff = Infinity;
         for (const [ts, apy] of aaveByTimestamp) {
           const diff = Math.abs(ts - feePoint.timestamp);
           if (diff < closestDiff && diff <= oneHour) {
             closestDiff = diff;
-            aaveApy = apy;
+            currency0Apy = apy;
           }
         }
       }
 
       return {
         ...feePoint,
-        aaveApy,
-        totalApr: feePoint.apr + (aaveApy ?? 0),
+        currency0Apy,
+        totalApr: feePoint.apr + (currency0Apy ?? 0),
       };
     });
   }, [query.data, aaveQuery.data]);
@@ -173,7 +173,7 @@ export function usePositionFeeChartData({
 
         // APR and Aave APY use last known values (lag by 1 point)
         const apr = lastPoint.apr;
-        const aaveApy = lastPoint.aaveApy;
+        const currency0Apy = lastPoint.currency0Apy;
 
         return [
           ...mergedData,
@@ -182,8 +182,8 @@ export function usePositionFeeChartData({
             feesUsd: currentFeesUsd,
             accumulatedFeesUsd,
             apr,
-            aaveApy,
-            totalApr: apr + (aaveApy ?? 0),
+            currency0Apy,
+            totalApr: apr + (currency0Apy ?? 0),
           },
         ];
       }

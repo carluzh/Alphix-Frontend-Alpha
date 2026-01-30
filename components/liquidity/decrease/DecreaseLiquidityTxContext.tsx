@@ -15,7 +15,7 @@
 import React, { createContext, useContext, useState, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount } from "wagmi";
 import { formatUnits, parseUnits, type Address, type Hash } from "viem";
-import { getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
+import { getTokenDefinitions, getPoolById, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useAllPrices } from "@/lib/apollo/hooks";
 import { getTokenSymbolByAddress, debounce } from "@/lib/utils";
@@ -31,6 +31,9 @@ import {
   LiquidityTransactionType,
   type ValidatedLiquidityTxContext,
 } from "@/lib/liquidity/types";
+
+// Pool state for slippage protection (sqrtPriceX96)
+import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
 
 // Unified Yield withdraw hook for ReHypothecation positions
 import { useUnifiedYieldWithdraw } from "@/lib/liquidity/unified-yield/hooks/useUnifiedYieldWithdraw";
@@ -81,6 +84,14 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const { position } = decreaseLiquidityState;
   const { withdrawAmount0, withdrawAmount1 } = derivedDecreaseInfo;
 
+  // Get pool config for subgraphId (needed for pool state query)
+  const poolConfig = useMemo(() => {
+    return position.poolId ? getPoolById(position.poolId, networkMode) : null;
+  }, [position.poolId, networkMode]);
+
+  // Pool state for slippage protection (sqrtPriceX96)
+  const { data: poolStateData } = usePoolState(poolConfig?.subgraphId ?? '');
+
   // Unified Yield withdraw hook - only active for ReHypothecation positions
   const unifiedYieldWithdraw = useUnifiedYieldWithdraw({
     hookAddress: position.hookAddress as Address | undefined,
@@ -88,6 +99,8 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     token1Decimals: tokenDefinitions[getTokenSymbolByAddress(position.token1.address, networkMode) as keyof typeof tokenDefinitions]?.decimals ?? 18,
     poolId: position.poolId,
     chainId,
+    sqrtPriceX96: poolStateData?.sqrtPriceX96,
+    maxPriceSlippage: 500, // 0.05%
   });
 
   const [isLoading, setIsLoading] = useState(false);
@@ -278,13 +291,16 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         const shareBalanceBigInt = parseUnits(position.shareBalance, 18);
         const sharesToWithdraw = calculateSharesFromPercentage(shareBalanceBigInt, withdrawPercentage);
 
-        // Build the withdraw transaction
+        // Build the withdraw transaction (with slippage protection)
+        const sqrtPriceX96 = poolStateData?.sqrtPriceX96 ? BigInt(poolStateData.sqrtPriceX96) : 0n;
         const txResult = buildUnifiedYieldWithdrawTx({
           hookAddress: position.hookAddress as Address,
           shares: sharesToWithdraw,
           userAddress: accountAddress,
           poolId: position.poolId,
           chainId,
+          expectedSqrtPriceX96: sqrtPriceX96,
+          maxPriceSlippage: 500, // 0.05%
         });
 
         // Convert display amounts to raw amounts (wei) for the SDK
@@ -415,7 +431,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       setIsLoading(false);
       return null;
     }
-  }, [accountAddress, chainId, position, withdrawAmount0, withdrawAmount1, networkMode, tokenDefinitions, parseTokenId, isUnifiedYield]);
+  }, [accountAddress, chainId, position, withdrawAmount0, withdrawAmount1, networkMode, tokenDefinitions, parseTokenId, isUnifiedYield, poolStateData]);
 
   // Get button text based on amounts
   const getWithdrawButtonText = useCallback(() => {

@@ -217,7 +217,14 @@ export const resolvers = {
     ) => {
       const data = await fetchInternal(
         ctx,
-        `/api/liquidity/get-ticks?poolId=${encodeURIComponent(args.poolId)}`
+        `/api/liquidity/get-ticks`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            poolId: args.poolId,
+            first: args.first ?? 500,
+          }),
+        }
       )
 
       if (!data.ticks || !Array.isArray(data.ticks)) {

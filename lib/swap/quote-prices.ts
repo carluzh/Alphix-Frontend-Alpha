@@ -1,6 +1,7 @@
 // Quote-based pricing utility
 // Uses on-chain V4 Quoter for real prices from pool liquidity
-// Now with Redis caching to reduce RPC calls and prevent rate limiting
+// Falls back to CoinGecko when quoter has insufficient liquidity
+// Redis caching to reduce RPC calls and prevent rate limiting
 
 import type { NetworkMode } from '@/lib/pools-config'
 import { MAINNET_CHAIN_ID } from '@/lib/network-mode'
@@ -15,6 +16,18 @@ const STABLECOINS_USD = new Set([
   'USDC', 'USDT', 'USDS',  // Mainnet
   'atUSDC', 'atDAI',       // Testnet
 ])
+
+// CoinGecko token ID mapping for fallback pricing
+// Canonical source: hooks/useCoinGeckoPrice.ts COINGECKO_IDS
+const COINGECKO_IDS: Record<string, string> = {
+  'ETH': 'ethereum',
+  'atETH': 'ethereum',
+  'aETH': 'ethereum',
+  'WETH': 'weth',
+  'BTC': 'bitcoin',
+  'aBTC': 'bitcoin',
+  'WBTC': 'wrapped-bitcoin',
+}
 
 function isStablecoinUSD(symbol: string | null | undefined): boolean {
   if (!symbol || typeof symbol !== 'string') return false
@@ -70,6 +83,33 @@ async function fetchPriceFromQuoter(
 }
 
 /**
+ * Fetch price from CoinGecko API (fallback when quoter has insufficient liquidity)
+ * Returns 0 on failure to match quoter contract
+ */
+async function fetchCoinGeckoFallback(symbol: string): Promise<number> {
+  const coinId = COINGECKO_IDS[symbol]
+  if (!coinId) return 0
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 5000)
+
+  try {
+    const response = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`,
+      { headers: { 'Accept': 'application/json' }, signal: controller.signal }
+    )
+    clearTimeout(timeoutId)
+    if (!response.ok) return 0
+    const data = await response.json()
+    const price = data[coinId]?.usd
+    return typeof price === 'number' && price > 0 ? price : 0
+  } catch {
+    clearTimeout(timeoutId)
+    return 0
+  }
+}
+
+/**
  * Get token price in USD with Redis caching
  * Uses stale-while-revalidate pattern to reduce RPC calls
  * Auto-detects client/server: client uses API endpoint, server uses Redis directly
@@ -103,9 +143,11 @@ export async function getQuotePrice(
 
     if (cached.data && cached.data > 0) {
       if (cached.isStale) {
-        // Background refresh - fire and forget
+        // Background refresh - fire and forget, with CoinGecko fallback
         fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
-          .then(price => {
+          .then(async (quoterPrice) => {
+            let price = quoterPrice
+            if (price === 0) price = await fetchCoinGeckoFallback(symbol)
             if (price > 0) {
               cacheService.set(cacheKey, price, PRICE_TTL.stale).catch(() => {})
             }
@@ -118,8 +160,11 @@ export async function getQuotePrice(
     // Cache lookup failed, continue to fetch fresh
   }
 
-  // No cache or cache miss - fetch fresh
-  const price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+  // No cache or cache miss - fetch fresh from quoter, fallback to CoinGecko
+  let price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+  if (price === 0) {
+    price = await fetchCoinGeckoFallback(symbol)
+  }
 
   if (price > 0) {
     cacheService.set(cacheKey, price, PRICE_TTL.stale).catch(() => {})

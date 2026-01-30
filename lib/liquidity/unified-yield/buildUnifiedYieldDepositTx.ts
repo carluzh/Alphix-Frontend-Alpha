@@ -59,11 +59,18 @@ export function buildUnifiedYieldDepositTx(
   const isToken1Native = token1Address.toLowerCase() === NATIVE_TOKEN_ADDRESS.toLowerCase();
   const value = (isToken0Native ? amount0Wei : 0n) + (isToken1Native ? amount1Wei : 0n);
 
+  // Apply shares haircut: reduce by 0.0001% (1 in 1,000,000) so the contract's
+  // _convertSharesToAmountsForDeposit returns slightly lower required amounts.
+  // This prevents InvalidMsgValue reverts caused by Aave yield accrual between
+  // preview and execution increasing the share price (and thus required amounts).
+  const sharesReduction = sharesToMint / 1000000n;
+  const adjustedShares = sharesToMint - (sharesReduction > 0n ? sharesReduction : 1n);
+
   // Build calldata for Hook.addReHypothecatedLiquidity(shares, expectedSqrtPriceX96, maxPriceSlippage)
   const calldata = encodeFunctionData({
     abi: UNIFIED_YIELD_HOOK_ABI,
     functionName: 'addReHypothecatedLiquidity',
-    args: [sharesToMint, expectedSqrtPriceX96, maxPriceSlippage],
+    args: [adjustedShares, expectedSqrtPriceX96, maxPriceSlippage],
   });
 
   return {
@@ -267,7 +274,9 @@ export function buildDepositParamsFromPreview(
   token1Address: Address,
   userAddress: Address,
   poolId: string,
-  chainId: number
+  chainId: number,
+  expectedSqrtPriceX96?: bigint,
+  maxPriceSlippage?: number,
 ): UnifiedYieldDepositParams {
   return {
     poolId,
@@ -279,5 +288,7 @@ export function buildDepositParamsFromPreview(
     sharesToMint: preview.shares,
     userAddress,
     chainId,
+    expectedSqrtPriceX96,
+    maxPriceSlippage,
   };
 }

@@ -503,7 +503,8 @@ export function ReviewExecuteModal() {
       const approveToken0Request = approvals.token0;
       const approveToken1Request = approvals.token1;
 
-      // Build deposit params from preview
+      // Build deposit params from preview (with slippage protection)
+      const sqrtPriceX96 = poolStateData?.sqrtPriceX96 ? BigInt(poolStateData.sqrtPriceX96) : undefined;
       const depositParams = buildDepositParamsFromPreview(
         depositPreview,
         hookAddress,
@@ -511,7 +512,9 @@ export function ReviewExecuteModal() {
         token1.address as Address,
         address,
         state.poolId!,
-        chainId
+        chainId,
+        sqrtPriceX96,
+        500, // 0.05% slippage
       );
 
       // Build deposit transaction

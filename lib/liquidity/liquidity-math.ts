@@ -127,13 +127,10 @@ export async function calculateLiquidityParameters(
     ? [sdkToken0, sdkToken1]
     : [sdkToken1, sdkToken0];
 
-  const poolId = V4Pool.getPoolId(
-    sortedToken0,
-    sortedToken1,
-    poolConfig.fee,
-    poolConfig.tickSpacing,
-    getAddress(poolConfig.hooks) as `0x${string}`
-  );
+  // Use the actual on-chain poolId from config rather than SDK-computed poolId.
+  // V4Pool.getPoolId() computes a different hash for native ETH (zero address) pools
+  // than the actual on-chain poolId, causing StateView reads to return zeros.
+  const poolId = poolConfig.subgraphId;
 
   const stateViewAbiViem = parseAbi(STATE_VIEW_ABI);
   const stateViewAddress = getStateViewAddress(networkMode);

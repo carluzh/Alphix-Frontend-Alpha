@@ -291,8 +291,8 @@ async function fetchBackendPriceHistory(
 
 /**
  * Combined fetch with network-aware source selection:
- * - Mainnet: Uniswap → Backend → CoinGecko
- * - Testnet: Backend only (Uniswap doesn't support testnet)
+ * - Mainnet: Uniswap Gateway API only (no fallbacks)
+ * - Testnet: Backend → CoinGecko (Uniswap doesn't support Base Sepolia)
  */
 async function fetchPriceHistory(
   poolId: string,
@@ -307,30 +307,24 @@ async function fetchPriceHistory(
     if (backendData && backendData.length >= 3) {
       return { data: backendData, source: 'backend' }
     }
+
+    // Testnet fallback to CoinGecko
+    const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
+    if (coingeckoData && coingeckoData.length >= 3) {
+      return { data: coingeckoData, source: 'coingecko' }
+    }
+
     return { data: [], source: 'backend' }
   }
 
-  // Mainnet: Try Uniswap Gateway first
+  // Mainnet: Uniswap Gateway API only
   const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
   if (uniswapData && uniswapData.length >= 3) {
     return { data: uniswapData, source: 'uniswap' }
   }
 
-  // Fallback to backend
-  const backendData = await fetchBackendPriceHistory(poolId, duration, networkMode)
-  if (backendData && backendData.length >= 3) {
-    return { data: backendData, source: 'backend' }
-  }
-
-  // Final fallback to CoinGecko
-  console.log(`[pool-price-history] Falling back to CoinGecko for ${poolId}`)
-  const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
-  if (coingeckoData && coingeckoData.length >= 3) {
-    return { data: coingeckoData, source: 'coingecko' }
-  }
-
-  // All sources failed
-  return { data: [], source: 'coingecko' }
+  console.warn(`[pool-price-history] Uniswap Gateway returned no data for mainnet pool ${poolId}`)
+  return { data: [], source: 'uniswap' }
 }
 
 /**
@@ -350,33 +344,26 @@ async function fetchPriceHistoryWithOptionalFallback(
     if (backendData && backendData.length >= 3) {
       return { data: backendData, source: 'backend' }
     }
+
+    // Testnet fallback to CoinGecko (only if tokens are provided)
+    if (token0 && token1) {
+      const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
+      if (coingeckoData && coingeckoData.length >= 3) {
+        return { data: coingeckoData, source: 'coingecko' }
+      }
+    }
+
     return { data: [], source: 'backend' }
   }
 
-  // Mainnet: Try Uniswap Gateway first
+  // Mainnet: Uniswap Gateway API only
   const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
   if (uniswapData && uniswapData.length >= 3) {
     return { data: uniswapData, source: 'uniswap' }
   }
 
-  // Fallback to backend
-  const backendData = await fetchBackendPriceHistory(poolId, duration, networkMode)
-  if (backendData && backendData.length >= 3) {
-    return { data: backendData, source: 'backend' }
-  }
-
-  // Final fallback to CoinGecko (only if tokens are provided)
-  if (token0 && token1) {
-    console.log(`[pool-price-history] Falling back to CoinGecko for ${poolId}`)
-    const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
-    if (coingeckoData && coingeckoData.length >= 3) {
-      return { data: coingeckoData, source: 'coingecko' }
-    }
-  }
-
-  // All sources failed
-  console.warn(`[pool-price-history] No data available for ${poolId}`)
-  return { data: [], source: 'backend' }
+  console.warn(`[pool-price-history] Uniswap Gateway returned no data for mainnet pool ${poolId}`)
+  return { data: [], source: 'uniswap' }
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ApiResponse | { message: string }>) {
