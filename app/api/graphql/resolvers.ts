@@ -1,6 +1,4 @@
-import { type NetworkMode, getAllTokenSymbols } from '@/lib/pools-config'
-import { batchQuotePrices } from '@/lib/swap/quote-prices'
-import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '@/lib/network-mode'
+import { type NetworkMode } from '@/lib/pools-config'
 import { mapPositionsToGraphQL } from '@/lib/apollo/mappers'
 
 /**
@@ -53,15 +51,7 @@ export const resolvers = {
     // Health check
     _health: () => 'ok',
 
-    // Token queries
-    tokenPrices: async (_: unknown, args: { chain: string }, ctx: Context) => {
-      // Use network from chain argument, not cookie
-      const networkMode = chainToNetworkMode(args.chain);
-      const chainId = networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID
-      const symbols = getAllTokenSymbols(networkMode)
-      const prices = await batchQuotePrices(symbols, chainId, networkMode)
-      return { ...prices, timestamp: Math.floor(Date.now() / 1000) }
-    },
+    // Token queries (prices now served via /api/prices/batch)
 
     token: async (
       _: unknown,

@@ -8,7 +8,7 @@
  * - Earns yield from swap fees + Aave lending (rehypothecation)
  *
  * Architecture:
- * - One Hook per pool (ETH/USDC has its own Hook, USDC/USDT has its own)
+ * - One Hook per pool (ETH/USDC has its own Hook, USDS/USDC has its own)
  * - Hook mints shares to users (extends IERC20)
  * - Liquidity is deposited into a managed tick range (rehypo range)
  * - Underlying assets are rehypothecated into yield sources (e.g., Aave)

@@ -169,7 +169,7 @@ export interface WSPositionData {
 export interface WSPoolData {
   /** Pool ID (bytes32 hex) */
   poolId: string;
-  /** Pool name (e.g., "USDC/USDT") */
+  /** Pool name (e.g., "USDS/USDC") */
   name: string;
   /** Network identifier */
   network: string;

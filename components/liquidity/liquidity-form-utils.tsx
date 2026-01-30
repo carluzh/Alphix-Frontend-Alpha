@@ -68,7 +68,6 @@ export const getUSDPriceForSymbol = (symbol: string | undefined, allPrices: any)
   if (s.includes('BTC')) return allPrices?.BTC ?? 0;
   if (s.includes('ETH')) return allPrices?.ETH ?? 0;
   if (s.includes('USDC')) return allPrices?.USDC ?? 1;
-  if (s.includes('USDT')) return allPrices?.USDT ?? 1;
   return 0;
 };
 

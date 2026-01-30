@@ -249,18 +249,6 @@ type TokenPrice {
   timestamp: Int!
 }
 
-type AllTokenPrices {
-  BTC: Float
-  aBTC: Float
-  ETH: Float
-  aETH: Float
-  USDC: Float
-  aUSDC: Float
-  USDT: Float
-  aUSDT: Float
-  timestamp: Int!
-}
-
 # =============================================================================
 # INPUT TYPES
 # =============================================================================
@@ -298,7 +286,6 @@ type Query {
 
   # Token queries
   token(chain: Chain!, address: String): Token
-  tokenPrices(chain: Chain!): AllTokenPrices!
 
   # Pool queries
   pool(chain: Chain!, poolId: String!): Pool

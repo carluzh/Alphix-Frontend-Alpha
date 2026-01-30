@@ -20,7 +20,7 @@ import { Token } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
 import { getToken } from '@/lib/pools-config';
 import { SlippageControl } from './SlippageControl';
-import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
+import { useTokenPrices } from '@/hooks/useTokenPrices';
 import { useSlippageValidation } from '@/hooks/useSlippage';
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { SwapTradeModel } from "./useSwapTrade";
@@ -119,8 +119,13 @@ export function SwapInputView({
   const [isBuyInputFocused, setIsBuyInputFocused] = React.useState(false);
   const wiggleControls = useAnimation();
 
-  const fromTokenPrice = useTokenUSDPrice(displayFromToken.symbol);
-  const toTokenPrice = useTokenUSDPrice(displayToToken.symbol);
+  const swapInputPriceSymbols = React.useMemo(
+    () => [displayFromToken.symbol, displayToToken.symbol].filter(Boolean),
+    [displayFromToken.symbol, displayToToken.symbol]
+  );
+  const { prices: swapInputPrices } = useTokenPrices(swapInputPriceSymbols);
+  const fromTokenPrice = { price: swapInputPrices[displayFromToken.symbol] || null };
+  const toTokenPrice = { price: swapInputPrices[displayToToken.symbol] || null };
   const { showWarning: showSlippageWarning, warningMessage: slippageWarningMessage, isCritical: isSlippageCritical } = useSlippageValidation(slippage);
 
   const formatPercentFromBps = React.useCallback((bps: number) => {

@@ -17,7 +17,7 @@ import { useAccount } from "wagmi";
 import { formatUnits, parseUnits, type Address, type Hash } from "viem";
 import { getTokenDefinitions, getPoolById, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
-import { useAllPrices } from "@/lib/apollo/hooks";
+import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { getTokenSymbolByAddress, debounce } from "@/lib/utils";
 import { useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
 import { getStoredUserSettings } from "@/hooks/useUserSettings";
@@ -78,11 +78,16 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const { address: accountAddress } = useAccount();
   const { chainId, networkMode } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
-  const { data: allPrices } = useAllPrices();
-
   const { decreaseLiquidityState, derivedDecreaseInfo, setDerivedInfo, isUnifiedYield } = useDecreaseLiquidityContext();
   const { position } = decreaseLiquidityState;
   const { withdrawAmount0, withdrawAmount1 } = derivedDecreaseInfo;
+
+  // Unified price hook - replaces useAllPrices + manual symbol matching
+  const priceSymbols = useMemo(
+    () => [position.token0.symbol, position.token1.symbol].filter(Boolean),
+    [position.token0.symbol, position.token1.symbol]
+  );
+  const { prices } = useTokenPrices(priceSymbols);
 
   // Get pool config for subgraphId (needed for pool state query)
   const poolConfig = useMemo(() => {
@@ -108,18 +113,8 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const [txContext, setTxContext] = useState<ValidatedLiquidityTxContext | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
 
-  const getUSDPriceForSymbol = useCallback((symbol?: string): number => {
-    if (!symbol) return 0;
-    const s = symbol.toUpperCase();
-    if (s.includes("BTC")) return allPrices?.BTC ?? 0;
-    if (s.includes("ETH")) return allPrices?.ETH ?? 0;
-    if (s.includes("USDC")) return allPrices?.USDC ?? 1;
-    if (s.includes("USDT")) return allPrices?.USDT ?? 1;
-    return 0;
-  }, [allPrices]);
-
-  const token0USDPrice = getUSDPriceForSymbol(position.token0.symbol);
-  const token1USDPrice = getUSDPriceForSymbol(position.token1.symbol);
+  const token0USDPrice = prices[position.token0.symbol] ?? 0;
+  const token1USDPrice = prices[position.token1.symbol] ?? 0;
 
   // Helper to parse token ID from position
   const parseTokenId = useCallback((positionId: string): string => {

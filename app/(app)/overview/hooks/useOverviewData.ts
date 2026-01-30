@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useAccount } from "wagmi";
-import { getAllPools, getChainId } from "@/lib/pools-config";
-import { batchQuotePrices } from "@/lib/swap/quote-prices";
+import { getAllPools } from "@/lib/pools-config";
 import { fetchPoolsMetrics } from "@/lib/backend-client";
+import { useTokenPrices } from "@/hooks/useTokenPrices";
 
 export interface TokenBalance {
   symbol: string;
@@ -41,6 +41,8 @@ const TOKEN_COLORS = [
 /**
  * Hook to aggregate overview data from user positions
  * Adapted from Uniswap's portfolio data fetching pattern
+ *
+ * Prices are fetched via useTokenPrices (React Query polling + V4 Quoter + CoinGecko fallback).
  */
 export function useOverviewData(
   networkMode: "mainnet" | "testnet",
@@ -49,19 +51,45 @@ export function useOverviewData(
   pricesData?: any
 ): OverviewData {
   const { address: accountAddress, isConnected } = useAccount();
-  const [overviewData, setOverviewData] = useState<OverviewData>({
-    totalValue: 0,
-    tokenBalances: [],
-    isLoading: true,
-    error: undefined,
-    priceMap: {},
-    pnl24hPct: 0,
-    priceChange24hPctMap: {},
-  });
 
-  useEffect(() => {
+  // 1. Filter positions to configured pools only
+  const filteredPositions = useMemo(() => {
+    if (!isConnected || !accountAddress) return [];
+    const positionsRaw = userPositionsData || [];
+    let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
+    try {
+      const pools = getAllPools(networkMode);
+      const allowedIds = new Set(
+        (pools || []).map((p: any) => String(p?.subgraphId || "").toLowerCase())
+      );
+      positions = positions.filter((pos: any) => {
+        const pid = String(pos?.poolId || "").toLowerCase();
+        return pid && allowedIds.has(pid);
+      });
+    } catch {}
+    return positions;
+  }, [isConnected, accountAddress, userPositionsData, networkMode]);
+
+  // 2. Extract unique token symbols for price fetching
+  const tokenSymbols = useMemo(() => {
+    const symbols = new Set<string>();
+    filteredPositions.forEach((pos: any) => {
+      const t0 = pos.token0?.symbol;
+      const t1 = pos.token1?.symbol;
+      if (t0) symbols.add(t0);
+      if (t1) symbols.add(t1);
+    });
+    return Array.from(symbols);
+  }, [filteredPositions]);
+
+  // 3. Fetch prices via unified hook (replaces direct batchQuotePrices call)
+  // Uses React Query with polling, retries, and deduplication
+  const { prices: priceMap, isLoading: isPricesLoading } = useTokenPrices(tokenSymbols, { pollInterval: 60_000 });
+
+  // 4. Aggregate overview data from positions + prices (reactive — recomputes when prices update)
+  const overviewData = useMemo((): OverviewData => {
     if (!isConnected || !accountAddress) {
-      setOverviewData({
+      return {
         totalValue: 0,
         tokenBalances: [],
         isLoading: false,
@@ -69,143 +97,93 @@ export function useOverviewData(
         priceMap: {},
         pnl24hPct: 0,
         priceChange24hPctMap: {},
-      });
-      return;
+      };
     }
 
-    const fetchOverviewData = async (positionsData: any[], priceData: any) => {
-      try {
-        setOverviewData((prev) => ({ ...prev, isLoading: true, error: undefined }));
+    // Aggregate token balances from positions
+    const tokenBalanceMap = new Map<string, number>();
+    filteredPositions.forEach((position: any) => {
+      const t0 = position.token0?.symbol;
+      const a0 = parseFloat(position.token0?.amount || "0");
+      if (t0 && a0 > 0) tokenBalanceMap.set(t0, (tokenBalanceMap.get(t0) || 0) + a0);
 
-        // 1. Filter to configured pools only
-        const positionsRaw = positionsData || [];
-        let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
-        try {
-          const pools = getAllPools(networkMode);
-          const allowedIds = new Set(
-            (pools || []).map((p: any) => String(p?.subgraphId || "").toLowerCase())
-          );
-          positions = positions.filter((pos: any) => {
-            const pid = String(pos?.poolId || "").toLowerCase();
-            return pid && allowedIds.has(pid);
-          });
-        } catch {}
+      const t1 = position.token1?.symbol;
+      const a1 = parseFloat(position.token1?.amount || "0");
+      if (t1 && a1 > 0) tokenBalanceMap.set(t1, (tokenBalanceMap.get(t1) || 0) + a1);
+    });
 
-        // 2. Aggregate token balances from positions
-        const tokenBalanceMap = new Map<string, number>();
-        if (Array.isArray(positions)) {
-          positions.forEach((position: any) => {
-            const t0 = position.token0?.symbol;
-            const a0 = parseFloat(position.token0?.amount || "0");
-            if (t0 && a0 > 0) tokenBalanceMap.set(t0, (tokenBalanceMap.get(t0) || 0) + a0);
+    // Create token balances with USD values and colors
+    const tokenBalances: TokenBalance[] = Array.from(tokenBalanceMap.entries())
+      .map(([symbol, balance]) => ({
+        symbol,
+        balance,
+        usdValue: balance * (priceMap[symbol] || 0),
+        color: "",
+      }))
+      .filter((token) => token.usdValue > 0.01)
+      .sort((a, b) => b.usdValue - a.usdValue);
 
-            const t1 = position.token1?.symbol;
-            const a1 = parseFloat(position.token1?.amount || "0");
-            if (t1 && a1 > 0) tokenBalanceMap.set(t1, (tokenBalanceMap.get(t1) || 0) + a1);
-          });
+    // Assign colors after sorting
+    tokenBalances.forEach((token, index) => {
+      token.color = TOKEN_COLORS[index % TOKEN_COLORS.length];
+    });
+
+    const totalValue = tokenBalances.reduce((sum, token) => sum + token.usdValue, 0);
+
+    // Compute portfolio 24h PnL %
+    let deltaNowUSD = 0;
+    if (totalValue > 0 && pricesData) {
+      tokenBalances.forEach((tb) => {
+        const s = String(tb.symbol || "").toUpperCase();
+        const base = s.includes("BTC")
+          ? "BTC"
+          : s.includes("ETH")
+          ? "ETH"
+          : s.includes("USDC")
+          ? "USDC"
+          : tb.symbol;
+        const coinData = pricesData?.[base] || pricesData?.[tb.symbol];
+        const ch = coinData?.usd_24h_change;
+        if (typeof ch === "number" && isFinite(ch)) {
+          const pastUsd = tb.usdValue / (1 + ch / 100);
+          const delta = tb.usdValue - pastUsd;
+          deltaNowUSD += delta;
         }
+      });
+    }
+    const pnl24hPct = totalValue > 0 ? (deltaNowUSD / totalValue) * 100 : 0;
 
-        // 3. Resolve prices (batchQuotePrices auto-detects client/server for caching)
-        const tokenSymbols = Array.from(tokenBalanceMap.keys());
-        const priceMap = new Map<string, number>();
-        const chainId = getChainId(networkMode);
-        try {
-          const batch = await batchQuotePrices(tokenSymbols, chainId, networkMode);
-          tokenSymbols.forEach((symbol) => {
-            const px = batch[symbol];
-            if (typeof px === "number" && px > 0) priceMap.set(symbol, px);
-          });
-        } catch {}
-
-        // 4. Create token balances with USD values and colors
-        const tokenBalances: TokenBalance[] = Array.from(tokenBalanceMap.entries())
-          .map(([symbol, balance]) => ({
-            symbol,
-            balance,
-            usdValue: balance * (priceMap.get(symbol) || 0),
-            color: "",
-          }))
-          .filter((token) => token.usdValue > 0.01)
-          .sort((a, b) => b.usdValue - a.usdValue);
-
-        // Assign colors after sorting
-        tokenBalances.forEach((token, index) => {
-          token.color = TOKEN_COLORS[index % TOKEN_COLORS.length];
-        });
-
-        const totalValue = tokenBalances.reduce((sum, token) => sum + token.usdValue, 0);
-
-        // 5. Compute portfolio 24h PnL %
-        let deltaNowUSD = 0;
-        if (totalValue > 0) {
-          tokenBalances.forEach((tb) => {
-            const s = String(tb.symbol || "").toUpperCase();
-            const base = s.includes("BTC")
-              ? "BTC"
-              : s.includes("ETH")
-              ? "ETH"
-              : s.includes("USDC")
-              ? "USDC"
-              : s.includes("USDT")
-              ? "USDT"
-              : tb.symbol;
-            const coinData = priceData?.[base] || priceData?.[tb.symbol];
-            const ch = coinData?.usd_24h_change;
-            if (typeof ch === "number" && isFinite(ch)) {
-              const pastUsd = tb.usdValue / (1 + ch / 100);
-              const delta = tb.usdValue - pastUsd;
-              deltaNowUSD += delta;
-            }
-          });
+    // Build price change map
+    const priceChange24hPctMap: Record<string, number> = {};
+    if (pricesData) {
+      tokenSymbols.forEach((symbol) => {
+        const s = String(symbol || "").toUpperCase();
+        const base = s.includes("BTC")
+          ? "BTC"
+          : s.includes("ETH")
+          ? "ETH"
+          : s.includes("USDC")
+          ? "USDC"
+          : symbol;
+        const coinData = pricesData?.[base] || pricesData?.[symbol];
+        const ch = coinData?.usd_24h_change;
+        if (typeof ch === "number" && isFinite(ch)) {
+          priceChange24hPctMap[symbol] = ch;
+          priceChange24hPctMap[base] = ch;
         }
-        const pnl24hPct = totalValue > 0 ? (deltaNowUSD / totalValue) * 100 : 0;
+      });
+    }
 
-        // 6. Build price change map
-        const priceChange24hPctMap: Record<string, number> = {};
-        tokenSymbols.forEach((symbol) => {
-          const s = String(symbol || "").toUpperCase();
-          const base = s.includes("BTC")
-            ? "BTC"
-            : s.includes("ETH")
-            ? "ETH"
-            : s.includes("USDC")
-            ? "USDC"
-            : s.includes("USDT")
-            ? "USDT"
-            : symbol;
-          const coinData = priceData?.[base] || priceData?.[symbol];
-          const ch = coinData?.usd_24h_change;
-          if (typeof ch === "number" && isFinite(ch)) {
-            priceChange24hPctMap[symbol] = ch;
-            priceChange24hPctMap[base] = ch;
-          }
-        });
-
-        setOverviewData({
-          totalValue,
-          tokenBalances,
-          isLoading: false,
-          error: undefined,
-          priceMap: Object.fromEntries(priceMap.entries()),
-          pnl24hPct,
-          priceChange24hPctMap,
-        });
-      } catch (error) {
-        console.error("Failed to fetch overview data:", error);
-        setOverviewData({
-          totalValue: 0,
-          tokenBalances: [],
-          isLoading: false,
-          error: error instanceof Error ? error.message : "Unknown error",
-          priceMap: {},
-          pnl24hPct: 0,
-          priceChange24hPctMap: {},
-        });
-      }
+    return {
+      totalValue,
+      tokenBalances,
+      isLoading: isPricesLoading && tokenSymbols.length > 0,
+      error: undefined,
+      priceMap,
+      pnl24hPct,
+      priceChange24hPctMap,
     };
-
-    fetchOverviewData(userPositionsData || [], pricesData || {});
-  }, [isConnected, accountAddress, refreshKey, userPositionsData, pricesData, networkMode]);
+  }, [isConnected, accountAddress, filteredPositions, priceMap, isPricesLoading, tokenSymbols, pricesData]);
 
   return overviewData;
 }

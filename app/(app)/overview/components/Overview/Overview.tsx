@@ -87,7 +87,7 @@ export const Overview = memo(function Overview({
   }, [router]);
 
   // Stablecoins always priced at $1
-  const STABLECOINS_USD = new Set(['USDC', 'USDT', 'USDS', 'atUSDC', 'atDAI']);
+  const STABLECOINS_USD = new Set(['USDC', 'USDS', 'atUSDC', 'atDAI']);
 
   // Get USD price for a symbol from priceMap (with stablecoin fallback)
   const getUsdPriceForSymbol = useCallback(

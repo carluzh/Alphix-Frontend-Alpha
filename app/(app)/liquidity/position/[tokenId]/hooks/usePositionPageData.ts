@@ -84,6 +84,7 @@ export interface PositionPageData {
   totalFeesValue: number | null;
   // Price info
   currentPrice: Price<Currency, Currency> | null;
+  currentPriceNumeric: number | null;
   priceInverted: boolean;
   setPriceInverted: (inverted: boolean) => void;
   // Range display
@@ -166,7 +167,7 @@ export function usePositionPageData(tokenId: string): PositionPageData {
   const { networkMode } = useNetwork();
   const publicClient = usePublicClient();
   const [priceInverted, setPriceInverted] = useState(false);
-  const [chartDuration, setChartDuration] = useState<ChartDuration>("1M");
+  const [chartDuration, setChartDuration] = useState<ChartDuration>("1W");
   const [denominationBase, setDenominationBase] = useState(true);
 
   // Check if this is a Unified Yield position (uy-{hookAddress}-{userAddress})
@@ -415,8 +416,30 @@ export function usePositionPageData(tokenId: string): PositionPageData {
     return (fiatFeeValue0 || 0) + (fiatFeeValue1 || 0);
   }, [fiatFeeValue0, fiatFeeValue1]);
 
-  // Current price
+  // Current price (SDK object — null for Unified Yield positions)
   const currentPrice = pool?.token0Price || null;
+
+  // Numeric current price in token1/token0 format (works for both V4 and Unified Yield)
+  // Computed from poolState.sqrtPriceX96 so it's available even when the SDK pool isn't built
+  const currentPriceNumeric = useMemo((): number | null => {
+    // For V4 positions with SDK pool, use SDK's computed price
+    if (pool) {
+      try {
+        return parseFloat(pool.token0Price.toSignificant(18));
+      } catch {
+        // Fall through to poolState computation
+      }
+    }
+    // Compute from poolState.sqrtPriceX96 for Unified Yield positions or fallback
+    if (poolState && token0Config && token1Config && poolState.sqrtPriceX96 > 0n) {
+      const sqrtPrice = Number(poolState.sqrtPriceX96) / 2 ** 96;
+      const rawPrice = sqrtPrice * sqrtPrice;
+      const decimalAdjustment = Math.pow(10, token0Config.decimals - token1Config.decimals);
+      const price = rawPrice * decimalAdjustment;
+      if (isFinite(price) && price > 0) return price;
+    }
+    return null;
+  }, [pool, poolState, token0Config, token1Config]);
 
   // ============================================================================
   // Range Calculations using shared hooks
@@ -627,6 +650,7 @@ export function usePositionPageData(tokenId: string): PositionPageData {
     totalFeesValue,
     // Price info
     currentPrice,
+    currentPriceNumeric,
     priceInverted,
     setPriceInverted,
     // Range display

@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { useAccount } from "wagmi";
 import { ANNOUNCEMENTS, isAnnouncementActive } from "@/lib/announcements";
 import { NavigationProgressBar } from "@/lib/navigation-progress";
+import { useToSAcceptance } from "@/hooks/useToSAcceptance";
+import { ToSAcceptanceModal } from "@/components/ui/ToSAcceptanceModal";
 
 function VersionBadge() {
   const version = process.env.NEXT_PUBLIC_APP_VERSION || '0.0.0';
@@ -33,6 +35,7 @@ const MOBILE_HEADER_PADDING_CLASS = "pt-14";
 export function AppLayout({ children }: AppLayoutProps) {
   const isMobile = useIsMobile();
   const { isConnected, address } = useAccount();
+  const { showModal: showToS, onConfirm: onToSConfirm, isSigningMessage } = useToSAcceptance();
   const [showUpdatesNotification, setShowUpdatesNotification] = useState(false);
   const [hasActiveAnnouncement, setHasActiveAnnouncement] = useState(false);
   const [announcementHeight, setAnnouncementHeight] = useState<number>(0);
@@ -111,6 +114,11 @@ export function AppLayout({ children }: AppLayoutProps) {
         stackOffsetPx={edgeOffsetPx + announcementHeight + (edgeOffsetPx >= 24 ? 12 : 8)}
       />
       {!showUpdatesNotification && !hasActiveAnnouncement && <VersionBadge />}
+      <ToSAcceptanceModal
+        isOpen={showToS}
+        onConfirm={onToSConfirm}
+        isSigningMessage={isSigningMessage}
+      />
     </>
   );
 } 

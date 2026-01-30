@@ -23,15 +23,12 @@ export {
 
 // Hooks
 export {
-  useAllPrices,
   useUserPositions,
   usePoolState,
 } from './hooks'
 
 // Queries
 export {
-  GET_TOKEN_PRICES,
-  GET_TOKEN,
   GET_POOL,
   GET_POOL_STATE,
   GET_POOL_METRICS,
@@ -57,6 +54,6 @@ export {
 } from './schema/fragments'
 
 // Generated types and hooks (from graphql-codegen)
-// Includes: useGetPoolStateQuery, useGetUserPositionsQuery, useGetTokenPricesQuery, etc.
+// Includes: useGetPoolStateQuery, useGetUserPositionsQuery, etc.
 // Types: Chain, Token, Pool, Position, PoolState, etc.
 export * from './__generated__'

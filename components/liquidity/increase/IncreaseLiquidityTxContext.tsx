@@ -19,7 +19,7 @@ import { parseUnits, type Address } from "viem";
 import { getTokenDefinitions, getPoolById, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useDerivedIncreaseInfo } from "@/lib/liquidity/hooks";
-import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
+import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { useIncreaseLiquidityContext } from "./IncreaseLiquidityContext";
 import { getStoredUserSettings } from "@/hooks/useUserSettings";
@@ -138,8 +138,13 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const [txContext, setTxContext] = useState<ValidatedLiquidityTxContext | null>(null);
 
   // USD prices
-  const { price: token0USDPrice } = useTokenUSDPrice(position.token0.symbol as TokenSymbol);
-  const { price: token1USDPrice } = useTokenUSDPrice(position.token1.symbol as TokenSymbol);
+  const increasePriceSymbols = useMemo(
+    () => [position.token0.symbol, position.token1.symbol].filter(Boolean),
+    [position.token0.symbol, position.token1.symbol]
+  );
+  const { prices: increasePrices } = useTokenPrices(increasePriceSymbols);
+  const token0USDPrice = increasePrices[position.token0.symbol] || null;
+  const token1USDPrice = increasePrices[position.token1.symbol] || null;
 
   // Balances
   const { data: token0BalanceData, refetch: refetchToken0Balance } = useBalance({

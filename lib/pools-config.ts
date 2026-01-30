@@ -171,7 +171,6 @@ export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverr
     // Mainnet
     'USDC': 100,
     'USDS': 95,
-    'USDT': 90,
     'ETH': 80,
     // Testnet
     'atUSDC': 100,

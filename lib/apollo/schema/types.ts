@@ -137,26 +137,8 @@ export interface UncollectedFees {
 }
 
 /**
- * Token prices response
- */
-export interface TokenPricesData {
-  BTC?: { usd: number; usd_24h_change?: number }
-  ETH?: { usd: number; usd_24h_change?: number }
-  USDC?: { usd: number; usd_24h_change?: number }
-  USDT?: { usd: number; usd_24h_change?: number }
-  aBTC?: { usd: number; usd_24h_change?: number }
-  aETH?: { usd: number; usd_24h_change?: number }
-  aUSDC?: { usd: number; usd_24h_change?: number }
-  aUSDT?: { usd: number; usd_24h_change?: number }
-  lastUpdated?: number
-}
-
-/**
  * Query result types
  */
-export interface TokenPricesQueryResult {
-  tokenPrices: TokenPricesData
-}
 
 export interface PoolQueryResult {
   pool: Pool | null

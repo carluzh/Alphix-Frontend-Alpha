@@ -31,7 +31,7 @@ export function isUnifiedYieldPool(pool: PoolConfig): boolean {
  * Check if a pool is a Stable pool
  *
  * Stable pools typically have tight tick spacing for correlated assets
- * (e.g., USDC/USDT, DAI/USDC)
+ * (e.g., USDS/USDC, DAI/USDC)
  *
  * @param pool - Pool configuration to check
  * @returns true if the pool is a stable pool

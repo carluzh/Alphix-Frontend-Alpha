@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { cn, getTokenIcon, getTokenColor } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { formatNumber } from "@/lib/format";
+import { getDecimalsForDenomination } from "@/lib/denomination-utils";
 import type { PoolConfig } from "@/lib/pools-config";
 import type { LPType, ChartDuration, PositionInfo, PoolStateData } from "../../hooks";
 import dynamic from "next/dynamic";
@@ -111,6 +112,7 @@ export interface PositionDetailProps {
   totalFeesValue: number | null;
   // Price info
   currentPrice: Price<Currency, Currency> | null;
+  currentPriceNumeric: number | null;
   priceInverted: boolean;
   setPriceInverted: (inverted: boolean) => void;
   // Range display
@@ -178,18 +180,22 @@ function LoadingSkeleton() {
   );
 }
 
-function StatusIndicator({ isInRange }: { isInRange: boolean }) {
+function StatusIndicator({ isInRange, isUnifiedYield }: { isInRange: boolean; isUnifiedYield?: boolean }) {
+  // Unified Yield positions are always earning (managed by Hook)
+  const label = isUnifiedYield ? "Earning" : (isInRange ? "In Range" : "Out of Range");
+  const isPositive = isUnifiedYield || isInRange;
+
   return (
     <div className="flex items-center gap-1.5">
       <div className={cn(
         "w-2 h-2 rounded-full",
-        isInRange ? "bg-green-500" : "bg-red-500"
+        isPositive ? "bg-green-500" : "bg-red-500"
       )} />
       <span className={cn(
         "text-sm",
-        isInRange ? "text-green-500" : "text-red-500"
+        isPositive ? "text-green-500" : "text-red-500"
       )}>
-        {isInRange ? "In Range" : "Out of Range"}
+        {label}
       </span>
     </div>
   );
@@ -386,7 +392,7 @@ function PositionHeader({
               {poolConfig.currency0.symbol} / {poolConfig.currency1.symbol}
             </Link>
             <div className="flex items-center gap-2">
-              <StatusIndicator isInRange={isInRange} />
+              <StatusIndicator isInRange={isInRange} isUnifiedYield={lpType === "rehypo"} />
               {lpType === "rehypo" && <UnifiedYieldBadge />}
             </div>
           </div>
@@ -444,16 +450,18 @@ function PriceRangeSection({
   tokenASymbol,
   tokenBSymbol,
   isFullRange,
-  currentPrice,
+  currentPriceNumeric,
   priceInverted,
+  poolType,
 }: {
   minPrice: string;
   maxPrice: string;
   tokenASymbol: string;
   tokenBSymbol: string;
   isFullRange: boolean;
-  currentPrice: Price<Currency, Currency> | null;
+  currentPriceNumeric: number | null;
   priceInverted: boolean;
+  poolType?: string;
 }) {
   const priceLabel = `${tokenASymbol} per ${tokenBSymbol}`;
 
@@ -467,6 +475,19 @@ function PriceRangeSection({
   const displayMin = isFullRange || isMinExtreme ? "0" : minPrice;
   const displayMax = isFullRange || isMaxExtreme ? "∞" : maxPrice;
 
+  // Format current price using the same approach as Step 2 (Add Liquidity wizard)
+  const formattedCurrentPrice = useMemo(() => {
+    if (currentPriceNumeric === null) return "—";
+    const displayPrice = priceInverted ? 1 / currentPriceNumeric : currentPriceNumeric;
+    if (!isFinite(displayPrice) || displayPrice <= 0) return "—";
+    // tokenASymbol is the denomination/quote token (e.g., "USDC" in "USDC per ETH")
+    const displayDecimals = getDecimalsForDenomination(tokenASymbol, poolType);
+    return displayPrice.toLocaleString("en-US", {
+      minimumFractionDigits: displayDecimals,
+      maximumFractionDigits: displayDecimals,
+    });
+  }, [currentPriceNumeric, priceInverted, tokenASymbol, poolType]);
+
   return (
     <div className="flex flex-col gap-4 p-4 bg-container border border-sidebar-border rounded-lg">
       <div className="grid grid-cols-3 gap-4">
@@ -477,13 +498,7 @@ function PriceRangeSection({
         </div>
         <div className="text-center">
           <div className="text-xs text-muted-foreground mb-1">Current Price</div>
-          <div className="font-semibold text-sm">
-            {currentPrice
-              ? priceInverted
-                ? currentPrice.invert().toSignificant(6)
-                : currentPrice.toSignificant(6)
-              : "-"}
-          </div>
+          <div className="font-semibold text-sm">{formattedCurrentPrice}</div>
           <div className="text-xs text-muted-foreground">{priceLabel}</div>
         </div>
         <div className="text-center">
@@ -837,6 +852,7 @@ export const PositionDetail = memo(function PositionDetail({
   fiatFeeValue1,
   totalFeesValue,
   currentPrice,
+  currentPriceNumeric,
   priceInverted,
   setPriceInverted,
   minPrice,
@@ -891,13 +907,10 @@ export const PositionDetail = memo(function PositionDetail({
 
   // Price deviation check - compare pool price vs market price
   const poolPriceValue = useMemo(() => {
-    if (!currentPrice) return null;
-    try {
-      return priceInverted ? currentPrice.invert().toSignificant(8) : currentPrice.toSignificant(8);
-    } catch {
-      return null;
-    }
-  }, [currentPrice, priceInverted]);
+    if (currentPriceNumeric === null) return null;
+    const displayPrice = priceInverted ? 1 / currentPriceNumeric : currentPriceNumeric;
+    return isFinite(displayPrice) ? displayPrice.toString() : null;
+  }, [currentPriceNumeric, priceInverted]);
 
   const priceDeviation = usePriceDeviation({
     token0Symbol: poolConfig?.currency0?.symbol,
@@ -1177,7 +1190,7 @@ export const PositionDetail = memo(function PositionDetail({
               chartData={chartData}
               isLoading={isLoadingChart}
               windowWidth={windowWidth}
-              currentPrice={currentPrice ? parseFloat(currentPrice.toSignificant(8)) : undefined}
+              currentPrice={currentPriceNumeric ?? undefined}
               minRangePrice={!isFullRange && minPrice ? parseFloat(minPrice) : undefined}
               maxRangePrice={!isFullRange && maxPrice ? parseFloat(maxPrice) : undefined}
               priceInverted={priceInverted}
@@ -1209,8 +1222,9 @@ export const PositionDetail = memo(function PositionDetail({
             tokenASymbol={tokenASymbol ?? ''}
             tokenBSymbol={tokenBSymbol ?? ''}
             isFullRange={isFullRange ?? false}
-            currentPrice={currentPrice}
+            currentPriceNumeric={currentPriceNumeric}
             priceInverted={priceInverted}
+            poolType={poolConfig?.type}
           />
         </div>
 

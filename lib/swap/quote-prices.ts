@@ -13,12 +13,12 @@ const PRICE_TTL = { fresh: 60, stale: 300 }
 
 // Stablecoins that are always priced at $1.00
 const STABLECOINS_USD = new Set([
-  'USDC', 'USDT', 'USDS',  // Mainnet
-  'atUSDC', 'atDAI',       // Testnet
+  'USDC', 'USDS',           // Mainnet
+  'aUSDC', 'DAI',           // Mainnet (Aave-wrapped / base)
+  'atUSDC', 'atDAI',        // Testnet
 ])
 
 // CoinGecko token ID mapping for fallback pricing
-// Canonical source: hooks/useCoinGeckoPrice.ts COINGECKO_IDS
 const COINGECKO_IDS: Record<string, string> = {
   'ETH': 'ethereum',
   'atETH': 'ethereum',

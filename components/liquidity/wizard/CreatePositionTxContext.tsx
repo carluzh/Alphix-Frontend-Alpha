@@ -32,7 +32,7 @@ import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useAddLiquidityCalculation, type CalculatedLiquidityData } from '@/lib/liquidity/hooks/transaction/useAddLiquidityCalculation';
 import { usePrepareMintQuery, useGasFeeEstimate } from '@/lib/liquidity';
 import { getToken, getPoolById, TokenSymbol } from '@/lib/pools-config';
-import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
+import { useTokenPrices } from '@/hooks/useTokenPrices';
 import { PositionField } from '@/lib/liquidity/types';
 import { useUserSlippageTolerance } from '@/hooks/useSlippage';
 import type { Address } from 'viem';
@@ -176,8 +176,13 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   const hookAddress = poolConfig?.hooks as Address | undefined;
 
   // Get USD prices
-  const { price: token0USDPrice } = useTokenUSDPrice(token0Symbol || null);
-  const { price: token1USDPrice } = useTokenUSDPrice(token1Symbol || null);
+  const createPriceSymbols = useMemo(
+    () => [token0Symbol, token1Symbol].filter(Boolean) as string[],
+    [token0Symbol, token1Symbol]
+  );
+  const { prices: createPrices } = useTokenPrices(createPriceSymbols);
+  const token0USDPrice = token0Symbol ? (createPrices[token0Symbol] || null) : null;
+  const token1USDPrice = token1Symbol ? (createPrices[token1Symbol] || null) : null;
 
   // Get slippage settings
   const { currentSlippage, updateAutoSlippage } = useUserSlippageTolerance();

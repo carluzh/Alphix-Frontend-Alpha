@@ -41,15 +41,6 @@
       "icon": "/tokens/USDS.png",
       "usdPrice": "1.0",
       "color": "#F5AC37"
-    },
-    "USDT": {
-      "symbol": "USDT",
-      "name": "Tether USD",
-      "address": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
-      "decimals": 6,
-      "icon": "/tokens/USDT.png",
-      "usdPrice": "1.0",
-      "color": "#26A17B"
     }
   },
   "pools": [
@@ -93,7 +84,7 @@
         "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
       },
       "fee": 8388608,
-      "tickSpacing": 10,
+      "tickSpacing": 60,
       "hooks": "0xF31de090d650919B1Fd9deBfCb20701d5D5460c0",
       "enabled": true,
       "featured": true,
@@ -115,7 +106,5 @@
     "note": "Base Mainnet configuration for Alphix V4 pools.",
     "subgraphId": "CRITICAL: The 'subgraphId' field contains the ACTUAL on-chain poolId (bytes32). DO NOT recalculate this value using keccak256 or any other method.",
     "fee": "The fee value 8388608 is the dynamic fee flag (0x800000). This indicates the pool uses dynamic fees managed by the hook contract.",
-    "hooks": "Each pool has its own hook contract address. The global alphixHookId is set to ETH/USDC hook for legacy compatibility (V4_POOL_HOOKS constant).",
-    "usds": "USDS icon (/tokens/USDS.png) needs to be added to public/tokens/"
-  }
+    "hooks": "Each pool has its own hook contract address. The global alphixHookId is set to ETH/USDC hook for legacy compatibility (V4_POOL_HOOKS constant)."  }
 }

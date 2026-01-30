@@ -6,9 +6,6 @@
  * @see interface/packages/api/src/clients/graphql/web (Uniswap's query files)
  */
 
-// Price queries
-export { GET_TOKEN_PRICES, GET_TOKEN } from './prices'
-
 // Pool queries
 export {
   GET_POOL,

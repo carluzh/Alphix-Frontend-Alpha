@@ -4,7 +4,20 @@
  */
 
 import { useMemo } from 'react';
-import { useCoinGeckoPrices, calculateMarketPriceRatio } from './useCoinGeckoPrice';
+import { useTokenPrices } from './useTokenPrices';
+
+/**
+ * Calculate market price ratio from two token USD prices.
+ * Returns token0Price in terms of token1 (how many token1 for 1 token0).
+ */
+function calculateMarketPriceRatio(
+  token0USDPrice: number | null,
+  token1USDPrice: number | null
+): number | null {
+  if (token0USDPrice === null || token1USDPrice === null) return null;
+  if (token1USDPrice === 0) return null;
+  return token0USDPrice / token1USDPrice;
+}
 
 // Deviation thresholds (percentages)
 export const DEVIATION_THRESHOLDS = {
@@ -108,7 +121,17 @@ export function usePriceDeviation({
     return symbols;
   }, [token0Symbol, token1Symbol]);
 
-  const { prices, isLoading } = useCoinGeckoPrices(tokenSymbols);
+  const { prices: rawPrices, isLoading } = useTokenPrices(tokenSymbols, { pollInterval: 30_000 });
+
+  // Normalize: useTokenPrices returns 0 for unknown, but deviation logic expects null
+  const prices = useMemo(() => {
+    const normalized: Record<string, number | null> = {};
+    for (const s of tokenSymbols) {
+      const p = rawPrices[s];
+      normalized[s] = p && p > 0 ? p : null;
+    }
+    return normalized;
+  }, [rawPrices, tokenSymbols]);
 
   // Calculate deviation
   const result = useMemo((): PriceDeviationResult => {

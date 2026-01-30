@@ -298,13 +298,10 @@ export default async function handler(
             ? [sdkToken0, sdkToken1] 
             : [sdkToken1, sdkToken0];
 
-        const poolId = V4Pool.getPoolId(
-            sortedToken0,
-            sortedToken1,
-            poolConfig.fee,
-            poolConfig.tickSpacing,
-            getAddress(poolConfig.hooks) as `0x${string}`
-        );
+        // Use the canonical on-chain poolId from config rather than recomputing via V4Pool.getPoolId().
+        // Computing keccak256(PoolKey) requires all config values to be exact; any mismatch
+        // (e.g. tickSpacing) produces a wrong hash and StateView reads return zeros.
+        const poolId = poolConfig.subgraphId;
         
         // sortedToken0/1 determined above
 

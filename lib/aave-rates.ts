@@ -31,7 +31,6 @@ const TOKEN_TO_PROTOCOL: Record<string, TokenMapping> = {
   'USDC': { key: 'USDC', protocol: 'aave' },
   'WETH': { key: 'WETH', protocol: 'aave' },
   'ETH': { key: 'WETH', protocol: 'aave' },
-  'USDT': { key: 'GHO', protocol: 'aave' },  // POC: Treat USDT as GHO
   'GHO': { key: 'GHO', protocol: 'aave' },
   // Spark tokens
   'DAI': { key: 'DAI', protocol: 'spark' },

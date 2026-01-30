@@ -20,7 +20,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
 import { useUserSlippageTolerance } from "@/hooks/useSlippage";
 import { getAutoSlippage } from "@/lib/slippage/slippage-api";
-import { useTokenUSDPrice } from "@/hooks/useTokenUSDPrice";
+import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { usePriceDeviation, requiresDeviationAcknowledgment } from "@/hooks/usePriceDeviation";
 import {
   HighRiskConfirmModal,
@@ -65,7 +65,6 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DA
     case 'atUSDC':
     case 'atDAI':
     case 'USDC':
-    case 'USDT':
       return 'USDC';
     case 'atETH':
     case 'ETH':
@@ -121,7 +120,7 @@ export interface Token {
 const getInitialTokens = (prices?: { BTC: number; USDC: number; ETH: number }) => {
   const availableTokens = getAvailableTokens(prices);
   const defaultFrom = availableTokens.find(t => t.symbol === 'atUSDC' || t.symbol === 'USDC') || availableTokens[0];
-  const defaultTo = availableTokens.find(t => t.symbol === 'atDAI' || t.symbol === 'USDT') || availableTokens[1];
+  const defaultTo = availableTokens.find(t => t.symbol === 'atDAI' || t.symbol === 'USDS') || availableTokens[1];
 
   return { defaultFrom, defaultTo, availableTokens };
 };
@@ -759,28 +758,33 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     }
   };
 
-  // Get USD prices using mid-price quotes (replaces CoinGecko)
-  const fromTokenUSDPrice = useTokenUSDPrice(fromToken?.symbol);
-  const toTokenUSDPrice = useTokenUSDPrice(toToken?.symbol);
-  
+  // Get USD prices using batch pricing (V4 Quoter primary, CoinGecko fallback)
+  const swapPriceSymbols = useMemo(
+    () => [fromToken?.symbol, toToken?.symbol].filter(Boolean) as string[],
+    [fromToken?.symbol, toToken?.symbol]
+  );
+  const { prices: swapPrices } = useTokenPrices(swapPriceSymbols);
+
   // Update token prices when USD prices change
   useEffect(() => {
-    if (fromTokenUSDPrice.price !== null) {
+    const price = swapPrices[fromToken?.symbol];
+    if (price && price > 0) {
       setFromToken(prev => {
-        if (prev.usdPrice === fromTokenUSDPrice.price) return prev;
-        return { ...prev, usdPrice: fromTokenUSDPrice.price || prev.usdPrice };
+        if (prev.usdPrice === price) return prev;
+        return { ...prev, usdPrice: price };
       });
     }
-  }, [fromTokenUSDPrice.price]);
-  
+  }, [swapPrices, fromToken?.symbol]);
+
   useEffect(() => {
-    if (toTokenUSDPrice.price !== null) {
+    const price = swapPrices[toToken?.symbol];
+    if (price && price > 0) {
       setToToken(prev => {
-        if (prev.usdPrice === toTokenUSDPrice.price) return prev;
-        return { ...prev, usdPrice: toTokenUSDPrice.price || prev.usdPrice };
+        if (prev.usdPrice === price) return prev;
+        return { ...prev, usdPrice: price };
       });
     }
-  }, [toTokenUSDPrice.price]);
+  }, [swapPrices, toToken?.symbol]);
   
   // priceImpactWarning is derived inside `useSwapTrade`
 

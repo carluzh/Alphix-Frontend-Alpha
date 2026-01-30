@@ -291,13 +291,16 @@ export const PriceChartSection = memo(function PriceChartSection({
 
   // Detect if it's a stablecoin pair (both symbols contain USD or stable naming)
   const isStablePair = useMemo(() => {
-    const stableTokens = ["USDC", "USDT", "DAI", "BUSD", "FRAX", "LUSD"];
+    const stableTokens = ["USDC", "USDS", "DAI", "BUSD", "FRAX", "LUSD"];
     const t0 = token0Symbol.toUpperCase();
     const t1 = token1Symbol.toUpperCase();
     return stableTokens.some(s => t0.includes(s)) && stableTokens.some(s => t1.includes(s));
   }, [token0Symbol, token1Symbol]);
 
   // Calculate price domain and delta
+  // Viewport is ±20% around the price history min/max — range boundaries are drawn
+  // as reference lines but do NOT expand the viewport (avoids unusable flat-line charts
+  // for Full Range or very wide-ranged positions).
   const { priceDomain, latestPrice, priceChange, absoluteChange } = useMemo(() => {
     if (chartData.length === 0) {
       return {
@@ -312,15 +315,7 @@ export const PriceChartSection = memo(function PriceChartSection({
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
 
-    // Include range prices in domain if provided
-    const rangePrices: number[] = [];
-    if (minRangePrice !== undefined) rangePrices.push(minRangePrice);
-    if (maxRangePrice !== undefined) rangePrices.push(maxRangePrice);
-
-    const domainMin = Math.min(minPrice, ...rangePrices);
-    const domainMax = Math.max(maxPrice, ...rangePrices);
-
-    const padding = (domainMax - domainMin) * 0.1 || domainMax * 0.1;
+    const padding = (maxPrice - minPrice) * 0.2 || maxPrice * 0.2;
 
     const latest = chartData[chartData.length - 1]?.value ?? 0;
     const first = chartData[0]?.value ?? latest;
@@ -329,14 +324,14 @@ export const PriceChartSection = memo(function PriceChartSection({
 
     return {
       priceDomain: [
-        Math.max(0, domainMin - padding),
-        domainMax + padding,
+        Math.max(0, minPrice - padding),
+        maxPrice + padding,
       ] as [number, number],
       latestPrice: latest,
       priceChange: change,
       absoluteChange: absChange,
     };
-  }, [chartData, minRangePrice, maxRangePrice]);
+  }, [chartData]);
 
   // Display values (hover or current)
   const displayValue = hoverData?.value ?? latestPrice;
@@ -454,17 +449,22 @@ export const PriceChartSection = memo(function PriceChartSection({
                 orientation="right"
               />
 
-              {/* Range visualization - subtle fill with dashed top/bottom boundaries */}
-              {minRangePrice !== undefined && maxRangePrice !== undefined && (
-                <ReferenceArea
-                  y1={minRangePrice}
-                  y2={maxRangePrice}
-                  fill={CHART_COLORS.rangeArea}
-                  fillOpacity={1}
-                  stroke="none"
-                />
-              )}
-              {minRangePrice !== undefined && (
+              {/* Range visualization - clamp to viewport so shading is still visible
+                  when range boundaries extend beyond the ±20% price history viewport */}
+              {minRangePrice !== undefined && maxRangePrice !== undefined && (() => {
+                const clampedMin = Math.max(minRangePrice, priceDomain[0]);
+                const clampedMax = Math.min(maxRangePrice, priceDomain[1]);
+                return clampedMin < clampedMax ? (
+                  <ReferenceArea
+                    y1={clampedMin}
+                    y2={clampedMax}
+                    fill={CHART_COLORS.rangeArea}
+                    fillOpacity={1}
+                    stroke="none"
+                  />
+                ) : null;
+              })()}
+              {minRangePrice !== undefined && minRangePrice >= priceDomain[0] && (
                 <ReferenceLine
                   y={minRangePrice}
                   stroke={CHART_COLORS.rangeLine}
@@ -472,7 +472,7 @@ export const PriceChartSection = memo(function PriceChartSection({
                   strokeWidth={1.5}
                 />
               )}
-              {maxRangePrice !== undefined && (
+              {maxRangePrice !== undefined && maxRangePrice <= priceDomain[1] && (
                 <ReferenceLine
                   y={maxRangePrice}
                   stroke={CHART_COLORS.rangeLine}

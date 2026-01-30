@@ -7,7 +7,7 @@ import {
 // Quote token priority for determining base token in price display
 const QUOTE_TOKEN_PRIORITY: Record<string, number> = {
   // Mainnet
-  'USDC': 10, 'USDT': 9, 'USDS': 9, 'ETH': 4,
+  'USDC': 10, 'USDS': 9, 'ETH': 4,
   // Testnet
   'atUSDC': 10, 'atDAI': 9, 'atETH': 4,
 };
@@ -24,7 +24,7 @@ export function getOptimalBaseToken(token0: string, token1: string, currentPrice
  * Uses token-aware logic for appropriate precision.
  */
 export function getDecimalsForDenomination(denomToken: string, poolType?: string): number {
-  const isUsd = ['USDC', 'USDT', 'USDS', 'atUSDC', 'atDAI'].includes(denomToken);
+  const isUsd = ['USDC', 'USDS', 'atUSDC', 'atDAI'].includes(denomToken);
   const isStable = poolType?.toLowerCase() === 'stable';
   return isUsd ? (isStable ? 6 : 2) : 6;
 }

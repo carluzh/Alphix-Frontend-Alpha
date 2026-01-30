@@ -155,7 +155,7 @@ function scoreRoute(route: SwapRoute): number {
   });
 
   // Bonus for stablecoin pairs (lower slippage typically)
-  const stablecoins = ['USDC', 'USDT', 'USDS', 'atUSDC', 'atDAI'];
+  const stablecoins = ['USDC', 'USDS', 'atUSDC', 'atDAI'];
   route.pools.forEach(pool => {
     const isStablePair = stablecoins.includes(pool.token0) && stablecoins.includes(pool.token1);
     if (isStablePair) score += 25;

@@ -173,8 +173,7 @@ export function useUnifiedYieldChartData({
 
     if (swapData) {
       for (const p of swapData) {
-        const apr = (p as any).swapApr ?? (p as any).apr ?? 0;
-        swapSorted.push({ ts: p.timestamp, val: apr });
+        swapSorted.push({ ts: p.timestamp, val: p.swapApr ?? 0 });
       }
       swapSorted.sort((a, b) => a.ts - b.ts);
     }
@@ -203,12 +202,17 @@ export function useUnifiedYieldChartData({
     // Sort timestamps chronologically
     const sortedTimestamps = Array.from(allTimestamps).sort((a, b) => a - b);
 
-    // Forward-fill: find the most recent value at or before targetTs
-    // APY data is valid until the next update, so we carry forward the last known value
+    // Forward-fill with backward-fill fallback:
+    // 1. Find the most recent value at or before targetTs (forward-fill)
+    // 2. If no prior data exists, use the EARLIEST known value (backward-fill)
+    //    This prevents showing 0% when a data source has sparse/delayed history
+    //    (e.g., swap APR has 1 recent point while yield data spans the full period)
     const forwardFill = (
       sorted: Array<{ ts: number; val: number }>,
       targetTs: number
     ): number | undefined => {
+      if (sorted.length === 0) return undefined;
+
       // Binary search for the largest ts <= targetTs
       let left = 0;
       let right = sorted.length - 1;
@@ -223,6 +227,12 @@ export function useUnifiedYieldChartData({
           right = mid - 1;
         }
       }
+
+      // Backward-fill: if targetTs is before all data points, use earliest value
+      if (result === undefined) {
+        result = sorted[0].val;
+      }
+
       return result;
     };
 

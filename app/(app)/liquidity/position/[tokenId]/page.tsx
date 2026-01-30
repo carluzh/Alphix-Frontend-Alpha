@@ -73,6 +73,7 @@ function PositionDetailContent({ tokenId, fromPage }: { tokenId: string; fromPag
     totalFeesValue,
     // Price info
     currentPrice,
+    currentPriceNumeric,
     priceInverted,
     setPriceInverted,
     // Range display
@@ -123,6 +124,7 @@ function PositionDetailContent({ tokenId, fromPage }: { tokenId: string; fromPag
       fiatFeeValue1={fiatFeeValue1}
       totalFeesValue={totalFeesValue}
       currentPrice={currentPrice}
+      currentPriceNumeric={currentPriceNumeric}
       priceInverted={priceInverted}
       setPriceInverted={setPriceInverted}
       minPrice={minPrice}

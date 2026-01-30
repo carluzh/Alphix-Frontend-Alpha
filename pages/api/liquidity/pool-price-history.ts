@@ -33,13 +33,12 @@ const COINGECKO_IDS: Record<string, string> = {
   'atETH': 'ethereum',
   'USDC': 'usd-coin',
   'atUSDC': 'usd-coin',
-  'USDT': 'tether',
   'USDS': 'usds',
   'atDAI': 'dai',
 }
 
 // Only USDC is the quote currency ($1.00)
-const STABLECOINS = ['USDC', 'USDT', 'USDS', 'atUSDC', 'atDAI']
+const STABLECOINS = ['USDC', 'USDS', 'atUSDC', 'atDAI']
 
 interface UniswapPriceHistoryResponse {
   data?: {
@@ -290,79 +289,45 @@ async function fetchBackendPriceHistory(
 }
 
 /**
- * Combined fetch with network-aware source selection:
- * - Mainnet: Uniswap Gateway API only (no fallbacks)
- * - Testnet: Backend → CoinGecko (Uniswap doesn't support Base Sepolia)
+ * Combined fetch — TEMPORARY: Uniswap Gateway API only (no backend/CoinGecko fallback).
  */
 async function fetchPriceHistory(
   poolId: string,
-  token0: string,
-  token1: string,
+  _token0: string,
+  _token1: string,
   duration: HistoryDuration,
-  networkMode: NetworkMode
+  _networkMode: NetworkMode
 ): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'backend' | 'coingecko' }> {
-  // Testnet: Use backend as primary (Uniswap doesn't support Base Sepolia)
-  if (networkMode === 'testnet') {
-    const backendData = await fetchBackendPriceHistory(poolId, duration, networkMode)
-    if (backendData && backendData.length >= 3) {
-      return { data: backendData, source: 'backend' }
-    }
-
-    // Testnet fallback to CoinGecko
-    const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
-    if (coingeckoData && coingeckoData.length >= 3) {
-      return { data: coingeckoData, source: 'coingecko' }
-    }
-
-    return { data: [], source: 'backend' }
-  }
-
-  // Mainnet: Uniswap Gateway API only
   const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
   if (uniswapData && uniswapData.length >= 3) {
     return { data: uniswapData, source: 'uniswap' }
   }
 
-  console.warn(`[pool-price-history] Uniswap Gateway returned no data for mainnet pool ${poolId}`)
+  console.warn(`[pool-price-history] Uniswap Gateway returned no data for pool ${poolId}`)
   return { data: [], source: 'uniswap' }
 }
 
 /**
  * Fetch with optional CoinGecko fallback
  * Used when called from GraphQL where token symbols may not be available
+ *
+ * TEMPORARY: Solely uses Uniswap Gateway API (spoofed header).
+ * Backend and CoinGecko fallbacks disabled while investigating fee data issues.
  */
 async function fetchPriceHistoryWithOptionalFallback(
   poolId: string,
-  token0: string | null,
-  token1: string | null,
+  _token0: string | null,
+  _token1: string | null,
   duration: HistoryDuration,
-  networkMode: NetworkMode
+  _networkMode: NetworkMode
 ): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'backend' | 'coingecko' }> {
-  // Testnet: Use backend as primary (Uniswap doesn't support Base Sepolia)
-  if (networkMode === 'testnet') {
-    const backendData = await fetchBackendPriceHistory(poolId, duration, networkMode)
-    if (backendData && backendData.length >= 3) {
-      return { data: backendData, source: 'backend' }
-    }
-
-    // Testnet fallback to CoinGecko (only if tokens are provided)
-    if (token0 && token1) {
-      const coingeckoData = await fetchCoinGeckoPriceHistory(token0, token1, duration)
-      if (coingeckoData && coingeckoData.length >= 3) {
-        return { data: coingeckoData, source: 'coingecko' }
-      }
-    }
-
-    return { data: [], source: 'backend' }
-  }
-
-  // Mainnet: Uniswap Gateway API only
+  // TEMPORARY: Always use Uniswap Gateway API only (no backend/CoinGecko fallback)
   const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
   if (uniswapData && uniswapData.length >= 3) {
     return { data: uniswapData, source: 'uniswap' }
   }
 
-  console.warn(`[pool-price-history] Uniswap Gateway returned no data for mainnet pool ${poolId}`)
+  console.warn(`[pool-price-history] Uniswap Gateway returned no data for pool ${poolId}`)
   return { data: [], source: 'uniswap' }
 }
 

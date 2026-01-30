@@ -2,9 +2,10 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useAccount } from "wagmi";
-import { useUserPositions, useAllPrices } from "@/lib/apollo/hooks";
+import { useUserPositions } from "@/lib/apollo/hooks";
 import { useNetwork } from "@/lib/network-context";
 import { useOverview } from "./useOverviewData";
+import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { fetchUserPoints, DEFAULT_USER_POINTS, type CachedUserPoints } from "@/lib/upstash-points";
 import { fetchUnifiedYieldPositions } from "@/lib/liquidity/unified-yield/fetchUnifiedYieldPositions";
 import { createNetworkClient } from "@/lib/viemClient";
@@ -30,10 +31,8 @@ export function useOverviewPageData() {
     loading: isLoadingUserPositions,
   } = useUserPositions(accountAddress || "");
 
-  // Prices data
-  const { data: pricesData } = useAllPrices();
-
   // Overview data (aggregates positions + prices)
+  // Prices are fetched internally via batchQuotePrices() — no need for useAllPrices
   const {
     overviewData,
     activePositions,
@@ -44,7 +43,7 @@ export function useOverviewPageData() {
     networkMode,
     positionsRefresh,
     userPositionsData,
-    pricesData,
+    undefined,
     isLoadingUserPositions
   );
 
@@ -129,6 +128,26 @@ export function useOverviewPageData() {
     };
   }, [isConnected, accountAddress]);
 
+  // Unified priceMap: extract token symbols from ALL position types (V4 + Unified Yield)
+  // V4 positions may be empty (subgraph returns []) while UY positions have data,
+  // so we must include UY symbols to ensure ETH/etc get priced.
+  const allTokenSymbols = useMemo(() => {
+    const symbols = new Set<string>();
+    // V4 positions
+    (userPositionsData || []).forEach((pos: any) => {
+      if (pos.token0?.symbol) symbols.add(pos.token0.symbol);
+      if (pos.token1?.symbol) symbols.add(pos.token1.symbol);
+    });
+    // Unified Yield positions
+    unifiedYieldPositions.forEach((pos) => {
+      if (pos.token0Symbol) symbols.add(pos.token0Symbol);
+      if (pos.token1Symbol) symbols.add(pos.token1Symbol);
+    });
+    return Array.from(symbols);
+  }, [userPositionsData, unifiedYieldPositions]);
+
+  const { prices: priceMap } = useTokenPrices(allTokenSymbols, { pollInterval: 60_000 });
+
   // Overall loading state
   const isLoading =
     isLoadingPositions || isLoadingPoints || isLoadingUYPositions || !readiness.core;
@@ -142,7 +161,7 @@ export function useOverviewPageData() {
     totalValue: overviewData.totalValue,
     activePositions,
     unifiedYieldPositions,
-    priceMap: overviewData.priceMap,
+    priceMap,
     priceChange24hPctMap: overviewData.priceChange24hPctMap,
     aprByPoolId,
 

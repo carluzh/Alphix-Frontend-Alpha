@@ -3,32 +3,8 @@
 
 import { Currency, CurrencyAmount, Price } from '@uniswap/sdk-core'
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { getStablecoin, PollingInterval, type PollingIntervalValue } from '../config'
-import { MAINNET_CHAIN_ID } from '@/lib/network-mode'
-import { getToken, type NetworkMode } from '@/lib/pools-config'
-import { getQuotePrice } from '@/lib/swap/quote-prices'
-
-// USDC variants are the base quote currency, so they're always $1.00
-const QUOTE_CURRENCY_SYMBOLS = new Set(['usdc', 'ausdc', 'atusdc'])
-
-function isQuoteCurrency(symbol?: string): boolean {
-  if (!symbol) return false
-  return QUOTE_CURRENCY_SYMBOLS.has(symbol.toLowerCase())
-}
-
-/**
- * Get hardcoded USD price from token config if available.
- * Used for stablecoins (USDT, DAI, etc.) that have fixed $1 prices.
- */
-function getHardcodedUsdPrice(symbol: string, chainId: number): number | null {
-  const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet'
-  const tokenConfig = getToken(symbol, networkMode)
-  if (tokenConfig?.usdPrice) {
-    return parseFloat(tokenConfig.usdPrice)
-  }
-  return null
-}
+import { useTokenPrices } from '@/hooks/useTokenPrices'
 
 export function useUSDCPrice(
   currency?: Currency,
@@ -38,46 +14,22 @@ export function useUSDCPrice(
   const symbol = currency?.symbol
   const stablecoin = chainId ? getStablecoin(chainId) : undefined
 
-  // Check for hardcoded price in config (for stablecoins like atUSDC, atDAI)
-  const hardcodedPrice = useMemo(() => {
-    if (!symbol || !chainId) return null
-    return getHardcodedUsdPrice(symbol, chainId)
-  }, [symbol, chainId])
-
-  // Skip quote API if token has hardcoded price or is a quote currency
-  const shouldFetchQuote = !!symbol && !!chainId && !isQuoteCurrency(symbol) && hardcodedPrice === null
-
-  const { data: usdPrice, isLoading } = useQuery({
-    queryKey: ['quote-price', symbol, chainId],
-    queryFn: () => getQuotePrice(symbol!, chainId!),
-    enabled: shouldFetchQuote,
-    refetchInterval: pollInterval,
-    staleTime: pollInterval / 2,
-  })
+  // Fetch price via unified batch pipeline (V4 Quoter + CoinGecko fallback)
+  // batchQuotePrices already handles stablecoins ($1.00), hardcoded configs, and quote currencies
+  const symbols = useMemo(() => (symbol ? [symbol] : []), [symbol])
+  const { prices, isLoading } = useTokenPrices(symbols, { pollInterval })
 
   const price = useMemo(() => {
-    if (!currency || !stablecoin) return undefined
+    if (!currency || !stablecoin || !symbol) return undefined
 
-    // Quote currencies (USDC variants) are always $1.00
-    if (isQuoteCurrency(symbol)) {
-      return new Price(currency, stablecoin, 1, 1)
-    }
-
-    // Use hardcoded price from config if available (for stablecoins)
-    if (hardcodedPrice !== null && hardcodedPrice > 0) {
-      const numerator = Math.round(hardcodedPrice * Math.pow(10, stablecoin.decimals))
-      const denominator = Math.pow(10, currency.decimals)
-      return new Price(currency, stablecoin, denominator.toString(), numerator.toString())
-    }
-
-    // Fall back to quote API price
+    const usdPrice = prices[symbol]
     if (!usdPrice || usdPrice <= 0) return undefined
 
     const numerator = Math.round(usdPrice * Math.pow(10, stablecoin.decimals))
     const denominator = Math.pow(10, currency.decimals)
 
     return new Price(currency, stablecoin, denominator.toString(), numerator.toString())
-  }, [currency, stablecoin, symbol, usdPrice, hardcodedPrice])
+  }, [currency, stablecoin, symbol, prices])
 
   return { price, isLoading }
 }

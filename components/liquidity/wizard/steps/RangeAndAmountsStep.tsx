@@ -28,7 +28,7 @@ import { getPoolById, getTokenDefinitions, TokenSymbol } from '@/lib/pools-confi
 import { useNetwork } from '@/lib/network-context';
 import { getDecimalsForDenomination } from '@/lib/denomination-utils';
 import { usePercentageInput } from '@/hooks/usePercentageInput';
-import { useTokenUSDPrice } from '@/hooks/useTokenUSDPrice';
+import { useTokenPrices } from '@/hooks/useTokenPrices';
 import { useRangeHopCallbacks } from '@/hooks/useRangeHopCallbacks';
 import { usePriceDeviation, requiresDeviationAcknowledgment } from '@/hooks/usePriceDeviation';
 import { PriceDeviationCallout } from '@/components/ui/PriceDeviationCallout';
@@ -598,8 +598,13 @@ export function RangeAndAmountsStep() {
   });
 
   // USD prices
-  const { price: token0USDPrice } = useTokenUSDPrice(token0Symbol || null);
-  const { price: token1USDPrice } = useTokenUSDPrice(token1Symbol || null);
+  const rangePriceSymbols = useMemo(
+    () => [token0Symbol, token1Symbol].filter(Boolean) as string[],
+    [token0Symbol, token1Symbol]
+  );
+  const { prices: rangePrices } = useTokenPrices(rangePriceSymbols);
+  const token0USDPrice = token0Symbol ? (rangePrices[token0Symbol] || null) : null;
+  const token1USDPrice = token1Symbol ? (rangePrices[token1Symbol] || null) : null;
 
   // Percentage input handlers
   const handleToken0Percentage = usePercentageInput(

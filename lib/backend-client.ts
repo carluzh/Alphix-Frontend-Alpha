@@ -579,20 +579,13 @@ export async function fetchUnifiedYieldPoolApr(
 }
 
 /**
- * Historical APR point for swap APR
- */
-export interface SwapAprHistoryPoint {
-  timestamp: number;
-  swapApr: number;
-  tvlUsd?: number;
-}
-
-/**
- * Historical APR point (generic)
+ * Historical APR point from UY pool APR history endpoint.
+ * Backend returns `swapApr` (the pool's swap fee APR) and `tvlUsd`.
  */
 export interface AprHistoryPoint {
   timestamp: number;
-  apr: number;
+  swapApr: number;
+  tvlUsd?: number;
 }
 
 /**

@@ -12,7 +12,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { formatUnits } from 'viem';
-import { useAllPrices } from '@/lib/apollo/hooks/useAllPrices';
+import { useTokenPrices } from '@/hooks/useTokenPrices';
 
 // =============================================================================
 // TYPES
@@ -64,7 +64,7 @@ export function useGasFeeEstimate({
   skip = false,
 }: UseGasFeeEstimateParams): GasFeeEstimateResult {
   const publicClient = usePublicClient({ chainId });
-  const { data: prices, loading: pricesLoading } = useAllPrices();
+  const { prices, isLoading: pricesLoading } = useTokenPrices(['ETH'], { pollInterval: 60_000 });
 
   // Fetch current gas price
   const {
@@ -118,7 +118,7 @@ export function useGasFeeEstimate({
     }
 
     // Get ETH price
-    const ethPriceUSD = prices?.ETH;
+    const ethPriceUSD = prices.ETH;
     if (!ethPriceUSD) {
       return {
         gasFeeUSD: undefined,

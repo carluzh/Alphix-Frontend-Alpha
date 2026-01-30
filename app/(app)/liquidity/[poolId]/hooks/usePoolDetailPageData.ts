@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useAccount } from "wagmi";
 import { useNetwork } from "@/lib/network-context";
-import { usePoolState, useAllPrices } from "@/lib/apollo/hooks";
+import { usePoolState } from "@/lib/apollo/hooks";
+import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { useWSPool } from "@/lib/websocket";
 import { fetchPoolsMetrics } from "@/lib/backend-client";
 import { getPoolById, getToken, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
@@ -305,31 +306,12 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     subgraphId,
   });
 
-  // Prices hook
-  const { data: allPrices } = useAllPrices();
-  const isLoadingPrices = !allPrices;
-
-  // Extract USD price from various formats
-  const extractUsd = useCallback((value: unknown, fallback: number): number => {
-    if (typeof value === 'number') return value;
-    if (value && typeof (value as Record<string, unknown>).usd === 'number') {
-      return (value as Record<string, number>).usd;
-    }
-    return fallback;
-  }, []);
-
-  const getUsdPriceForSymbol = useCallback((symbolRaw?: string): number => {
-    const symbol = (symbolRaw || '').toUpperCase();
-    if (!symbol) return 0;
-    // Stablecoins (mainnet + testnet)
-    if (['USDC', 'USDT', 'ATUSDC', 'ATDAI'].includes(symbol)) {
-      return extractUsd(allPrices?.USDC, 1);
-    }
-    if (['ETH', 'ATETH'].includes(symbol)) {
-      return extractUsd(allPrices?.ETH, 0);
-    }
-    return 0;
-  }, [allPrices, extractUsd]);
+  // Prices hook — unified via useTokenPrices (replaces useAllPrices + hardcoded stablecoin lists)
+  const poolTokenSymbols = useMemo(
+    () => poolConfig?.tokens.map(t => t.symbol) || [],
+    [poolConfig]
+  );
+  const { prices: priceMap, isLoading: isLoadingPrices } = useTokenPrices(poolTokenSymbols, { pollInterval: 60_000 });
 
   const calculatePositionUsd = useCallback((position: Position): number => {
     if (!position) return 0;
@@ -338,8 +320,8 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     if (isV4Position(position)) {
       const amt0 = parseFloat(position.token0.amount || '0');
       const amt1 = parseFloat(position.token1.amount || '0');
-      const p0 = getUsdPriceForSymbol(position.token0.symbol);
-      const p1 = getUsdPriceForSymbol(position.token1.symbol);
+      const p0 = priceMap[position.token0.symbol] ?? 0;
+      const p1 = priceMap[position.token1.symbol] ?? 0;
       return (amt0 * p0) + (amt1 * p1);
     }
 
@@ -347,19 +329,13 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     if (isUnifiedYieldPosition(position)) {
       const amt0 = parseFloat(position.token0Amount || '0');
       const amt1 = parseFloat(position.token1Amount || '0');
-      const p0 = getUsdPriceForSymbol(position.token0Symbol);
-      const p1 = getUsdPriceForSymbol(position.token1Symbol);
+      const p0 = priceMap[position.token0Symbol] ?? 0;
+      const p1 = priceMap[position.token1Symbol] ?? 0;
       return (amt0 * p0) + (amt1 * p1);
     }
 
     return 0;
-  }, [getUsdPriceForSymbol]);
-
-  // Price map for components
-  const priceMap = useMemo(() => ({
-    USDC: extractUsd(allPrices?.USDC, 1),
-    ETH: extractUsd(allPrices?.ETH, 0),
-  }), [allPrices, extractUsd]);
+  }, [priceMap]);
 
   // Sort positions by USD value descending (same as Overview)
   const sortedPositions = useMemo(() => {
