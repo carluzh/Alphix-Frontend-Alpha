@@ -119,6 +119,7 @@ function parseTokenIdFromHexId(idHex: string): bigint | null {
 // ---------------------------------------------------------------------------
 
 export async function fetchUserPositions(ownerAddress: string, networkMode: NetworkMode): Promise<Position[]> {
+    console.log('[fetchUserPositions] called with', { ownerAddress, networkMode });
     const owner = getAddress(ownerAddress);
     const hookPositionsQuery = GET_USER_HOOK_POSITIONS_QUERY;
     const chainId = getChainId(networkMode);
@@ -127,6 +128,12 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
     const subgraphUrls: string[] = [];
     const primaryUrl = getAlphixSubgraphUrl(networkMode);
     if (primaryUrl) subgraphUrls.push(primaryUrl);
+    console.log('[fetchUserPositions] subgraph URLs:', subgraphUrls);
+
+    if (subgraphUrls.length === 0) {
+        console.error('[fetchUserPositions] no subgraph URLs - returning empty');
+        return [];
+    }
 
     // Fetch from all subgraphs in parallel
     const subgraphResults = await Promise.allSettled(subgraphUrls.map(async (subgraphUrl) => {
@@ -136,9 +143,13 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
         try {
             const resp = await fetch(subgraphUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: hookPositionsQuery, variables: { owner: owner.toLowerCase() } }), signal: controller.signal });
             clearTimeout(timeoutId);
-            if (!resp.ok) return [];
+            if (!resp.ok) {
+                console.error('[fetchUserPositions] subgraph response not ok:', resp.status, resp.statusText);
+                return [];
+            }
             const json = await resp.json() as any;
             let raw = json?.data?.hookPositions ?? [] as SubgraphPosition[];
+            console.log('[fetchUserPositions] subgraph returned', raw.length, 'hookPositions');
             // Fallback to legacy positions if hookPositions empty (testnet only)
             if (networkMode === 'testnet' && (!Array.isArray(raw) || raw.length === 0)) {
                 try {
@@ -154,8 +165,9 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
                 } catch {}
             }
             return raw;
-        } catch (error) {
+        } catch (error: any) {
             clearTimeout(timeoutId);
+            console.error('[fetchUserPositions] subgraph fetch threw:', error?.message || error);
             throw error;
         }
     }));
@@ -164,13 +176,18 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
     let allRawPositions: SubgraphPosition[] = [];
     const seenPositionIds = new Set<string>();
     for (const result of subgraphResults) {
-        if (result.status !== 'fulfilled') continue;
+        if (result.status !== 'fulfilled') {
+            console.error('[fetchUserPositions] subgraph promise rejected:', (result as PromiseRejectedResult).reason?.message || (result as PromiseRejectedResult).reason);
+            continue;
+        }
         for (const pos of result.value) { if (!seenPositionIds.has(pos.id)) { seenPositionIds.add(pos.id); allRawPositions.push(pos); } }
     }
+    console.log('[fetchUserPositions] total raw positions after dedup:', allRawPositions.length);
 
     // Process all positions
     try {
         if (allRawPositions.length > 0) {
+            console.log('[fetchUserPositions] processing', allRawPositions.length, 'positions, chainId:', chainId);
             // Step 1: Batch fetch all position details in parallel
             const positionDetailPromises = allRawPositions.map(async (r) => {
                 try {
@@ -184,7 +201,9 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
                 }
             });
 
-            const positionsWithDetails = (await Promise.all(positionDetailPromises)).filter(Boolean) as Array<{
+            const positionDetailResults = await Promise.all(positionDetailPromises);
+            console.log('[fetchUserPositions] position details fetched:', positionDetailResults.filter(Boolean).length, '/', allRawPositions.length, 'succeeded');
+            const positionsWithDetails = positionDetailResults.filter(Boolean) as Array<{
                 r: SubgraphPosition;
                 tokenId: bigint;
                 details: Awaited<ReturnType<typeof getPositionDetails>>;
@@ -427,7 +446,10 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
                 }
             }
 
+            console.log('[fetchUserPositions] returning', processed.length, 'processed positions');
             return processed;
+        } else {
+            console.log('[fetchUserPositions] no raw positions to process - returning empty');
         }
     } catch (error: any) {
         console.error('[fetchUserPositions] position processing failed:', error?.message || error);
