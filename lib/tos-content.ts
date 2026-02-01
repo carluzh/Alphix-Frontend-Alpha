@@ -131,35 +131,52 @@ You may not: download, modify, copy, distribute content from the Services; dupli
     heading: '9. Disclaimers, Limitations of Liability and Indemnification',
     body: `Your access to and use of the Covered Activities are at your own risk. The Covered Activities are provided on an "AS IS" and "AS AVAILABLE" basis. To the maximum extent permitted by applicable law, the Company Entities disclaim all warranties, conditions and representations, whether express, implied or statutory.
 
-TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, THE COMPANY ENTITIES WILL NOT BE LIABLE FOR ANY INDIRECT, SPECIAL, EXEMPLARY, INCIDENTAL, CONSEQUENTIAL OR PUNITIVE DAMAGES. IN NO EVENT WILL THE AGGREGATE LIABILITY EXCEED US$100.
+TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, THE ALPHIX PARTIES AND RELATED PARTIES SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING LOSS OF PROFITS, REVENUE, DATA, GOODWILL, OR BUSINESS INTERRUPTION, ARISING OUT OF OR RELATING TO THE SERVICES OR COVERED ACTIVITIES, UNDER ANY THEORY OF LIABILITY.
 
-By entering into these Terms, you agree that you shall defend, indemnify and hold the Company Entities harmless from and against any and all claims, costs, damages, losses, liabilities and expenses arising out of your violation of these Terms or applicable law.`,
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE AGGREGATE LIABILITY OF THE ALPHIX PARTIES SHALL NOT EXCEED THE GREATER OF (i) THE FEES ACTUALLY PAID BY YOU TO THE ALPHIX ASSOCIATION IN THE TWELVE (12) MONTHS PRECEDING THE EVENT GIVING RISE TO THE CLAIM, OR (ii) USD 100.
+
+Nothing in these Terms limits liability for fraud, wilful misconduct, or any liability that cannot be lawfully excluded.`,
   },
   {
-    heading: '10. Third Party Beneficiaries',
-    body: `You and the Company acknowledge and agree that the Company Entities, the Operator Parties, the Security Council Parties, and the Multisig Members are third party beneficiaries of these Terms.`,
+    heading: '9.4 Assumption of Risks',
+    body: `You acknowledge that interacting with blockchain technology, smart contracts, and digital assets involves significant risks, including but not limited to:
+\u2022 loss of private keys or wallet access;
+\u2022 smart contract vulnerabilities or exploits;
+\u2022 irreversible transactions;
+\u2022 regulatory or tax uncertainty;
+\u2022 price volatility and liquidity risk;
+\u2022 protocol upgrades, pauses, or parameter changes;
+\u2022 reliance on third-party infrastructure and public networks.
+
+Certain aspects of the Protocol may be subject to control by multisignature wallets or governance mechanisms, including pausing, upgrades, or parameter adjustments. Such controls may be exercised by persons not under the control of the Alphix Association.
+
+You accept that the Protocol may not be fully decentralised at all times and that risks may evolve over time.`,
   },
   {
-    heading: '11. Arbitration And Class Action Waiver',
-    body: `PLEASE READ THIS SECTION CAREFULLY \u2013 IT MAY SIGNIFICANTLY AFFECT YOUR LEGAL RIGHTS, INCLUDING YOUR RIGHT TO FILE A LAWSUIT IN COURT AND TO HAVE A JURY HEAR YOUR CLAIMS.
+    heading: '9.5 Indemnification',
+    body: `You agree to defend, indemnify, and hold harmless the Alphix Parties and Related Parties from and against any claims, damages, losses, liabilities, costs, and expenses (including reasonable attorneys\u2019 fees) arising out of or relating to:
+a. your breach of these Terms or applicable law;
+b. your misuse of the Services or Covered Activities;
+c. your violation of any third-party rights; or
+d. your negligence or wilful misconduct.
 
-Following the informal dispute resolution process, any dispute, controversy or claim arising out of or in connection with the Covered Activities shall be referred to and finally resolved by arbitration under the BVI IAC Arbitration Rules. The seat of arbitration shall be the British Virgin Islands and the language shall be English. Each arbitration must be conducted on an individual basis only; class, collective or representative proceedings are not permitted.
+The Alphix Association reserves the right to control the defence and settlement of any claim subject to indemnification, and you agree to cooperate fully.`,
+  },
+  {
+    heading: '10. No Third-Party Beneficiaries',
+    body: `These Terms are solely for the benefit of you and the Alphix Association. No other person or entity shall be deemed a third-party beneficiary of these Terms.`,
+  },
+  {
+    heading: '11. Governing Law; Dispute Resolution',
+    body: `These Terms and any non-contractual obligations arising from them are governed by the laws of Switzerland, without regard to conflict-of-laws principles.
 
-These Terms and any non-contractual obligations arising out of or in connection with them are governed by the laws of the British Virgin Islands.`,
+Any dispute arising out of or relating to these Terms or the Services shall be subject to the exclusive jurisdiction of the competent courts of the Canton of Zug, Switzerland.`,
   },
   {
     heading: '12. Miscellaneous',
-    body: `If any provision of these Terms is found to be invalid or unenforceable, that provision will be enforced to the maximum extent permissible and the remaining provisions will remain in full force and effect. Failure or delay by us in exercising any right or remedy will not operate as a waiver. You may not assign or transfer these Terms without our prior written consent.`,
-  },
-  {
-    heading: 'Annex A \u2013 Pre-Launch Tokens Addendum',
-    body: `This Addendum applies where an independent Operator offers or sells ERC-20 tokens issued prior to deployment of a new Machine, for the purposes of bootstrapping liquidity before launch (the "Pre-Launch Tokens"). The Pre-Launch Vault is an automated bootstrapping tool governed by transparent smart contracts.
+    body: `If any provision of these Terms is held invalid or unenforceable, the remaining provisions shall remain in full force and effect. Failure to enforce any right shall not constitute a waiver.
 
-Pre-Launch Tokens do not confer any rights to underlying assets, yield, rewards, dividends, distributions or governance and may provide no utility until Activation. Pre-Launch Tokens are not investor deposits or subscriptions to a collective investment scheme.
-
-Pre-Launch Tokens are speculative; they may provide no utility or value unless and until Activation, and Activation or buy-back is not guaranteed. You may lose all amounts paid.
-
-This Addendum is governed by the laws of the British Virgin Islands and disputes are subject to Section 11 (Arbitration and Class Action Waiver) of the Terms.
+You may not assign or transfer these Terms without prior written consent. We may assign these Terms as part of a restructuring or reorganization.
 
 By using the App, you acknowledge that you understand and accept the risks of digital assets and agree that the Company shall not be liable for any losses incurred.`,
   },
@@ -168,4 +185,4 @@ By using the App, you acknowledge that you understand and accept the risks of di
 /**
  * The exact message to be signed by the user's wallet when accepting the ToS.
  */
-export const TOS_SIGNATURE_MESSAGE = `I accept the Terms of Service, listed at https://app.alphix.fi/ToS.pdf, as well as the Privacy Policy, listed at https://app.alphix.fi/PrivacyPolicy.pdf. I acknowledge that I am not a citizen or resident of a Prohibited Jurisdiction, as defined in the Terms of Service, proof of which may be required for any potential rewards available in the future.`
+export const TOS_SIGNATURE_MESSAGE = `I accept the Terms of Service, listed at https://app.alphix.fi/ToS.pdf. I acknowledge that I am not a citizen or resident of a Prohibited Jurisdiction, as defined in the Terms of Service, proof of which may be required for any potential rewards available in the future.`

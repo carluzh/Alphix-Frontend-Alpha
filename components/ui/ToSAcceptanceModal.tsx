@@ -25,9 +25,8 @@ export function ToSAcceptanceModal({
   isSigningMessage,
 }: ToSAcceptanceModalProps) {
   const [tosChecked, setTosChecked] = useState(false)
-  const [privacyChecked, setPrivacyChecked] = useState(false)
 
-  const canConfirm = tosChecked && privacyChecked && !isSigningMessage
+  const canConfirm = tosChecked && !isSigningMessage
 
   if (!isOpen) return null
 
@@ -100,26 +99,6 @@ export function ToSAcceptanceModal({
                   className="text-sidebar-primary hover:brightness-125 hover:underline transition-colors"
                 >
                   Terms of Service
-                </a>
-                .
-              </span>
-            </label>
-
-            <label className="flex items-center gap-3 cursor-pointer py-1.5">
-              <Checkbox
-                checked={privacyChecked}
-                onCheckedChange={(checked) => setPrivacyChecked(checked === true)}
-                className="data-[state=checked]:bg-white data-[state=checked]:border-white data-[state=checked]:text-black"
-              />
-              <span className="text-sm text-muted-foreground">
-                I have read and understood the{' '}
-                <a
-                  href="https://app.alphix.fi/PrivacyPolicy.pdf"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sidebar-primary hover:brightness-125 hover:underline transition-colors"
-                >
-                  Privacy Policy
                 </a>
                 .
               </span>
