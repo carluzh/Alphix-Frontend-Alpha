@@ -1,5 +1,6 @@
 import { type NetworkMode } from '@/lib/pools-config'
 import { mapPositionsToGraphQL } from '@/lib/apollo/mappers'
+import { fetchUserPositions } from '@/lib/positions/fetchPositions'
 
 /**
  * GraphQL Resolvers
@@ -256,16 +257,17 @@ export const resolvers = {
       args: { chain: string; owner: string },
       ctx: Context
     ) => {
-      const data = await fetchInternal(
-        ctx,
-        `/api/liquidity/get-positions?ownerAddress=${encodeURIComponent(args.owner)}`
-      )
-
-      if (!Array.isArray(data)) {
-        return []
+      // Call position fetching logic directly instead of HTTP round-trip to REST API.
+      // On Vercel, fetchInternal self-calls spawn a second serverless function which
+      // frequently times out or fails silently due to cold starts + RPC latency.
+      const networkMode = chainToNetworkMode(args.chain)
+      try {
+        const positions = await fetchUserPositions(args.owner, networkMode)
+        return mapPositionsToGraphQL(positions, args.chain)
+      } catch (error) {
+        console.error('[GraphQL] userPositions resolver error:', error)
+        throw error
       }
-
-      return mapPositionsToGraphQL(data, args.chain)
     },
 
     positionFees: async (

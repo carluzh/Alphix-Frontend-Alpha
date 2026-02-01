@@ -446,7 +446,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
       slippageBps: slippageToleranceBps,
     },
     {
-      enabled: !!calculatedData && !transactionError,
+      enabled: !!calculatedData && !transactionError && !isCalculating,
       refetchInterval: 10000, // Refresh every 10 seconds
       staleTime: 5000,
     }

@@ -1,7 +1,7 @@
 "use client";
 
 import { formatUSD as formatUSDShared } from "@/lib/format";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Table, Cell, HeaderCell, ClickableHeaderRow, HeaderArrow, HeaderSortText } from "@/components/table-v2";
 import Image from "next/image";
 import Link from "next/link";
@@ -15,10 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefetchOnHover } from "@/hooks/usePrefetchOnHover";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
-import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
-import { useAccount } from "wagmi";
 import { getEnabledPools, getToken, getPoolSubgraphId } from "@/lib/pools-config";
-import { loadUserPositionIds, derivePositionsFromIds, getCachedPositionTimestamps } from "@/lib/client-cache";
 import { Pool } from "@/types";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useNetwork } from "@/lib/network-context";
@@ -127,7 +124,6 @@ const formatAPR = (aprValue: number) => {
 };
 
 export default function LiquidityPage() {
-  const [userPositions, setUserPositions] = useState<ProcessedPosition[]>([]);
   const { networkMode } = useNetwork();
 
   // Pool config (static: tokens, icons, pair names)
@@ -187,7 +183,6 @@ export default function LiquidityPage() {
   }, [aaveRatesData]);
 
   const isMobile = useIsMobile();
-  const { address: accountAddress, isConnected, chainId } = useAccount();
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -236,31 +231,7 @@ export default function LiquidityPage() {
   };
 
 
-  useEffect(() => {
-    if (isConnected && accountAddress && chainId) {
-      (async () => {
-        try {
-          const ids = await loadUserPositionIds(accountAddress);
-          const timestamps = getCachedPositionTimestamps(accountAddress);
-          const positions = await derivePositionsFromIds(accountAddress, ids, chainId, timestamps);
-          setUserPositions(positions as ProcessedPosition[]);
-        } catch (error) {
-          console.error("Failed to load derived positions:", error);
-          setUserPositions([]);
-        }
-      })();
-    } else {
-      setUserPositions([]);
-    }
-  }, [isConnected, accountAddress, chainId]);
-
-  const poolsWithPositionCounts = useMemo(() => {
-    return poolsData.map(pool => {
-      const apiPoolId = (getPoolSubgraphId(pool.id) || pool.id).toLowerCase();
-      const count = userPositions.filter((pos) => String(pos?.poolId || '').toLowerCase() === apiPoolId).length;
-      return { ...pool, positionsCount: count };
-    });
-  }, [poolsData, userPositions]);
+  const poolsWithPositionCounts = poolsData;
 
   const filteredPools = useMemo(() => {
     // Add link property for row navigation in table-v2

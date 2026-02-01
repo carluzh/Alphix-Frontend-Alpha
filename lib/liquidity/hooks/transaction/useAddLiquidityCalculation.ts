@@ -231,6 +231,8 @@ export function useAddLiquidityCalculation(
     if (debounceTimeoutRef.current !== null) {
       clearTimeout(debounceTimeoutRef.current);
     }
+    // Mark calculating immediately so downstream consumers don't use stale data
+    setIsCalculating(true);
     // Set new timeout
     debounceTimeoutRef.current = setTimeout(() => {
       performCalculation(input);

@@ -322,6 +322,10 @@ export function RangeAndAmountsStep() {
   const [priceInverted, setPriceInverted] = useState(false);
   const [amount0, setAmount0] = useState(state.amount0 || '');
   const [amount1, setAmount1] = useState(state.amount1 || '');
+  const amount0Ref = useRef(amount0);
+  amount0Ref.current = amount0;
+  const amount1Ref = useRef(amount1);
+  amount1Ref.current = amount1;
   const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
   const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
   const [chartDuration, setChartDuration] = useState<HistoryDuration>(HistoryDuration.MONTH);
@@ -1047,28 +1051,27 @@ export function RangeAndAmountsStep() {
   const handleAmount0Change = useCallback((value: string) => {
     setAmount0(value);
     setInputSide('token0');
-    // Sync to context immediately so TxContext can calculate
-    setAmounts(value, amount1);
-  }, [setInputSide, setAmounts, amount1]);
+    setAmounts(value, amount1Ref.current);
+  }, [setInputSide, setAmounts]);
 
   const handleAmount1Change = useCallback((value: string) => {
     setAmount1(value);
     setInputSide('token1');
-    // Sync to context immediately so TxContext can calculate
-    setAmounts(amount0, value);
-  }, [setInputSide, setAmounts, amount0]);
+    setAmounts(amount0Ref.current, value);
+  }, [setInputSide, setAmounts]);
 
-  // Sync dependent amount from TxContext to local state when calculated
+  // Sync dependent amount from TxContext to both local state AND context
   useEffect(() => {
     if (!txDependentAmount || !dependentField) return;
 
-    // Only update the dependent field (not the one user is typing in)
     if (dependentField === 'amount1' && state.inputSide === 'token0') {
       setAmount1(txDependentAmount);
+      setAmounts(amount0Ref.current, txDependentAmount);
     } else if (dependentField === 'amount0' && state.inputSide === 'token1') {
       setAmount0(txDependentAmount);
+      setAmounts(txDependentAmount, amount1Ref.current);
     }
-  }, [txDependentAmount, dependentField, state.inputSide]);
+  }, [txDependentAmount, dependentField, state.inputSide, setAmounts]);
 
   // Handle review button click
   const handleReview = useCallback(() => {
