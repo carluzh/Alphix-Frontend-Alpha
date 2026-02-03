@@ -45,6 +45,8 @@ interface UseUnifiedYieldChartDataParams {
   /** Token symbols for yield source rate lookup */
   token0Symbol?: string;
   token1Symbol?: string;
+  /** Current live Swap APR (%) from yield breakdown – appended as a "now" point */
+  currentSwapApr?: number | null;
   enabled?: boolean;
 }
 
@@ -106,6 +108,7 @@ export function useUnifiedYieldChartData({
   yieldSources = [],
   token0Symbol,
   token1Symbol,
+  currentSwapApr,
   enabled = true,
 }: UseUnifiedYieldChartDataParams): UseUnifiedYieldChartDataResult {
   const { networkMode } = useNetwork();
@@ -254,12 +257,35 @@ export function useUnifiedYieldChartData({
     });
   }, [swapAprQuery.data, token0YieldQuery.data, token1YieldQuery.data, token0HasYield, token1HasYield]);
 
+  // Append a "live now" point using the current Swap APR from the yield breakdown,
+  // so the chart tip reflects the freshest value instead of lagging up to 1h behind.
+  const dataWithLivePoint = useMemo(() => {
+    if (!mergedData || mergedData.length === 0) return mergedData;
+    if (currentSwapApr == null || currentSwapApr < 0) return mergedData;
+
+    const lastPoint = mergedData[mergedData.length - 1];
+    const now = Math.floor(Date.now() / 1000);
+
+    if (now <= lastPoint.timestamp) return mergedData;
+
+    return [
+      ...mergedData,
+      {
+        timestamp: now,
+        swapApr: currentSwapApr,
+        currency0Apy: lastPoint.currency0Apy,
+        currency1Apy: lastPoint.currency1Apy,
+        totalApr: currentSwapApr + (lastPoint.currency0Apy ?? 0) + (lastPoint.currency1Apy ?? 0),
+      },
+    ];
+  }, [mergedData, currentSwapApr]);
+
   const isLoading = swapAprQuery.isLoading ||
     (token0HasYield && token0YieldQuery.isLoading) ||
     (token1HasYield && token1YieldQuery.isLoading);
 
   return {
-    data: mergedData,
+    data: dataWithLivePoint,
     currency0Protocol: token0HasYield ? token0Protocol : undefined,
     currency1Protocol: token1HasYield ? token1Protocol : undefined,
     isLoading,

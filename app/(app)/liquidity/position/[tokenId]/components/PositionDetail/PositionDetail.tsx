@@ -947,6 +947,7 @@ export const PositionDetail = memo(function PositionDetail({
     yieldSources: poolConfig?.yieldSources,
     token0Symbol: poolConfig?.currency0?.symbol,
     token1Symbol: poolConfig?.currency1?.symbol,
+    currentSwapApr: poolApr,
     enabled: chartTab === "yield" && !!poolConfig?.subgraphId && isUnifiedYield,
   });
 

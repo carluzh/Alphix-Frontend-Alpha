@@ -4,11 +4,10 @@ export const preferredRegion = 'auto';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { checkRateLimit } from '@/lib/api/ratelimit';
-import { getPoolSubgraphId, getAllPools, type NetworkMode } from '@/lib/pools-config';
+import { getPoolSubgraphId, type NetworkMode } from '@/lib/pools-config';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
 import { poolKeys } from '@/lib/cache/redis-keys';
 import { fetchPoolHistory } from '@/lib/backend-client';
-import { batchQuotePrices, calculateTotalUSD } from '@/lib/swap/quote-prices';
 
 interface ChartDataPoint {
   date: string;
@@ -70,49 +69,25 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       };
     }
 
-    // Get pool config for token symbols
-    const allPools = getAllPools(networkMode);
-    const poolCfg = allPools.find(p => (getPoolSubgraphId(p.id, networkMode) || p.id).toLowerCase() === subgraphId);
-    const sym0 = poolCfg?.currency0?.symbol || 'USDC';
-    const sym1 = poolCfg?.currency1?.symbol || 'ETH';
-
-    // Get token prices for USD conversion
-    const prices = await batchQuotePrices([sym0, sym1], 8453, networkMode);
-    const p0 = prices[sym0] || 0;
-    const p1 = prices[sym1] || 0;
-
-    // Log warning if prices unavailable
-    if (!p0 || !p1) {
-      console.warn('[pool-chart-data] Price fetch returned 0:', { sym0, p0, sym1, p1 });
-    }
-
-    // Group snapshots by date and aggregate
-    const dataByDate = new Map<string, { tvlUSD: number; volumeUSD: number; count: number }>();
+    // Group snapshots by date and aggregate — backend provides pre-computed USD values
+    const dataByDate = new Map<string, { tvlUSD: number; volumeUSD: number; feesUSD: number; count: number }>();
 
     for (const snapshot of historyResponse.snapshots) {
       const date = new Date(snapshot.timestamp * 1000).toISOString().split('T')[0];
 
-      // Calculate TVL from token amounts
-      const tvlUSD = calculateTotalUSD(
-        snapshot.tvlToken0 || 0,
-        snapshot.tvlToken1 || 0,
-        p0,
-        p1
-      );
-
-      // Volume (use 24h volume if available, converted to USD)
-      const volumeUSD = snapshot.volumeToken024h
-        ? calculateTotalUSD(snapshot.volumeToken024h, 0, p0, 0)
-        : 0;
+      const tvlUSD = snapshot.tvlUSD || 0;
+      const volumeUSD = snapshot.volumeUSD || 0;
+      const feesUSD = snapshot.feesUSD || 0;
 
       const existing = dataByDate.get(date);
       if (existing) {
-        // Take latest TVL for the day, accumulate volume
-        existing.tvlUSD = tvlUSD; // Use latest snapshot's TVL
-        existing.volumeUSD = Math.max(existing.volumeUSD, volumeUSD); // Take max volume
+        // Take latest TVL for the day, take max volume/fees (24h rolling values)
+        existing.tvlUSD = tvlUSD;
+        existing.volumeUSD = Math.max(existing.volumeUSD, volumeUSD);
+        existing.feesUSD = Math.max(existing.feesUSD, feesUSD);
         existing.count++;
       } else {
-        dataByDate.set(date, { tvlUSD, volumeUSD, count: 1 });
+        dataByDate.set(date, { tvlUSD, volumeUSD, feesUSD, count: 1 });
       }
     }
 
@@ -136,24 +111,22 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
     for (const dateKey of allDateKeys) {
       const dayData = dataByDate.get(dateKey);
 
-      let tvlUSD: number;
-      let volumeUSD: number;
-
       if (dayData) {
-        tvlUSD = dayData.tvlUSD;
-        volumeUSD = dayData.volumeUSD;
-        lastTvlUSD = tvlUSD; // Update for forward-fill
+        lastTvlUSD = dayData.tvlUSD;
+        data.push({
+          date: dateKey,
+          tvlUSD: dayData.tvlUSD,
+          volumeUSD: dayData.volumeUSD,
+          feesUSD: dayData.feesUSD,
+        });
       } else {
-        tvlUSD = lastTvlUSD; // Forward-fill
-        volumeUSD = 0;
+        data.push({
+          date: dateKey,
+          tvlUSD: lastTvlUSD, // Forward-fill
+          volumeUSD: 0,
+          feesUSD: 0,
+        });
       }
-
-      data.push({
-        date: dateKey,
-        tvlUSD,
-        volumeUSD,
-        feesUSD: 0, // Fees calculated separately if needed
-      });
     }
 
     // Process fee events

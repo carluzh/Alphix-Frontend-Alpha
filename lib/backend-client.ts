@@ -147,6 +147,9 @@ export interface PoolSnapshot {
   tvlToken0: number;
   tvlToken1: number;
   volumeToken024h?: number;
+  tvlUSD?: number;
+  volumeUSD?: number;
+  feesUSD?: number;
 }
 
 /**

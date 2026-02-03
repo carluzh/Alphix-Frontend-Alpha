@@ -190,17 +190,6 @@ export async function batchQuotePrices(
   )
 }
 
-export function calculateTotalUSD(
-  amount0: number,
-  amount1: number,
-  price0: number,
-  price1: number
-): number {
-  const usd0 = isNaN(amount0 * price0) ? 0 : amount0 * price0
-  const usd1 = isNaN(amount1 * price1) ? 0 : amount1 * price1
-  return usd0 + usd1
-}
-
 // Alias for backwards compatibility
 export async function getTokenPrice(symbol: string): Promise<number | null> {
   const price = await getQuotePrice(symbol)

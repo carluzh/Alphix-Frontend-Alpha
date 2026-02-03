@@ -14,7 +14,7 @@
 import { getStoredNetworkMode, type NetworkMode } from './network-mode';
 
 // Goldsky-hosted subgraph URLs (primary source for both networks)
-const GOLDSKY_MAINNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-mainnet/1.0.0/gn';
+const GOLDSKY_MAINNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-mainnet/prod/gn';
 const GOLDSKY_TESTNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-testnet/0.0.7/gn';
 
 /**
@@ -60,25 +60,4 @@ export function getUniswapV4SubgraphUrl(networkModeOverride?: NetworkMode): stri
 export function isMainnetSubgraphMode(networkModeOverride?: NetworkMode): boolean {
   const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   return networkMode === 'mainnet';
-}
-
-/**
- * Returns an array of subgraph URLs to try in order (primary + fallbacks).
- * Used by subgraphClient for automatic failover.
- */
-export function getSubgraphUrlsWithFallback(networkModeOverride?: NetworkMode): string[] {
-  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
-  const urls: string[] = [];
-
-  if (networkMode === 'mainnet') {
-    const primary = process.env.SUBGRAPH_URL_MAINNET_ALPHIX;
-    if (primary) urls.push(primary);
-    urls.push(GOLDSKY_MAINNET_URL);
-  } else {
-    const primary = process.env.SUBGRAPH_URL;
-    if (primary) urls.push(primary);
-    urls.push(GOLDSKY_TESTNET_URL);
-  }
-
-  return urls.filter(Boolean);
 }
