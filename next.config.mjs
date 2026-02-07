@@ -60,7 +60,8 @@ const nextConfig = {
     return config;
   },
   typescript: {
-    ignoreBuildErrors: true,
+    // Build errors are now enforced - fix type issues instead of ignoring them
+    ignoreBuildErrors: false,
   },
   images: {
     // Enable Next.js image optimization (WebP conversion, responsive sizes)

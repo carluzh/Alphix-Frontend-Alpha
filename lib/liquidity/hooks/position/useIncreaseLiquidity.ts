@@ -379,16 +379,6 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
       const { calldata, value } = V4PositionManager.addCallParameters(position, addOptions) as { calldata: Hex; value: string | number | bigint };
 
-      console.log('[DEBUG] Final transaction parameters:', {
-        positionTokenId: nftTokenId,
-        currencyOrder: { currency0: currency0.symbol, currency1: currency1.symbol },
-        finalAmounts: { amount0: finalAdditionalAmount0, amount1: finalAdditionalAmount1 },
-        mappedAmounts: { amountC0Raw: amountC0Raw.toString(), amountC1Raw: amountC1Raw.toString() },
-        valueToSend: value?.toString(),
-        calldataLength: calldata.length,
-        hasBatchPermit: Boolean((addOptions as any)?.batchPermit),
-      });
-
       // Toast removed - TransactionFlowPanel already shows "Confirm Transaction"
       resetWriteContract();
       writeContract({

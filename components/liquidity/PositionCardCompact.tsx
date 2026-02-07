@@ -189,7 +189,8 @@ export function PositionCardCompact({
     });
 
     // Use Uniswap's useGetRangeDisplay for price formatting
-    const { minPrice, maxPrice } = useGetRangeDisplay({
+    // minPriceNumeric/maxPriceNumeric are full-precision values for chart use
+    const { minPrice, maxPrice, minPriceNumeric, maxPriceNumeric } = useGetRangeDisplay({
         priceOrdering,
         pricesInverted,
         tickSpacing,
@@ -320,8 +321,8 @@ export function PositionCardCompact({
                         token1={token1Symbol}
                         priceInverted={pricesInverted}
                         positionStatus={position.status}
-                        priceLower={minPrice ? parseFloat(minPrice) : undefined}
-                        priceUpper={maxPrice ? parseFloat(maxPrice) : undefined}
+                        priceLower={minPriceNumeric}
+                        priceUpper={maxPriceNumeric}
                         className="w-full h-full"
                     />
                 </div>
@@ -332,8 +333,8 @@ export function PositionCardCompact({
                         token1={token1Symbol}
                         priceInverted={pricesInverted}
                         positionStatus={position.status}
-                        priceLower={minPrice ? parseFloat(minPrice) : undefined}
-                        priceUpper={maxPrice ? parseFloat(maxPrice) : undefined}
+                        priceLower={minPriceNumeric}
+                        priceUpper={maxPriceNumeric}
                         className="w-full h-full"
                     />
                 </div>

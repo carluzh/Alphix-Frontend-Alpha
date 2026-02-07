@@ -13,6 +13,30 @@ function formatNumberOrString(value: string): string {
   return num.toFixed(decimals)
 }
 
+/**
+ * Convert Price object to number with full precision
+ * Uses the same method as the working chart: parseFloat(price.toSignificant())
+ */
+export function priceToNumber(price: Price<Currency, Currency> | undefined, defaultValue: number): number {
+  if (!price) {
+    return defaultValue
+  }
+
+  try {
+    // Use toSignificant() directly - same as formatNumberOrString uses for minPrice/maxPrice strings
+    const numPrice = parseFloat(price.toSignificant())
+
+    // Check for invalid values
+    if (!isFinite(numPrice) || Math.abs(numPrice) >= 1e20 || Math.abs(numPrice) <= 1e-20) {
+      return defaultValue
+    }
+
+    return numPrice
+  } catch {
+    return defaultValue
+  }
+}
+
 function calculateInvertedValues({
   priceLower,
   priceUpper,
@@ -74,6 +98,10 @@ export function useGetRangeDisplay({
 }): {
   minPrice: string
   maxPrice: string
+  /** Full-precision numeric value for charts (avoids string formatting precision loss) */
+  minPriceNumeric?: number
+  /** Full-precision numeric value for charts (avoids string formatting precision loss) */
+  maxPriceNumeric?: number
   tokenASymbol?: string
   tokenBSymbol?: string
   isFullRange?: boolean
@@ -97,12 +125,20 @@ export function useGetRangeDisplay({
     atLimit: isTickAtLimit,
     direction: Bound.UPPER,
   })
+
+  // Full-precision numeric values for chart use (avoids formatNumberOrString precision loss)
+  // Only provide numeric values when not at tick limits (0 or ∞)
+  const minPriceNumeric = isTickAtLimit[Bound.LOWER] ? undefined : priceToNumber(priceLower, 0)
+  const maxPriceNumeric = isTickAtLimit[Bound.UPPER] ? undefined : priceToNumber(priceUpper, Number.MAX_SAFE_INTEGER)
+
   const tokenASymbol = quote?.symbol
   const tokenBSymbol = base?.symbol
 
   return {
     minPrice,
     maxPrice,
+    minPriceNumeric: minPriceNumeric === 0 ? undefined : minPriceNumeric,
+    maxPriceNumeric: maxPriceNumeric === Number.MAX_SAFE_INTEGER ? undefined : maxPriceNumeric,
     tokenASymbol,
     tokenBSymbol,
     isFullRange: isTickAtLimit[Bound.LOWER] && isTickAtLimit[Bound.UPPER],

@@ -152,7 +152,9 @@ function parseTokenIdFromHexId(idHex: string): bigint | null {
 // Removed tokenURI parsing fallback (subgraph-only discovery now; details are on-chain)
 
 // Delegate to shared module (avoids duplication between REST handler and GraphQL resolver)
-export { fetchUserPositions as fetchAndProcessUserPositionsForApi } from "@/lib/positions/fetchPositions";
+// Import for local use, re-export for external consumers
+import { fetchUserPositions as fetchAndProcessUserPositionsForApi } from "@/lib/positions/fetchPositions";
+export { fetchAndProcessUserPositionsForApi };
 
 export default async function handler(
   req: NextApiRequest,

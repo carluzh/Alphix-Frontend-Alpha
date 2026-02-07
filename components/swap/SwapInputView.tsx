@@ -38,8 +38,8 @@ interface SwapInputViewProps {
   handleSwapTokens: () => void;
   handleUsePercentage: (percentage: number, isFrom: boolean) => void;
   availableTokens: Token[];
-  onFromTokenSelect: (token: Token) => void;
-  onToTokenSelect: (token: Token) => void;
+  onFromTokenSelect: (token: TokenSelectorToken) => void;
+  onToTokenSelect: (token: TokenSelectorToken) => void;
   isConnected: boolean;
   isAttemptingSwitch: boolean;
   isLoadingCurrentFromTokenBalance: boolean;

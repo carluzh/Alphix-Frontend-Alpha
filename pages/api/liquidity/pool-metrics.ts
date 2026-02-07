@@ -247,7 +247,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ? parseFloat(pool.totalValueLockedToken0)
           : 0;
 
-        const totalVolumeToken0 = dayDatas.reduce((sum, day) => sum + parseFloat(day.volumeToken0 || '0'), 0);
+        const totalVolumeToken0 = dayDatas.reduce((sum: number, day: { volumeToken0?: string }) => sum + parseFloat(day.volumeToken0 || '0'), 0);
 
         return {
           pool,

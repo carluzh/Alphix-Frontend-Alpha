@@ -30,8 +30,8 @@ const COLORS = {
   inRange: '#22c55e',      // Green for in-range (statusSuccess)
   outOfRange: '#ef4444',   // Red for out-of-range (statusCritical)
   neutral: '#9B9B9B',      // Gray for closed/unknown (neutral2)
-  bandLine: 'rgba(255, 255, 255, 0.10)',  // neutral1 with opacity
-  bandFill: 'rgba(255, 255, 255, 0.04)',  // surface3 - neutral, not status-colored
+  bandLine: 'rgba(255, 255, 255, 0.25)',  // More visible border lines
+  bandFill: 'rgba(255, 255, 255, 0.08)',  // More visible shaded area
 }
 
 /**
@@ -205,13 +205,8 @@ export function PositionRangeChart({
     })
     seriesRef.current = series
 
-    // Band series (invisible line, just for primitive attachment)
-    const bandSeries = chart.addLineSeries({
-      priceScaleId: 'right',
-      priceLineVisible: false,
-      color: 'transparent',
-    })
-    bandSeriesRef.current = bandSeries
+    // No separate band series needed - attach BandsIndicator directly to main series
+    bandSeriesRef.current = series // Use main series for band indicator
 
     const handleResize = () => {
       if (chartContainerRef.current && chartContainerRef.current.clientWidth > 0) {
@@ -256,8 +251,7 @@ export function PositionRangeChart({
       priceLineVisible: false,
     })
 
-    // Set band series data (extended)
-    bandSeries.setData(extendedData)
+    // Band indicator now uses main series, no separate data needed
 
     // Set up or update band indicator
     if (priceLower !== undefined && priceUpper !== undefined && priceLower > 0 && priceUpper < Number.MAX_SAFE_INTEGER) {
@@ -281,27 +275,25 @@ export function PositionRangeChart({
         bandIndicatorRef.current.updateAllViews()
       }
 
-      // Ensure price scale includes band values and matches Uniswap's visual positioning
-      // Uniswap centers the current price and gives ~20% margin above/below the bands
-      const currentPrice = entries[entries.length - 1]?.value ?? (priceLower + priceUpper) / 2
-      const bandHeight = priceUpper - priceLower
+      // Calculate visible range based on price line data only
+      // Bands will be drawn wherever they fall (may be partially visible)
+      const priceValues = entries.map(e => e.value)
+      const priceMin = Math.min(...priceValues)
+      const priceMax = Math.max(...priceValues)
 
-      // Calculate visible range:
-      // - Include both bands and current price
-      // - Add 20% of band height as margin (Uniswap style)
-      // - Ensure current price has room to "breathe" within the bands
-      const margin = Math.max(bandHeight * 0.2, Math.abs(currentPrice - priceLower) * 0.3, Math.abs(priceUpper - currentPrice) * 0.3)
-      const visibleMin = Math.min(priceLower, currentPrice) - margin
-      const visibleMax = Math.max(priceUpper, currentPrice) + margin
+      // No margin - fit exactly to price line data
+      const visibleMin = priceMin
+      const visibleMax = priceMax
 
-      series.applyOptions({
-        autoscaleInfoProvider: () => ({
-          priceRange: {
-            minValue: visibleMin,
-            maxValue: visibleMax,
-          },
-        }),
+      const autoscaleProvider = () => ({
+        priceRange: {
+          minValue: visibleMin,
+          maxValue: visibleMax,
+        },
       })
+
+      // Apply autoscale to the series (band indicator now uses the same series)
+      series.applyOptions({ autoscaleInfoProvider: autoscaleProvider })
     }
 
     chart.timeScale().fitContent()

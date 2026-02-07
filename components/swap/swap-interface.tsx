@@ -57,6 +57,7 @@ import { SwapRoute } from "@/lib/swap/routing-engine";
 import { SwapInputView } from './SwapInputView';
 import { SwapReviewView } from './SwapReviewView';
 import { SwapSuccessView } from './SwapSuccessView';
+import type { TokenSelectorToken } from './TokenSelector';
 
 const TARGET_CHAIN_ID = activeChainId;
 
@@ -462,17 +463,19 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   };
 
   // Token selection handlers
-  const handleFromTokenSelect = (token: Token) => {
+  const handleFromTokenSelect = (token: TokenSelectorToken) => {
+    // TokenSelectorToken is compatible with Token for our purposes
     if (token.address !== fromToken.address) {
-      setFromToken(token);
+      setFromToken(token as Token);
       swapStore.actions.setAmounts("", "")
       // Let the centralized fetchFee() effect handle route + fee fetching to avoid duplicate API calls
     }
   };
 
-  const handleToTokenSelect = (token: Token) => {
+  const handleToTokenSelect = (token: TokenSelectorToken) => {
+    // TokenSelectorToken is compatible with Token for our purposes
     if (token.address !== toToken.address) {
-      setToToken(token);
+      setToToken(token as Token);
       swapStore.actions.setAmounts("", "")
       // Let the centralized fetchFee() effect handle route + fee fetching to avoid duplicate API calls
     }
