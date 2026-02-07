@@ -115,7 +115,7 @@ export function PositionRangeChart({
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null)
-  const bandSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const bandSeriesRef = useRef<ISeriesApi<'Area'> | null>(null)
   const bandIndicatorRef = useRef<BandsIndicator | null>(null)
 
   const [dotCoords, setDotCoords] = useState<{ x: number; y: number } | null>(null)
@@ -214,17 +214,15 @@ export function PositionRangeChart({
         chart.timeScale().fitContent()
       }
     }
-    window.addEventListener('resize', handleResize)
 
-    // Trigger initial resize after a brief delay to ensure container has dimensions
-    requestAnimationFrame(() => {
-      handleResize()
-    })
+    // Use ResizeObserver to handle container resizes (not just window resizes)
+    const resizeObserver = new ResizeObserver(handleResize)
+    resizeObserver.observe(chartContainerRef.current)
 
     setIsChartReady(true)
 
     return () => {
-      window.removeEventListener('resize', handleResize)
+      resizeObserver.disconnect()
       chart.remove()
       chartRef.current = null
       seriesRef.current = null

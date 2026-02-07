@@ -314,7 +314,7 @@ export function PositionCardCompact({
                     </div>
                 </div>
 
-                <div className="flex lg:hidden w-[140px] sm:w-[160px] h-12 ml-auto cursor-pointer flex-shrink-0">
+                <div className="flex xl:hidden w-[100px] sm:w-[140px] md:w-[160px] h-12 ml-auto cursor-pointer flex-shrink-0">
                     <PositionRangeChart
                         poolId={position.poolId}
                         token0={token0Symbol}
@@ -326,7 +326,7 @@ export function PositionCardCompact({
                         className="w-full h-full"
                     />
                 </div>
-                <div className="hidden lg:flex flex-1 max-w-[280px] h-12 ml-auto cursor-pointer">
+                <div className="hidden xl:flex flex-1 max-w-[280px] h-12 ml-auto cursor-pointer">
                     <PositionRangeChart
                         poolId={position.poolId}
                         token0={token0Symbol}

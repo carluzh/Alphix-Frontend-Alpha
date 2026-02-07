@@ -186,6 +186,16 @@ export default function LiquidityPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Track window width for responsive column hiding
+  // Below 1170px: hide Fees, Below 940px: also hide Volume
+  const [tableWidth, setTableWidth] = React.useState<number>(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  React.useEffect(() => {
+    const handleResize = () => setTableWidth(window.innerWidth);
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Token search state - sync with URL param
   const initialTokenSearch = searchParams?.get('token') || '';
   const [tokenSearch, setTokenSearch] = useState(initialTokenSearch);
@@ -302,129 +312,139 @@ export default function LiquidityPage() {
     return [...filteredPools].sort((a: any, b: any) => getMetric(b) - getMetric(a));
   }, [filteredPools, isMobile, mobileSortBy]);
 
-  const columns: ColumnDef<Pool & { link: string }>[] = useMemo(() => [
-    {
-      id: "pair",
-      accessorKey: "pair",
-      header: () => (
-        <HeaderCell justifyContent="flex-start">
-          <span className="text-muted-foreground text-sm">Pool</span>
-        </HeaderCell>
-      ),
-      size: 280,
-      cell: ({ row }) => {
-        const pool = row?.original;
-        if (!pool) {
+  const columns: ColumnDef<Pool & { link: string }>[] = useMemo(() => {
+    const allColumns: ColumnDef<Pool & { link: string }>[] = [
+      {
+        id: "pair",
+        accessorKey: "pair",
+        header: () => (
+          <HeaderCell justifyContent="flex-start">
+            <span className="text-muted-foreground text-sm">Pool</span>
+          </HeaderCell>
+        ),
+        size: 280,
+        cell: ({ row }) => {
+          const pool = row?.original;
+          if (!pool) {
+            return (
+              <Cell loading justifyContent="flex-start" />
+            );
+          }
           return (
-            <Cell loading justifyContent="flex-start" />
+            <Cell justifyContent="flex-start">
+              <div className="flex items-center gap-3">
+                <div className="relative w-14 h-7 flex-shrink-0">
+                  <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background border border-sidebar-border z-10">
+                    <Image
+                      src={pool.tokens[0].icon}
+                      alt={pool.tokens[0].symbol}
+                      width={28}
+                      height={28}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="absolute top-0 left-5 w-7 h-7 rounded-full overflow-hidden bg-background border border-sidebar-border z-20">
+                    <Image
+                      src={pool.tokens[1].icon}
+                      alt={pool.tokens[1].symbol}
+                      width={28}
+                      height={28}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-medium text-sm truncate">{pool.pair}</span>
+                  {pool.type && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">
+                      {pool.type}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </Cell>
           );
-        }
-        return (
-          <Cell justifyContent="flex-start">
-            <div className="flex items-center gap-3">
-              <div className="relative w-14 h-7 flex-shrink-0">
-                <div className="absolute top-0 left-0 w-7 h-7 rounded-full overflow-hidden bg-background border border-sidebar-border z-10">
-                  <Image
-                    src={pool.tokens[0].icon}
-                    alt={pool.tokens[0].symbol}
-                    width={28}
-                    height={28}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-                <div className="absolute top-0 left-5 w-7 h-7 rounded-full overflow-hidden bg-background border border-sidebar-border z-20">
-                  <Image
-                    src={pool.tokens[1].icon}
-                    alt={pool.tokens[1].symbol}
-                    width={28}
-                    height={28}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="font-medium text-sm truncate">{pool.pair}</span>
-                {pool.type && (
-                  <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">
-                    {pool.type}
-                  </span>
-                )}
-              </div>
-            </div>
-          </Cell>
-        );
+        },
       },
-    },
-    {
-      id: "tvl",
-      accessorKey: "tvlUSD",
-      header: () => <SortableHeader field="tvl" label="TVL" />,
-      size: 140,
-      cell: ({ row }) => {
-        const isLoading = !row?.original || typeof row.original.tvlUSD !== 'number';
-        return (
-          <Cell loading={isLoading} justifyContent="flex-end">
-            <span className="text-sm font-mono">{formatUSD(row?.original?.tvlUSD || 0)}</span>
-          </Cell>
-        );
+      {
+        id: "tvl",
+        accessorKey: "tvlUSD",
+        header: () => <SortableHeader field="tvl" label="TVL" />,
+        size: 140,
+        cell: ({ row }) => {
+          const isLoading = !row?.original || typeof row.original.tvlUSD !== 'number';
+          return (
+            <Cell loading={isLoading} justifyContent="flex-end">
+              <span className="text-sm font-mono">{formatUSD(row?.original?.tvlUSD || 0)}</span>
+            </Cell>
+          );
+        },
       },
-    },
-    {
-      id: "volume24h",
-      accessorKey: "volume24hUSD",
-      header: () => <SortableHeader field="volume24h" label="Volume (24h)" />,
-      size: 150,
-      cell: ({ row }) => {
-        const isLoading = !row?.original || typeof row.original.volume24hUSD !== 'number';
-        return (
-          <Cell loading={isLoading} justifyContent="flex-end">
-            <span className="text-sm font-mono">{formatUSD(row?.original?.volume24hUSD || 0)}</span>
-          </Cell>
-        );
+      {
+        id: "volume24h",
+        accessorKey: "volume24hUSD",
+        header: () => <SortableHeader field="volume24h" label="Volume (24h)" />,
+        size: 150,
+        cell: ({ row }) => {
+          const isLoading = !row?.original || typeof row.original.volume24hUSD !== 'number';
+          return (
+            <Cell loading={isLoading} justifyContent="flex-end">
+              <span className="text-sm font-mono">{formatUSD(row?.original?.volume24hUSD || 0)}</span>
+            </Cell>
+          );
+        },
       },
-    },
-    {
-      id: "fees24h",
-      accessorKey: "fees24hUSD",
-      header: () => <SortableHeader field="fees24h" label="Fees (24h)" />,
-      size: 130,
-      cell: ({ row }) => {
-        const isLoading = !row?.original || typeof row.original.fees24hUSD !== 'number';
-        return (
-          <Cell loading={isLoading} justifyContent="flex-end">
-            <span className="text-sm font-mono">{formatUSD(row?.original?.fees24hUSD || 0)}</span>
-          </Cell>
-        );
+      {
+        id: "fees24h",
+        accessorKey: "fees24hUSD",
+        header: () => <SortableHeader field="fees24h" label="Fees (24h)" />,
+        size: 130,
+        cell: ({ row }) => {
+          const isLoading = !row?.original || typeof row.original.fees24hUSD !== 'number';
+          return (
+            <Cell loading={isLoading} justifyContent="flex-end">
+              <span className="text-sm font-mono">{formatUSD(row?.original?.fees24hUSD || 0)}</span>
+            </Cell>
+          );
+        },
       },
-    },
-    {
-      id: "apr",
-      accessorKey: "apr",
-      header: () => <SortableHeader field="apr" label="APR" />,
-      size: 120,
-      cell: ({ row }) => {
-        const pool = row?.original;
-        if (!pool) {
-          return <Cell loading justifyContent="flex-end" />;
-        }
-        const isAprCalculated = pool.apr !== undefined && pool.apr !== "Loading..." && pool.apr !== "N/A";
-        const aprValue = isAprCalculated ? parseFloat(pool.apr.replace(/[~%K]/g, '')) : undefined;
-        const tokens = pool.tokens || [];
-        const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '');
+      {
+        id: "apr",
+        accessorKey: "apr",
+        header: () => <SortableHeader field="apr" label="APR" />,
+        size: 120,
+        cell: ({ row }) => {
+          const pool = row?.original;
+          if (!pool) {
+            return <Cell loading justifyContent="flex-end" />;
+          }
+          const isAprCalculated = pool.apr !== undefined && pool.apr !== "Loading..." && pool.apr !== "N/A";
+          const aprValue = isAprCalculated ? parseFloat(pool.apr.replace(/[~%K]/g, '')) : undefined;
+          const tokens = pool.tokens || [];
+          const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '');
 
-        return (
-          <Cell justifyContent="flex-end">
-            <APRBadge
-              breakdown={{ poolApr: aprValue, lendingApr }}
-              token0Symbol={tokens[0]?.symbol}
-              token1Symbol={tokens[1]?.symbol}
-              isLoading={!isAprCalculated}
-            />
-          </Cell>
-        );
+          return (
+            <Cell justifyContent="flex-end">
+              <APRBadge
+                breakdown={{ poolApr: aprValue, lendingApr }}
+                token0Symbol={tokens[0]?.symbol}
+                token1Symbol={tokens[1]?.symbol}
+                isLoading={!isAprCalculated}
+              />
+            </Cell>
+          );
+        },
       },
-    },
-  ], [sortMethod, sortAscending, getPoolAaveApy]);
+    ];
+
+    // Responsive column filtering
+    // Below 1170px: hide Fees, Below 940px: also hide Volume
+    return allColumns.filter(col => {
+      if (col.id === 'fees24h' && tableWidth < 1170) return false;
+      if (col.id === 'volume24h' && tableWidth < 940) return false;
+      return true;
+    });
+  }, [sortMethod, sortAscending, getPoolAaveApy, tableWidth]);
 
   const poolAggregates = React.useMemo(() => {
     let totalTVL = 0;
@@ -468,34 +488,36 @@ export default function LiquidityPage() {
         </div>
 
         {/* Stats Cards + Search Bar - aligned at bottom */}
-        <div className="flex items-end justify-between gap-4">
-          {/* Stats Cards */}
-          <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4">
-            <div className="flex gap-4">
-              <div className="w-[160px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
-                <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">TVL</h2>
-                <div className="text-lg font-medium translate-y-0.5">
-                  {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
+        <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
+          {/* Stats Cards - hidden on mobile, flex on desktop */}
+          {!isMobile && (
+            <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 flex-shrink-0">
+              <div className="flex gap-4">
+                <div className="flex-1 rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
+                  <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">TVL</h2>
+                  <div className="text-lg font-medium translate-y-0.5">
+                    {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
+                  </div>
                 </div>
-              </div>
-              <div className="w-[160px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
-                <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">VOLUME (24H)</h2>
-                <div className="text-lg font-medium translate-y-0.5">
-                  {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
+                <div className="flex-1 rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
+                  <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">VOLUME (24H)</h2>
+                  <div className="text-lg font-medium translate-y-0.5">
+                    {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
+                  </div>
                 </div>
-              </div>
-              <div className="w-[160px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
-                <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">FEES (24H)</h2>
-                <div className="text-lg font-medium translate-y-0.5">
-                  {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
+                <div className="flex-1 rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
+                  <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">FEES (24H)</h2>
+                  <div className="text-lg font-medium translate-y-0.5">
+                    {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Search bar + New Position button - aligned to bottom */}
+          {/* Search bar + New Position button - aligned to bottom, right-aligned when stacked */}
           {!isMobile && (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
               <TokenSearchBar
                 value={tokenSearch}
                 onValueChange={handleTokenSearchChange}
@@ -540,7 +562,6 @@ export default function LiquidityPage() {
           data={filteredPools}
           loading={poolAggregates.isLoading}
           maxWidth={1200}
-          defaultPinnedColumns={['pair']}
           loadingRowsCount={6}
           rowWrapper={poolRowWrapper}
         />

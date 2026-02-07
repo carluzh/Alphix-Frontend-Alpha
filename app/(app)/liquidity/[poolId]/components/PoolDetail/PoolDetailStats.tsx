@@ -152,20 +152,6 @@ export const PoolDetailStats = memo(function PoolDetailStats({
             )}
           </div>
 
-          {/* Fees 24h */}
-          <div className={statCardClass}>
-            <h3 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">
-              FEES (24H)
-            </h3>
-            {isLoading ? (
-              <div className="h-6 w-20 bg-muted/60 rounded animate-pulse" />
-            ) : (
-              <div className="text-lg font-semibold font-mono">
-                {poolStats.fees24hFormatted}
-              </div>
-            )}
-          </div>
-
           {/* APR - with always-visible gradient border animation and tooltip */}
           <TooltipProvider delayDuration={100}>
             <Tooltip>

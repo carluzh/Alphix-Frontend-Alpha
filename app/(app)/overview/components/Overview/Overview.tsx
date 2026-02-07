@@ -52,7 +52,6 @@ interface OverviewProps {
 }
 
 // Constants
-const OVERVIEW_RIGHT_COLUMN_WIDTH = 380;
 const MAX_POSITIONS_DISPLAYED = 5;
 
 /**
@@ -236,20 +235,19 @@ export const Overview = memo(function Overview({
       <div
         className={cn(
           "flex flex-col",
-          "min-[1200px]:flex-row",
+          "xl:flex-row",
           "gap-10",
           "items-start"
         )}
       >
-        {/* PORTFOLIO CHART - Left (grows, max 720px) */}
-        <div className="flex-1 min-w-0 flex flex-col">
-          <PortfolioChart className="w-full max-w-[720px]" currentPositionsValue={totalPositionsValue} isParentLoading={isLoading} />
+        {/* PORTFOLIO CHART - Left */}
+        <div className="flex-1 min-w-0 flex flex-col w-full">
+          <PortfolioChart className="w-full" currentPositionsValue={totalPositionsValue} isParentLoading={isLoading} />
         </div>
 
-        {/* RIGHT COLUMN - Points Earned + Stats (380px fixed) */}
+        {/* RIGHT COLUMN - Points Earned + Stats */}
         <div
-          className="flex-shrink-0 flex flex-col gap-4"
-          style={{ width: OVERVIEW_RIGHT_COLUMN_WIDTH }}
+          className="flex-shrink-0 flex flex-col gap-4 w-full xl:w-[380px]"
         >
           <PointsRewardsCard
             totalPoints={totalPoints}
@@ -276,13 +274,13 @@ export const Overview = memo(function Overview({
       <div
         className={cn(
           "flex flex-col",
-          "min-[1200px]:flex-row",
+          "xl:flex-row",
           "gap-10",
           "items-start"
         )}
       >
         {/* POOLS - Left (grows to fill space) */}
-        <div className="flex-1 min-w-0 flex flex-col">
+        <div className="flex-1 min-w-0 flex flex-col w-full">
           <div className="flex flex-col gap-3">
             <TableSectionHeader
               title="Your Positions"
@@ -378,8 +376,7 @@ export const Overview = memo(function Overview({
 
         {/* RIGHT COLUMN - Empty placeholder to maintain layout (same width as top section) */}
         <div
-          className="flex-shrink-0 hidden min-[1200px]:block"
-          style={{ width: OVERVIEW_RIGHT_COLUMN_WIDTH }}
+          className="flex-shrink-0 hidden xl:block xl:w-[380px]"
         />
       </div>
     </div>

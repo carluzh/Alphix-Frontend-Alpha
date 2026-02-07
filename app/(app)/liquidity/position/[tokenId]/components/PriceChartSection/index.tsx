@@ -415,7 +415,7 @@ export const PriceChartSection = memo(function PriceChartSection({
         </div>
 
         {/* Chart */}
-        <ChartContainer config={chartConfig} className="w-full h-full">
+        <ChartContainer config={chartConfig} className="w-full h-full aspect-auto">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={chartData}

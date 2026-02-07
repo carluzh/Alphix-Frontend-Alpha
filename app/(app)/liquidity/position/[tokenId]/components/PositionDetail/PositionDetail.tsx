@@ -164,13 +164,13 @@ function LoadingSkeleton() {
   return (
     <div className="flex flex-col gap-6 p-3 sm:p-6 w-full max-w-[1200px] mx-auto animate-pulse">
       <div className="h-8 w-48 bg-muted/40 rounded" />
-      <div className="flex flex-col min-[1200px]:flex-row gap-10">
-        <div className="flex-1 flex flex-col gap-6 max-w-[720px]">
+      <div className="flex flex-col xl:flex-row gap-10">
+        <div className="flex-1 flex flex-col gap-6 w-full">
           <div className="h-12 bg-muted/40 rounded" />
           <div className="h-[380px] bg-muted/20 rounded-lg" />
           <div className="h-24 bg-muted/40 rounded-lg" />
         </div>
-        <div className="flex flex-col gap-5 w-full min-[1200px]:w-[380px]">
+        <div className="flex flex-col gap-5 w-full xl:w-[380px]">
           <div className="h-48 bg-muted/40 rounded-lg" />
           <div className="h-48 bg-muted/40 rounded-lg" />
           <div className="h-36 bg-muted/40 rounded-lg" />
@@ -490,21 +490,21 @@ function PriceRangeSection({
 
   return (
     <div className="flex flex-col gap-4 p-4 bg-container border border-sidebar-border rounded-lg">
-      <div className="grid grid-cols-3 gap-4">
-        <div className="text-center">
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+        <div className="text-center min-w-0">
           <div className="text-xs text-muted-foreground mb-1">Min Price</div>
-          <div className="font-semibold text-sm">{displayMin}</div>
-          <div className="text-xs text-muted-foreground">{priceLabel}</div>
+          <div className="font-semibold text-sm truncate">{displayMin}</div>
+          <div className="text-xs text-muted-foreground truncate">{priceLabel}</div>
         </div>
-        <div className="text-center">
+        <div className="text-center min-w-0">
           <div className="text-xs text-muted-foreground mb-1">Current Price</div>
-          <div className="font-semibold text-sm">{formattedCurrentPrice}</div>
-          <div className="text-xs text-muted-foreground">{priceLabel}</div>
+          <div className="font-semibold text-sm truncate">{formattedCurrentPrice}</div>
+          <div className="text-xs text-muted-foreground truncate">{priceLabel}</div>
         </div>
-        <div className="text-center">
+        <div className="text-center min-w-0">
           <div className="text-xs text-muted-foreground mb-1">Max Price</div>
-          <div className="font-semibold text-sm">{displayMax}</div>
-          <div className="text-xs text-muted-foreground">{priceLabel}</div>
+          <div className="font-semibold text-sm truncate">{displayMax}</div>
+          <div className="text-xs text-muted-foreground truncate">{priceLabel}</div>
         </div>
       </div>
     </div>
@@ -1140,12 +1140,60 @@ export const PositionDetail = memo(function PositionDetail({
         fromPage={fromPage}
       />
 
+      {/* Right Column content - Mobile only: appears above chart when stacked */}
+      <div className="flex flex-col gap-4 xl:hidden">
+        {/* Uncollected Fees - Show first when > 0 */}
+        {hasFees && (
+          <EarningsSection
+            fee0Amount={fee0Amount}
+            fee1Amount={fee1Amount}
+            fiatFeeValue0={fiatFeeValue0}
+            fiatFeeValue1={fiatFeeValue1}
+            totalFeesValue={totalFeesValue}
+            token0Symbol={token0Symbol}
+            token1Symbol={token1Symbol}
+            networkMode={networkMode}
+          />
+        )}
+
+        {/* Position Value */}
+        <PositionValueSection
+          currency0Amount={currency0Amount}
+          currency1Amount={currency1Amount}
+          fiatValue0={fiatValue0}
+          fiatValue1={fiatValue1}
+          totalPositionValue={totalPositionValue}
+          token0Symbol={token0Symbol}
+          token1Symbol={token1Symbol}
+          networkMode={networkMode}
+        />
+
+        {/* Price Deviation Warning */}
+        {priceDeviation.severity !== 'none' && poolConfig && (
+          <PriceDeviationCallout
+            deviation={priceDeviation}
+            token0Symbol={token0Symbol}
+            token1Symbol={token1Symbol}
+            variant="card"
+          />
+        )}
+
+        {/* APR */}
+        <APRSection
+          poolApr={poolApr}
+          aaveApr={aaveApr}
+          totalApr={totalApr}
+          lpType={lpType}
+          yieldSources={poolConfig?.yieldSources}
+        />
+      </div>
+
       {/* Two-column layout - matches PoolDetail pattern */}
-      <div className="flex flex-col min-[1200px]:flex-row gap-10">
+      <div className="flex flex-col xl:flex-row gap-10">
         {/* Left Column: Chart & Price Range */}
-        <div className="flex-1 flex flex-col gap-6 min-w-0">
+        <div className="flex-1 flex flex-col gap-6 min-w-0 w-full overflow-hidden">
           {/* Chart Tabs + Denomination Toggle */}
-          <div className="flex flex-row items-center justify-between">
+          <div className="flex flex-row items-center justify-between gap-2 min-w-0">
             <div className="flex flex-row items-center gap-1">
               <button
                 onClick={() => setChartTab("price")}
@@ -1229,8 +1277,8 @@ export const PositionDetail = memo(function PositionDetail({
           />
         </div>
 
-        {/* Right Column: Position Info - 380px matches Overview/PoolDetail */}
-        <div className="flex flex-col gap-4 w-full min-[1200px]:w-[380px] flex-shrink-0">
+        {/* Right Column: Position Info - Desktop only (xl+) - 380px matches Overview/PoolDetail */}
+        <div className="hidden xl:flex flex-col gap-4 w-full xl:w-[380px] flex-shrink-0">
           {/* Uncollected Fees - Show first when > 0 */}
           {hasFees && (
             <EarningsSection

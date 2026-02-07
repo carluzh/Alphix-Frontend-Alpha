@@ -711,7 +711,7 @@ export const YieldChartSection = memo(function YieldChartSection({
         )}
 
         {/* Chart - single Y-axis on right */}
-        <ChartContainer config={chartConfig} className="w-full h-full">
+        <ChartContainer config={chartConfig} className="w-full h-full aspect-auto">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={filteredChartData}

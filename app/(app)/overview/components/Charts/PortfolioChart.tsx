@@ -219,16 +219,19 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
     });
 
     const handleResize = () => {
-      if (chartContainerRef.current) {
+      if (chartContainerRef.current && chartContainerRef.current.clientWidth > 0) {
         chart.applyOptions({ width: chartContainerRef.current.clientWidth });
       }
     };
-    window.addEventListener("resize", handleResize);
+
+    // Use ResizeObserver to handle container resizes (not just window resizes)
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(chartContainerRef.current);
 
     setIsChartReady(true);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      resizeObserver.disconnect();
       chart.remove();
       chartRef.current = null;
       positionsSeriesRef.current = null;

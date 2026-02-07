@@ -279,9 +279,9 @@ export const PoolDetail = memo(function PoolDetail({
       <PoolDetailHeader poolConfig={poolConfig} />
 
       {/* Two-column layout on desktop - matches Overview page ratios */}
-      <div className="flex flex-col min-[1200px]:flex-row gap-10">
-        {/* Left Column: Stats, Chart, Positions */}
-        <div className="flex-1 flex flex-col gap-6 min-w-0">
+      <div className="flex flex-col xl:flex-row gap-10">
+        {/* Left Column: Stats, Chart (Positions moved out for mobile ordering) */}
+        <div className="flex-1 flex flex-col gap-6 min-w-0 w-full">
           {/* Stats */}
           <PoolDetailStats
             poolStats={poolStats}
@@ -296,28 +296,30 @@ export const PoolDetail = memo(function PoolDetail({
             windowWidth={windowWidth}
           />
 
-          {/* Positions */}
-          <PoolDetailPositions
-            poolConfig={poolConfig}
-            poolState={poolState}
-            poolAPR={poolStats.aprRaw}
-            isLoadingPrices={isLoadingPrices}
-            userPositions={userPositions}
-            isLoadingPositions={isLoadingPositions}
-            isDerivingNewPosition={isDerivingNewPosition}
-            priceMap={priceMap}
-            onPositionClick={handlePositionClick}
-            onAddLiquidity={handleAddLiquidity}
-            getPositionInfo={getPositionInfo}
-            convertTickToPrice={convertTickToPrice}
-            calculatePositionUsd={calculatePositionUsd}
-            getFeesForPosition={getFeesForPosition}
-          />
+          {/* Positions - Only visible on desktop (xl+) */}
+          <div className="hidden xl:block">
+            <PoolDetailPositions
+              poolConfig={poolConfig}
+              poolState={poolState}
+              poolAPR={poolStats.aprRaw}
+              isLoadingPrices={isLoadingPrices}
+              userPositions={userPositions}
+              isLoadingPositions={isLoadingPositions}
+              isDerivingNewPosition={isDerivingNewPosition}
+              priceMap={priceMap}
+              onPositionClick={handlePositionClick}
+              onAddLiquidity={handleAddLiquidity}
+              getPositionInfo={getPositionInfo}
+              convertTickToPrice={convertTickToPrice}
+              calculatePositionUsd={calculatePositionUsd}
+              getFeesForPosition={getFeesForPosition}
+            />
+          </div>
         </div>
 
         {/* Right Column: Add Liquidity Actions + Pool Info - 380px matches Overview */}
-        <div className="hidden min-[1200px]:block w-[380px] flex-shrink-0">
-          <div className="sticky top-6">
+        <div className="w-full xl:w-[380px] flex-shrink-0">
+          <div className="xl:sticky xl:top-6">
             <PoolDetailSidebar
               poolConfig={poolConfig}
               poolApr={poolStats.aprRaw}
@@ -325,6 +327,26 @@ export const PoolDetail = memo(function PoolDetail({
             />
           </div>
         </div>
+      </div>
+
+      {/* Positions - Mobile only (below xl): appears after sidebar when stacked */}
+      <div className="xl:hidden">
+        <PoolDetailPositions
+          poolConfig={poolConfig}
+          poolState={poolState}
+          poolAPR={poolStats.aprRaw}
+          isLoadingPrices={isLoadingPrices}
+          userPositions={userPositions}
+          isLoadingPositions={isLoadingPositions}
+          isDerivingNewPosition={isDerivingNewPosition}
+          priceMap={priceMap}
+          onPositionClick={handlePositionClick}
+          onAddLiquidity={handleAddLiquidity}
+          getPositionInfo={getPositionInfo}
+          convertTickToPrice={convertTickToPrice}
+          calculatePositionUsd={calculatePositionUsd}
+          getFeesForPosition={getFeesForPosition}
+        />
       </div>
     </div>
   );
