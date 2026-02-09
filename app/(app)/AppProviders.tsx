@@ -5,8 +5,7 @@ import { useEffect } from "react"
 import AppKitProvider from '@/components/AppKitProvider'
 import { NetworkProvider, type NetworkMode } from "@/lib/network-context"
 import { Toaster } from "@/components/ui/sonner"
-import { Analytics } from '@vercel/analytics/react'
-import { SpeedInsights } from '@vercel/speed-insights/next'
+import { ConditionalAnalytics } from '@/components/ConditionalAnalytics'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { SSEProvider } from "@/lib/realtime"
@@ -57,8 +56,7 @@ export default function AppProviders({
         </SSEProvider>
       </AppKitProvider>
       <Toaster position="top-right" />
-      <Analytics />
-      <SpeedInsights />
+      <ConditionalAnalytics />
     </NetworkProvider>
   )
 }

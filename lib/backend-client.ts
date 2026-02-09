@@ -8,6 +8,7 @@
  */
 
 import { type NetworkMode } from './network-mode';
+import { LENDING_APR_NET_FACTOR } from './aave-rates';
 
 // Backend URL - defaults to localhost for development
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
@@ -838,7 +839,12 @@ export async function fetchSparkRatesHistory(
       throw new Error(errorData.error || `HTTP ${response.status}`);
     }
 
-    return await response.json();
+    const data: SparkHistoryResponse = await response.json();
+    // Apply net factor to historical lending rates
+    if (data.points) {
+      data.points = data.points.map(p => ({ ...p, apy: p.apy * LENDING_APR_NET_FACTOR }));
+    }
+    return data;
   } catch (error) {
     return {
       success: false,

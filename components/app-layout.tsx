@@ -13,6 +13,7 @@ import { ANNOUNCEMENTS, isAnnouncementActive } from "@/lib/announcements";
 import { NavigationProgressBar } from "@/lib/navigation-progress";
 import { useToSAcceptance } from "@/hooks/useToSAcceptance";
 import { ToSAcceptanceModal } from "@/components/ui/ToSAcceptanceModal";
+import { Loader2 } from "lucide-react";
 
 function VersionBadge() {
   const version = process.env.NEXT_PUBLIC_APP_VERSION || '0.0.0';
@@ -35,7 +36,7 @@ const MOBILE_HEADER_PADDING_CLASS = "pt-14";
 export function AppLayout({ children }: AppLayoutProps) {
   const isMobile = useIsMobile();
   const { isConnected, address } = useAccount();
-  const { showModal: showToS, onConfirm: onToSConfirm, isSigningMessage } = useToSAcceptance();
+  const { showModal: showToS, onConfirm: onToSConfirm, isSigningMessage, isSendingToBackend, resolved: tosResolved } = useToSAcceptance();
   const [showUpdatesNotification, setShowUpdatesNotification] = useState(false);
   const [hasActiveAnnouncement, setHasActiveAnnouncement] = useState(false);
   const [announcementHeight, setAnnouncementHeight] = useState<number>(0);
@@ -100,25 +101,37 @@ export function AppLayout({ children }: AppLayoutProps) {
       <SidebarInset
         className={isMobile === true ? MOBILE_HEADER_PADDING_CLASS : ""}
       >
-        <NavigationProgressBar />
-        <div className="flex flex-1 flex-col">
-          {children}
-        </div>
+        {isConnected && !tosResolved ? (
+          /* Brief loading state while backend TOS check runs */
+          <div className="flex flex-1 items-center justify-center">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : isConnected && showToS ? (
+          /* TOS not accepted — show ONLY the modal, no app content */
+          <ToSAcceptanceModal
+            onConfirm={onToSConfirm}
+            isSigningMessage={isSigningMessage}
+            isSendingToBackend={isSendingToBackend}
+          />
+        ) : (
+          /* TOS accepted or wallet not connected — render app normally */
+          <>
+            <NavigationProgressBar />
+            <div className="flex flex-1 flex-col">
+              {children}
+            </div>
+            <AnnouncementCard />
+            <UpdatesNotification
+              open={showUpdatesNotification}
+              onClose={() => setShowUpdatesNotification(false)}
+              stackAboveAnnouncement={hasActiveAnnouncement}
+              edgeOffsetPx={edgeOffsetPx}
+              stackOffsetPx={edgeOffsetPx + announcementHeight + (edgeOffsetPx >= 24 ? 12 : 8)}
+            />
+            {!showUpdatesNotification && !hasActiveAnnouncement && <VersionBadge />}
+          </>
+        )}
       </SidebarInset>
-      <AnnouncementCard />
-      <UpdatesNotification
-        open={showUpdatesNotification}
-        onClose={() => setShowUpdatesNotification(false)}
-        stackAboveAnnouncement={hasActiveAnnouncement}
-        edgeOffsetPx={edgeOffsetPx}
-        stackOffsetPx={edgeOffsetPx + announcementHeight + (edgeOffsetPx >= 24 ? 12 : 8)}
-      />
-      {!showUpdatesNotification && !hasActiveAnnouncement && <VersionBadge />}
-      <ToSAcceptanceModal
-        isOpen={showToS}
-        onConfirm={onToSConfirm}
-        isSigningMessage={isSigningMessage}
-      />
     </>
   );
 } 

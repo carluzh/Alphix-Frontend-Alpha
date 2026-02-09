@@ -66,6 +66,7 @@ interface SwapInputViewProps {
   onNetworkSwitch?: () => void;
   onClearFromAmount?: () => void;
   priceDeviation?: PriceDeviationResult;
+  fromTokenRawBalance?: string;
 }
 
 export function SwapInputView({
@@ -107,6 +108,7 @@ export function SwapInputView({
   onNetworkSwitch,
   onClearFromAmount,
   priceDeviation,
+  fromTokenRawBalance,
 }: SwapInputViewProps) {
   const isMobile = useIsMobile();
   const [hoveredRouteIndex, setHoveredRouteIndex] = React.useState<number | null>(null);
@@ -169,7 +171,7 @@ export function SwapInputView({
     parseFloat(fromAmount || "0") > 0 &&
     (
       isNaN(parseFloat(displayFromToken.balance || "0")) ||
-      parseFloat(displayFromToken.balance || "0") < parseFloat(fromAmount || "0")
+      parseFloat(fromTokenRawBalance || displayFromToken.balance || "0") < parseFloat(fromAmount || "0")
     );
 
   const isSwapBaseDisabled = actionButtonDisabled || trade.quoteLoading;

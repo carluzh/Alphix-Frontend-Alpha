@@ -10,6 +10,12 @@
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
 /**
+ * Net lending APR factor after protocol fees.
+ * Users receive 70% of the gross lending rate from Aave/Spark.
+ */
+export const LENDING_APR_NET_FACTOR = 0.70;
+
+/**
  * Protocol source for each token
  */
 type ProtocolSource = 'aave' | 'spark';
@@ -168,7 +174,8 @@ export async function fetchAaveRates(): Promise<AaveRatesResponse> {
       const aaveData = await aaveResponse.json();
       if (aaveData.success && aaveData.data) {
         for (const [key, value] of Object.entries(aaveData.data)) {
-          combinedData[key] = value as AaveTokenRate;
+          const rate = value as AaveTokenRate;
+          combinedData[key] = { ...rate, apy: rate.apy * LENDING_APR_NET_FACTOR };
         }
       }
     }
@@ -181,7 +188,7 @@ export async function fetchAaveRates(): Promise<AaveRatesResponse> {
           // Spark returns { apy, conversionRate, timestamp } - normalize to AaveTokenRate
           const sparkRate = value as { apy: number; conversionRate?: string; timestamp: number };
           combinedData[key] = {
-            apy: sparkRate.apy,
+            apy: sparkRate.apy * LENDING_APR_NET_FACTOR,
             utilization: 0, // Spark doesn't return utilization
             timestamp: sparkRate.timestamp,
           };
@@ -300,7 +307,12 @@ export async function fetchAaveHistory(
       throw new Error(errorData.error || `HTTP ${response.status}`);
     }
 
-    return await response.json();
+    const data: AaveHistoryResponse = await response.json();
+    // Apply net factor to historical lending rates
+    if (data.points) {
+      data.points = data.points.map(p => ({ ...p, apy: p.apy * LENDING_APR_NET_FACTOR }));
+    }
+    return data;
   } catch (error) {
     return {
       success: false,

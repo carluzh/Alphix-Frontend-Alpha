@@ -980,6 +980,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                   swapStore.actions.setAmounts("", "")
                 }}
                 priceDeviation={priceDeviation}
+                fromTokenRawBalance={fromTokenBalanceData?.formatted}
               />
             )}
 
