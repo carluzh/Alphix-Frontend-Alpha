@@ -104,8 +104,8 @@ export function LiquidityPositionFeeStats({
   return (
     <div className={cn(
       // Layout - mirrors Flex row gap="$gap20" justifyContent="space-between"
-      // Increased padding for larger stat bar
-      "flex items-center justify-between gap-5 py-4 px-4 rounded-b-lg transition-colors",
+      // Reduced padding on mobile for more compact cards
+      "flex items-center justify-between gap-3 sm:gap-5 py-2.5 sm:py-4 px-3 sm:px-4 rounded-b-lg transition-colors",
       // Background - mirrors backgroundColor={cardHovered ? '$surface2Hovered' : '$surface2'}
       cardHovered ? "bg-muted/50" : "bg-muted/30"
     )}>
@@ -123,9 +123,9 @@ export function LiquidityPositionFeeStats({
         )}
       </FeeStat>
 
-      {/* Fees - mirrors second FeeStat (hidden for Unified Yield positions) */}
+      {/* Fees - mirrors second FeeStat (hidden on mobile & for Unified Yield positions) */}
       {!hideFees && (
-        <FeeStat>
+        <FeeStat className="hidden sm:flex">
           {isLoading ? (
             <FeeStatLoader />
           ) : (
@@ -142,7 +142,7 @@ export function LiquidityPositionFeeStats({
         </FeeStat>
       )}
 
-      {/* Range - uses pre-formatted prices (hidden for Unified Yield positions) */}
+      {/* Range - uses pre-formatted prices (hidden on mobile & for Unified Yield positions) */}
       {!hideFees && !hideRangeContent && (
         <MinMaxRange
           tickSpacing={tickSpacing}

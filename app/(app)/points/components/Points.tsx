@@ -10,8 +10,6 @@ import { SeasonTimelineBanner } from "./SeasonTimelineBanner";
 import type { PointsHistoryEntry, LeaderboardEntry } from "../hooks/usePointsPageData";
 import type { CachedRefereesData } from "@/lib/upstash-points";
 
-// Constants
-const POINTS_RIGHT_COLUMN_WIDTH = 380;
 
 export type PointsTab = "history" | "leaderboard" | "referral";
 
@@ -97,7 +95,7 @@ export const Points = memo(function Points({
           SEASON TIMELINE: Full-width progress banner
           ================================================================ */}
       <SeasonTimelineBanner
-        seasonStartDate={seasonStartDate || new Date("2026-01-22T00:00:00Z")}
+        seasonStartDate={seasonStartDate || new Date("2026-02-12T00:00:00Z")}
         seasonDurationDays={90}
         pointsPerWeek={100000}
         isLoading={isLoading}
@@ -129,10 +127,9 @@ export const Points = memo(function Points({
           )}
         </div>
 
-        {/* RIGHT COLUMN - Dynamic Stats Panel (380px fixed, stretches to match left) */}
+        {/* RIGHT COLUMN - Dynamic Stats Panel (380px fixed on desktop, full width on mobile/tablet) */}
         <div
-          className="flex-shrink-0 w-full min-[1200px]:w-auto"
-          style={{ width: POINTS_RIGHT_COLUMN_WIDTH }}
+          className="flex-shrink-0 w-full min-[1200px]:w-[380px]"
         >
           <PointsStatsPanel
             activeTab={activeTab}

@@ -479,61 +479,55 @@ export default function LiquidityPage() {
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto">
       {/* Header Section */}
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold">Unified Pools</h2>
-            <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
-          </div>
+      <div className="flex flex-col gap-2 sm:gap-4">
+        {/* Title - hidden on mobile */}
+        <div className="hidden sm:block">
+          <h2 className="text-xl font-semibold">Unified Pools</h2>
+          <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
         </div>
 
-        {/* Stats Cards + Search Bar - aligned at bottom */}
-        <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
-          {/* Stats Cards - hidden on mobile, flex on desktop */}
-          {!isMobile && (
-            <div className="rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-4 flex-shrink-0">
-              <div className="flex gap-4">
-                <div className="flex-1 rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
-                  <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">TVL</h2>
-                  <div className="text-lg font-medium translate-y-0.5">
-                    {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
-                  </div>
-                </div>
-                <div className="flex-1 rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
-                  <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">VOLUME (24H)</h2>
-                  <div className="text-lg font-medium translate-y-0.5">
-                    {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
-                  </div>
-                </div>
-                <div className="flex-1 rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3">
-                  <h2 className="text-xs tracking-wider text-muted-foreground font-mono font-bold whitespace-nowrap mb-1">FEES (24H)</h2>
-                  <div className="text-lg font-medium translate-y-0.5">
-                    {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
-                  </div>
-                </div>
-              </div>
+        {/* Stats + Button - stacked on mobile, inline on desktop */}
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+          {/* Stats */}
+          <div className="flex items-center gap-3 w-fit rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2">
+            <div className="flex flex-col min-w-[90px] px-4 py-1.5 rounded-md bg-muted/30 border border-sidebar-border/60">
+              <span className="text-xs text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Tvl</span>
+              <span className="text-base font-medium">
+                {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
+              </span>
             </div>
-          )}
+            <div className="flex flex-col min-w-[90px] px-4 py-1.5 rounded-md bg-muted/30 border border-sidebar-border/60">
+              <span className="text-xs text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Volume</span>
+              <span className="text-base font-medium">
+                {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
+              </span>
+            </div>
+            <div className="flex flex-col min-w-[90px] px-4 py-1.5 rounded-md bg-muted/30 border border-sidebar-border/60">
+              <span className="text-xs text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Fees</span>
+              <span className="text-base font-medium">
+                {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
+              </span>
+            </div>
+          </div>
 
-          {/* Search bar + New Position button - aligned to bottom, right-aligned when stacked */}
-          {!isMobile && (
-            <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
-              <TokenSearchBar
-                value={tokenSearch}
-                onValueChange={handleTokenSearchChange}
-                placeholder="Search tokens..."
-              />
-              <Button
-                asChild
-                className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
-              >
-                <Link href="/liquidity/add?from=pools">
-                  <Plus className="h-4 w-4" strokeWidth={2.5} />
-                  New position
-                </Link>
-              </Button>
-            </div>
-          )}
+          {/* Search bar + New Position button (desktop only) */}
+          <div className="hidden sm:flex items-center justify-end gap-3 flex-shrink-0">
+            <TokenSearchBar
+              value={tokenSearch}
+              onValueChange={handleTokenSearchChange}
+              placeholder="Search tokens..."
+              className="hidden min-[1200px]:flex"
+            />
+            <Button
+              asChild
+              className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
+            >
+              <Link href="/liquidity/add?from=pools">
+                <Plus className="h-4 w-4" strokeWidth={2.5} />
+                New position
+              </Link>
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -555,6 +549,17 @@ export default function LiquidityPage() {
             </div>
           )}
           <MobileLiquidityList pools={mobilePools} />
+          <div className="flex justify-end">
+            <Button
+              asChild
+              className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
+            >
+              <Link href="/liquidity/add?from=pools">
+                <Plus className="h-4 w-4" strokeWidth={2.5} />
+                New position
+              </Link>
+            </Button>
+          </div>
         </div>
       ) : (
         <Table

@@ -1,7 +1,7 @@
 "use client"
 
 import { cn } from '@/lib/utils'
-import { ChevronRight } from 'lucide-react'
+import { IconChevronLeft, IconChevronRight } from 'nucleo-micro-bold-essential'
 
 type ScrollButtonDirection = 'left' | 'right'
 
@@ -11,21 +11,18 @@ export type ScrollButtonProps = {
   direction: ScrollButtonDirection
 }
 
-export const ScrollButton = ({ onPress, opacity = 1, direction }: ScrollButtonProps) => (
-  <button
-    onClick={onPress}
-    className={cn(
-      "p-3 rounded-full bg-muted/80 hover:bg-muted border border-sidebar-border",
-      "backdrop-blur-sm shadow-lg transition-all duration-200",
-      "-translate-y-1/2"
-    )}
-    style={{ opacity }}
-  >
-    <ChevronRight
+export const ScrollButton = ({ onPress, opacity = 1, direction }: ScrollButtonProps) => {
+  const Icon = direction === 'left' ? IconChevronLeft : IconChevronRight
+  return (
+    <button
+      onClick={onPress}
       className={cn(
-        "h-3 w-3 text-foreground",
-        direction === 'left' && "rotate-180"
+        "p-2 rounded-md bg-muted/50 hover:bg-muted border border-sidebar-border/60",
+        "transition-all duration-200"
       )}
-    />
-  </button>
-)
+      style={{ opacity }}
+    >
+      <Icon className="h-3.5 w-3.5 text-foreground" />
+    </button>
+  )
+}

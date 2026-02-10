@@ -3,8 +3,8 @@
 import { useState, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Loader2, ShieldCheck } from 'lucide-react'
-import { TOS_SECTIONS, TOS_LAST_UPDATED } from '@/lib/tos-content'
+import { Loader2 } from 'lucide-react'
+import { TOS_SECTIONS } from '@/lib/tos-content'
 
 export interface ToSAcceptanceModalProps {
   onConfirm: () => Promise<void>
@@ -30,35 +30,47 @@ export function ToSAcceptanceModal({
     }
   }, [hasScrolledToBottom])
 
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }, [])
+
   const isLoading = isSigningMessage || isSendingToBackend
   const canConfirm = checked && hasScrolledToBottom && !isLoading
 
   return (
-    <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
-      <div className="w-full max-w-2xl flex flex-col gap-4 rounded-xl border border-sidebar-border/40 bg-sidebar p-5 sm:p-6 shadow-2xl">
+    <div className="flex items-center justify-center p-4 sm:p-6">
+      <style dangerouslySetInnerHTML={{__html: `
+        .tos-scrollbar::-webkit-scrollbar {
+          width: 6px;
+        }
+        .tos-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .tos-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 3px;
+        }
+        .tos-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(255, 255, 255, 0.2);
+        }
+        .tos-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+        }
+      `}} />
+      <div className="w-full max-w-2xl flex flex-col rounded-xl border border-sidebar-border/40 bg-sidebar p-5 sm:p-6 shadow-2xl">
         {/* Header */}
-        <div className="flex items-start gap-3">
-          <div
-            className="flex items-center justify-center p-2.5 rounded-lg shrink-0"
-            style={{ backgroundColor: 'rgba(244, 85, 2, 0.12)' }}
-          >
-            <ShieldCheck className="w-5 h-5 text-sidebar-primary" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-white">
-              Terms of Service
-            </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Last updated: {TOS_LAST_UPDATED}. Please read carefully before proceeding.
-            </p>
-          </div>
-        </div>
+        <h2 className="text-lg font-semibold text-white mb-4">
+          Terms of Service
+        </h2>
 
         {/* Scrollable ToS content */}
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="max-h-[55vh] overflow-y-auto rounded-lg border border-sidebar-border/40 bg-black/20 p-4 sm:p-5 text-xs leading-relaxed text-muted-foreground scrollbar-thin scrollbar-track-transparent scrollbar-thumb-sidebar-border/50"
+          className="tos-scrollbar max-h-[55vh] overflow-y-auto rounded-lg border border-sidebar-border/40 bg-black/20 p-4 sm:p-5 text-xs leading-relaxed text-muted-foreground"
         >
           {TOS_SECTIONS.map((section, i) => (
             <div key={i} className={i > 0 ? 'mt-4' : ''}>
@@ -74,18 +86,21 @@ export function ToSAcceptanceModal({
           ))}
         </div>
 
-        {/* Scroll hint — hidden once scrolled */}
+        {/* Scroll hint — hidden once scrolled, clickable */}
         {!hasScrolledToBottom && (
-          <p className="text-xs text-muted-foreground/60 text-center animate-pulse">
+          <button
+            onClick={scrollToBottom}
+            className="text-xs text-muted-foreground/60 text-center animate-pulse mt-3 hover:text-muted-foreground transition-colors cursor-pointer"
+          >
             Scroll to the bottom to continue
-          </p>
+          </button>
         )}
 
         {/* Action area — revealed after scrolling to bottom */}
         <div
           className={`flex flex-col gap-3 transition-all duration-300 ${
             hasScrolledToBottom
-              ? 'opacity-100 max-h-40'
+              ? 'opacity-100 max-h-40 mt-4'
               : 'opacity-0 max-h-0 overflow-hidden pointer-events-none'
           }`}
         >
@@ -125,9 +140,9 @@ export function ToSAcceptanceModal({
             className={`w-full transition-all duration-200 overflow-hidden ${
               canConfirm
                 ? 'bg-button-primary hover-button-primary text-sidebar-primary border border-sidebar-primary'
-                : 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-white/75 cursor-not-allowed opacity-50'
+                : 'border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] text-white/75 cursor-not-allowed'
             }`}
-            style={!canConfirm ? { backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+            style={!canConfirm ? { backgroundImage: 'url(/patterns/button-wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
           >
             {isSigningMessage ? (
               <>
@@ -140,7 +155,7 @@ export function ToSAcceptanceModal({
                 Confirming...
               </>
             ) : (
-              'Accept & Continue'
+              'Accept'
             )}
           </Button>
         </div>

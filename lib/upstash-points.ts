@@ -226,7 +226,7 @@ export const DEFAULT_GLOBAL_STATS: CachedGlobalStats = {
   totalPointsDistributed: 0,
   currentSeason: 0,
   currentWeek: 0,
-  seasonStartDate: 1769040000000, // Jan 22, 2026 in ms
+  seasonStartDate: 1770854400000, // Feb 12, 2026 in ms
   lastUpdated: 0,
 };
 

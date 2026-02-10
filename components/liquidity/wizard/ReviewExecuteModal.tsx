@@ -432,21 +432,16 @@ export function ReviewExecuteModal() {
     return { min: minPrice || '-', max: maxPrice || '-' };
   }, [minPrice, maxPrice, isFullRangeFromHook, state.isFullRange, state.mode, pool?.rehypoRange?.isFullRange]);
 
-  // Determine position status for chart (new position is always in-range initially)
   const chartPositionStatus = useMemo(() => {
     const currentTick = poolStateData?.currentPoolTick;
-    if (currentTick === null || currentTick === undefined || !txInfo) {
+    if (currentTick === null || currentTick === undefined) {
       return PositionStatus.IN_RANGE;
     }
-
-    const tickLower = txInfo.tickLower;
-    const tickUpper = txInfo.tickUpper;
-
     if (currentTick >= tickLower && currentTick <= tickUpper) {
       return PositionStatus.IN_RANGE;
     }
     return PositionStatus.OUT_OF_RANGE;
-  }, [poolStateData, txInfo]);
+  }, [poolStateData?.currentPoolTick, tickLower, tickUpper]);
 
   // Wrapper for shared approval utility (adds chainId from context)
   const buildApprovalRequests = useCallback((params: {

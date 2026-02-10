@@ -38,13 +38,13 @@ function ChartSkeletonAxes({
         <rect width="7%" height="6" rx="3" x="64.75%" fill={tickColor} />
         <rect width="7%" height="6" rx="3" x="83%" fill={tickColor} />
       </g>
-      {/* Y-axis tick skeletons - positioned on right side */}
-      <g transform="translate(0, 10)">
-        <rect width="24" height="6" rx="3" y={(0 * height) / 5} x="96%" fill={tickColor} />
-        <rect width="24" height="6" rx="3" y={(1 * height) / 5} x="96%" fill={tickColor} />
-        <rect width="24" height="6" rx="3" y={(2 * height) / 5} x="96%" fill={tickColor} />
-        <rect width="24" height="6" rx="3" y={(3 * height) / 5} x="96%" fill={tickColor} />
-        <rect width="24" height="6" rx="3" y={(4 * height) / 5} x="96%" fill={tickColor} />
+      {/* Y-axis tick skeletons - positioned on right side, hidden on small screens via parent overflow-hidden */}
+      <g transform="translate(-32, 10)">
+        <rect width="24" height="6" rx="3" y={(0 * height) / 5} x="100%" fill={tickColor} />
+        <rect width="24" height="6" rx="3" y={(1 * height) / 5} x="100%" fill={tickColor} />
+        <rect width="24" height="6" rx="3" y={(2 * height) / 5} x="100%" fill={tickColor} />
+        <rect width="24" height="6" rx="3" y={(3 * height) / 5} x="100%" fill={tickColor} />
+        <rect width="24" height="6" rx="3" y={(4 * height) / 5} x="100%" fill={tickColor} />
       </g>
     </g>
   );
@@ -85,7 +85,7 @@ export function ChartSkeleton({ height, errorText }: ChartSkeletonProps) {
   const tickColor = COLORS.neutral3;
 
   return (
-    <div className="relative w-full" style={{ height }}>
+    <div className="relative w-full overflow-hidden" style={{ height }}>
       <svg
         width="100%"
         height={height}

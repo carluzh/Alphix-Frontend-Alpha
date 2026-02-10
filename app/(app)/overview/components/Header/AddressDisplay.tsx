@@ -6,6 +6,7 @@ import { mainnet } from "wagmi/chains";
 import { cn } from "@/lib/utils";
 import { IconClone2, IconCheck } from "nucleo-micro-bold-essential";
 import { DeterministicAvatar } from "@/lib/icons/avatar";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 /**
  * Fallback wallet icons for connectors without native icons
@@ -55,11 +56,15 @@ interface AddressDisplayProps {
  * - Click to copy with checkmark animation
  */
 export const AddressDisplay = memo(function AddressDisplay({
-  isCompact,
+  isCompact: isCompactProp,
 }: AddressDisplayProps) {
   const { address, isConnected, connector } = useAccount();
   const [isCopied, setIsCopied] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const isMobile = useIsMobile();
+
+  // Mobile uses a middle-ground size (not full 48px, not tiny 24px)
+  const isCompact = !isMobile && isCompactProp;
 
   // Get wallet icon for the badge
   const walletIconUrl = getWalletIconUrl(
@@ -102,12 +107,13 @@ export const AddressDisplay = memo(function AddressDisplay({
     return null;
   }
 
-  const iconSize = isCompact ? 24 : 48;
+  // Mobile: 32px, Compact: 24px, Full: 48px
+  const iconSize = isMobile ? 32 : isCompact ? 24 : 48;
   const displayName = ensName || `${address.slice(0, 6)}...${address.slice(-4)}`;
   const shortAddress = `${address.slice(0, 6)}...${address.slice(-4)}`;
 
   // Mini wallet icon size - based on Uniswap's StatusIcon pattern (16px default)
-  const miniIconSize = isCompact ? 12 : 16;
+  const miniIconSize = isMobile ? 14 : isCompact ? 12 : 16;
 
   return (
     <div className="flex flex-row items-center gap-3">
@@ -163,7 +169,7 @@ export const AddressDisplay = memo(function AddressDisplay({
           <span
             className={cn(
               "font-semibold text-foreground",
-              isCompact ? "text-sm" : "text-xl"
+              isMobile ? "text-base" : isCompact ? "text-sm" : "text-xl"
             )}
           >
             {ensName}
@@ -179,7 +185,7 @@ export const AddressDisplay = memo(function AddressDisplay({
             <span
               className={cn(
                 "font-semibold transition-opacity duration-200",
-                isCompact ? "text-sm" : "text-xl",
+                isMobile ? "text-base" : isCompact ? "text-sm" : "text-xl",
                 isHovered ? "opacity-80" : "opacity-100"
               )}
             >
@@ -225,7 +231,7 @@ export const AddressDisplay = memo(function AddressDisplay({
           >
             <span
               className={cn(
-                "text-sm text-muted-foreground transition-opacity duration-200",
+                "text-xs sm:text-sm text-muted-foreground transition-opacity duration-200",
                 isHovered ? "opacity-80" : "opacity-100"
               )}
             >

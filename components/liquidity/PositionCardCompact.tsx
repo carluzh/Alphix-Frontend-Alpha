@@ -292,10 +292,10 @@ export function PositionCardCompact({
             )}
 
             <div className={cn(
-                "relative flex items-center justify-between gap-4 py-5 px-4 overflow-visible transition-colors",
+                "relative flex items-center justify-between gap-4 py-3 sm:py-5 px-4 overflow-visible transition-colors",
                 isHovered && "bg-muted/20"
             )}>
-                <div className="flex items-center gap-3 min-w-0 flex-shrink">
+                <div className="flex items-center gap-3 flex-shrink">
                     {isLoadingPrices || isLoadingPoolStates ? (
                         <div className="h-8 w-16 bg-muted/60 rounded-full animate-pulse flex-shrink-0" />
                     ) : (
@@ -303,8 +303,8 @@ export function PositionCardCompact({
                             <TokenStack position={tokenStackPosition} />
                         </div>
                     )}
-                    <div className="flex flex-col justify-center gap-0.5 min-w-0">
-                        <div className="text-sm font-normal">{token0Symbol} / {token1Symbol}</div>
+                    <div className="flex flex-col justify-center gap-0.5">
+                        <div className="text-sm font-normal whitespace-nowrap">{token0Symbol} / {token1Symbol}</div>
                         <div className="flex items-center gap-2">
                             <div className={cn("flex items-center gap-1.5 text-xs", statusColor)}>
                                 <StatusIndicatorCircle className={statusColor} />
@@ -314,7 +314,7 @@ export function PositionCardCompact({
                     </div>
                 </div>
 
-                <div className="flex xl:hidden w-[100px] sm:w-[140px] md:w-[160px] h-12 ml-auto cursor-pointer flex-shrink-0">
+                <div className="flex xl:hidden w-[100px] sm:w-[140px] md:w-[160px] h-10 sm:h-12 ml-auto cursor-pointer flex-shrink-0">
                     <PositionRangeChart
                         poolId={position.poolId}
                         token0={token0Symbol}

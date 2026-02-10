@@ -256,18 +256,29 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
       return;
     }
 
-    positionsDataRef.current = positionsChartData;
+    // When there's only 1 data point, add a synthetic starting point to create a horizontal line
+    // This ensures the live dot appears at the right edge of the chart
+    let dataToRender = positionsChartData;
+    if (positionsChartData.length === 1) {
+      const [periodFrom] = calculatePeriodRange(selectedPeriod);
+      dataToRender = [
+        { time: periodFrom as UTCTimestamp, value: positionsChartData[0].value },
+        positionsChartData[0],
+      ];
+    }
 
-    if (positionsSeriesRef.current && positionsChartData.length > 0) {
-      positionsSeriesRef.current.setData(positionsChartData);
-      positionsModelRef.current?.updateData(positionsChartData);
+    positionsDataRef.current = dataToRender;
+
+    if (positionsSeriesRef.current && dataToRender.length > 0) {
+      positionsSeriesRef.current.setData(dataToRender);
+      positionsModelRef.current?.updateData(dataToRender);
 
       // Use setVisibleLogicalRange to show full period (setVisibleRange can't show beyond data bounds)
       const [periodFrom, periodTo] = calculatePeriodRange(selectedPeriod);
-      const firstDataTime = positionsChartData[0].time;
-      const lastDataTime = positionsChartData[positionsChartData.length - 1].time;
+      const firstDataTime = dataToRender[0].time;
+      const lastDataTime = dataToRender[dataToRender.length - 1].time;
       const dataTimeSpan = lastDataTime - firstDataTime;
-      const avgBarWidth = positionsChartData.length > 1 ? dataTimeSpan / (positionsChartData.length - 1) : 3600;
+      const avgBarWidth = dataToRender.length > 1 ? dataTimeSpan / (dataToRender.length - 1) : 3600;
 
       chartRef.current.timeScale().setVisibleLogicalRange({
         from: (periodFrom - firstDataTime) / avgBarWidth,

@@ -2,7 +2,6 @@ import type React from "react"
 import { Inter } from "next/font/google"
 import "./globals.css"
 import type { Metadata } from 'next'
-import { CookieBanner } from "@/components/ui/CookieBanner"
 
 // Load Inter font
 const inter = Inter({
@@ -68,7 +67,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${inter.variable} dark`} suppressHydrationWarning style={{ backgroundColor: '#0f0f0f' }}>
       <body style={{ backgroundColor: '#0f0f0f' }}>
         {children}
-        <CookieBanner />
       </body>
     </html>
   )

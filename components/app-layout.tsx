@@ -5,14 +5,14 @@ import { AppSidebar } from "./app-sidebar";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { UpdatesNotification } from "./updates-notification";
 import { AnnouncementCard } from "./announcement-card";
-import { MobileHeader } from "./MobileHeader";
+import { MobileNavBar } from "./MobileNavBar";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Button } from "@/components/ui/button";
 import { useAccount } from "wagmi";
 import { ANNOUNCEMENTS, isAnnouncementActive } from "@/lib/announcements";
 import { NavigationProgressBar } from "@/lib/navigation-progress";
 import { useToSAcceptance } from "@/hooks/useToSAcceptance";
 import { ToSAcceptanceModal } from "@/components/ui/ToSAcceptanceModal";
+import { CookieBanner } from "@/components/ui/CookieBanner";
 import { Loader2 } from "lucide-react";
 
 function VersionBadge() {
@@ -29,9 +29,6 @@ function VersionBadge() {
 interface AppLayoutProps {
   children: React.ReactNode;
 }
-
-// Define the expected mobile header height for padding. Corresponds to h-14 in MobileHeader.tsx (3.5rem or 56px)
-const MOBILE_HEADER_PADDING_CLASS = "pt-14";
 
 export function AppLayout({ children }: AppLayoutProps) {
   const isMobile = useIsMobile();
@@ -96,41 +93,42 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <>
-      <AppSidebar variant="inset" onBetaClick={handleBetaClick} />
-      <MobileHeader />
-      <SidebarInset
-        className={isMobile === true ? MOBILE_HEADER_PADDING_CLASS : ""}
-      >
-        {isConnected && !tosResolved ? (
-          /* Brief loading state while backend TOS check runs */
-          <div className="flex flex-1 items-center justify-center">
+      {/* Desktop: Sidebar, Mobile: Top Nav Bar */}
+      {!isMobile && <AppSidebar variant="inset" onBetaClick={handleBetaClick} />}
+      <SidebarInset>
+        <MobileNavBar />
+        <NavigationProgressBar />
+        <div className="flex flex-1 flex-col min-w-0">
+          {children}
+        </div>
+        <AnnouncementCard />
+        <UpdatesNotification
+          open={showUpdatesNotification}
+          onClose={() => setShowUpdatesNotification(false)}
+          stackAboveAnnouncement={hasActiveAnnouncement}
+          edgeOffsetPx={edgeOffsetPx}
+          stackOffsetPx={edgeOffsetPx + announcementHeight + (edgeOffsetPx >= 24 ? 12 : 8)}
+        />
+        {!showUpdatesNotification && !hasActiveAnnouncement && <VersionBadge />}
+
+        {/* TOS overlay - shown on top of content */}
+        {isConnected && !tosResolved && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
             <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
           </div>
-        ) : isConnected && showToS ? (
-          /* TOS not accepted — show ONLY the modal, no app content */
-          <ToSAcceptanceModal
-            onConfirm={onToSConfirm}
-            isSigningMessage={isSigningMessage}
-            isSendingToBackend={isSendingToBackend}
-          />
-        ) : (
-          /* TOS accepted or wallet not connected — render app normally */
-          <>
-            <NavigationProgressBar />
-            <div className="flex flex-1 flex-col">
-              {children}
-            </div>
-            <AnnouncementCard />
-            <UpdatesNotification
-              open={showUpdatesNotification}
-              onClose={() => setShowUpdatesNotification(false)}
-              stackAboveAnnouncement={hasActiveAnnouncement}
-              edgeOffsetPx={edgeOffsetPx}
-              stackOffsetPx={edgeOffsetPx + announcementHeight + (edgeOffsetPx >= 24 ? 12 : 8)}
-            />
-            {!showUpdatesNotification && !hasActiveAnnouncement && <VersionBadge />}
-          </>
         )}
+        {isConnected && tosResolved && showToS && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <ToSAcceptanceModal
+              onConfirm={onToSConfirm}
+              isSigningMessage={isSigningMessage}
+              isSendingToBackend={isSendingToBackend}
+            />
+          </div>
+        )}
+
+        {/* Cookie banner - only show after TOS is resolved and accepted */}
+        {(!isConnected || (tosResolved && !showToS)) && <CookieBanner />}
       </SidebarInset>
     </>
   );

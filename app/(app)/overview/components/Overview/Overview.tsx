@@ -236,7 +236,7 @@ export const Overview = memo(function Overview({
         className={cn(
           "flex flex-col",
           "xl:flex-row",
-          "gap-10",
+          "gap-4 xl:gap-10",
           "items-start"
         )}
       >

@@ -12,6 +12,7 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localh
 /**
  * Net lending APR factor after protocol fees.
  * Users receive 70% of the gross lending rate from Aave/Spark.
+ * Note: ETH/WETH is excluded from this discount.
  */
 export const LENDING_APR_NET_FACTOR = 0.70;
 
@@ -175,7 +176,8 @@ export async function fetchAaveRates(): Promise<AaveRatesResponse> {
       if (aaveData.success && aaveData.data) {
         for (const [key, value] of Object.entries(aaveData.data)) {
           const rate = value as AaveTokenRate;
-          combinedData[key] = { ...rate, apy: rate.apy * LENDING_APR_NET_FACTOR };
+          const apyFactor = key === 'WETH' ? 1 : LENDING_APR_NET_FACTOR;
+          combinedData[key] = { ...rate, apy: rate.apy * apyFactor };
         }
       }
     }
@@ -308,8 +310,8 @@ export async function fetchAaveHistory(
     }
 
     const data: AaveHistoryResponse = await response.json();
-    // Apply net factor to historical lending rates
-    if (data.points) {
+    // Apply net factor to historical lending rates (except WETH)
+    if (data.points && aaveKey !== 'WETH') {
       data.points = data.points.map(p => ({ ...p, apy: p.apy * LENDING_APR_NET_FACTOR }));
     }
     return data;

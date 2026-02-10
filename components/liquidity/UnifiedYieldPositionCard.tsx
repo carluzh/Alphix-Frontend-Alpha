@@ -227,11 +227,11 @@ export function UnifiedYieldPositionCard({
         >
             {/* Main content row - matches PositionCardCompact exactly */}
             <div className={cn(
-                "relative flex items-center justify-between gap-4 py-5 px-4 overflow-visible transition-colors",
+                "relative flex items-center justify-between gap-4 py-3 sm:py-5 px-4 overflow-visible transition-colors",
                 isHovered && "bg-muted/20"
             )}>
                 {/* Token pair and status - identical to PositionCardCompact */}
-                <div className="flex items-center gap-3 min-w-0 flex-shrink">
+                <div className="flex items-center gap-3 flex-shrink">
                     {isLoadingPrices ? (
                         <div className="h-8 w-16 bg-muted/60 rounded-full animate-pulse flex-shrink-0" />
                     ) : (
@@ -239,9 +239,9 @@ export function UnifiedYieldPositionCard({
                             <TokenStack position={tokenStackPosition} />
                         </div>
                     )}
-                    <div className="flex flex-col justify-center gap-0.5 min-w-0">
+                    <div className="flex flex-col justify-center gap-0.5">
                         <div className="flex items-center gap-2">
-                            <span className="text-sm font-normal">{token0Symbol} / {token1Symbol}</span>
+                            <span className="text-sm font-normal whitespace-nowrap">{token0Symbol} / {token1Symbol}</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <div className={cn("flex items-center gap-1.5 text-xs", statusColor)}>
@@ -253,7 +253,7 @@ export function UnifiedYieldPositionCard({
                 </div>
 
                 {/* Yield chart - mobile */}
-                <div className="flex lg:hidden w-[140px] sm:w-[160px] h-12 ml-auto cursor-pointer flex-shrink-0">
+                <div className="flex lg:hidden w-[140px] sm:w-[160px] h-10 sm:h-12 ml-auto cursor-pointer flex-shrink-0">
                     <PositionYieldChart
                         poolId={poolConfig?.id || position.poolId}
                         token0Symbol={token0Symbol}
