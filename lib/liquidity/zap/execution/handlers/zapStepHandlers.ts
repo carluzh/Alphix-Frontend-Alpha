@@ -6,6 +6,7 @@
  */
 
 import type { Hex, Address } from 'viem';
+import { formatUnits } from 'viem';
 import type {
   ZapSwapApprovalStep,
   ZapPSMSwapStep,
@@ -225,6 +226,8 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
   }
 
   // Step 3: Build swap transaction using existing API
+  // Use formatUnits to avoid precision loss when converting bigint to decimal string
+  // (JavaScript Number loses precision for values > 2^53, USDS/USDC amounts can exceed this)
   console.log('[ZapPoolSwap] Calling build-tx API...');
   const buildTxResponse = await fetch('/api/swap/build-tx', {
     method: 'POST',
@@ -234,8 +237,8 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
       fromTokenSymbol: typedStep.inputToken,
       toTokenSymbol: typedStep.outputToken,
       swapType: 'ExactIn',
-      amountDecimalsStr: (Number(typedStep.inputAmount) / 10 ** inputDecimals).toString(),
-      limitAmountDecimalsStr: (Number(typedStep.minOutputAmount) / 10 ** outputDecimals).toString(),
+      amountDecimalsStr: formatUnits(typedStep.inputAmount, inputDecimals),
+      limitAmountDecimalsStr: formatUnits(typedStep.minOutputAmount, outputDecimals),
       permitSignature,
       permitTokenAddress: permitData.permitTokenAddress,
       permitAmount: permitData.permitAmount,
