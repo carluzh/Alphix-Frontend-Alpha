@@ -33,6 +33,7 @@ import {
 } from '../../../lib/pools-config';
 import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
 import { V4QuoterAbi, EMPTY_BYTES } from '@/lib/swap/swap-constants';
+import { getUsdsQuoteStateOverridesEthers, needsUsdsStateOverride } from '@/lib/swap/quote-state-override';
 import { getRpcUrlForNetwork } from '../../../lib/viemClient';
 import { ethers } from 'ethers';
 import { findBestRoute, SwapRoute, routeToString } from '@/lib/swap/routing-engine';
@@ -233,11 +234,38 @@ async function getV4QuoteExactInputSingle(
     // Convert lpFee (millionths) to basis points
     const dynamicFeeBps = Math.max(0, Math.round((Number(slot0.lpFee || 0) / 1_000_000) * 10_000 * 100) / 100);
 
-    const retryResult = await RetryUtility.execute(
-      () => quoter.callStatic.quoteExactInputSingle(quoteParams),
-      { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
-    );
-    const [amountOut, gasEstimate] = retryResult.data!;
+    // Check if we need state overrides for USDS input swaps
+    // Pool Manager only has ~375 USDS on-chain (rest is rehypothecated to Sky vault)
+    const needsOverride = needsUsdsStateOverride(fromToken.address || '');
+
+    let amountOut: bigint;
+    let gasEstimate: bigint;
+
+    if (needsOverride) {
+      // Use raw eth_call with state overrides for USDS input swaps
+      const calldata = quoter.interface.encodeFunctionData('quoteExactInputSingle', [quoteParams]);
+      const stateOverrides = getUsdsQuoteStateOverridesEthers();
+
+      const retryResult = await RetryUtility.execute(
+        async () => {
+          const result = await provider.send('eth_call', [
+            { to: quoterAddress, data: calldata },
+            'latest',
+            stateOverrides
+          ]);
+          return quoter.interface.decodeFunctionResult('quoteExactInputSingle', result);
+        },
+        { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
+      );
+      [amountOut, gasEstimate] = retryResult.data!;
+    } else {
+      // Standard callStatic for non-USDS quotes
+      const retryResult = await RetryUtility.execute(
+        () => quoter.callStatic.quoteExactInputSingle(quoteParams),
+        { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
+      );
+      [amountOut, gasEstimate] = retryResult.data!;
+    }
 
     // Get mid price for price impact calculation
     const midPrice = await getMidPrice(fromToken, toToken, poolConfig, networkMode);
@@ -270,6 +298,10 @@ async function getV4QuoteExactOutputSingle(
   // Use subgraphId directly - DO NOT recalculate using keccak256
   const poolId = poolConfig.pool.subgraphId;
 
+  // Check if we need state overrides for USDS input swaps
+  // Pool Manager only has ~375 USDS on-chain (rest is rehypothecated to Sky vault)
+  const needsOverride = needsUsdsStateOverride(fromToken.address || '');
+
   try {
     const provider = createProvider(networkMode);
     const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
@@ -281,11 +313,34 @@ async function getV4QuoteExactOutputSingle(
     // Convert lpFee (millionths) to basis points
     const dynamicFeeBps = Math.max(0, Math.round((Number(slot0.lpFee || 0) / 1_000_000) * 10_000 * 100) / 100);
 
-    const retryResult = await RetryUtility.execute(
-      () => quoter.callStatic.quoteExactOutputSingle(quoteParams),
-      { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
-    );
-    const [amountIn, gasEstimate] = retryResult.data!;
+    let amountIn: bigint;
+    let gasEstimate: bigint;
+
+    if (needsOverride) {
+      // Use raw eth_call with state overrides for USDS input swaps
+      const calldata = quoter.interface.encodeFunctionData('quoteExactOutputSingle', [quoteParams]);
+      const stateOverrides = getUsdsQuoteStateOverridesEthers();
+
+      const retryResult = await RetryUtility.execute(
+        async () => {
+          const result = await provider.send('eth_call', [
+            { to: quoterAddress, data: calldata },
+            'latest',
+            stateOverrides
+          ]);
+          return quoter.interface.decodeFunctionResult('quoteExactOutputSingle', result);
+        },
+        { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
+      );
+      [amountIn, gasEstimate] = retryResult.data!;
+    } else {
+      // Standard callStatic for non-USDS quotes
+      const retryResult = await RetryUtility.execute(
+        () => quoter.callStatic.quoteExactOutputSingle(quoteParams),
+        { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
+      );
+      [amountIn, gasEstimate] = retryResult.data!;
+    }
 
     // Get mid price for price impact calculation
     const midPrice = await getMidPrice(fromToken, toToken, poolConfig, networkMode);
@@ -383,11 +438,39 @@ async function getV4QuoteExactInputMultiHop(
     }
 
     const quoter = new ethers.Contract(quoterAddress, V4QuoterAbi as any, provider);
-    const retryResult = await RetryUtility.execute(
-      () => quoter.callStatic.quoteExactInput(quoteParams),
-      { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
-    );
-    const [amountOut, gasEstimate] = retryResult.data!;
+
+    // Check if we need state overrides for USDS input swaps (works for multi-hop too)
+    const needsOverride = needsUsdsStateOverride(fromToken.address || '');
+
+    let amountOut: bigint;
+    let gasEstimate: bigint;
+
+    if (needsOverride) {
+      // Use raw eth_call with state overrides for USDS input swaps
+      const calldata = quoter.interface.encodeFunctionData('quoteExactInput', [quoteParams]);
+      const stateOverrides = getUsdsQuoteStateOverridesEthers();
+
+      const retryResult = await RetryUtility.execute(
+        async () => {
+          const result = await provider.send('eth_call', [
+            { to: quoterAddress, data: calldata },
+            'latest',
+            stateOverrides
+          ]);
+          return quoter.interface.decodeFunctionResult('quoteExactInput', result);
+        },
+        { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
+      );
+      [amountOut, gasEstimate] = retryResult.data!;
+    } else {
+      // Standard callStatic for non-USDS quotes
+      const retryResult = await RetryUtility.execute(
+        () => quoter.callStatic.quoteExactInput(quoteParams),
+        { attempts: 3, backoffStrategy: 'exponential', baseDelay: 500, maxDelay: 5000, shouldRetry: shouldRetryRpc, throwOnFailure: true }
+      );
+      [amountOut, gasEstimate] = retryResult.data!;
+    }
+
     return { amountOut, gasEstimate, dynamicFeeBps };
   } catch (error: any) {
     console.error('[V4 Quoter ExactInputMultiHop] FAILED:', {

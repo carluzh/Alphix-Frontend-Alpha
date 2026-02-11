@@ -13,7 +13,7 @@
     "stateView": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71"
   },
   "hooks": {
-    "alphixHookId": "0xF31de090d650919B1Fd9deBfCb20701d5D5460c0"
+    "alphixHookId": "0x831CfDf7c0E194f5369f204b3DD2481B843d60c0"
   },
   "tokens": {
     "ETH": {
@@ -48,7 +48,7 @@
       "id": "usds-usdc",
       "name": "USDS/USDC",
       "description": "Stablecoin pair with dynamic fees and rehypothecated liquidity",
-      "subgraphId": "0xb90ac48b0f87826ce215f42b734a154d3a958cfc281151a30520083ea7b063ba",
+      "subgraphId": "0xaf9168a5026bd5e398863dc1d0a0513fe21417792f9df4889571fd68d2d8cd71",
       "currency0": {
         "symbol": "USDS",
         "address": "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc"
@@ -59,14 +59,14 @@
       },
       "fee": 8388608,
       "tickSpacing": 1,
-      "hooks": "0xe562971e8f8753120029Ed9D5cA31c569f7020c0",
+      "hooks": "0x0e4b892Df7C5Bcf5010FAF4AA106074e555660C0",
       "enabled": true,
       "featured": true,
       "type": "Stable",
       "yieldSources": ["spark", "aave"],
       "rehypoRange": {
-        "min": "-276326",
-        "max": "-276324",
+        "min": "-276325",
+        "max": "-276323",
         "isFullRange": false
       }
     },
@@ -74,7 +74,7 @@
       "id": "eth-usdc",
       "name": "ETH/USDC",
       "description": "ETH/USDC pair with dynamic fees and rehypothecated liquidity",
-      "subgraphId": "0x6c4166b0023482b3c174fc08cb5edc1addb28d7252c0374d1507c1a78593998a",
+      "subgraphId": "0x71c06960eee8003ebf3f869caa480d7032c7088850d951f04de5b46d86ada017",
       "currency0": {
         "symbol": "ETH",
         "address": "0x0000000000000000000000000000000000000000"
@@ -85,7 +85,7 @@
       },
       "fee": 8388608,
       "tickSpacing": 60,
-      "hooks": "0xF31de090d650919B1Fd9deBfCb20701d5D5460c0",
+      "hooks": "0x831CfDf7c0E194f5369f204b3DD2481B843d60c0",
       "enabled": true,
       "featured": true,
       "type": "Volatile",

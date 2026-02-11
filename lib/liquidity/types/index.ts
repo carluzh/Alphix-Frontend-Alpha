@@ -66,12 +66,19 @@ export {
   type UnifiedYieldApprovalStep,
   type UnifiedYieldDepositStep,
   type UnifiedYieldWithdrawStep,
+  // Zap step interfaces
+  type ZapTokenSymbol,
+  type ZapSwapApprovalStep,
+  type ZapPSMSwapStep,
+  type ZapPoolSwapStep,
   // Composite step types
   type IncreaseLiquiditySteps,
   type DecreaseLiquiditySteps,
   type CollectFeesSteps,
   type UnifiedYieldDepositSteps,
   type UnifiedYieldWithdrawSteps,
+  type ZapSwapSteps,
+  type ZapDepositSteps,
   type TransactionStep,
   // Liquidity action (CurrencyAmount is from @uniswap/sdk-core)
   type LiquidityAction,

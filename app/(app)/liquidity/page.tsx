@@ -58,7 +58,7 @@ function PoolRowPrefetchWrapper({
     <motion.div
       onHoverStart={onMouseEnter}
       onHoverEnd={onMouseLeave}
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{
         delay: 0.1 + index * 0.03,
@@ -489,23 +489,23 @@ export default function LiquidityPage() {
         {/* Stats + Button - stacked on mobile, inline on desktop */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
           {/* Stats */}
-          <div className="flex items-center gap-3 w-fit rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2">
-            <div className="flex flex-col min-w-[90px] px-4 py-1.5 rounded-md bg-muted/30 border border-sidebar-border/60">
-              <span className="text-xs text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Tvl</span>
-              <span className="text-base font-medium">
-                {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
+          <div className="flex items-center gap-4 w-fit rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-2.5">
+            <div className="flex flex-col min-w-[108px] px-5 py-2 rounded-md bg-muted/30 border border-sidebar-border/60">
+              <span className="text-sm text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Tvl</span>
+              <span className="text-lg font-medium">
+                {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
               </span>
             </div>
-            <div className="flex flex-col min-w-[90px] px-4 py-1.5 rounded-md bg-muted/30 border border-sidebar-border/60">
-              <span className="text-xs text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Volume</span>
-              <span className="text-base font-medium">
-                {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
+            <div className="flex flex-col min-w-[108px] px-5 py-2 rounded-md bg-muted/30 border border-sidebar-border/60">
+              <span className="text-sm text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Volume</span>
+              <span className="text-lg font-medium">
+                {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
               </span>
             </div>
-            <div className="flex flex-col min-w-[90px] px-4 py-1.5 rounded-md bg-muted/30 border border-sidebar-border/60">
-              <span className="text-xs text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Fees</span>
-              <span className="text-base font-medium">
-                {poolAggregates.isLoading ? <span className="inline-block h-5 w-16 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
+            <div className="flex flex-col min-w-[108px] px-5 py-2 rounded-md bg-muted/30 border border-sidebar-border/60">
+              <span className="text-sm text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Fees</span>
+              <span className="text-lg font-medium">
+                {poolAggregates.isLoading ? <span className="inline-block h-6 w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
               </span>
             </div>
           </div>

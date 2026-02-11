@@ -13,6 +13,7 @@ import {
   IconPlus,
   IconMinus,
   IconCoins,
+  IconArrowRight,
 } from 'nucleo-micro-bold-essential'
 import {
   TransactionStep,
@@ -21,6 +22,7 @@ import {
   CurrentStepState,
   TokenApprovalStep,
   FaucetMintStep,
+  SwapStep,
 } from '@/lib/transactions/types'
 
 interface ProgressIndicatorProps {
@@ -47,6 +49,13 @@ function areStepsEqual(
     currentStep.type === TransactionStepType.FaucetMintTransaction
   ) {
     return (step as FaucetMintStep).tokenAddress === (currentStep as FaucetMintStep).tokenAddress
+  }
+
+  if (
+    step.type === TransactionStepType.SwapTransaction &&
+    currentStep.type === TransactionStepType.SwapTransaction
+  ) {
+    return (step as SwapStep).inputTokenSymbol === (currentStep as SwapStep).inputTokenSymbol
   }
 
   return true
@@ -120,6 +129,14 @@ function getStepText(step: TransactionStep, status: StepStatus): { title: string
         : { title: `Minting ${symbol}`, subtitle: 'Confirm in wallet' }
     }
 
+    case TransactionStepType.SwapTransaction: {
+      const swapStep = step as SwapStep
+      const routeLabel = swapStep.routeType === 'psm' ? 'PSM' : 'Pool'
+      return isComplete
+        ? { title: `Swapped ${swapStep.inputTokenSymbol} → ${swapStep.outputTokenSymbol}` }
+        : { title: `Swapping via ${routeLabel}`, subtitle: 'Confirm in wallet' }
+    }
+
     default:
       return { title: 'Transaction' }
   }
@@ -144,6 +161,8 @@ function getStepIcon(step: TransactionStep): StepIconInfo {
       return { type: 'icon', Icon: IconCoins }
     case TransactionStepType.FaucetMintTransaction:
       return { type: 'token', icon: (step as FaucetMintStep).tokenIcon, symbol: (step as FaucetMintStep).tokenSymbol }
+    case TransactionStepType.SwapTransaction:
+      return { type: 'icon', Icon: IconArrowRight }
     default:
       return { type: 'icon', Icon: IconPenWriting }
   }

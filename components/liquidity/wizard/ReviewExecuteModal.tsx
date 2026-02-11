@@ -68,6 +68,9 @@ import {
   TransactionStepType as UIStepType,
 } from '@/lib/transactions';
 
+// Zap (single-token deposit) support
+import { useZapPreview, useZapApprovals, generateZapSteps, isPreviewFresh, isZapEligiblePool, type ZapToken } from '@/lib/liquidity/zap';
+
 // Map executor step types to UI step types
 function mapExecutorStepsToUI(
   executorSteps: TransactionStep[],
@@ -135,6 +138,44 @@ function mapExecutorStepsToUI(
           token0Icon,
           token1Icon,
         };
+
+      // Zap (single-token deposit) steps
+      case 'ZapSwapApproval': {
+        const zapStep = step as any;
+        const isToken0 = zapStep.inputToken === 'USDS' || zapStep.tokenSymbol === pool.currency0.symbol;
+        return {
+          type: UIStepType.TokenApprovalTransaction,
+          tokenSymbol: zapStep.tokenSymbol || (isToken0 ? pool.currency0.symbol : pool.currency1.symbol),
+          tokenAddress: zapStep.tokenAddress || '',
+          tokenIcon: isToken0 ? token0Icon : token1Icon,
+        };
+      }
+
+      case 'ZapPSMSwap': {
+        const zapStep = step as any;
+        const isToken0Input = zapStep.direction === 'USDS_TO_USDC';
+        return {
+          type: UIStepType.SwapTransaction,
+          inputTokenSymbol: isToken0Input ? pool.currency0.symbol : pool.currency1.symbol,
+          outputTokenSymbol: isToken0Input ? pool.currency1.symbol : pool.currency0.symbol,
+          inputTokenIcon: isToken0Input ? token0Icon : token1Icon,
+          outputTokenIcon: isToken0Input ? token1Icon : token0Icon,
+          routeType: 'psm' as const,
+        };
+      }
+
+      case 'ZapPoolSwap': {
+        const zapStep = step as any;
+        const isToken0Input = zapStep.inputToken === 'USDS';
+        return {
+          type: UIStepType.SwapTransaction,
+          inputTokenSymbol: isToken0Input ? pool.currency0.symbol : pool.currency1.symbol,
+          outputTokenSymbol: isToken0Input ? pool.currency1.symbol : pool.currency0.symbol,
+          inputTokenIcon: isToken0Input ? token0Icon : token1Icon,
+          outputTokenIcon: isToken0Input ? token1Icon : token0Icon,
+          routeType: 'pool' as const,
+        };
+      }
 
       default:
         return {
@@ -300,6 +341,36 @@ export function ReviewExecuteModal() {
   const tokens = getAllTokens();
   const token0Config = pool ? tokens[pool.currency0.symbol] : null;
   const token1Config = pool ? tokens[pool.currency1.symbol] : null;
+
+  // Determine if using zap mode (only for USDS/USDC pool)
+  const isZapMode = isUnifiedYield && isZapEligiblePool(state.poolId) && state.depositMode === 'zap' && state.zapInputToken !== null;
+  const zapInputToken: ZapToken | undefined = isZapMode
+    ? (state.zapInputToken === 'token0' ? 'USDS' : 'USDC')
+    : undefined;
+  const zapInputAmount = isZapMode
+    ? (state.zapInputToken === 'token0' ? state.amount0 : state.amount1)
+    : undefined;
+
+  // Zap preview hook
+  const zapPreviewQuery = useZapPreview({
+    inputToken: zapInputToken ?? null,
+    inputAmount: zapInputAmount || '',
+    hookAddress: (pool?.hooks ?? '0x0000000000000000000000000000000000000000') as Address,
+    enabled: isZapMode && !!zapInputToken && !!zapInputAmount && !!pool?.hooks,
+  });
+
+  // Zap approvals hook
+  const zapApprovalsQuery = useZapApprovals({
+    userAddress: address,
+    inputToken: zapInputToken,
+    swapAmount: zapPreviewQuery.data?.swapAmount,
+    route: zapPreviewQuery.data?.route,
+    hookAddress: pool?.hooks as Address,
+    inputAmount: zapPreviewQuery.data?.swapAmount
+      ? zapPreviewQuery.data.swapAmount + zapPreviewQuery.data.remainingInputAmount
+      : undefined,
+    enabled: isZapMode && !!zapPreviewQuery.data && !!address && !!pool?.hooks,
+  });
 
   // Map executor steps to UI steps for ProgressIndicator
   const uiSteps = useMemo(() => {
@@ -696,7 +767,7 @@ export function ReviewExecuteModal() {
     return context as ValidatedLiquidityTxContext;
   }, [pool, address, chainId, networkMode, state, txInfo, calculatedData, isUnifiedYield, depositPreview, buildApprovalRequests]);
 
-  // Handle confirm - unified for both V4 and Unified Yield
+  // Handle confirm - unified for V4, Unified Yield, and Zap modes
   const handleConfirm = useCallback(async () => {
     if (!pool || !address) return;
 
@@ -704,6 +775,99 @@ export function ReviewExecuteModal() {
     setIsExecuting(true);
     setError(null);
     setIsPermitError(false);
+
+    // =======================================================================
+    // ZAP MODE - Single-token deposit with auto-swap
+    // =======================================================================
+    if (isZapMode && zapPreviewQuery.data && zapApprovalsQuery.approvals) {
+      try {
+        // Generate zap steps
+        const hookAddress = pool.hooks as Address;
+        let preview = zapPreviewQuery.data;
+
+        // Check if preview is stale and refetch if needed
+        // Preview is stale if older than MAX_PREVIEW_AGE_MS (30 seconds)
+        if (!isPreviewFresh(preview)) {
+          console.log('[ReviewExecuteModal] Zap preview is stale, refetching...');
+          const freshPreview = await zapPreviewQuery.refetch();
+          if (!freshPreview.data) {
+            throw new Error('Failed to refresh zap preview');
+          }
+          preview = freshPreview.data;
+        }
+
+        // Get user settings for slippage and approval mode
+        const userSettings = getStoredUserSettings();
+
+        // Calculate token amounts after swap
+        // If input is USDS (token0): we have remaining USDS + swapped USDC
+        // If input is USDC (token1): we have swapped USDS + remaining USDC
+        const inputToken = preview.inputTokenInfo.symbol as ZapToken;
+        const token0Amount = inputToken === 'USDS'
+          ? preview.remainingInputAmount  // Remaining USDS
+          : preview.swapOutputAmount;      // USDS from swap
+        const token1Amount = inputToken === 'USDC'
+          ? preview.remainingInputAmount  // Remaining USDC
+          : preview.swapOutputAmount;      // USDC from swap
+
+        // Apply haircut to shares to account for yield accrual between preview and execution
+        // The pool accrues yield block-by-block, so requesting the exact preview shares
+        // may fail if yield was distributed. Request slightly fewer shares (0.1% less).
+        const sharesWithHaircut = (preview.expectedShares * 999n) / 1000n;
+
+        const zapStepsResult = generateZapSteps({
+          calculation: preview,
+          approvals: zapApprovalsQuery.approvals,
+          hookAddress,
+          userAddress: address,
+          sharesToMint: sharesWithHaircut,
+          slippageTolerance: userSettings.slippage,
+          token0Symbol: pool.currency0.symbol,
+          token1Symbol: pool.currency1.symbol,
+          poolId: state.poolId!,
+          inputToken,
+          token0Address: pool.currency0.address as Address,
+          token1Address: pool.currency1.address as Address,
+          token0Amount,
+          token1Amount,
+          approvalMode: userSettings.approvalMode,
+        });
+
+        // Cast zap steps to TransactionStep[] for UI display
+        const steps = zapStepsResult.steps as unknown as TransactionStep[];
+        setExecutorSteps(steps);
+
+        // Start with first step
+        if (steps.length > 0) {
+          setCurrentStepIndex(0);
+          setStepAccepted(false);
+        }
+
+        // Build a minimal context for zap execution
+        // Zap steps are self-contained and don't need the full V4 context
+        const zapContext = {
+          type: LiquidityTransactionType.Create,
+          isZapMode: true,
+          zapSteps: zapStepsResult.steps,
+          hookAddress,
+          chainId,
+        };
+
+        // Execute using the step executor
+        // Note: The executor will use the registry to handle zap steps
+        await executor.execute(zapContext as any);
+      } catch (err: any) {
+        console.error('[ReviewExecuteModal] Zap transaction error:', err);
+        setIsExecuting(false);
+        setView('review');
+        setError(err?.message || 'Zap transaction failed');
+      }
+      return;
+    }
+
+    // =======================================================================
+    // STANDARD MODE - V4 or balanced Unified Yield deposit
+    // =======================================================================
 
     // V4 uses permit flow state tracking
     if (!isUnifiedYield) {
@@ -745,7 +909,7 @@ export function ReviewExecuteModal() {
       setView('review');
       setError(err?.message || 'Transaction failed');
     }
-  }, [pool, address, fetchAndBuildContext, executor, calculatedData, txInfo, state, chainId, isUnifiedYield]);
+  }, [pool, address, fetchAndBuildContext, executor, calculatedData, txInfo, state, chainId, isUnifiedYield, isZapMode, zapPreviewQuery.data, zapApprovalsQuery.approvals]);
 
   // Clear error and retry
   const handleRetry = useCallback(() => {
@@ -880,10 +1044,58 @@ export function ReviewExecuteModal() {
 
             {/* Depositing Section */}
             <div className="px-4 py-3 mt-2">
-              <span className="text-sm text-muted-foreground mb-3 block">Depositing</span>
+              <span className="text-sm text-muted-foreground mb-3 block">
+                {isZapMode ? 'Zap Deposit' : 'Depositing'}
+              </span>
               <div className="flex flex-col gap-4">
-                {/* For Unified Yield, use depositPreview amounts (shows both tokens with calculated values) */}
-                {isUnifiedYield && depositPreview ? (
+                {/* Zap mode loading state */}
+                {isZapMode && zapPreviewQuery.isLoading && (
+                  <div className="flex items-center justify-center py-4">
+                    <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
+                    <span className="ml-2 text-sm text-muted-foreground">Calculating optimal swap...</span>
+                  </div>
+                )}
+                {/* Zap mode error state */}
+                {isZapMode && zapPreviewQuery.isError && (
+                  <div className="flex flex-col gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                    <span className="text-sm text-red-400">Failed to calculate zap preview</span>
+                    <span className="text-xs text-muted-foreground">{zapPreviewQuery.error?.message}</span>
+                  </div>
+                )}
+                {/* Zap mode: Show single input token with swap info */}
+                {isZapMode && !zapPreviewQuery.isLoading && !zapPreviewQuery.isError && zapPreviewQuery.data ? (
+                  <>
+                    {/* Input token */}
+                    <TokenInfoRow
+                      symbol={zapInputToken === 'USDS' ? pool.currency0.symbol : pool.currency1.symbol}
+                      icon={zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon}
+                      amount={zapInputAmount || '0'}
+                      usdValue={usdValues?.[zapInputToken === 'USDS' ? 'TOKEN0' : 'TOKEN1'] || '0.00'}
+                    />
+                    {/* Swap info */}
+                    <div className="flex flex-col gap-2 py-2 px-3 rounded-lg bg-muted/30">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Swap amount</span>
+                        <span className="text-white">
+                          {zapPreviewQuery.data.formatted.swapAmount} {zapInputToken}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Route</span>
+                        <span className="text-white">
+                          {zapPreviewQuery.data.route.type === 'psm' ? 'PSM (1:1)' : 'Pool swap'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Expected shares</span>
+                        <span className="text-white">
+                          {parseFloat(zapPreviewQuery.data.formatted.expectedShares).toFixed(6)}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                ) : !isZapMode && isUnifiedYield && depositPreview ? (
+                  /* For balanced Unified Yield (NOT zap mode), use depositPreview amounts */
                   <>
                     {parseFloat(depositPreview.amount0Formatted) > 0 && (
                       <TokenInfoRow
@@ -902,7 +1114,8 @@ export function ReviewExecuteModal() {
                       />
                     )}
                   </>
-                ) : (
+                ) : !isZapMode ? (
+                  /* For V4 or fallback */
                   <>
                     {state.amount0 && parseFloat(state.amount0) > 0 && (
                       <TokenInfoRow
@@ -921,7 +1134,7 @@ export function ReviewExecuteModal() {
                       />
                     )}
                   </>
-                )}
+                ) : null /* Zap mode handled above */}
               </div>
             </div>
 
@@ -994,10 +1207,14 @@ export function ReviewExecuteModal() {
               ) : (
                 <Button
                   onClick={handleConfirm}
-                  disabled={isUnifiedYield && !depositPreview}
+                  disabled={
+                    isZapMode
+                      ? !zapPreviewQuery.data || !zapApprovalsQuery.approvals
+                      : isUnifiedYield && !depositPreview
+                  }
                   className="w-full h-12 text-base font-semibold bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Create
+                  {isZapMode ? 'Zap & Create' : 'Create'}
                 </Button>
               )}
             </div>

@@ -36,6 +36,9 @@ export enum TransactionStepType {
   // Alphix-specific
   CreatePositionTransaction = 'CreatePositionTransaction',
 
+  // Swap operations (for Zap flow)
+  SwapTransaction = 'SwapTransaction',
+
   // Faucet
   FaucetMintTransaction = 'FaucetMintTransaction',
 }
@@ -96,6 +99,19 @@ export interface FaucetMintStep extends TransactionStepBase {
 }
 
 /**
+ * Swap step - for Zap flow (PSM or pool swap)
+ */
+export interface SwapStep extends TransactionStepBase {
+  type: TransactionStepType.SwapTransaction
+  inputTokenSymbol: string
+  outputTokenSymbol: string
+  inputTokenIcon?: string
+  outputTokenIcon?: string
+  /** Route type: 'psm' for 1:1 PSM swap, 'pool' for AMM swap */
+  routeType: 'psm' | 'pool'
+}
+
+/**
  * Union of all step types
  */
 export type TransactionStep =
@@ -103,6 +119,7 @@ export type TransactionStep =
   | Permit2SignatureStep
   | LiquidityPositionStep
   | FaucetMintStep
+  | SwapStep
 
 // ============================================================================
 // Component Props Interfaces

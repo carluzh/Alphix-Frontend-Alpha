@@ -14,6 +14,9 @@ export enum WizardStep {
 
 export type LPMode = 'rehypo' | 'concentrated';
 
+// Deposit mode for Unified Yield positions
+export type UnifiedYieldDepositMode = 'balanced' | 'zap';
+
 export interface WizardState {
   // Step tracking
   currentStep: WizardStep;
@@ -36,6 +39,12 @@ export interface WizardState {
   amount0: string;
   amount1: string;
   inputSide: 'token0' | 'token1';
+
+  // Unified Yield Zap mode (Step 2 - rehypo mode only)
+  // 'balanced' = provide both tokens (default)
+  // 'zap' = provide single token, auto-swap to balance
+  depositMode: UnifiedYieldDepositMode;
+  zapInputToken: 'token0' | 'token1' | null;
 
   // Review modal state
   isReviewModalOpen: boolean;
@@ -130,6 +139,9 @@ export const DEFAULT_WIZARD_STATE: WizardState = {
   amount0: '',
   amount1: '',
   inputSide: 'token0',
+  // Default to balanced mode (zap available only for USDS/USDC pool)
+  depositMode: 'balanced',
+  zapInputToken: null,
   isReviewModalOpen: false,
   estimatedApr: null,
 };

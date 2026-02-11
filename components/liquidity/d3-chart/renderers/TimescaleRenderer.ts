@@ -73,7 +73,10 @@ export function createTimescaleRenderer({
       .range([CHART_DIMENSIONS.TIMESCALE_HEIGHT, dimensions.width]);
 
     const timeFormat = getTimeFormat(duration);
-    const ticks = xScale.ticks(4);
+    // Calculate number of ticks based on width to prevent overlap on mobile
+    // Roughly 1 tick per 100px, minimum 2, maximum 5
+    const tickCount = Math.max(2, Math.min(5, Math.floor(dimensions.width / 100)));
+    const ticks = xScale.ticks(tickCount);
 
     timescaleGroup
       .selectAll('.time-label')

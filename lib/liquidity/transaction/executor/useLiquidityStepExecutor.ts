@@ -400,6 +400,7 @@ export function useLiquidityStepExecutor(
               action: txContext.action,
               signature,
               setCurrentStep: setCurrentStep(i),
+              signTypedData, // Pass for handlers that need Permit2 signing (e.g., zap pool swap)
             };
 
             // Build transaction functions

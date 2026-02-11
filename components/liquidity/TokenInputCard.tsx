@@ -82,6 +82,8 @@ interface TokenInputCardProps {
   className?: string;
   /** Callback when token selector is clicked (for switching tokens in Zap mode) */
   onTokenClick?: () => void;
+  /** Custom icon to show in token selector when onTokenClick is provided (defaults to caret) */
+  tokenClickIcon?: React.ReactNode;
 }
 
 /**
@@ -107,6 +109,7 @@ export function TokenInputCard({
   animationControls: externalControls,
   className,
   onTokenClick,
+  tokenClickIcon,
 }: TokenInputCardProps) {
   // Internal animation controls if not provided externally
   const internalControls = useAnimation();
@@ -230,7 +233,7 @@ export function TokenInputCard({
                   className="rounded-full"
                 />
                 <span className="text-sm font-medium">{tokenSymbol}</span>
-                <IconCaretExpandY className="w-3.5 h-3.5 text-muted-foreground group-hover/token:text-white transition-colors" />
+                {tokenClickIcon ?? <IconCaretExpandY className="w-3.5 h-3.5 text-muted-foreground group-hover/token:text-white transition-colors" />}
               </button>
             ) : (
               <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">

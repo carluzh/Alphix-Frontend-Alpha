@@ -21,6 +21,9 @@ import type {
   UnifiedYieldApprovalStep,
   UnifiedYieldDepositStep,
   UnifiedYieldWithdrawStep,
+  ZapSwapApprovalStep,
+  ZapPSMSwapStep,
+  ZapPoolSwapStep,
   LiquidityAction,
 } from '../../../types';
 import { TransactionStepType } from '../../../types';
@@ -33,6 +36,11 @@ import {
   handleUnifiedYieldDepositStep,
   handleUnifiedYieldWithdrawStep,
 } from './unifiedYieldHandler';
+import {
+  handleZapSwapApprovalStep,
+  handleZapPSMSwapStep,
+  handleZapPoolSwapStep,
+} from '../../../../liquidity/zap/execution/handlers';
 
 // =============================================================================
 // TYPES
@@ -60,6 +68,13 @@ export interface StepExecutionContext {
   action?: LiquidityAction;
   signature?: string; // From prior Permit2Signature step
   setCurrentStep: (params: { step: TransactionStep; accepted: boolean }) => void;
+  /** Sign typed data for Permit2 (used by zap pool swaps) */
+  signTypedData?: (args: {
+    domain: { name: string; chainId: number; verifyingContract: `0x${string}` };
+    types: Record<string, Array<{ name: string; type: string }>>;
+    primaryType: string;
+    message: Record<string, unknown>;
+  }) => Promise<`0x${string}`>;
 }
 
 /**
@@ -250,6 +265,17 @@ export const STEP_HANDLER_REGISTRY: Partial<Record<TransactionStepType, StepHand
   },
   [TransactionStepType.UnifiedYieldWithdrawTransaction]: {
     handler: uyWithdrawHandler,
+  },
+
+  // Zap steps (single-token deposit with swap)
+  [TransactionStepType.ZapSwapApproval]: {
+    handler: handleZapSwapApprovalStep,
+  },
+  [TransactionStepType.ZapPSMSwap]: {
+    handler: handleZapPSMSwapStep,
+  },
+  [TransactionStepType.ZapPoolSwap]: {
+    handler: handleZapPoolSwapStep,
   },
 };
 

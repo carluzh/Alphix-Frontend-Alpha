@@ -20,6 +20,7 @@ import {
   WizardState,
   LPMode,
   RangePreset,
+  UnifiedYieldDepositMode,
   DEFAULT_WIZARD_STATE,
   WIZARD_STEPS,
 } from './types';
@@ -27,6 +28,7 @@ import { usePoolState } from '@/lib/apollo/hooks/usePoolState';
 import { getPoolById } from '@/lib/pools-config';
 import { useDerivedPositionInfo } from '@/lib/liquidity/hooks/position/useDerivedPositionInfo';
 import type { CreatePositionInfo } from '@/lib/liquidity/types';
+import { isZapEligiblePool } from '@/lib/liquidity/zap';
 
 // Types adapted from Uniswap's structure
 export interface PriceRangeState {
@@ -130,6 +132,10 @@ interface AddLiquidityContextType {
   setAmounts: (amount0: string, amount1: string) => void;
   setInputSide: (side: 'token0' | 'token1') => void;
 
+  // Unified Yield Zap mode setters
+  setDepositMode: (mode: UnifiedYieldDepositMode) => void;
+  setZapInputToken: (token: 'token0' | 'token1' | null) => void;
+
   // Reset functions
   reset: () => void;
   resetPriceRange: () => void;
@@ -178,13 +184,21 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     // Note: We no longer skip to step 2 when poolId is set - users should always
     // be able to choose their LP strategy (rehypo vs concentrated)
 
+    const initialPoolId = urlPool || entryConfig?.poolId || null;
+
+    // Set deposit mode based on zap eligibility of the initial pool
+    const depositModeForPool = initialPoolId && isZapEligiblePool(initialPoolId)
+      ? { depositMode: 'zap' as const, zapInputToken: 'token1' as const }
+      : { depositMode: 'balanced' as const, zapInputToken: null };
+
     return {
       ...DEFAULT_WIZARD_STATE,
       currentStep: startStep,
-      poolId: urlPool || entryConfig?.poolId || null,
+      poolId: initialPoolId,
       token0Symbol: urlT0 || entryConfig?.token0Symbol || null,
       token1Symbol: urlT1 || entryConfig?.token1Symbol || null,
       mode: urlMode || entryConfig?.mode || 'rehypo',
+      ...depositModeForPool,
     };
   }, [searchParams, entryConfig]);
 
@@ -312,7 +326,20 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   }, []);
 
   const setPoolIdFn = useCallback((newPoolId: string | null) => {
-    setState(prev => ({ ...prev, poolId: newPoolId }));
+    setState(prev => ({
+      ...prev,
+      poolId: newPoolId,
+      // Set deposit mode based on zap eligibility:
+      // - USDS/USDC: default to zap mode (Single Token)
+      // - Other pools: use balanced mode (Dual Deposit)
+      ...(newPoolId ? (isZapEligiblePool(newPoolId) ? {
+        depositMode: 'zap' as const,
+        zapInputToken: 'token1' as const, // Default to USDC
+      } : {
+        depositMode: 'balanced' as const,
+        zapInputToken: null,
+      }) : {}),
+    }));
   }, []);
 
   const setMode = useCallback((mode: LPMode) => {
@@ -354,6 +381,28 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     setState(prev => ({ ...prev, inputSide: side }));
   }, []);
 
+  // Unified Yield Zap mode setters
+  const setDepositModeFn = useCallback((mode: UnifiedYieldDepositMode) => {
+    setState(prev => ({
+      ...prev,
+      depositMode: mode,
+      // When switching to zap mode, set default input token to USDC (token1) if not set
+      zapInputToken: mode === 'zap' && !prev.zapInputToken ? 'token1' : prev.zapInputToken,
+      // When switching back to balanced, clear amounts
+      ...(mode === 'balanced' ? { amount0: '', amount1: '' } : {}),
+    }));
+  }, []);
+
+  const setZapInputToken = useCallback((token: 'token0' | 'token1' | null) => {
+    setState(prev => ({
+      ...prev,
+      zapInputToken: token,
+      // Clear the opposite token's amount when switching zap input
+      amount0: token === 'token1' ? '' : prev.amount0,
+      amount1: token === 'token0' ? '' : prev.amount1,
+    }));
+  }, []);
+
   // Reset functions
   const reset = useCallback(() => {
     setState(DEFAULT_WIZARD_STATE);
@@ -378,6 +427,8 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
       ...prev,
       amount0: '',
       amount1: '',
+      depositMode: 'balanced',
+      zapInputToken: null,
     }));
   }, []);
 
@@ -455,6 +506,10 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     setRangePreset,
     setAmounts,
     setInputSide,
+
+    // Unified Yield Zap mode setters
+    setDepositMode: setDepositModeFn,
+    setZapInputToken,
 
     // Reset functions
     reset,

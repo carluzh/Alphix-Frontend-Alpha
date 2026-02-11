@@ -154,6 +154,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     tickUpper,
     inputSide,
     mode,
+    depositMode, // zap or balanced
   } = state;
 
   // Determine if this is Unified Yield mode
@@ -259,10 +260,16 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   // UNIFIED YIELD PREVIEW (for 'rehypo' mode)
   // ==========================================================================
 
-  // Calculate Unified Yield deposit preview when in 'rehypo' mode
-  // IMPORTANT: Only use the user's INPUT amount (based on inputSide), never the dependent amount
+  // Calculate Unified Yield deposit preview when in 'rehypo' mode AND balanced deposit mode
+  // IMPORTANT: Skip when in 'zap' mode - the zap preview hook handles that differently
   useEffect(() => {
     if (!isUnifiedYield || !hookAddress || !publicClient) {
+      setDepositPreview(null);
+      return;
+    }
+
+    // In zap mode, the zap preview hook handles calculations - don't use balanced depositPreview
+    if (depositMode === 'zap') {
       setDepositPreview(null);
       return;
     }
@@ -337,6 +344,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     };
   }, [
     isUnifiedYield,
+    depositMode,
     hookAddress,
     publicClient,
     inputSide,

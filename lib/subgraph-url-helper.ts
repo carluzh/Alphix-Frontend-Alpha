@@ -13,8 +13,9 @@
 
 import { getStoredNetworkMode, type NetworkMode } from './network-mode';
 
-// Goldsky-hosted subgraph URLs (primary source for both networks)
-const GOLDSKY_MAINNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-mainnet/prod/gn';
+// Goldsky-hosted subgraph URLs
+// Mainnet: MUST be set via SUBGRAPH_URL_MAINNET_ALPHIX env var (no hardcoded fallback)
+// Testnet: Goldsky fallback for development convenience
 const GOLDSKY_TESTNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-testnet/0.0.7/gn';
 
 /**
@@ -32,24 +33,34 @@ function getDefaultNetworkMode(): NetworkMode {
 
 /**
  * Returns the Alphix subgraph URL for HookPosition and AlphixHook queries.
- * Falls back to Goldsky if env var is not set.
+ * Mainnet: Requires SUBGRAPH_URL_MAINNET_ALPHIX env var
+ * Testnet: Falls back to Goldsky if env var is not set
  */
 export function getAlphixSubgraphUrl(networkModeOverride?: NetworkMode): string {
   const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') {
-    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || GOLDSKY_MAINNET_URL;
+    const mainnetUrl = process.env.SUBGRAPH_URL_MAINNET_ALPHIX;
+    if (!mainnetUrl) {
+      throw new Error('SUBGRAPH_URL_MAINNET_ALPHIX env var is required for mainnet');
+    }
+    return mainnetUrl;
   }
   return process.env.SUBGRAPH_URL || GOLDSKY_TESTNET_URL;
 }
 
 /**
  * Returns the subgraph URL for Pool/PoolDayData queries.
- * Both networks use the unified Alphix Goldsky subgraph.
+ * Mainnet: Requires SUBGRAPH_URL_MAINNET_ALPHIX env var
+ * Testnet: Falls back to Goldsky if env var is not set
  */
 export function getUniswapV4SubgraphUrl(networkModeOverride?: NetworkMode): string {
   const networkMode = networkModeOverride ?? getDefaultNetworkMode();
   if (networkMode === 'mainnet') {
-    return process.env.SUBGRAPH_URL_MAINNET_ALPHIX || GOLDSKY_MAINNET_URL;
+    const mainnetUrl = process.env.SUBGRAPH_URL_MAINNET_ALPHIX;
+    if (!mainnetUrl) {
+      throw new Error('SUBGRAPH_URL_MAINNET_ALPHIX env var is required for mainnet');
+    }
+    return mainnetUrl;
   }
   return process.env.SUBGRAPH_URL || GOLDSKY_TESTNET_URL;
 }

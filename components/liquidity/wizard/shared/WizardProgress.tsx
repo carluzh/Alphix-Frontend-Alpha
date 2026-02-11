@@ -161,27 +161,34 @@ export function WizardProgressHeader() {
     <div
       ref={elementRef}
       className={cn(
-        "lg:hidden flex flex-row w-full items-center justify-between gap-3 p-4 bg-container sticky top-0 z-10 transition-all duration-200",
-        isSticky
-          ? "border-b border-sidebar-border shadow-md shadow-black/10"
-          : "border-b border-transparent"
+        "lg:hidden flex flex-row w-full items-center gap-3 px-4 py-3 mb-4 sticky top-0 z-10 transition-all duration-200"
       )}
     >
-      {/* Step number - rounded rectangle */}
-      <div className="h-7 w-7 rounded-md bg-muted flex items-center justify-center shrink-0">
-        <span className="text-xs font-semibold text-foreground font-[Consolas,monospace]">
-          {currentIndex + 1}
-        </span>
-      </div>
+      {/* Step indicator pill - matches desktop styling with rounded corners and border */}
+      <div
+        className={cn(
+          "flex flex-row items-center gap-3 py-2.5 px-3 rounded-lg border bg-container transition-shadow duration-200 flex-1",
+          isSticky
+            ? "border-sidebar-border shadow-lg shadow-black/20"
+            : "border-sidebar-border"
+        )}
+      >
+        {/* Step number - rounded rectangle */}
+        <div className="h-7 w-7 rounded-md bg-muted flex items-center justify-center shrink-0">
+          <span className="text-xs font-semibold text-foreground font-[Consolas,monospace]">
+            {currentIndex + 1}
+          </span>
+        </div>
 
-      {/* Step info */}
-      <div className="flex-1 min-w-0 flex flex-col gap-0.5 font-[Inter]">
-        <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground truncate">
-          Step {currentIndex + 1} of {steps.length}
-        </span>
-        <span className="text-sm font-medium text-foreground truncate">
-          {currentStepData.label}
-        </span>
+        {/* Step info */}
+        <div className="flex-1 min-w-0 flex flex-col gap-0.5 font-[Inter]">
+          <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground truncate">
+            Step {currentIndex + 1} of {steps.length}
+          </span>
+          <span className="text-sm font-medium text-foreground truncate">
+            {currentStepData.label}
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -42,6 +42,7 @@ function getActionLabel(stepType: TransactionStepType): string {
     [TransactionStepType.Permit2Signature]: 'Sign',
     [TransactionStepType.Permit2Transaction]: 'Permit',
     [TransactionStepType.FaucetMintTransaction]: 'Mint',
+    [TransactionStepType.SwapTransaction]: 'Swap',
   }
   return actionLabels[stepType] || 'Confirm'
 }

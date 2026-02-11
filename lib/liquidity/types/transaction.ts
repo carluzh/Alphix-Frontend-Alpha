@@ -31,6 +31,10 @@ export enum TransactionStepType {
   UnifiedYieldApprovalTransaction = 'UnifiedYieldApproval',
   UnifiedYieldDepositTransaction = 'UnifiedYieldDeposit',
   UnifiedYieldWithdrawTransaction = 'UnifiedYieldWithdraw',
+  // Zap step types (single-token deposit with swap)
+  ZapSwapApproval = 'ZapSwapApproval',
+  ZapPSMSwap = 'ZapPSMSwap',
+  ZapPoolSwap = 'ZapPoolSwap',
 }
 
 // =============================================================================
@@ -315,6 +319,64 @@ export interface UnifiedYieldWithdrawStep extends OnChainTransactionFields {
 }
 
 // =============================================================================
+// ZAP STEP INTERFACES - Single-token deposit with automatic swap
+// =============================================================================
+
+/** Zap token types */
+export type ZapTokenSymbol = 'USDS' | 'USDC';
+
+/**
+ * Zap Swap Approval Step - Approve input token for swap (to PSM or Permit2)
+ */
+export interface ZapSwapApprovalStep extends OnChainTransactionFields {
+  type: TransactionStepType.ZapSwapApproval;
+  /** Token being approved */
+  tokenAddress: Address;
+  /** Token symbol */
+  tokenSymbol: ZapTokenSymbol;
+  /** Spender address (PSM or Permit2) */
+  spender: Address;
+  /** Amount to approve */
+  amount: bigint;
+}
+
+/**
+ * Zap PSM Swap Step - Execute 1:1 swap via PSM
+ */
+export interface ZapPSMSwapStep extends OnChainTransactionFields {
+  type: TransactionStepType.ZapPSMSwap;
+  /** Swap direction */
+  direction: 'USDS_TO_USDC' | 'USDC_TO_USDS';
+  /** Input amount (in wei) */
+  inputAmount: bigint;
+  /** Expected output amount (in wei) */
+  expectedOutputAmount: bigint;
+  /** Input token address */
+  inputTokenAddress: Address;
+  /** Output token address */
+  outputTokenAddress: Address;
+}
+
+/**
+ * Zap Pool Swap Step - Execute swap via Universal Router
+ */
+export interface ZapPoolSwapStep extends OnChainTransactionFields {
+  type: TransactionStepType.ZapPoolSwap;
+  /** Input token */
+  inputToken: ZapTokenSymbol;
+  inputTokenAddress: Address;
+  /** Output token */
+  outputToken: ZapTokenSymbol;
+  outputTokenAddress: Address;
+  /** Input amount (in wei) */
+  inputAmount: bigint;
+  /** Minimum output after slippage (in wei) */
+  minOutputAmount: bigint;
+  /** Transaction deadline */
+  deadline: bigint;
+}
+
+// =============================================================================
 // COMPOSITE STEP TYPES - Matches Uniswap's union types
 // =============================================================================
 
@@ -340,12 +402,24 @@ export type UnifiedYieldDepositSteps =
 
 export type UnifiedYieldWithdrawSteps = UnifiedYieldWithdrawStep;
 
+// Zap step unions
+export type ZapSwapSteps =
+  | ZapSwapApprovalStep
+  | ZapPSMSwapStep
+  | ZapPoolSwapStep;
+
+export type ZapDepositSteps =
+  | ZapSwapSteps
+  | UnifiedYieldApprovalStep
+  | UnifiedYieldDepositStep;
+
 export type TransactionStep =
   | IncreaseLiquiditySteps
   | DecreaseLiquiditySteps
   | CollectFeesSteps
   | UnifiedYieldDepositSteps
-  | UnifiedYieldWithdrawSteps;
+  | UnifiedYieldWithdrawSteps
+  | ZapDepositSteps;
 
 // =============================================================================
 // LIQUIDITY ACTION - Matches Uniswap's LiquidityAction

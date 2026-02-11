@@ -128,7 +128,7 @@ function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { select
       <button
         onClick={onSelect}
         className={cn(
-          'relative flex flex-row rounded-lg transition-all w-full text-left overflow-hidden bg-[#141414] p-3 border',
+          'relative flex flex-col sm:flex-row rounded-lg transition-all w-full text-left overflow-hidden bg-[#141414] p-3 border',
           selected ? 'border-transparent' : 'border-sidebar-border/60 group-hover:border-transparent'
         )}
       >
@@ -167,33 +167,35 @@ function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { select
             <h3 className="text-base font-semibold text-foreground">Unified Yield</h3>
             <p className="text-sm text-muted-foreground">Earn additional yield on top of swap fees by lending out idle liquidity</p>
           </div>
-          {/* Powered by section */}
-          {hasBoth ? (
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ backgroundColor: AAVE_CONFIG.pillBg }}>
+          {/* Powered by section - hidden on mobile */}
+          <div className="hidden sm:block">
+            {hasBoth ? (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ backgroundColor: AAVE_CONFIG.pillBg }}>
+                  <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
+                  <Image src={AAVE_CONFIG.textLogo} alt="Aave" width={44} height={12} />
+                </div>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: SPARK_CONFIG.gradient }}>
+                  <span className="text-xs font-medium text-white">Powered by</span>
+                  <Image src="/spark/Spark-Logo-Horizontal-White-RGB.svg" alt="Spark" width={52} height={14} />
+                </div>
+              </div>
+            ) : hasAave ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ backgroundColor: AAVE_CONFIG.pillBg }}>
                 <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
                 <Image src={AAVE_CONFIG.textLogo} alt="Aave" width={44} height={12} />
               </div>
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: SPARK_CONFIG.gradient }}>
+            ) : hasSpark ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ background: SPARK_CONFIG.gradient }}>
                 <span className="text-xs font-medium text-white">Powered by</span>
                 <Image src="/spark/Spark-Logo-Horizontal-White-RGB.svg" alt="Spark" width={52} height={14} />
               </div>
-            </div>
-          ) : hasAave ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ backgroundColor: AAVE_CONFIG.pillBg }}>
-              <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
-              <Image src={AAVE_CONFIG.textLogo} alt="Aave" width={44} height={12} />
-            </div>
-          ) : hasSpark ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ background: SPARK_CONFIG.gradient }}>
-              <span className="text-xs font-medium text-white">Powered by</span>
-              <Image src="/spark/Spark-Logo-Horizontal-White-RGB.svg" alt="Spark" width={52} height={14} />
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
 
-        {/* APR visualization section */}
-        <div className="relative z-10 flex w-[25%] min-w-[140px] rounded-lg overflow-hidden">
+        {/* APR visualization section - below on mobile, right on desktop */}
+        <div className="relative z-10 flex w-full sm:w-[25%] sm:min-w-[140px] h-20 sm:h-auto rounded-lg overflow-hidden mt-2 sm:mt-0">
           {hasBoth ? (
             // Both sources: left Aave purple rings, right Spark gradient with SVG
             <>

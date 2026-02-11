@@ -18,6 +18,8 @@ import {
     getToken,
     NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
+// State overrides for USDS simulation (Pool Manager has limited USDS balance)
+import { getUsdsQuoteStateOverridesViem, needsUsdsStateOverride } from '../../../lib/swap/quote-state-override';
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
 import { getUniversalRouterAddress, getStateViewAddress } from '../../../lib/pools-config';
 import { findBestRoute, SwapRoute, routeToString } from '@/lib/swap/routing-engine';
@@ -147,8 +149,26 @@ export function encodeMultihopExactOutPath(
 }
 
 
-// --- Helper: Prepare V4 Exact Input Swap Data (Adapted from original swap.ts) ---
-// This function can be kept within this file or moved to a separate utility if it grows.
+// =============================================================================
+// V4 SWAP ACTION BUILDERS
+// =============================================================================
+//
+// All V4 swap functions use the action order: SETTLE → SWAP → TAKE
+//
+// Why SETTLE first (instead of SWAP → SETTLE → TAKE)?
+// - The USDS/USDC pool uses rehypothecated liquidity (USDS deposited in Sky vault)
+// - Pool Manager only holds ~375 USDS on-chain
+// - With SWAP first, the hook can't access enough USDS during beforeSwap
+// - With SETTLE first, user's tokens are in Pool Manager BEFORE the swap executes
+// - This allows hooks to access the settled tokens during the swap
+//
+// For ExactOut: We add a 4th action (TAKE_ALL input remainder) because:
+// - We settle maxAmountIn (worst case with slippage)
+// - The swap only uses actualAmountIn
+// - V4 requires ALL deltas cleared at transaction end
+// - The 4th TAKE_ALL returns unused input tokens to the user
+// =============================================================================
+
 interface V4PlanBuild {
     encodedActions: Hex;
     actions: any;
@@ -163,17 +183,24 @@ async function prepareV4ExactInSwapData(
     poolConfig: any
 ): Promise<V4PlanBuild> {
     const v4PoolKey: PoolKey = createPoolKeyFromConfig(poolConfig.pool);
-    // Build plan per guide (no extra logging)
 
     const v4Planner = new V4Planner();
-    
-    // Action order will follow the guide exactly; no optional price limit used
+
     const sqrtPriceLimitX96 = 0n;
 
     // Uniswap SDK ref: Use canonical token ordering to determine swap direction
     // zeroForOne = true when swapping from lower address (currency0) to higher address (currency1)
-    // Matches get-quote.ts: fromToken.sortsBefore(toToken)
     const zeroForOne = inputToken.sortsBefore(outputToken);
+    const inputCurrency = zeroForOne ? v4PoolKey.currency0 : v4PoolKey.currency1;
+    const outputCurrency = zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0;
+
+    // See module-level comment for action ordering rationale (SETTLE → SWAP → TAKE)
+    v4Planner.addAction(Actions.SETTLE, [
+        inputCurrency,
+        BigNumber.from(amountInSmallestUnits.toString()),
+        true // payerIsUser = true
+    ]);
+
     v4Planner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [
         {
             poolKey: v4PoolKey,
@@ -185,23 +212,9 @@ async function prepareV4ExactInSwapData(
         }
     ]);
 
-    // Second: SETTLE_ALL per guide
-    v4Planner.addAction(Actions.SETTLE_ALL, [
-        zeroForOne ? v4PoolKey.currency0 : v4PoolKey.currency1,
-        BigNumber.from(amountInSmallestUnits.toString()),
-    ]);
-
-    // Third: TAKE_ALL - take whatever amount the swap produced
-    // minAmount matches SWAP's amountOutMinimum (slippage already applied)
-    const outputCurrency = zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0;
-    const isNativeOutput = outputCurrency === '0x0000000000000000000000000000000000000000';
-    // SWAP action's amountOutMinimum already enforces slippage - use same value for TAKE_ALL
+    const isNativeOutput = outputToken.isNative;
     const takeAllMin = isNativeOutput ? 1n : minAmountOutSmallestUnits;
-    
-    v4Planner.addAction(Actions.TAKE_ALL, [
-        outputCurrency,
-        BigNumber.from(takeAllMin.toString())
-    ]);
+    v4Planner.addAction(Actions.TAKE_ALL, [outputCurrency, BigNumber.from(takeAllMin.toString())]);
 
     const encodedActions = v4Planner.finalize() as Hex;
     return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
@@ -214,22 +227,33 @@ async function prepareV4ExactOutSwapData(
     maxAmountInSmallestUnits: bigint,
     amountOutSmallestUnits: bigint,
     poolConfig: any,
-    limitPrice?: string
+    limitPrice?: string,
+    permitAmount?: bigint // The actual permitted amount (may differ slightly from maxAmountIn)
 ): Promise<V4PlanBuild> {
     const v4PoolKey: PoolKey = createPoolKeyFromConfig(poolConfig.pool);
-    // Build plan per guide (trimmed logs)
 
     const v4Planner = new V4Planner();
-    
+
     // Uniswap SDK ref: Use canonical token ordering to determine swap direction
-    // Matches get-quote.ts: fromToken.sortsBefore(toToken)
     const zeroForOne = inputToken.sortsBefore(outputToken);
+    const inputCurrency = zeroForOne ? v4PoolKey.currency0 : v4PoolKey.currency1;
+    const outputCurrency = zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0;
 
     // Calculate price limit if provided
-    let sqrtPriceLimitX96 = 0n; // 0 means no limit
+    let sqrtPriceLimitX96 = 0n;
     if (limitPrice && limitPrice !== "" && parseFloat(limitPrice) > 0) {
         sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
     }
+
+    // See module-level comment for action ordering rationale (SETTLE → SWAP → TAKE → TAKE)
+    // Use permitAmount for SETTLE (matches what user authorized via Permit2)
+    const settleAmount = permitAmount ?? maxAmountInSmallestUnits;
+
+    v4Planner.addAction(Actions.SETTLE, [
+        inputCurrency,
+        BigNumber.from(settleAmount.toString()),
+        true // payerIsUser = true
+    ]);
 
     v4Planner.addAction(Actions.SWAP_EXACT_OUT_SINGLE, [
         {
@@ -242,17 +266,8 @@ async function prepareV4ExactOutSwapData(
         }
     ]);
 
-    // After swap, settle input currency up to max
-    v4Planner.addAction(Actions.SETTLE_ALL, [
-        zeroForOne ? v4PoolKey.currency0 : v4PoolKey.currency1,
-        BigNumber.from(maxAmountInSmallestUnits.toString()),
-    ]);
-
-    // Take all of the output currency (amountOut owed to caller)
-    v4Planner.addAction(Actions.TAKE_ALL, [
-        zeroForOne ? v4PoolKey.currency1 : v4PoolKey.currency0,
-        BigNumber.from(amountOutSmallestUnits.toString()),
-    ]);
+    v4Planner.addAction(Actions.TAKE_ALL, [outputCurrency, BigNumber.from(amountOutSmallestUnits.toString())]);
+    v4Planner.addAction(Actions.TAKE_ALL, [inputCurrency, BigNumber.from(0)]); // Return unused input
 
     const encodedActions = v4Planner.finalize() as Hex;
     return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
@@ -285,7 +300,23 @@ async function prepareV4MultiHopExactInSwapData(
 
     const v4Planner = new V4Planner();
 
-    // SWAP_EXACT_IN with PathKey[]
+    // Determine output currency
+    const lastPoolKey = poolKeys[poolKeys.length - 1];
+    const finalOutputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
+    if (!finalOutputToken) {
+        throw new Error('Failed to create output token for TAKE_ALL');
+    }
+    const outputCurrency = getAddress(finalOutputToken.address!) === lastPoolKey.currency0
+        ? lastPoolKey.currency0
+        : lastPoolKey.currency1;
+
+    // See module-level comment for action ordering rationale (SETTLE → SWAP → TAKE)
+    v4Planner.addAction(Actions.SETTLE, [
+        inputToken.address,
+        BigNumber.from(amountInSmallestUnits.toString()),
+        true // payerIsUser = true
+    ]);
+
     v4Planner.addAction(Actions.SWAP_EXACT_IN, [
         {
             currencyIn: inputToken.address,
@@ -295,31 +326,9 @@ async function prepareV4MultiHopExactInSwapData(
         }
     ]);
 
-    // SETTLE_ALL on true input currency (currencyIn)
-    v4Planner.addAction(Actions.SETTLE_ALL, [
-        inputToken.address,
-        BigNumber.from(amountInSmallestUnits.toString()),
-    ]);
-
-    // TAKE_ALL on true output currency (final currencyOut)
-    // minAmount matches SWAP's amountOutMinimum (slippage already applied)
-    const lastPoolKey = poolKeys[poolKeys.length - 1];
-    const finalOutputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
-    if (!finalOutputToken) {
-        throw new Error('Failed to create output token for TAKE_ALL');
-    }
-    // Determine which currency in the last pool is the output
-    const outputCurrency = getAddress(finalOutputToken.address!) === lastPoolKey.currency0
-        ? lastPoolKey.currency0
-        : lastPoolKey.currency1;
-    const isNativeOutput = outputCurrency === '0x0000000000000000000000000000000000000000';
-    // SWAP action's amountOutMinimum already enforces slippage - use same value for TAKE_ALL
+    const isNativeOutput = outputToken.isNative;
     const takeAllMin = isNativeOutput ? 1n : minAmountOutSmallestUnits;
-    
-    v4Planner.addAction(Actions.TAKE_ALL, [
-        outputCurrency,
-        BigNumber.from(takeAllMin.toString()),
-    ]);
+    v4Planner.addAction(Actions.TAKE_ALL, [outputCurrency, BigNumber.from(takeAllMin.toString())]);
 
     const encodedActions = v4Planner.finalize() as Hex;
     return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
@@ -331,7 +340,8 @@ async function prepareV4MultiHopExactOutSwapData(
     maxAmountInSmallestUnits: bigint,
     amountOutSmallestUnits: bigint,
     chainId: number,
-    networkMode: 'mainnet' | 'testnet'
+    networkMode: 'mainnet' | 'testnet',
+    permitAmount?: bigint // The actual permitted amount (may differ slightly from maxAmountIn)
 ): Promise<V4PlanBuild> {
     const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId, networkMode);
     const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
@@ -355,6 +365,16 @@ async function prepareV4MultiHopExactOutSwapData(
 
     const v4Planner = new V4Planner();
 
+    // See module-level comment for action ordering rationale (SETTLE → SWAP → TAKE → TAKE)
+    // Use permitAmount for SETTLE (matches what user authorized via Permit2)
+    const settleAmount = permitAmount ?? maxAmountInSmallestUnits;
+
+    v4Planner.addAction(Actions.SETTLE, [
+        inputToken.address,
+        BigNumber.from(settleAmount.toString()),
+        true // payerIsUser = true
+    ]);
+
     v4Planner.addAction(Actions.SWAP_EXACT_OUT, [
         {
             currencyOut: outputToken.address,
@@ -364,19 +384,10 @@ async function prepareV4MultiHopExactOutSwapData(
         }
     ]);
 
-    v4Planner.addAction(Actions.SETTLE_ALL, [
-        inputToken.address,
-        BigNumber.from(maxAmountInSmallestUnits.toString()),
-    ]);
-
     const isNativeOutput = outputToken.isNative;
-    // SWAP action's amountOut already enforces slippage - use same value for TAKE_ALL
     const takeAllMin = isNativeOutput ? 1n : amountOutSmallestUnits;
-
-    v4Planner.addAction(Actions.TAKE_ALL, [
-        outputToken.address,
-        BigNumber.from(takeAllMin.toString()),
-    ]);
+    v4Planner.addAction(Actions.TAKE_ALL, [outputToken.address, BigNumber.from(takeAllMin.toString())]);
+    v4Planner.addAction(Actions.TAKE_ALL, [inputToken.address, BigNumber.from(0)]); // Return unused input
 
     const encodedActions = v4Planner.finalize() as Hex;
     return { encodedActions, actions: (v4Planner as any).actions, params: (v4Planner as any).params };
@@ -645,16 +656,18 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         } else { // ExactOut
             amountOutSmallestUnits = actualSwapAmount; // amountOut in OUTPUT token units
             const maxAmountInSmallestUnits = actualLimitAmount; // max INPUT limit
-            
+
             if (route.isDirectRoute) {
                 // Single-hop swap using existing logic
+                // Pass parsedPermitAmount to use as SETTLE amount (what user actually authorized)
                 v4Plan = await prepareV4ExactOutSwapData(
                     INPUT_TOKEN,
                     OUTPUT_TOKEN,
                     maxAmountInSmallestUnits, // Max Input is the limit amount
                     amountOutSmallestUnits, // Actual output amount
                     poolConfig,
-                    limitPrice
+                    limitPrice,
+                    parsedPermitAmount // Use permitted amount for SETTLE to avoid InsufficientAllowance
                 );
             } else {
                 // Multi-hop swap using new logic
@@ -663,7 +676,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                     maxAmountInSmallestUnits,
                     amountOutSmallestUnits,
                     chainId,
-                    networkMode
+                    networkMode,
+                    parsedPermitAmount // Use permitted amount for SETTLE to avoid InsufficientAllowance
                 );
             }
         }
@@ -675,14 +689,34 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         const txDeadline = currentTimestamp + BigInt(TX_DEADLINE_SECONDS);
 
         // 4. Simulate Transaction
-        await publicClient.simulateContract({
-            account: getAddress(userAddress), // Simulate as if the user is sending
-            address: getUniversalRouterAddress(networkMode),
-            abi: UniversalRouterAbi, // Ensure UniversalRouterAbi is correctly typed as Abi
-            functionName: 'execute',
-            args: [routePlanner.commands as Hex, routePlanner.inputs as Hex[], txDeadline],
-            value: txValue,
-        });
+        // Action order is now SETTLE → SWAP → TAKE, which ensures tokens are in Pool Manager
+        // before the swap executes, allowing hooks to access them during the swap.
+        //
+        // For USDS swaps: Pool Manager only has ~375 USDS on-chain (rest is rehypothecated).
+        // We use state overrides to give Pool Manager a virtual 10k USDS balance during simulation
+        // so the eth_call doesn't fail. The actual on-chain swap will work because SETTLE first
+        // brings tokens into Pool Manager before the swap executes.
+        //
+        // USDS ExactOut: Skip simulation entirely. The rehypothecated liquidity hook has complex
+        // interactions with the Sky vault that can't be fully replicated via state overrides.
+        // The quote was already verified, and on-chain execution works with SETTLE first.
+        const isUsdsInput = needsUsdsStateOverride(INPUT_TOKEN.address);
+        const isUsdsExactOut = isUsdsInput && swapType === 'ExactOut';
+
+        if (!isUsdsExactOut) {
+            const stateOverride = isUsdsInput ? getUsdsQuoteStateOverridesViem() : undefined;
+
+            await publicClient.simulateContract({
+                account: getAddress(userAddress),
+                address: getUniversalRouterAddress(networkMode),
+                abi: UniversalRouterAbi,
+                functionName: 'execute',
+                args: [routePlanner.commands as Hex, routePlanner.inputs as Hex[], txDeadline],
+                value: txValue,
+                stateOverride,
+            });
+        }
+        // For USDS ExactOut: simulation skipped, quote already verified by quoter
 
         // Derive touched pools (friendly poolId and subgraphId) for downstream cache invalidation
         const touchedPools: Array<{ poolId: string; subgraphId?: string }> = [];
