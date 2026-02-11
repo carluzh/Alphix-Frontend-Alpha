@@ -21,8 +21,9 @@ function getGraphQLEndpoint(): string {
     return `${window.location.origin}/api/graphql`
   }
 
-  // Server-side: Require environment variable
+  // Server-side: Use NEXT_PUBLIC_APP_URL or fall back to VERCEL_URL for preview deployments
   const appUrl = process.env.NEXT_PUBLIC_APP_URL
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)
   if (!appUrl) {
     throw new Error(
       'NEXT_PUBLIC_APP_URL environment variable is required for server-side GraphQL operations. ' +
