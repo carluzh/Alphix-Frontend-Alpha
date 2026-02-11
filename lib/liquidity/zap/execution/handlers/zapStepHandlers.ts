@@ -5,14 +5,17 @@
  * These integrate with the existing step executor registry.
  */
 
-import type { Hex, Address } from 'viem';
-import { formatUnits } from 'viem';
+import type { Hex, Address, PublicClient } from 'viem';
+import { formatUnits, createPublicClient, http, encodeFunctionData } from 'viem';
+import { base } from 'viem/chains';
 import type {
   ZapSwapApprovalStep,
   ZapPSMSwapStep,
   ZapPoolSwapStep,
-  ZapTransactionStepType,
 } from '../../types';
+import type {
+  ZapDynamicDepositStep,
+} from '../../../types';
 import type {
   TransactionFunctions,
   StepExecutionContext,
@@ -20,6 +23,8 @@ import type {
 } from '../../../transaction/executor/handlers/registry';
 import { getStoredUserSettings } from '@/hooks/useUserSettings';
 import { USDS_USDC_POOL_CONFIG } from '../../constants';
+import { UNIFIED_YIELD_HOOK_ABI } from '../../../unified-yield/abi/unifiedYieldHookABI';
+import { reportZapDust, calculateDustFromDelta } from '../../utils/reportZapDust';
 
 // Helper to get token decimals from config
 const getTokenDecimals = (token: 'USDS' | 'USDC'): number =>
@@ -309,6 +314,238 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
 };
 
 // =============================================================================
+// DYNAMIC DEPOSIT HANDLER
+// =============================================================================
+
+/**
+ * ERC20 balanceOf ABI for querying token balances
+ */
+const ERC20_BALANCE_ABI = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
+
+/**
+ * Handle ZapDynamicDeposit step.
+ *
+ * This handler queries ACTUAL token balances after the swap completes,
+ * then calculates the correct shares to mint and builds the deposit tx.
+ *
+ * This fixes the "insufficient balance" error that occurs when the swap
+ * output differs slightly from the preview estimate.
+ *
+ * Strategy:
+ * - Query user's actual balance of both tokens
+ * - Use min(actual_balance, expected_amount) to avoid depositing pre-existing funds
+ * - Call previewAddFromAmount0/1 with actual amounts to get correct shares
+ * - Build and execute the deposit transaction
+ */
+export const handleZapDynamicDepositStep: TransactionStepHandler = async (
+  step,
+  context,
+  txFunctions
+): Promise<`0x${string}`> => {
+  const typedStep = step as unknown as ZapDynamicDepositStep;
+
+  console.log(`[ZapDynamicDeposit] Building deposit with actual balances...`);
+
+  // Create a public client for RPC calls
+  const publicClient = createPublicClient({
+    chain: base,
+    transport: http(),
+  });
+
+  // Query actual token balances
+  const [balance0, balance1] = await Promise.all([
+    publicClient.readContract({
+      address: typedStep.token0Address,
+      abi: ERC20_BALANCE_ABI,
+      functionName: 'balanceOf',
+      args: [context.address],
+    }) as Promise<bigint>,
+    publicClient.readContract({
+      address: typedStep.token1Address,
+      abi: ERC20_BALANCE_ABI,
+      functionName: 'balanceOf',
+      args: [context.address],
+    }) as Promise<bigint>,
+  ]);
+
+  console.log(`[ZapDynamicDeposit] Actual balances: token0=${balance0}, token1=${balance1}`);
+
+  // Determine which token was the input token
+  // and call the appropriate preview function
+  let shares: bigint;
+  let amount0: bigint;
+  let amount1: bigint;
+
+  if (typedStep.inputToken === 'USDS') {
+    // Input was USDS (token0) - use token0 balance for preview
+    // This gives us shares based on available USDS
+    const preview = await publicClient.readContract({
+      address: typedStep.hookAddress,
+      abi: UNIFIED_YIELD_HOOK_ABI,
+      functionName: 'previewAddFromAmount0',
+      args: [balance0],
+    }) as [bigint, bigint];
+
+    const [requiredAmount1, previewShares] = preview;
+
+    // Use the smaller of required vs actual for token1 (the swapped token)
+    // This handles the case where swap output was less than expected
+    amount0 = balance0;
+    amount1 = requiredAmount1 <= balance1 ? requiredAmount1 : balance1;
+    shares = previewShares;
+
+    // If we don't have enough token1, recalculate based on token1
+    if (requiredAmount1 > balance1) {
+      console.log(`[ZapDynamicDeposit] Token1 limited, recalculating from token1 balance`);
+      const preview1 = await publicClient.readContract({
+        address: typedStep.hookAddress,
+        abi: UNIFIED_YIELD_HOOK_ABI,
+        functionName: 'previewAddFromAmount1',
+        args: [balance1],
+      }) as [bigint, bigint];
+      const [requiredAmount0, shares1] = preview1;
+      amount0 = requiredAmount0 <= balance0 ? requiredAmount0 : balance0;
+      amount1 = balance1;
+      shares = shares1;
+    }
+  } else {
+    // Input was USDC (token1) - use token1 balance for preview
+    const preview = await publicClient.readContract({
+      address: typedStep.hookAddress,
+      abi: UNIFIED_YIELD_HOOK_ABI,
+      functionName: 'previewAddFromAmount1',
+      args: [balance1],
+    }) as [bigint, bigint];
+
+    const [requiredAmount0, previewShares] = preview;
+
+    // Use the smaller of required vs actual for token0 (the swapped token)
+    amount0 = requiredAmount0 <= balance0 ? requiredAmount0 : balance0;
+    amount1 = balance1;
+    shares = previewShares;
+
+    // If we don't have enough token0, recalculate based on token0
+    if (requiredAmount0 > balance0) {
+      console.log(`[ZapDynamicDeposit] Token0 limited, recalculating from token0 balance`);
+      const preview0 = await publicClient.readContract({
+        address: typedStep.hookAddress,
+        abi: UNIFIED_YIELD_HOOK_ABI,
+        functionName: 'previewAddFromAmount0',
+        args: [balance0],
+      }) as [bigint, bigint];
+      const [requiredAmount1, shares0] = preview0;
+      amount0 = balance0;
+      amount1 = requiredAmount1 <= balance1 ? requiredAmount1 : balance1;
+      shares = shares0;
+    }
+  }
+
+  console.log(`[ZapDynamicDeposit] Calculated: shares=${shares}, amount0=${amount0}, amount1=${amount1}`);
+
+  // Apply shares haircut (0.0001%) to account for yield accrual
+  const sharesReduction = shares / 1000000n;
+  const adjustedShares = shares - (sharesReduction > 0n ? sharesReduction : 1n);
+
+  // Build deposit calldata
+  const depositCalldata = encodeFunctionData({
+    abi: UNIFIED_YIELD_HOOK_ABI,
+    functionName: 'addReHypothecatedLiquidity',
+    args: [adjustedShares, 0n, 0], // Skip slippage check (0n sqrtPrice, 0 maxSlippage)
+  });
+
+  console.log(`[ZapDynamicDeposit] Built deposit with ${adjustedShares} shares`);
+
+  // Signal step is starting
+  context.setCurrentStep({ step, accepted: false });
+
+  // Send deposit transaction
+  const hash = await txFunctions.sendTransaction({
+    to: typedStep.hookAddress,
+    data: depositCalldata,
+    value: 0n,
+  });
+
+  console.log(`[ZapDynamicDeposit] Transaction submitted: ${hash}`);
+
+  // Signal transaction was accepted
+  context.setCurrentStep({ step, accepted: true });
+
+  // Wait for confirmation
+  const receipt = await txFunctions.waitForReceipt({ hash });
+
+  if (receipt.status !== 'success') {
+    throw new Error(`Dynamic deposit failed: ${hash}`);
+  }
+
+  console.log(`[ZapDynamicDeposit] Confirmed: ${hash}`);
+
+  // =========================================================================
+  // DUST CALCULATION AND REPORTING
+  // =========================================================================
+  // If initial balances were provided, calculate and report dust
+  if (typedStep.initialBalance0 !== undefined && typedStep.initialBalance1 !== undefined) {
+    try {
+      // Query final balances after deposit
+      const [finalBalance0, finalBalance1] = await Promise.all([
+        publicClient.readContract({
+          address: typedStep.token0Address,
+          abi: ERC20_BALANCE_ABI,
+          functionName: 'balanceOf',
+          args: [context.address],
+        }) as Promise<bigint>,
+        publicClient.readContract({
+          address: typedStep.token1Address,
+          abi: ERC20_BALANCE_ABI,
+          functionName: 'balanceOf',
+          args: [context.address],
+        }) as Promise<bigint>,
+      ]);
+
+      // Calculate dust as delta from initial balances
+      const { dust0, dust1 } = calculateDustFromDelta(
+        typedStep.initialBalance0,
+        typedStep.initialBalance1,
+        finalBalance0,
+        finalBalance1
+      );
+
+      console.log(`[ZapDynamicDeposit] Dust calculation:`, {
+        initialBalance0: typedStep.initialBalance0.toString(),
+        initialBalance1: typedStep.initialBalance1.toString(),
+        finalBalance0: finalBalance0.toString(),
+        finalBalance1: finalBalance1.toString(),
+        dust0: dust0.toString(),
+        dust1: dust1.toString(),
+      });
+
+      // Report dust if it exceeds threshold
+      reportZapDust({
+        token0Dust: dust0,
+        token1Dust: dust1,
+        token0Symbol: typedStep.token0Symbol,
+        token1Symbol: typedStep.token1Symbol,
+        token0Decimals: typedStep.token0Decimals,
+        token1Decimals: typedStep.token1Decimals,
+        inputAmountUSD: typedStep.inputAmountUSD ?? 0,
+      });
+    } catch (dustError) {
+      // Don't fail the transaction for dust calculation errors
+      console.warn(`[ZapDynamicDeposit] Failed to calculate dust:`, dustError);
+    }
+  }
+
+  return hash;
+};
+
+// =============================================================================
 // REGISTRY ENTRIES
 // =============================================================================
 
@@ -328,6 +565,9 @@ export const ZAP_STEP_HANDLERS = {
   ZapPoolSwap: {
     handler: handleZapPoolSwapStep,
   },
+  ZapDynamicDeposit: {
+    handler: handleZapDynamicDepositStep,
+  },
 } as const;
 
 // =============================================================================
@@ -341,6 +581,7 @@ export function isZapStep(stepType: string): boolean {
   return (
     stepType === 'ZapSwapApproval' ||
     stepType === 'ZapPSMSwap' ||
-    stepType === 'ZapPoolSwap'
+    stepType === 'ZapPoolSwap' ||
+    stepType === 'ZapDynamicDeposit'
   );
 }

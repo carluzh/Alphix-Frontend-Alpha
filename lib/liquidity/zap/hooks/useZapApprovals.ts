@@ -13,7 +13,7 @@ import { useQuery } from '@tanstack/react-query';
 import { type Address, erc20Abi } from 'viem';
 import { usePublicClient } from 'wagmi';
 
-import { PSM_CONFIG, USDS_USDC_POOL_CONFIG, PERMIT2_ADDRESS } from '../constants';
+import { PSM_CONFIG, USDS_USDC_POOL_CONFIG, PERMIT2_ADDRESS, USDC_TO_USDS_MULTIPLIER, USDS_TO_USDC_DIVISOR } from '../constants';
 import type { ZapToken, ZapSwapRoute, ZapApprovalStatus, RouteDetails } from '../types';
 
 // =============================================================================
@@ -140,11 +140,19 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
       // The remaining input + swap output will be deposited
       const remainingInput = inputAmount ? inputAmount - swapAmount : 0n;
 
-      // Rough estimate: assume 1:1 for stablecoins
+      // Calculate estimated output amount with correct decimals
+      const estimatedSwapOutput =
+        inputToken === 'USDC'
+          ? swapAmount * USDC_TO_USDS_MULTIPLIER
+          : swapAmount / USDS_TO_USDC_DIVISOR;
+
+      // For deposit amounts:
+      // - token0 (USDS, 18 dec): If input is USDS, use remainingInput. If input is USDC, use swap output (converted to 18 dec).
+      // - token1 (USDC, 6 dec): If input is USDC, use remainingInput. If input is USDS, use swap output (converted to 6 dec).
       const estimatedToken0ForDeposit =
-        inputToken === 'USDS' ? remainingInput : swapAmount; // USDS from remaining or swap output
+        inputToken === 'USDS' ? remainingInput : estimatedSwapOutput;
       const estimatedToken1ForDeposit =
-        inputToken === 'USDC' ? remainingInput : swapAmount; // USDC from remaining or swap output
+        inputToken === 'USDC' ? remainingInput : estimatedSwapOutput;
 
       // Check if approvals are sufficient
       const inputTokenApprovedForSwap = inputAllowanceForSwap >= requiredSwapApproval;

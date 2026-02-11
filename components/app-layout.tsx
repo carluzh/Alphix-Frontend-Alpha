@@ -40,7 +40,8 @@ export function AppLayout({ children }: AppLayoutProps) {
   const [edgeOffsetPx, setEdgeOffsetPx] = useState<number>(12);
 
   const handleBetaClick = () => {
-    setShowUpdatesNotification(v => !v);
+    // Changelog disabled for launch - re-enable by uncommenting line below
+    // setShowUpdatesNotification(v => !v);
   };
 
   useEffect(() => {

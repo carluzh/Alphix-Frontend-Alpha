@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatedEmblems } from "@/app/(app)/overview/components/ConnectWalletBanner/AnimatedStyledBanner/AnimatedEmblems";
+import { appKit } from "@/components/AppKitProvider";
 
 /**
  * PointsConnectWalletBanner - Shows connect wallet CTA on Points page
@@ -9,6 +10,10 @@ import { AnimatedEmblems } from "@/app/(app)/overview/components/ConnectWalletBa
  * Uses h-full to stretch and match the height of the adjacent stats panel
  */
 export function PointsConnectWalletBanner() {
+  const handleConnect = () => {
+    appKit?.open();
+  };
+
   return (
     <div className="relative overflow-hidden bg-muted/30 border border-sidebar-border/60 rounded-lg h-full min-h-[216px]">
       {/* Grid pattern overlay */}
@@ -24,11 +29,13 @@ export function PointsConnectWalletBanner() {
         <span className="text-sm font-medium text-foreground">
           Connect a wallet <span className="text-muted-foreground">to view your points</span>
         </span>
-        <div className="relative flex h-10 cursor-pointer items-center justify-center rounded-md bg-button-primary text-sidebar-primary border border-sidebar-primary px-8 font-semibold transition-all hover-button-primary overflow-hidden">
-          {/* @ts-expect-error custom element provided by wallet kit */}
-          <appkit-button className="absolute inset-0 z-10 block h-full w-full cursor-pointer p-0 opacity-0" />
-          <span className="relative z-0 pointer-events-none">Connect</span>
-        </div>
+        <button
+          type="button"
+          onClick={handleConnect}
+          className="flex h-10 cursor-pointer items-center justify-center rounded-md bg-button-primary text-sidebar-primary border border-sidebar-primary px-8 font-semibold transition-all hover-button-primary"
+        >
+          Connect
+        </button>
       </div>
     </div>
   );

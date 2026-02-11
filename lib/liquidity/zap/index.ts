@@ -89,7 +89,10 @@ export {
   calculateMaxInput,
   formatPriceImpact,
   getPriceImpactColor,
+  findOptimalSwapAmount,
   type PriceImpactAnalysis,
+  type OptimalSwapResult,
+  type FindOptimalSwapParams,
 } from './calculation';
 
 // =============================================================================
@@ -147,3 +150,13 @@ export {
   type UseZapApprovalsParams,
   type UseZapApprovalsReturn,
 } from './hooks';
+
+// =============================================================================
+// UTILITIES
+// =============================================================================
+
+export {
+  reportZapDust,
+  calculateDustFromDelta,
+  type DustReport,
+} from './utils';

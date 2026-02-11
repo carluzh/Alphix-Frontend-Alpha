@@ -24,6 +24,7 @@ import type {
   ZapSwapApprovalStep,
   ZapPSMSwapStep,
   ZapPoolSwapStep,
+  ZapDynamicDepositStep,
   LiquidityAction,
 } from '../../../types';
 import { TransactionStepType } from '../../../types';
@@ -40,6 +41,7 @@ import {
   handleZapSwapApprovalStep,
   handleZapPSMSwapStep,
   handleZapPoolSwapStep,
+  handleZapDynamicDepositStep,
 } from '../../../../liquidity/zap/execution/handlers';
 
 // =============================================================================
@@ -276,6 +278,9 @@ export const STEP_HANDLER_REGISTRY: Partial<Record<TransactionStepType, StepHand
   },
   [TransactionStepType.ZapPoolSwap]: {
     handler: handleZapPoolSwapStep,
+  },
+  [TransactionStepType.ZapDynamicDeposit]: {
+    handler: handleZapDynamicDepositStep,
   },
 };
 

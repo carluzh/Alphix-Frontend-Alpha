@@ -25,3 +25,9 @@ export {
   getPriceImpactColor,
   type PriceImpactAnalysis,
 } from './calculatePriceImpact';
+
+export {
+  findOptimalSwapAmount,
+  type OptimalSwapResult,
+  type FindOptimalSwapParams,
+} from './findOptimalSwapAmount';

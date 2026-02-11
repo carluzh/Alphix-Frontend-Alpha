@@ -2,8 +2,7 @@
  * useZapPreview Hook
  *
  * Calculates and returns a preview of a zap deposit operation.
- * This hook fetches pool state, calculates optimal swap amount,
- * selects the best route (PSM vs Pool), and estimates the result.
+ * Uses binary search with Hook preview functions to find optimal swap amount.
  */
 
 'use client';
@@ -12,24 +11,20 @@ import { useQuery } from '@tanstack/react-query';
 import { type Address, formatUnits, parseUnits } from 'viem';
 import { usePublicClient } from 'wagmi';
 
-import {
-  calculateOptimalSwapAmount,
-  calculatePoolRatio,
-  calculatePoolRatioFromToken1,
-  calculatePostSwapAmounts,
-  estimateLeftover,
-  calculateLeftoverPercent,
-} from '../calculation';
-import { selectSwapRoute, getPSMQuote } from '../routing';
+import { findOptimalSwapAmount } from '../calculation';
 import { USDS_USDC_POOL_CONFIG, MAX_PREVIEW_AGE_MS } from '../constants';
 import type { ZapToken, ZapPreviewResult, UseZapPreviewParams } from '../types';
 import { ZapError, ZapErrorCode } from '../types';
 
-// Import Unified Yield preview functions
-import {
-  previewAddFromAmount0,
-  previewAddFromAmount1,
-} from '../../unified-yield/buildUnifiedYieldDepositTx';
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+
+/** USDS decimals */
+const USDS_DECIMALS = 18;
+
+/** USDC decimals */
+const USDC_DECIMALS = 6;
 
 // =============================================================================
 // HOOK
@@ -37,6 +32,9 @@ import {
 
 /**
  * Hook to get a preview of a zap deposit.
+ *
+ * Uses binary search to find the optimal swap amount that minimizes leftover (dust).
+ * Target: < 0.01% of input value as dust.
  *
  * @param params - Preview parameters
  * @returns Query result with preview data
@@ -58,127 +56,54 @@ export function useZapPreview(params: UseZapPreviewParams) {
       }
 
       // Parse input amount to wei
-      const inputDecimals = inputToken === 'USDS' ? 18 : 6;
+      const inputDecimals = inputToken === 'USDS' ? USDS_DECIMALS : USDC_DECIMALS;
       const inputAmountWei = parseUnits(inputAmount, inputDecimals);
 
-      // Step 1: Get pool ratio from Hook preview
-      // We use a small amount to get the ratio without affecting the result
-      const testAmount = inputToken === 'USDS' ? 10n ** 18n : 10n ** 6n; // 1 unit
-
-      let poolRatio: number;
-      if (inputToken === 'USDS') {
-        const preview = await previewAddFromAmount0(hookAddress, testAmount, publicClient);
-        if (!preview) {
-          throw new ZapError(ZapErrorCode.POOL_LIQUIDITY_LOW, 'Failed to get pool ratio');
-        }
-        poolRatio = calculatePoolRatio(testAmount, preview.otherAmount, 18, 6);
-      } else {
-        const preview = await previewAddFromAmount1(hookAddress, testAmount, publicClient);
-        if (!preview) {
-          throw new ZapError(ZapErrorCode.POOL_LIQUIDITY_LOW, 'Failed to get pool ratio');
-        }
-        poolRatio = calculatePoolRatioFromToken1(testAmount, preview.otherAmount, 18, 6);
-      }
-
-      // Step 2: Calculate optimal swap amount
-      const inputPosition = inputToken === 'USDS' ? 'token0' : 'token1';
-      const swapAmount = calculateOptimalSwapAmount(
-        inputPosition,
-        inputAmountWei,
-        poolRatio,
-        1.0 // Assume PSM rate initially
-      );
-
-      // Step 3: Select route (PSM vs Pool)
-      const routeResult = await selectSwapRoute({
+      // Use binary search to find optimal swap amount
+      const optimalResult = await findOptimalSwapAmount({
         inputToken,
-        swapAmount,
+        inputAmount: inputAmountWei,
+        hookAddress,
         publicClient,
       });
 
-      // Step 4: Calculate post-swap amounts
-      const postSwapAmounts = calculatePostSwapAmounts(
-        inputToken,
-        inputAmountWei,
-        swapAmount,
-        routeResult.outputAmount
-      );
-
-      // Step 5: Get deposit preview from Hook
-      let depositPreview: { otherAmount: bigint; shares: bigint } | null;
-      let estimatedToken0Used: bigint;
-      let estimatedToken1Used: bigint;
-
-      // We have both tokens now, preview from the larger side
-      if (inputToken === 'USDS') {
-        depositPreview = await previewAddFromAmount0(
-          hookAddress,
-          postSwapAmounts.token0Amount,
-          publicClient
-        );
-        if (!depositPreview) {
-          throw new ZapError(ZapErrorCode.POOL_LIQUIDITY_LOW, 'Failed to preview deposit');
-        }
-        estimatedToken0Used = postSwapAmounts.token0Amount;
-        // Use the minimum of what we have and what's required
-        estimatedToken1Used =
-          depositPreview.otherAmount < postSwapAmounts.token1Amount
-            ? depositPreview.otherAmount
-            : postSwapAmounts.token1Amount;
-      } else {
-        depositPreview = await previewAddFromAmount1(
-          hookAddress,
-          postSwapAmounts.token1Amount,
-          publicClient
-        );
-        if (!depositPreview) {
-          throw new ZapError(ZapErrorCode.POOL_LIQUIDITY_LOW, 'Failed to preview deposit');
-        }
-        estimatedToken1Used = postSwapAmounts.token1Amount;
-        estimatedToken0Used =
-          depositPreview.otherAmount < postSwapAmounts.token0Amount
-            ? depositPreview.otherAmount
-            : postSwapAmounts.token0Amount;
-      }
-
-      // Step 6: Estimate leftover
-      const leftover = estimateLeftover(
-        postSwapAmounts.token0Amount,
-        postSwapAmounts.token1Amount,
-        estimatedToken0Used,
-        estimatedToken1Used
-      );
-
-      const leftoverPercent = calculateLeftoverPercent(
-        leftover.leftover0,
-        leftover.leftover1,
-        inputAmountWei,
-        inputToken
-      );
-
-      // Build result
+      // Calculate leftover amounts
+      // After swap: we have remainingInput of inputToken and swapOutput of outputToken
+      // For deposit: we need requiredOther of outputToken
+      // Leftover = swapOutput - requiredOther (in output token)
       const outputToken: ZapToken = inputToken === 'USDS' ? 'USDC' : 'USDS';
-      const outputDecimals = outputToken === 'USDS' ? 18 : 6;
+      const outputDecimals = outputToken === 'USDS' ? USDS_DECIMALS : USDC_DECIMALS;
 
+      // Dust is the difference between swap output and what Hook needs
+      const dustInOutputToken =
+        optimalResult.swapOutput > optimalResult.requiredOther
+          ? optimalResult.swapOutput - optimalResult.requiredOther
+          : 0n;
+
+      // Map dust to token0/token1 based on output token
+      const leftover0 = outputToken === 'USDS' ? dustInOutputToken : 0n;
+      const leftover1 = outputToken === 'USDC' ? dustInOutputToken : 0n;
+
+      // Build preview result
       const result: ZapPreviewResult = {
-        swapAmount,
-        swapOutputAmount: routeResult.outputAmount,
-        remainingInputAmount: inputAmountWei - swapAmount,
-        route: routeResult.route,
-        expectedShares: depositPreview.shares,
+        swapAmount: optimalResult.swapAmount,
+        swapOutputAmount: optimalResult.swapOutput,
+        remainingInputAmount: optimalResult.remainingInput,
+        route: optimalResult.route,
+        expectedShares: optimalResult.expectedShares,
         estimatedLeftover: {
-          token0: leftover.leftover0,
-          token1: leftover.leftover1,
+          token0: leftover0,
+          token1: leftover1,
         },
-        leftoverPercent,
+        leftoverPercent: optimalResult.estimatedDustPercent,
         formatted: {
           inputAmount,
-          swapAmount: formatUnits(swapAmount, inputDecimals),
-          swapOutputAmount: formatUnits(routeResult.outputAmount, outputDecimals),
-          remainingInputAmount: formatUnits(inputAmountWei - swapAmount, inputDecimals),
-          expectedShares: formatUnits(depositPreview.shares, 18),
-          leftoverToken0: formatUnits(leftover.leftover0, 18),
-          leftoverToken1: formatUnits(leftover.leftover1, 6),
+          swapAmount: formatUnits(optimalResult.swapAmount, inputDecimals),
+          swapOutputAmount: formatUnits(optimalResult.swapOutput, outputDecimals),
+          remainingInputAmount: formatUnits(optimalResult.remainingInput, inputDecimals),
+          expectedShares: formatUnits(optimalResult.expectedShares, 18),
+          leftoverToken0: formatUnits(leftover0, USDS_DECIMALS),
+          leftoverToken1: formatUnits(leftover1, USDC_DECIMALS),
         },
         inputTokenInfo: {
           symbol: inputToken,

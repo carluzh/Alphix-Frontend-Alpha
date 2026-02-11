@@ -35,6 +35,8 @@ export enum TransactionStepType {
   ZapSwapApproval = 'ZapSwapApproval',
   ZapPSMSwap = 'ZapPSMSwap',
   ZapPoolSwap = 'ZapPoolSwap',
+  // Zap dynamic deposit - queries actual balances at execution time
+  ZapDynamicDeposit = 'ZapDynamicDeposit',
 }
 
 // =============================================================================
@@ -376,6 +378,42 @@ export interface ZapPoolSwapStep extends OnChainTransactionFields {
   deadline: bigint;
 }
 
+/**
+ * Zap Dynamic Deposit Step - Rebuilds deposit tx at execution time
+ *
+ * Unlike the pre-built UnifiedYieldDepositStep, this step queries
+ * actual token balances after the swap and calculates the correct
+ * shares to mint. This prevents "insufficient balance" errors when
+ * swap output differs slightly from the preview estimate.
+ */
+export interface ZapDynamicDepositStep {
+  type: TransactionStepType.ZapDynamicDeposit;
+  /** Hook contract address */
+  hookAddress: Address;
+  /** Pool identifier */
+  poolId: string;
+  /** Token0 address */
+  token0Address: Address;
+  /** Token1 address */
+  token1Address: Address;
+  /** Token symbols for display */
+  token0Symbol: string;
+  token1Symbol: string;
+  /** Token decimals for balance queries */
+  token0Decimals: number;
+  token1Decimals: number;
+  /** Fallback shares if balance query fails (from preview) */
+  fallbackSharesEstimate: bigint;
+  /** The input token used for zap (to determine which balance to use for preview) */
+  inputToken: ZapTokenSymbol;
+  /** Initial token0 balance before Zap started (for dust calculation) */
+  initialBalance0?: bigint;
+  /** Initial token1 balance before Zap started (for dust calculation) */
+  initialBalance1?: bigint;
+  /** Total input amount in USD (for dust percentage calculation) */
+  inputAmountUSD?: number;
+}
+
 // =============================================================================
 // COMPOSITE STEP TYPES - Matches Uniswap's union types
 // =============================================================================
@@ -411,7 +449,8 @@ export type ZapSwapSteps =
 export type ZapDepositSteps =
   | ZapSwapSteps
   | UnifiedYieldApprovalStep
-  | UnifiedYieldDepositStep;
+  | UnifiedYieldDepositStep
+  | ZapDynamicDepositStep;
 
 export type TransactionStep =
   | IncreaseLiquiditySteps

@@ -71,6 +71,7 @@ export {
   type ZapSwapApprovalStep,
   type ZapPSMSwapStep,
   type ZapPoolSwapStep,
+  type ZapDynamicDepositStep,
   // Composite step types
   type IncreaseLiquiditySteps,
   type DecreaseLiquiditySteps,

@@ -757,7 +757,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         return trade.tradeState !== "ready";
       }
     } else {
-      return false; // <appkit-button> handles its own state
+      return false; // Connect wallet button is always enabled
     }
   };
 

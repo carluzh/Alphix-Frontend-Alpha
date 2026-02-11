@@ -15,7 +15,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { useAccount } from 'wagmi';
+import { useAccount, usePublicClient } from 'wagmi';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { IconXmark } from 'nucleo-micro-bold-essential';
 import { Button } from '@/components/ui/button';
@@ -177,6 +177,17 @@ function mapExecutorStepsToUI(
         };
       }
 
+      case 'ZapDynamicDeposit': {
+        // Dynamic deposit step - shows as a deposit/create position step
+        return {
+          type: UIStepType.CreatePositionTransaction,
+          token0Symbol: pool.currency0.symbol,
+          token1Symbol: pool.currency1.symbol,
+          token0Icon,
+          token1Icon,
+        };
+      }
+
       default:
         return {
           type: UIStepType.CreatePositionTransaction,
@@ -303,9 +314,21 @@ function ErrorCallout({
   );
 }
 
+// ERC20 balanceOf ABI for querying token balances
+const ERC20_BALANCE_ABI = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
+
 export function ReviewExecuteModal() {
   const router = useRouter();
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const { chainId, networkMode } = useNetwork();
   const { state, closeReviewModal, reset, poolStateData } = useAddLiquidityContext();
 
@@ -815,6 +838,41 @@ export function ReviewExecuteModal() {
         // may fail if yield was distributed. Request slightly fewer shares (0.1% less).
         const sharesWithHaircut = (preview.expectedShares * 999n) / 1000n;
 
+        // Query initial balances for dust tracking
+        // These are recorded before any swaps so we can calculate dust delta after deposit
+        let initialBalance0: bigint | undefined;
+        let initialBalance1: bigint | undefined;
+        if (publicClient) {
+          try {
+            const [balance0, balance1] = await Promise.all([
+              publicClient.readContract({
+                address: pool.currency0.address as Address,
+                abi: ERC20_BALANCE_ABI,
+                functionName: 'balanceOf',
+                args: [address],
+              }) as Promise<bigint>,
+              publicClient.readContract({
+                address: pool.currency1.address as Address,
+                abi: ERC20_BALANCE_ABI,
+                functionName: 'balanceOf',
+                args: [address],
+              }) as Promise<bigint>,
+            ]);
+            initialBalance0 = balance0;
+            initialBalance1 = balance1;
+            console.log('[ReviewExecuteModal] Initial balances for dust tracking:', {
+              token0: balance0.toString(),
+              token1: balance1.toString(),
+            });
+          } catch (balanceError) {
+            console.warn('[ReviewExecuteModal] Failed to query initial balances:', balanceError);
+          }
+        }
+
+        // Calculate input amount in USD (stablecoins ≈ $1)
+        const inputDecimals = inputToken === 'USDS' ? 18 : 6;
+        const inputAmountUSD = Number(preview.formatted.inputAmount);
+
         const zapStepsResult = generateZapSteps({
           calculation: preview,
           approvals: zapApprovalsQuery.approvals,
@@ -831,6 +889,9 @@ export function ReviewExecuteModal() {
           token0Amount,
           token1Amount,
           approvalMode: userSettings.approvalMode,
+          initialBalance0,
+          initialBalance1,
+          inputAmountUSD,
         });
 
         // Cast zap steps to TransactionStep[] for UI display

@@ -177,13 +177,13 @@ export const USDS_TO_USDC_DIVISOR = 10n ** 12n;
 /**
  * Check if a pool supports the Zap feature.
  *
- * Currently, only the USDS/USDC pool supports Zap because:
- * - PSM (Peg Stability Module) only supports USDS <-> USDC swaps
- * - The swap calculation logic is specific to stablecoin pairs
+ * TEMPORARILY DISABLED for launch - needs more testing.
+ * TODO: Re-enable after testing by returning: poolId === USDS_USDC_POOL_CONFIG.poolId
  *
  * @param poolId - The pool ID to check
- * @returns True if the pool supports Zap
+ * @returns True if the pool supports Zap (currently always false)
  */
-export function isZapEligiblePool(poolId: string | null): boolean {
-  return poolId === USDS_USDC_POOL_CONFIG.poolId;
+export function isZapEligiblePool(_poolId: string | null): boolean {
+  // Zap feature disabled for launch - only Dual Token mode available
+  return false;
 }

@@ -17,13 +17,12 @@ import { calculateMinOutput } from '../calculation';
 import type {
   TransactionStep,
   UnifiedYieldApprovalStep,
-  UnifiedYieldDepositStep,
   ZapSwapApprovalStep,
   ZapPSMSwapStep,
   ZapPoolSwapStep,
+  ZapDynamicDepositStep,
 } from '../../types';
 import { TransactionStepType } from '../../types';
-import { buildUnifiedYieldDepositTx } from '../../unified-yield/buildUnifiedYieldDepositTx';
 
 // =============================================================================
 // TYPES
@@ -57,6 +56,12 @@ export interface GenerateZapStepsParams {
   token1Amount: bigint;
   /** Approval mode: 'exact' for exact amounts, 'infinite' for max approval */
   approvalMode?: 'exact' | 'infinite';
+  /** Initial token0 balance before Zap (for dust calculation) */
+  initialBalance0?: bigint;
+  /** Initial token1 balance before Zap (for dust calculation) */
+  initialBalance1?: bigint;
+  /** Total input amount in USD (for dust percentage calculation) */
+  inputAmountUSD?: number;
 }
 
 export interface GenerateZapStepsResult {
@@ -114,6 +119,9 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
     token0Amount,
     token1Amount,
     approvalMode = 'exact', // Default to exact for safety
+    initialBalance0,
+    initialBalance1,
+    inputAmountUSD,
   } = params;
 
   const steps: TransactionStep[] = [];
@@ -202,19 +210,23 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
   }
 
   // =========================================================================
-  // STEP 4: Deposit to Hook
+  // STEP 4: Deposit to Hook (Dynamic - rebuilds at execution time)
   // =========================================================================
 
-  const depositStep = createHookDepositStep(
+  // Use dynamic deposit step that queries actual balances at execution time
+  // This fixes the "insufficient balance" error when swap output differs from preview
+  const depositStep = createZapDynamicDepositStep(
     hookAddress,
     poolId,
-    sharesToMint,
     token0Symbol,
     token1Symbol,
     token0Address,
     token1Address,
-    token0Amount,
-    token1Amount
+    sharesToMint,
+    inputToken,
+    initialBalance0,
+    initialBalance1,
+    inputAmountUSD
   );
   steps.push(depositStep);
   depositStepCount++;
@@ -385,48 +397,42 @@ function createHookApprovalStep(
 }
 
 /**
- * Create Hook deposit step with proper calldata.
+ * Create Zap Dynamic Deposit step.
+ *
+ * Unlike the old pre-built deposit step, this carries metadata that allows
+ * the handler to query actual token balances at execution time and rebuild
+ * the deposit transaction with correct shares.
+ *
+ * This fixes the "insufficient balance" error when swap output differs from preview.
  */
-function createHookDepositStep(
+function createZapDynamicDepositStep(
   hookAddress: Address,
   poolId: string,
-  sharesToMint: bigint,
   token0Symbol: string,
   token1Symbol: string,
   token0Address: Address,
   token1Address: Address,
-  token0Amount: bigint,
-  token1Amount: bigint
-): UnifiedYieldDepositStep {
-  // Build proper deposit calldata using the unified yield builder
-  // Note: poolId, userAddress, chainId are required by the type but not used by the function
-  const depositTx = buildUnifiedYieldDepositTx({
-    poolId,
+  fallbackSharesEstimate: bigint,
+  inputToken: 'USDS' | 'USDC',
+  initialBalance0?: bigint,
+  initialBalance1?: bigint,
+  inputAmountUSD?: number
+): ZapDynamicDepositStep {
+  return {
+    type: TransactionStepType.ZapDynamicDeposit,
     hookAddress,
+    poolId,
     token0Address,
     token1Address,
-    amount0Wei: token0Amount,
-    amount1Wei: token1Amount,
-    sharesToMint,
-    userAddress: '0x0000000000000000000000000000000000000000' as Address, // Not used for calldata
-    chainId: 0, // Not used for calldata
-    expectedSqrtPriceX96: 0n, // Skip slippage check (already applied in swap)
-    maxPriceSlippage: 0,
-  });
-
-  return {
-    type: TransactionStepType.UnifiedYieldDepositTransaction,
-    hookAddress,
-    poolId,
-    sharesToMint,
     token0Symbol,
     token1Symbol,
-    txRequest: {
-      to: depositTx.to,
-      data: depositTx.calldata,
-      value: depositTx.value,
-      gasLimit: depositTx.gasLimit,
-    },
+    token0Decimals: USDS_USDC_POOL_CONFIG.token0.decimals,
+    token1Decimals: USDS_USDC_POOL_CONFIG.token1.decimals,
+    fallbackSharesEstimate,
+    inputToken,
+    initialBalance0,
+    initialBalance1,
+    inputAmountUSD,
   };
 }
 
