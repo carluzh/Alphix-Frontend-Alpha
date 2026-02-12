@@ -44,10 +44,10 @@ const POOL_MANAGER_ADDRESS = '0x498581ff718922c3f8e6a244956af099b2652b2b';
 const USDS_BALANCE_MAPPING_SLOT = 2n;
 
 /**
- * USDS balance override for simulation (10,000 USDS)
- * Conservative limit - allows quotes up to 10k while minimizing risk from state overrides
+ * USDS balance override for simulation (1,000,000 USDS)
+ * Allows quotes up to 1M USDS for arbitrage and large swap simulations
  */
-const OVERRIDE_BALANCE = 10_000n * 10n ** 18n; // 10,000 USDS (in wei, 18 decimals)
+const OVERRIDE_BALANCE = 1_000_000n * 10n ** 18n; // 1,000,000 USDS (in wei, 18 decimals)
 
 // =============================================================================
 // STORAGE SLOT CALCULATION
