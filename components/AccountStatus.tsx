@@ -104,7 +104,7 @@ export function AccountStatus() {
                 {displayedName ? (
                   <>
                     <span className="truncate font-medium">{displayedName}</span>
-                    <span className="truncate text-xs text-muted-foreground">Beta Tester</span>
+                    <span className="truncate text-xs text-muted-foreground">Early User</span>
                   </>
                 ) : (
                   <>
