@@ -17,15 +17,10 @@ if (!projectId) {
   console.error('Error: NEXT_PUBLIC_PROJECT_ID environment variable is not set.')
 }
 
-// Get current network mode - for wagmi config, use env var for default
-// This is different from API routes which use cookies
-// On server: use env var default (mainnet for production)
-// On client: check localStorage, then env var
-const networkMode = typeof window === 'undefined'
-  ? (process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet')
-  : getStoredNetworkMode();
-const isMainnet = networkMode === 'mainnet';
-const chainId = isMainnet ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
+// OVERRIDE: Always use mainnet (testnet removed)
+const networkMode = 'mainnet' as const;
+const isMainnet = true;
+const chainId = MAINNET_CHAIN_ID;
 
 export const activeChain = isMainnet ? baseMainnet : baseSepolia;
 

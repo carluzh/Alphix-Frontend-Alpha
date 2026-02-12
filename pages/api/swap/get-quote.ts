@@ -537,9 +537,8 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
   try {
     const { fromTokenSymbol, toTokenSymbol, amountDecimalsStr, swapType = 'ExactIn', network: networkParam } = req.body;
 
-    const networkMode: NetworkMode = (networkParam === 'mainnet' || networkParam === 'testnet')
-      ? networkParam
-      : getNetworkModeFromRequest(req.headers.cookie);
+    // OVERRIDE: Always use mainnet (testnet removed)
+    const networkMode: NetworkMode = 'mainnet';
 
     // Validate required fields
     if (!fromTokenSymbol || !toTokenSymbol || !amountDecimalsStr) {

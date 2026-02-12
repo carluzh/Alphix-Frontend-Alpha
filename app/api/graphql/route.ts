@@ -29,10 +29,8 @@ const { handleRequest } = createYoga({
   fetchAPI: { Response },
   // Context function to pass request info to resolvers
   context: async ({ request }) => {
-    // Get network mode from cookies (matches NETWORK_COOKIE_NAME from network-mode.ts)
-    const cookieStore = await cookies()
-    const networkModeCookie = cookieStore.get('alphix-network-mode')
-    const networkMode = networkModeCookie?.value === 'testnet' ? 'testnet' : 'mainnet'
+    // OVERRIDE: Always use mainnet (testnet removed)
+    const networkMode = 'mainnet' as 'mainnet' | 'testnet'
 
     // Resolve base URL with Vercel fallback for preview deployments
     // Priority: NEXT_PUBLIC_APP_URL > VERCEL_URL (auto-set by Vercel)

@@ -33,18 +33,10 @@ interface PoolsConfigFile {
 }
 
 /**
- * Get the default network mode for module-level initialization.
- * On server: use env var default (mainnet for production)
- * On client: check localStorage, then env var
+ * OVERRIDE: Always use mainnet (testnet removed)
  */
 function getDefaultNetworkMode(): NetworkMode {
-  if (typeof window === 'undefined') {
-    // Server-side: use env var default
-    const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
-    return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
-  }
-  // Client-side: use full logic with localStorage
-  return getStoredNetworkMode();
+  return 'mainnet';
 }
 
 /**
@@ -62,16 +54,10 @@ function getPoolsConfig(networkModeOverride?: NetworkMode): PoolsConfigFile {
 }
 
 /**
- * Get network mode from request cookies (for API routes).
- * Pass the cookie header value from the request.
- * Falls back to env var default for new users without cookies.
+ * OVERRIDE: Always use mainnet (testnet removed)
  */
 export function getNetworkModeFromRequest(cookieHeader: string | undefined | null): NetworkMode {
-  const fromCookies = getNetworkModeFromCookies(cookieHeader);
-  if (fromCookies) return fromCookies;
-  // Fall back to env var default for new users (server-side)
-  const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
-  return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
+  return 'mainnet';
 }
 
 // Types based on pools.json structure

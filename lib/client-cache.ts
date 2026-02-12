@@ -10,10 +10,9 @@ import { SafeStorage } from './safe-storage';
 import { RetryUtility } from './retry-utility';
 import { getStoredNetworkMode } from './network-mode';
 
-// Get network prefix for cache keys to prevent data contamination between networks
+// OVERRIDE: Always use mainnet prefix (testnet removed)
 function getNetworkPrefix(): string {
-  const networkMode = getStoredNetworkMode();
-  return networkMode === 'mainnet' ? 'mainnet' : 'testnet';
+  return 'mainnet';
 }
 
 // Request deduplication: track ongoing requests to prevent duplicates

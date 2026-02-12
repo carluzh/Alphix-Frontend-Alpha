@@ -45,10 +45,8 @@ export default async function handler(
     return res.status(400).json({ message: 'Valid poolId query parameter is required.' });
   }
 
-  // Get network mode from query param (for server-to-server calls) or cookies (for browser calls)
-  const networkMode: NetworkMode = (networkQuery === 'mainnet' || networkQuery === 'testnet')
-    ? networkQuery
-    : getNetworkModeFromRequest(req.headers.cookie);
+  // OVERRIDE: Always use mainnet (testnet removed)
+  const networkMode: NetworkMode = 'mainnet';
 
   const cacheKey = `dynamic-fees:${poolId.toLowerCase()}:${networkMode}`;
 

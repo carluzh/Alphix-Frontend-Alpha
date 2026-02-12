@@ -15,14 +15,10 @@ const MAINNET_RPC_URLS = [
   "https://base.drpc.org",
 ];
 
-// Determine network mode for the default public client
-// Server-side: use env var default
-// Client-side: check localStorage
-const defaultNetworkMode = typeof window === 'undefined'
-  ? (process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet')
-  : getStoredNetworkMode();
-const isMainnet = defaultNetworkMode === 'mainnet';
-const activeChain = isMainnet ? baseMainnet : baseSepolia;
+// OVERRIDE: Always use mainnet (testnet removed)
+const defaultNetworkMode = 'mainnet' as const;
+const isMainnet = true;
+const activeChain = baseMainnet;
 
 function getRpcUrlsForNetwork(networkMode: NetworkMode): string[] {
   const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;

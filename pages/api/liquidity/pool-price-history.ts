@@ -343,8 +343,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(400).json({ message: 'poolId is required' })
   }
 
-  // Validate network mode
-  const networkMode: NetworkMode = network === 'testnet' ? 'testnet' : 'mainnet'
+  // OVERRIDE: Always use mainnet (testnet removed)
+  const networkMode: NetworkMode = 'mainnet'
 
   // token0/token1 are optional - only needed for CoinGecko fallback
   // If not provided, skip CoinGecko fallback entirely

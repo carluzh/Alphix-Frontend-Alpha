@@ -176,13 +176,8 @@ export async function GET(request: Request) {
       );
     }
 
-    // Get network mode from cookies (defaults to env var for new users)
-    const cookieStore = await cookies();
-    const networkCookie = cookieStore.get('alphix-network-mode');
-    const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
-    const networkMode: NetworkMode = (networkCookie?.value === 'mainnet' || networkCookie?.value === 'testnet')
-      ? networkCookie.value
-      : envDefault;
+    // OVERRIDE: Always use mainnet (testnet removed)
+    const networkMode: NetworkMode = 'mainnet';
 
     // Use poolKeys helper for consistent cache key naming (include network mode)
     const cacheKey = poolKeys.chart(poolId, days, networkMode);

@@ -23,23 +23,8 @@ export function getNetworkModeFromCookies(cookieString: string | undefined | nul
 }
 
 export function getStoredNetworkMode(): NetworkMode {
-  // Server-side: always default to testnet for API routes
-  // API routes should use getNetworkModeFromCookies() for user's actual preference
-  // This default is only for module-level initialization (e.g., subgraphClient.ts)
-  if (typeof window === 'undefined') {
-    return 'testnet';
-  }
-
-  // Client-side: check localStorage, then env var for default
-  try {
-    const stored = localStorage.getItem(NETWORK_STORAGE_KEY);
-    if (stored === 'mainnet' || stored === 'testnet') return stored;
-    // No stored preference - use env var default for new users
-    const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
-    return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
-  } catch {
-    return 'testnet';
-  }
+  // OVERRIDE: Always use mainnet (testnet removed)
+  return 'mainnet';
 }
 
 export function getStoredChainId(): number {
@@ -47,7 +32,8 @@ export function getStoredChainId(): number {
 }
 
 export function isTestnetMode(): boolean {
-  return getStoredNetworkMode() === 'testnet';
+  // OVERRIDE: Always false (testnet removed)
+  return false;
 }
 
 export function isMainnetMode(): boolean {

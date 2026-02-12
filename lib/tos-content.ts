@@ -421,4 +421,4 @@ This arbitration agreement, including any question as to its existence, validity
 /**
  * The exact message to be signed by the user's wallet when accepting the ToS.
  */
-export const TOS_SIGNATURE_MESSAGE = `I accept the Terms of Service, listed at https://alphix.fi/terms, and the Privacy Policy, listed at https://alphix.fi/privacy. I acknowledge that I am not a citizen or resident of a Prohibited Jurisdiction, as defined in the Terms of Service.`
+export const TOS_SIGNATURE_MESSAGE = `I accept the Terms of Service, listed at https://alphix.fi/legal/ToS.pdf, and the Privacy Policy, listed at https://alphix.fi/legal/PrivacyPolicy.pdf. I acknowledge that I am not a citizen or resident of a Prohibited Jurisdiction, as defined in the Terms of Service.`

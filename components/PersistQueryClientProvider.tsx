@@ -25,24 +25,10 @@ interface PersistQueryClientProviderProps {
 }
 
 /**
- * Creates a network-aware localStorage key to prevent data contamination
- * between mainnet and testnet.
- *
- * Returns different keys based on current network mode:
- * - 'alphix-rq-cache-mainnet'
- * - 'alphix-rq-cache-testnet'
+ * OVERRIDE: Always use mainnet cache key (testnet removed)
  */
 function getNetworkAwareCacheKey(): string {
-  if (typeof window === 'undefined') {
-    return 'alphix-rq-cache-ssr'
-  }
-
-  try {
-    const networkMode = localStorage.getItem(NETWORK_STORAGE_KEY) || 'testnet'
-    return `alphix-rq-cache-${networkMode}`
-  } catch {
-    return 'alphix-rq-cache-default'
-  }
+  return 'alphix-rq-cache-mainnet'
 }
 
 /**

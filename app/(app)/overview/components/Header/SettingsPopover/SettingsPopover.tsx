@@ -393,17 +393,7 @@ function SettingsPanel({
             </SettingsRow>
           </div>
 
-          {/* Network Section */}
-          <div className="flex flex-col gap-2">
-            <SectionTitle>Network</SectionTitle>
-            <SettingsRow title="Testnet mode">
-              <Switch
-                checked={testnetMode}
-                onCheckedChange={handleNetworkToggle}
-                disabled={isNetworkSwitching}
-              />
-            </SettingsRow>
-          </div>
+          {/* Network Section - Removed: testnet no longer available */}
         </div>
       </div>
 

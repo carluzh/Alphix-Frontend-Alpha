@@ -19,16 +19,10 @@ import { getStoredNetworkMode, type NetworkMode } from './network-mode';
 const GOLDSKY_TESTNET_URL = 'https://api.goldsky.com/api/public/project_cmktm2w8l5s0k01u9fz2yetrw/subgraphs/alphix-hook-testnet/0.0.7/gn';
 
 /**
- * Get the default network mode for this module.
- * On server: use env var default (mainnet for production)
- * On client: check localStorage, then env var
+ * OVERRIDE: Always use mainnet (testnet removed)
  */
 function getDefaultNetworkMode(): NetworkMode {
-  if (typeof window === 'undefined') {
-    const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
-    return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
-  }
-  return getStoredNetworkMode();
+  return 'mainnet';
 }
 
 /**

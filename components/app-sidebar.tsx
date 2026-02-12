@@ -137,14 +137,14 @@ export function AppSidebar({ variant = "floating", ...props }: AppSidebarProps) 
                   <Image src="/logos/alphix-type-white.svg" alt="Alphix Logo" width={112} height={24} priority />
                 </Link>
                 <div>
-                  {/* Beta badge - changelog disabled for launch */}
+                  {/* Live badge */}
                   <Badge
                     variant="outline"
-                    className="bg-button-primary text-sidebar-primary border-sidebar-primary rounded-md font-normal inline-block"
+                    className="bg-green-500/10 text-green-500 border-green-500 rounded-md font-semibold inline-block"
                     style={{ fontFamily: 'Consolas, monospace' }}
                   >
                     <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>
-                      Beta
+                      Live
                     </span>
                   </Badge>
                 </div>

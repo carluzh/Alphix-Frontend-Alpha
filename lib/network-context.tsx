@@ -39,10 +39,9 @@ interface NetworkProviderProps {
   initialNetworkMode?: NetworkMode;
 }
 
-// Get default network from env var (used for SSR and new users)
+// OVERRIDE: Always use mainnet (testnet removed)
 function getEnvDefault(): NetworkMode {
-  const envDefault = process.env.NEXT_PUBLIC_DEFAULT_NETWORK;
-  return envDefault === 'mainnet' ? 'mainnet' : 'testnet';
+  return 'mainnet';
 }
 
 export function NetworkProvider({ children, initialNetworkMode }: NetworkProviderProps) {
@@ -89,11 +88,11 @@ export function NetworkProvider({ children, initialNetworkMode }: NetworkProvide
   }, []);
 
   const value: NetworkContextValue = {
-    networkMode,
+    networkMode: 'mainnet', // OVERRIDE: Always mainnet
     setNetworkMode,
-    isTestnet: networkMode === 'testnet',
-    isMainnet: networkMode === 'mainnet',
-    chainId: networkMode === 'testnet' ? TESTNET_CHAIN_ID : MAINNET_CHAIN_ID,
+    isTestnet: false, // OVERRIDE: Always false
+    isMainnet: true, // OVERRIDE: Always true
+    chainId: MAINNET_CHAIN_ID, // OVERRIDE: Always mainnet chain
   };
 
   return (
