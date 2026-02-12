@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import Image from 'next/image'
 import { PropsWithChildren, useState } from 'react'
+import { TVLDisplay, SeasonBadge } from './TVLTicker'
 
 const GithubIcon = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -53,8 +54,66 @@ const LandingPageNavigation = () => {
 
   return (
     <div className="sticky top-0 z-50 flex w-full flex-col items-center py-4 md:py-6 px-4 md:px-0" style={{ willChange: 'transform' }}>
-      <nav className="flex w-full md:w-auto items-center justify-between md:justify-start gap-3 md:gap-6 rounded-lg bg-surface border border-sidebar-border/60 p-2">
-        <div className="flex items-center gap-5 md:gap-6">
+      {/* Desktop: TVL | Nav | Season layout */}
+      <div className="hidden md:flex w-full max-w-6xl items-center justify-between">
+        <Link href="/liquidity" className="rounded-lg bg-surface border border-sidebar-border/60 px-4 py-2 hover:border-white/30 transition-colors">
+          <TVLDisplay />
+        </Link>
+        <nav className="flex items-center gap-6 rounded-lg bg-surface border border-sidebar-border/60 p-2">
+          <div className="flex items-center gap-6">
+            <Link href="/" className="flex items-center justify-center ml-1">
+              <Image
+                src="/logos/alphix-icon-white.svg"
+                alt="Alphix"
+                width={28}
+                height={28}
+                className="h-6 w-7"
+                unoptimized
+              />
+            </Link>
+            <div className="flex items-center gap-6">
+              <a
+                href="#dynamic-fees-section"
+                className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
+              >
+                Products
+              </a>
+              <Link
+                href="https://alphix.gitbook.io/docs/"
+                target="_blank"
+                className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
+              >
+                Docs
+              </Link>
+              <Link
+                href="https://alphix.gitbook.io/docs/tech/security"
+                target="_blank"
+                className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
+              >
+                Security
+              </Link>
+            </div>
+          </div>
+          <Link href="/overview" onClick={() => setIsLaunching(true)} prefetch>
+            <Button
+              className={`h-8 rounded-md px-5 text-sm font-semibold transition-all active:scale-[0.97] ${
+                isLaunching
+                  ? 'bg-button-primary text-sidebar-primary'
+                  : 'bg-[#2a2a2a] text-white/75 hover:bg-button-primary hover:text-sidebar-primary'
+              }`}
+            >
+              Launch
+            </Button>
+          </Link>
+        </nav>
+        <Link href="/points" className="rounded-lg bg-surface border border-sidebar-border/60 px-4 py-2 hover:border-white/30 transition-colors">
+          <SeasonBadge />
+        </Link>
+      </div>
+
+      {/* Mobile: just the nav bar */}
+      <nav className="flex md:hidden w-full items-center justify-between gap-3 rounded-lg bg-surface border border-sidebar-border/60 p-2">
+        <div className="flex items-center gap-5">
           <Link href="/" className="flex items-center justify-center ml-1">
             <Image
               src="/logos/alphix-icon-white.svg"
@@ -65,32 +124,32 @@ const LandingPageNavigation = () => {
               unoptimized
             />
           </Link>
-          <div className="flex items-center gap-5 md:gap-6">
-          <a
-            href="#dynamic-fees-section"
-            className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
-          >
-            Products
-          </a>
-          <Link
-            href="https://alphix.gitbook.io/docs/"
-            target="_blank"
-            className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
-          >
-            Docs
-          </Link>
-          <Link
-            href="https://alphix.gitbook.io/docs/tech/security"
-            target="_blank"
-            className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
-          >
-            Security
-          </Link>
+          <div className="flex items-center gap-5">
+            <a
+              href="#dynamic-fees-section"
+              className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
+            >
+              Products
+            </a>
+            <Link
+              href="https://alphix.gitbook.io/docs/"
+              target="_blank"
+              className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
+            >
+              Docs
+            </Link>
+            <Link
+              href="https://alphix.gitbook.io/docs/tech/security"
+              target="_blank"
+              className="text-sm font-semibold text-muted-foreground transition-colors hover:text-white"
+            >
+              Security
+            </Link>
           </div>
         </div>
         <Link href="/overview" onClick={() => setIsLaunching(true)} prefetch>
           <Button
-            className={`h-8 rounded-md px-4 md:px-5 text-sm font-semibold transition-all active:scale-[0.97] ${
+            className={`h-8 rounded-md px-4 text-sm font-semibold transition-all active:scale-[0.97] ${
               isLaunching
                 ? 'bg-button-primary text-sidebar-primary'
                 : 'bg-[#2a2a2a] text-white/75 hover:bg-button-primary hover:text-sidebar-primary'

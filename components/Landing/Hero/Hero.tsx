@@ -7,12 +7,14 @@ export type HeroProps = PropsWithChildren<{
   className?: string
   title: ReactNode
   description: string
+  stats?: ReactNode
 }>
 
 export const Hero = ({
   className,
   title,
   description,
+  stats,
   children,
 }: HeroProps) => {
   return (
@@ -51,6 +53,11 @@ export const Hero = ({
       >
         {children}
       </div>
+      {stats && (
+        <div className="hero-animate in-view hero-stats relative z-10 mt-8 w-full max-w-xl px-4">
+          {stats}
+        </div>
+      )}
     </div>
   )
 }
