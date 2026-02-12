@@ -906,17 +906,11 @@ export const PositionDetail = memo(function PositionDetail({
   const [feeChartPeriod, setFeeChartPeriod] = useState<ChartPeriod>("1W");
 
   // Price deviation check - compare pool price vs market price
-  const poolPriceValue = useMemo(() => {
-    if (currentPriceNumeric === null) return null;
-    const displayPrice = priceInverted ? 1 / currentPriceNumeric : currentPriceNumeric;
-    return isFinite(displayPrice) ? displayPrice.toString() : null;
-  }, [currentPriceNumeric, priceInverted]);
-
+  // Always pass canonical pool price (not display price) - deviation is denomination-agnostic
   const priceDeviation = usePriceDeviation({
     token0Symbol: poolConfig?.currency0?.symbol,
     token1Symbol: poolConfig?.currency1?.symbol,
-    poolPrice: poolPriceValue,
-    priceInverted,
+    poolPrice: currentPriceNumeric,
   });
 
   // Fee chart data for V4 positions - pass current uncollected fees for "live now" point

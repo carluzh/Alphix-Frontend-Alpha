@@ -272,8 +272,10 @@ export function tryParseCurrencyAmount(
 /**
  * Determine which input fields should be disabled based on position range.
  *
- * - If current tick >= upperTick: token0 input disabled (out of range above)
- * - If current tick <= lowerTick: token1 input disabled (out of range below)
+ * From Uniswap V3 Tick.sol getFeeGrowthInside:
+ * - In-range: tickLower <= currentTick < tickUpper (both tokens)
+ * - Above range: currentTick >= tickUpper (only token1)
+ * - Below range: currentTick < tickLower (only token0)
  */
 export function getFieldsDisabled({
   pool,
@@ -291,11 +293,13 @@ export function getFieldsDisabled({
 
   const [tickLower, tickUpper] = ticks;
 
+  // Above range: only token1 needed
   const deposit0Disabled = Boolean(
     typeof tickUpper === 'number' && pool.tickCurrent >= tickUpper
   );
+  // Below range: only token0 needed (strict < because tickLower is inclusive)
   const deposit1Disabled = Boolean(
-    typeof tickLower === 'number' && pool.tickCurrent <= tickLower
+    typeof tickLower === 'number' && pool.tickCurrent < tickLower
   );
 
   return {

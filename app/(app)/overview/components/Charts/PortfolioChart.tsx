@@ -150,7 +150,7 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
       rightPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: 0.32, bottom: 0.15 }, autoScale: true },
       timeScale: { borderVisible: false, ticksVisible: false, timeVisible: true, fixLeftEdge: false, fixRightEdge: false },
       handleScale: false,
-      handleScroll: { horzTouchDrag: true, vertTouchDrag: false },
+      handleScroll: false,
     });
 
     chartRef.current = chart;
@@ -256,16 +256,9 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
       return;
     }
 
-    // When there's only 1 data point, add a synthetic starting point to create a horizontal line
-    // This ensures the live dot appears at the right edge of the chart
-    let dataToRender = positionsChartData;
-    if (positionsChartData.length === 1) {
-      const [periodFrom] = calculatePeriodRange(selectedPeriod);
-      dataToRender = [
-        { time: periodFrom as UTCTimestamp, value: positionsChartData[0].value },
-        positionsChartData[0],
-      ];
-    }
+    // Single data point is rendered as-is (just a dot via LiveDotRenderer)
+    // Once a second backend point arrives, we'll have a line
+    const dataToRender = positionsChartData;
 
     positionsDataRef.current = dataToRender;
 

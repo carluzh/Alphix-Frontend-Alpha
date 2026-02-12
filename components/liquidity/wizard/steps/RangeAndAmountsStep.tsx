@@ -10,6 +10,7 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { ChevronLeft } from 'lucide-react';
 import { IconCircleInfo, IconTriangleWarningFilled, IconRefreshClockwise } from 'nucleo-micro-bold-essential';
 import { cn } from '@/lib/utils';
@@ -411,11 +412,11 @@ export function RangeAndAmountsStep() {
   const currentTick = poolStateData?.currentPoolTick;
 
   // Price deviation check - compare pool price against CoinGecko market price
+  // Deviation is denomination-agnostic, so we pass canonical pool price
   const priceDeviation = usePriceDeviation({
     token0Symbol: token0Symbol ?? null,
     token1Symbol: token1Symbol ?? null,
     poolPrice: currentPriceRaw,
-    priceInverted,
   });
 
   // For Unified Yield: Convert tick range from config to prices
@@ -1414,6 +1415,15 @@ export function RangeAndAmountsStep() {
               Enter how much liquidity to provide
             </p>
           </div>
+          {/* Swap to USDS link - Only shown for USDS/USDC pool when zap is disabled */}
+          {state.poolId === 'usds-usdc' && !zapEnabled && (
+            <Link
+              href="/swap?to=USDS"
+              className="text-sm text-muted-foreground underline hover:text-white transition-colors"
+            >
+              Swap to USDS
+            </Link>
+          )}
           {/* Dual Deposit link - Only shown for Unified Yield in zap mode */}
           {isRehypoMode && zapEnabled && state.depositMode === 'zap' && (
             <button

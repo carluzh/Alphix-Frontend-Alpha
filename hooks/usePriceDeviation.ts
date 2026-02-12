@@ -168,13 +168,10 @@ export function usePriceDeviation({
       return { ...defaultResult, poolPrice: poolPriceNum };
     }
 
-    // Determine which price to compare based on inversion
-    // If inverted, pool shows token1/token0, so we need to invert market price too
-    const effectiveMarketPrice = priceInverted ? 1 / marketPriceRatio : marketPriceRatio;
-
     // Calculate deviation percentage
-    // deviation = (poolPrice - marketPrice) / marketPrice * 100
-    const deviation = ((poolPriceNum - effectiveMarketPrice) / effectiveMarketPrice) * 100;
+    // Both poolPrice and marketPriceRatio are in canonical form (token1/token0)
+    // Deviation is denomination-agnostic - same percentage regardless of display direction
+    const deviation = ((poolPriceNum - marketPriceRatio) / marketPriceRatio) * 100;
     const absoluteDeviation = Math.abs(deviation);
     const direction: 'above' | 'below' = deviation > 0 ? 'above' : 'below';
     const severity = getSeverity(absoluteDeviation);
@@ -186,7 +183,7 @@ export function usePriceDeviation({
       severity,
       direction,
       isLoading,
-      marketPrice: effectiveMarketPrice,
+      marketPrice: marketPriceRatio,
       poolPrice: poolPriceNum,
       message,
     };

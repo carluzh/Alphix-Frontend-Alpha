@@ -810,9 +810,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     token1Symbol: toToken?.symbol,
     // For swaps, we compare execution rate vs market rate
     // Market rate = fromTokenUSD / toTokenUSD (how many toTokens per fromToken at market)
-    // We pass execution rate as "pool price" for comparison
     poolPrice: swapExecutionRate,
-    priceInverted: false,
   });
 
   const containerRef = useRef<HTMLDivElement>(null); // Ref for the entire swap container (card + chart)
