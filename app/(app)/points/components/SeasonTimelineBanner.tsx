@@ -24,6 +24,18 @@ interface SeasonTimelineBannerProps {
   /** Points distributed per week */
   pointsPerWeek?: number;
   isLoading?: boolean;
+  /**
+   * TEMPORARY OVERRIDE: Offset in days from seasonStartDate for when Week 1 actually starts.
+   * Use this for launch week adjustments. Set to 1 if W1 starts 1 day after season start.
+   * Remove after first week is complete.
+   */
+  firstWeekOffsetDays?: number;
+  /**
+   * TEMPORARY OVERRIDE: Duration in days for the first week only.
+   * Use this if the first week is shorter/longer than 7 days.
+   * Remove after first week is complete.
+   */
+  firstWeekDurationDays?: number;
 }
 
 /**
@@ -68,6 +80,9 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
   seasonDurationDays = 90,
   pointsPerWeek = 100000,
   isLoading,
+  // TEMPORARY: Week 1 overrides - remove after W1 ends
+  firstWeekOffsetDays = 0,
+  firstWeekDurationDays,
 }: SeasonTimelineBannerProps) {
   // Calculate progress values
   const {
@@ -79,36 +94,77 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
     weekRemainingMs,
     isSeasonActive,
     isBeforeSeason,
-    daysUntilStart,
+    msUntilStart,
   } = useMemo(() => {
     const now = new Date();
-    const seasonEnd = new Date(seasonStartDate);
+
+    // =======================================================================
+    // TEMPORARY LAUNCH OVERRIDE - Remove after W1 ends (Thursday Feb 20, 2026)
+    // Override backend's season start to Feb 13 19:00 CET (18:00 UTC) for display
+    // =======================================================================
+    const LAUNCH_OVERRIDE_START = new Date("2026-02-13T18:00:00Z");
+    const effectiveSeasonStart = LAUNCH_OVERRIDE_START;
+    // After removing override, change back to: const effectiveSeasonStart = seasonStartDate;
+    // =======================================================================
+
+    const seasonEnd = new Date(effectiveSeasonStart);
     seasonEnd.setDate(seasonEnd.getDate() + seasonDurationDays);
 
-    // Check if we're before season start
-    const beforeSeason = now < seasonStartDate;
-    const msUntilStart = seasonStartDate.getTime() - now.getTime();
-    const daysUntil = Math.ceil(msUntilStart / ONE_DAY_MS);
+    // Week 1 starts with offset from effective season start
+    const week1Start = new Date(effectiveSeasonStart);
+    week1Start.setDate(week1Start.getDate() + firstWeekOffsetDays);
+    const week1Duration = firstWeekDurationDays ?? 7;
 
+    // Check if we're before Week 1 start (for week display purposes)
+    const beforeWeek1 = now < week1Start;
+    const msUntilWeek1 = week1Start.getTime() - now.getTime();
+    const daysUntilWeek1 = Math.ceil(msUntilWeek1 / ONE_DAY_MS);
+
+    // Season progress uses effective season start
+    const beforeSeason = now < effectiveSeasonStart;
     const totalMs = seasonDurationDays * ONE_DAY_MS;
-    const elapsedMs = Math.max(0, now.getTime() - seasonStartDate.getTime());
+    const elapsedMs = Math.max(0, now.getTime() - effectiveSeasonStart.getTime());
     const seasonProg = beforeSeason ? 0 : Math.min(100, (elapsedMs / totalMs) * 100);
 
-    // Calculate current week (0-indexed before start, 1-indexed after)
-    const elapsedDays = elapsedMs / ONE_DAY_MS;
-    const week = beforeSeason ? 0 : Math.floor(elapsedDays / 7) + 1;
-    const weeks = Math.ceil(seasonDurationDays / 7);
+    // Calculate current week with W1 override
+    // W1 ends at week1Start + week1Duration, then normal 7-day weeks
+    const week1EndMs = week1Start.getTime() + (week1Duration * ONE_DAY_MS);
+    const msFromWeek1Start = now.getTime() - week1Start.getTime();
 
-    // Week progress (0-100% within current week)
-    const msIntoWeek = elapsedMs % (7 * ONE_DAY_MS);
-    const weekProg = beforeSeason ? 0 : (msIntoWeek / (7 * ONE_DAY_MS)) * 100;
+    let week: number;
+    let weekProg: number;
+    let weekRemMs: number;
+
+    if (beforeWeek1) {
+      // Before Week 1 starts
+      week = 0;
+      weekProg = 0;
+      weekRemMs = 0;
+    } else if (now.getTime() < week1EndMs) {
+      // During Week 1 (uses custom duration)
+      week = 1;
+      weekProg = (msFromWeek1Start / (week1Duration * ONE_DAY_MS)) * 100;
+      weekRemMs = Math.max(0, week1EndMs - now.getTime());
+    } else {
+      // After Week 1: normal 7-day weeks
+      const msAfterWeek1 = now.getTime() - week1EndMs;
+      const weeksAfterW1 = Math.floor(msAfterWeek1 / (7 * ONE_DAY_MS));
+      week = 2 + weeksAfterW1;
+      const msIntoCurrentWeek = msAfterWeek1 % (7 * ONE_DAY_MS);
+      weekProg = (msIntoCurrentWeek / (7 * ONE_DAY_MS)) * 100;
+      weekRemMs = Math.max(0, (7 * ONE_DAY_MS) - msIntoCurrentWeek);
+    }
+
+    // Total weeks calculation (W1 may be shorter, rest are 7 days)
+    const daysAfterW1 = seasonDurationDays - firstWeekOffsetDays - week1Duration;
+    const weeksAfterW1 = Math.ceil(daysAfterW1 / 7);
+    const weeks = 1 + weeksAfterW1;
 
     // Time remaining calculations
     const seasonRemMs = Math.max(0, seasonEnd.getTime() - now.getTime());
-    const weekRemMs = beforeSeason ? 0 : Math.max(0, (7 * ONE_DAY_MS) - msIntoWeek);
 
     // Season is active if we're between start and end
-    const isActive = now >= seasonStartDate && now <= seasonEnd;
+    const isActive = now >= effectiveSeasonStart && now <= seasonEnd;
 
     return {
       seasonProgress: seasonProg,
@@ -118,10 +174,10 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
       seasonRemainingMs: seasonRemMs,
       weekRemainingMs: weekRemMs,
       isSeasonActive: isActive,
-      isBeforeSeason: beforeSeason,
-      daysUntilStart: daysUntil,
+      isBeforeSeason: beforeWeek1, // Use week1 for "before" display
+      msUntilStart: msUntilWeek1, // Raw ms for proper formatting
     };
-  }, [seasonStartDate, seasonDurationDays]);
+  }, [seasonStartDate, seasonDurationDays, firstWeekOffsetDays, firstWeekDurationDays]);
 
   const formatPoints = (points: number) => {
     return new Intl.NumberFormat("en-US").format(points);
@@ -199,7 +255,7 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
               <span className="text-muted-foreground">Season Progress</span>
               <span className="text-foreground font-medium" style={{ fontFamily: "Consolas, monospace" }}>
                 {isBeforeSeason ? (
-                  <span className="text-sidebar-primary">starting in {daysUntilStart}d</span>
+                  <span className="text-sidebar-primary">starting in {formatWeekRemaining(msUntilStart)}</span>
                 ) : (
                   formatSeasonRemaining(seasonRemainingMs)
                 )}

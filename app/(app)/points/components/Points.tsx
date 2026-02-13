@@ -99,6 +99,8 @@ export const Points = memo(function Points({
         seasonDurationDays={90}
         pointsPerWeek={100000}
         isLoading={isLoading}
+        // TEMPORARY: W1 is 6 days - remove after W1 ends (Feb 20, 2026)
+        firstWeekDurationDays={6}
       />
 
       {/* ================================================================
