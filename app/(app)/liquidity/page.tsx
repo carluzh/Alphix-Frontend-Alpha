@@ -375,7 +375,7 @@ export default function LiquidityPage() {
           const isLoading = !row?.original || typeof row.original.tvlUSD !== 'number';
           return (
             <Cell loading={isLoading} justifyContent="flex-end">
-              <span className="text-sm font-mono">{formatUSD(row?.original?.tvlUSD || 0)}</span>
+              <span className="text-sm">{formatUSD(row?.original?.tvlUSD || 0)}</span>
             </Cell>
           );
         },
@@ -389,7 +389,7 @@ export default function LiquidityPage() {
           const isLoading = !row?.original || typeof row.original.volume24hUSD !== 'number';
           return (
             <Cell loading={isLoading} justifyContent="flex-end">
-              <span className="text-sm font-mono">{formatUSD(row?.original?.volume24hUSD || 0)}</span>
+              <span className="text-sm">{formatUSD(row?.original?.volume24hUSD || 0)}</span>
             </Cell>
           );
         },
@@ -403,7 +403,7 @@ export default function LiquidityPage() {
           const isLoading = !row?.original || typeof row.original.fees24hUSD !== 'number';
           return (
             <Cell loading={isLoading} justifyContent="flex-end">
-              <span className="text-sm font-mono">{formatUSD(row?.original?.fees24hUSD || 0)}</span>
+              <span className="text-sm">{formatUSD(row?.original?.fees24hUSD || 0)}</span>
             </Cell>
           );
         },
