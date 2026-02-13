@@ -56,7 +56,31 @@ async function checkBackendStatus(address: string): Promise<{ accepted: boolean;
 }
 
 async function submitAcceptance(address: string, signature: string): Promise<void> {
-  const res = await fetch('/api/tos/accept', {
+  const backendUrl = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001'
+
+  // 1. Try backend first (PostgreSQL audit trail)
+  let backendSuccess = false
+  try {
+    const backendRes = await fetch(`${backendUrl}/tos/sign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userAddress: address,
+        signature,
+        message: TOS_SIGNATURE_MESSAGE,
+        version: TOS_VERSION,
+      }),
+    })
+    backendSuccess = backendRes.ok
+    if (!backendSuccess) {
+      console.warn('[useToSAcceptance] Backend TOS sign failed:', backendRes.status)
+    }
+  } catch (error) {
+    console.warn('[useToSAcceptance] Backend TOS sign error:', error)
+  }
+
+  // 2. Always write to Redis (fast reads + fallback)
+  const redisRes = await fetch('/api/tos/accept', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -66,9 +90,16 @@ async function submitAcceptance(address: string, signature: string): Promise<voi
     }),
   })
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `TOS accept failed: ${res.status}`)
+  // Success if at least Redis write succeeds
+  if (!redisRes.ok) {
+    const body = await redisRes.json().catch(() => ({}))
+    throw new Error(body.error || `TOS accept failed: ${redisRes.status}`)
+  }
+
+  if (backendSuccess) {
+    console.log('[useToSAcceptance] TOS recorded in both backend and Redis')
+  } else {
+    console.log('[useToSAcceptance] TOS recorded in Redis only (backend unavailable)')
   }
 }
 
