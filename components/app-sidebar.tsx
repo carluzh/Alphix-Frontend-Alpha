@@ -140,7 +140,7 @@ export function AppSidebar({ variant = "floating", ...props }: AppSidebarProps) 
                   {/* Live badge */}
                   <Badge
                     variant="outline"
-                    className="bg-green-500/10 text-green-500 border-green-500 rounded-md font-semibold inline-block"
+                    className="bg-green-500/20 text-green-500 border-transparent rounded-md font-semibold inline-block"
                     style={{ fontFamily: 'Consolas, monospace' }}
                   >
                     <span className="inline-flex items-center justify-center" style={{ minWidth: 28 }}>
