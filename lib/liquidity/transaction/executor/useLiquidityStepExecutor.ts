@@ -9,11 +9,12 @@
  */
 
 import { useCallback, useState, useRef } from 'react';
-import { useAccount, useSendTransaction, useSignTypedData, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useSendTransaction, useSignTypedData, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { waitForTransactionReceipt } from 'wagmi/actions';
 import { useConfig } from 'wagmi';
 import type { Hex } from 'viem';
 import * as Sentry from '@sentry/nextjs';
+import { ERC20_ABI } from '@/lib/abis/erc20';
 import { useTransactionAdder, TransactionType, type LiquidityIncreaseTransactionInfo, type LiquidityDecreaseTransactionInfo, type ApproveTransactionInfo, type Permit2ApproveTransactionInfo } from '@/lib/transactions';
 
 import {
@@ -212,6 +213,7 @@ export function useLiquidityStepExecutor(
 
   const { address, chainId } = useAccount();
   const config = useConfig();
+  const publicClient = usePublicClient();
   const { sendTransactionAsync } = useSendTransaction();
   const { signTypedDataAsync } = useSignTypedData();
 
@@ -445,6 +447,48 @@ export function useLiquidityStepExecutor(
         } catch (error) {
           // Capture to Sentry with full context for debugging
           const errorObj = error instanceof Error ? error : new Error(String(error));
+
+          // For Unified Yield deposit errors, fetch current allowances for debugging
+          let allowanceData: Record<string, string> | undefined;
+          if (step.type === TransactionStepType.UnifiedYieldDepositTransaction && publicClient && address) {
+            const depositStep = step as UnifiedYieldDepositStep;
+            try {
+              // Get token addresses from txContext action
+              const token0Address = txContext.action?.currency0Amount?.currency?.wrapped?.address;
+              const token1Address = txContext.action?.currency1Amount?.currency?.wrapped?.address;
+              const hookAddress = depositStep.hookAddress;
+
+              if (token0Address && token1Address && hookAddress) {
+                const [allowance0, allowance1] = await Promise.all([
+                  publicClient.readContract({
+                    address: token0Address as `0x${string}`,
+                    abi: ERC20_ABI,
+                    functionName: 'allowance',
+                    args: [address, hookAddress],
+                  }),
+                  publicClient.readContract({
+                    address: token1Address as `0x${string}`,
+                    abi: ERC20_ABI,
+                    functionName: 'allowance',
+                    args: [address, hookAddress],
+                  }),
+                ]);
+                allowanceData = {
+                  token0Address,
+                  token1Address,
+                  hookAddress,
+                  token0Allowance: String(allowance0),
+                  token1Allowance: String(allowance1),
+                  token0Symbol: txContext.action?.currency0Amount?.currency?.symbol || 'unknown',
+                  token1Symbol: txContext.action?.currency1Amount?.currency?.symbol || 'unknown',
+                };
+              }
+            } catch (allowanceError) {
+              // Don't let allowance fetch failure block error reporting
+              console.warn('[LiquidityStepExecutor] Failed to fetch allowances for Sentry:', allowanceError);
+            }
+          }
+
           Sentry.captureException(errorObj, {
             tags: {
               component: 'LiquidityStepExecutor',
@@ -456,6 +500,7 @@ export function useLiquidityStepExecutor(
               stepIndex: i,
               totalSteps: steps.length,
               chainId,
+              userAddress: address,
               // Include step details without sensitive data
               stepDetails: 'txRequest' in step ? {
                 to: (step as any).txRequest?.to,
@@ -466,6 +511,8 @@ export function useLiquidityStepExecutor(
               cause: (error as any)?.cause?.message || (error as any)?.cause,
               shortMessage: (error as any)?.shortMessage,
               details: (error as any)?.details,
+              // Include allowance data for deposit failures
+              allowanceData,
             },
           });
 

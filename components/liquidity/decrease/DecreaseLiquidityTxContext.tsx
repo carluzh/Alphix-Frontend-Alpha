@@ -15,6 +15,7 @@
 import React, { createContext, useContext, useState, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount } from "wagmi";
 import { formatUnits, parseUnits, type Address, type Hash } from "viem";
+import * as Sentry from "@sentry/nextjs";
 import { getTokenDefinitions, getPoolById, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
@@ -236,6 +237,15 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       return txHash;
     } catch (err: any) {
       console.error("[DecreaseLiquidityTxContext] Unified Yield withdraw error:", err);
+      Sentry.captureException(err, {
+        tags: { component: "DecreaseLiquidityTxContext", operation: "executeUnifiedYieldWithdraw" },
+        extra: {
+          poolId: position?.poolId,
+          shareBalance: position?.shareBalance,
+          userAddress: accountAddress,
+          chainId,
+        },
+      });
       setError(err.message || "Unified Yield withdrawal failed");
       setIsLoading(false);
       return undefined;
@@ -342,6 +352,16 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         return context as ValidatedLiquidityTxContext;
       } catch (err: any) {
         console.error("[DecreaseLiquidityTxContext] Unified Yield context error:", err);
+        Sentry.captureException(err, {
+          tags: { component: "DecreaseLiquidityTxContext", operation: "buildUnifiedYieldContext" },
+          extra: {
+            poolId: position?.poolId,
+            hookAddress: position?.hookAddress,
+            shareBalance: position?.shareBalance,
+            userAddress: accountAddress,
+            chainId,
+          },
+        });
         setError(err.message || "Failed to prepare Unified Yield withdrawal");
         setIsLoading(false);
         return null;
@@ -422,6 +442,17 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       return context as ValidatedLiquidityTxContext;
     } catch (err: any) {
       console.error("[DecreaseLiquidityTxContext] fetchAndBuildContext error:", err);
+      Sentry.captureException(err, {
+        tags: { component: "DecreaseLiquidityTxContext", operation: "fetchAndBuildContext" },
+        extra: {
+          poolId: position?.poolId,
+          positionId: position?.positionId,
+          userAddress: accountAddress,
+          chainId,
+          withdrawAmount0,
+          withdrawAmount1,
+        },
+      });
       setError(err.message || "Failed to prepare transaction");
       setIsLoading(false);
       return null;

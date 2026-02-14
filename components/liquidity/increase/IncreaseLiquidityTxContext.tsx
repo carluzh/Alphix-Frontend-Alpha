@@ -16,6 +16,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount, useBalance } from "wagmi";
 import { parseUnits, type Address } from "viem";
+import * as Sentry from "@sentry/nextjs";
 import { getTokenDefinitions, getPoolById, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { useDerivedIncreaseInfo } from "@/lib/liquidity/hooks";
@@ -387,6 +388,15 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         return context as ValidatedLiquidityTxContext;
       } catch (err: any) {
         console.error("[IncreaseLiquidityTxContext] Unified Yield context error:", err);
+        Sentry.captureException(err, {
+          tags: { component: "IncreaseLiquidityTxContext", operation: "buildUnifiedYieldContext" },
+          extra: {
+            poolId: position?.poolId,
+            hookAddress: poolConfig?.hooks,
+            userAddress: accountAddress,
+            chainId,
+          },
+        });
         setError(err.message || "Failed to prepare Unified Yield deposit");
         setIsLoading(false);
         return null;
@@ -638,6 +648,15 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       throw new Error("Unexpected API response");
     } catch (err: any) {
       console.error("[IncreaseLiquidityTxContext] fetchAndBuildContext error:", err);
+      Sentry.captureException(err, {
+        tags: { component: "IncreaseLiquidityTxContext", operation: "fetchAndBuildContext" },
+        extra: {
+          poolId: position?.poolId,
+          positionId: position?.positionId,
+          userAddress: accountAddress,
+          chainId,
+        },
+      });
       setError(err.message || "Failed to prepare transaction");
       setIsLoading(false);
       return null;

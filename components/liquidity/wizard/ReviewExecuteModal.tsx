@@ -17,6 +17,8 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useAccount, usePublicClient } from 'wagmi';
 import { AlertCircle, RefreshCw } from 'lucide-react';
+import * as Sentry from '@sentry/nextjs';
+import { isUserRejectionError } from '@/lib/liquidity/utils/validation/errorHandling';
 import { IconXmark } from 'nucleo-micro-bold-essential';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -631,10 +633,16 @@ export function ReviewExecuteModal() {
     if (isUnifiedYield && depositPreview && pool.hooks) {
       const hookAddress = pool.hooks as Address;
 
-      // Build approval requests using shared helper
+      // CRITICAL: Refetch approvals fresh before building context
+      // This prevents skipping approval steps based on stale cached data
+      const freshApprovals = await refetchApprovals();
+      const needsToken0 = freshApprovals.needsToken0ERC20Approval;
+      const needsToken1 = freshApprovals.needsToken1ERC20Approval;
+
+      // Build approval requests using fresh data
       const approvals = buildApprovalRequests({
-        needsToken0: txInfo?.needsToken0Approval ?? false,
-        needsToken1: txInfo?.needsToken1Approval ?? false,
+        needsToken0,
+        needsToken1,
         token0Address: token0.address as Address,
         token1Address: token1.address as Address,
         spender: hookAddress,
@@ -971,6 +979,18 @@ export function ReviewExecuteModal() {
         await executor.execute(zapContext as any);
       } catch (err: any) {
         console.error('[ReviewExecuteModal] Zap transaction error:', err);
+        // Capture non-rejection errors to Sentry
+        if (!isUserRejectionError(err)) {
+          Sentry.captureException(err, {
+            tags: { component: 'ReviewExecuteModal', operation: 'zapTransaction' },
+            extra: {
+              poolId: pool?.id,
+              userAddress: address,
+              chainId,
+              isZapMode: true,
+            },
+          });
+        }
         setIsExecuting(false);
         setView('review');
         setError(err?.message || 'Zap transaction failed');
@@ -1018,6 +1038,18 @@ export function ReviewExecuteModal() {
       await executor.execute(context);
     } catch (err: any) {
       console.error('[ReviewExecuteModal] Transaction error:', err);
+      // Capture non-rejection errors to Sentry
+      if (!isUserRejectionError(err)) {
+        Sentry.captureException(err, {
+          tags: { component: 'ReviewExecuteModal', operation: 'transaction' },
+          extra: {
+            poolId: pool?.id,
+            userAddress: address,
+            chainId,
+            isUnifiedYield,
+          },
+        });
+      }
       setIsExecuting(false);
       setView('review');
       setError(err?.message || 'Transaction failed');

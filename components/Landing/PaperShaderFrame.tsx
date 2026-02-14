@@ -20,6 +20,15 @@ export const PaperShaderFrame = () => {
   useEffect(() => {
     if (window.innerWidth < 768) return // Skip heavy WebGL on mobile
 
+    // Check WebGL support before mounting shader
+    try {
+      const canvas = document.createElement('canvas')
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
+      if (!gl) return
+    } catch {
+      return
+    }
+
     setMounted(true)
 
     const checkWidth = () => {

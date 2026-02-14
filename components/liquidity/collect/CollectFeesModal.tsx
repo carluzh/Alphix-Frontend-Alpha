@@ -12,6 +12,8 @@ import Image from "next/image";
 import { AlertCircle } from "lucide-react";
 import { IconXmark } from "nucleo-micro-bold-essential";
 import { useAccount } from "wagmi";
+import * as Sentry from "@sentry/nextjs";
+import { isUserRejectionError } from "@/lib/liquidity/utils/validation/errorHandling";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
@@ -295,11 +297,24 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
       await executor.execute(context);
     } catch (err: any) {
       console.error("[CollectFeesModal] Transaction error:", err);
+      // Capture non-rejection errors to Sentry
+      if (!isUserRejectionError(err)) {
+        Sentry.captureException(err, {
+          tags: { component: "CollectFeesModal", operation: "handleConfirm" },
+          extra: {
+            positionId: position?.positionId,
+            userAddress: address,
+            chainId,
+            token0Symbol: position?.token0?.symbol,
+            token1Symbol: position?.token1?.symbol,
+          },
+        });
+      }
       setIsExecuting(false);
       setView("review");
       setError(err?.message || "Transaction failed");
     }
-  }, [address, hasFees, fetchAndBuildContext, executor]);
+  }, [address, hasFees, fetchAndBuildContext, executor, position, chainId]);
 
   // Clear error and retry
   const handleRetry = useCallback(() => {

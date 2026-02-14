@@ -697,6 +697,28 @@ export function useSwapExecution({
         return
       }
 
+      // Capture non-rejection errors to Sentry
+      Sentry.captureException(err, {
+        tags: {
+          component: "useSwapExecution",
+          operation: "handleConfirmSwap",
+          errorKind: classified.kind,
+          progressState: stateBeforeAction,
+        },
+        extra: {
+          fromTokenSymbol: fromToken?.symbol,
+          fromTokenAddress: fromToken?.address,
+          toTokenSymbol: toToken?.symbol,
+          toTokenAddress: toToken?.address,
+          fromAmount,
+          toAmount,
+          chainId: currentChainId,
+          userAddress: accountAddress,
+          shortMessage: err?.shortMessage,
+          cause: err?.cause?.message || err?.cause,
+        },
+      })
+
       setIsSwapping(false)
       toast.error(classified.title, {
         icon: createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),

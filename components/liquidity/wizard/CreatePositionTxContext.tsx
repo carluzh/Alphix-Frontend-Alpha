@@ -108,8 +108,8 @@ interface CreatePositionTxContextType {
   approvalData: ReturnType<typeof useCheckMintApprovalsWithMode>['data'];
   /** Whether approvals are being checked */
   isCheckingApprovals: boolean;
-  /** Refetch approvals */
-  refetchApprovals: () => void;
+  /** Refetch approvals and return fresh data */
+  refetchApprovals: ReturnType<typeof useCheckMintApprovalsWithMode>['refetch'];
   /** Input validation error */
   inputError: ReactNode | undefined;
   /** Formatted amounts for display */

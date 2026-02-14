@@ -109,8 +109,11 @@ export interface UseModeAwareApprovalsResult {
   /** Whether approvals are being checked */
   isLoading: boolean;
 
-  /** Refetch approvals */
-  refetch: () => Promise<void>;
+  /**
+   * Refetch approvals and return fresh data.
+   * Use this before building transaction context to ensure accurate approval state.
+   */
+  refetch: () => Promise<ModeAwareApprovalResult>;
 }
 
 /**
@@ -214,11 +217,30 @@ export function useModeAwareApprovals(
 
   const isLoading = isUnifiedYield ? uyResult.isLoading : v4Result.isLoading;
 
-  const refetch = async () => {
+  const refetch = async (): Promise<ModeAwareApprovalResult> => {
     if (isUnifiedYield) {
-      await uyResult.refetch();
+      const freshData = await uyResult.refetch();
+      return {
+        needsToken0ERC20Approval: freshData?.token0NeedsApproval ?? false,
+        needsToken1ERC20Approval: freshData?.token1NeedsApproval ?? false,
+        needsPermit2Signature: false,
+        needsAnyApproval:
+          (freshData?.token0NeedsApproval ?? false) ||
+          (freshData?.token1NeedsApproval ?? false),
+        approvalTarget: hookAddress ?? null,
+        isUnifiedYield: true,
+      };
     } else {
       await v4Result.refetch();
+      // V4 refetch doesn't return data directly, use the updated hook data
+      return {
+        needsToken0ERC20Approval: v4Result.data.token0?.needsERC20Approval ?? false,
+        needsToken1ERC20Approval: v4Result.data.token1?.needsERC20Approval ?? false,
+        needsPermit2Signature: v4Result.data.needsPermit2Signature,
+        needsAnyApproval: v4Result.data.needsERC20Approvals || v4Result.data.needsPermit2Signature,
+        approvalTarget: null,
+        isUnifiedYield: false,
+      };
     }
   };
 

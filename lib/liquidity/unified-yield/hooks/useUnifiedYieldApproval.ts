@@ -9,6 +9,9 @@ import { useCallback, useState } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import { type Address, type Hash, maxUint256 } from 'viem';
 import { toast } from 'sonner';
+import * as Sentry from '@sentry/nextjs';
+
+import { isUserRejectionError } from '../../utils/validation/errorHandling';
 import { IconBadgeCheck2 } from 'nucleo-micro-bold-essential';
 import React from 'react';
 
@@ -121,6 +124,21 @@ export function useUnifiedYieldApproval(
     } catch (err: any) {
       const error = err instanceof Error ? err : new Error('Approval failed');
       setError(error);
+
+      // Capture non-rejection errors to Sentry
+      if (!isUserRejectionError(err)) {
+        Sentry.captureException(error, {
+          tags: { component: 'useUnifiedYieldApproval', operation: 'approve' },
+          extra: {
+            hookAddress: params.hookAddress,
+            tokenAddress: params.tokenAddress,
+            tokenSymbol: params.tokenSymbol,
+            amountWei: params.amountWei?.toString(),
+            userAddress,
+          },
+        });
+      }
+
       return undefined;
     }
   }, [params, userAddress, writeContractAsync]);

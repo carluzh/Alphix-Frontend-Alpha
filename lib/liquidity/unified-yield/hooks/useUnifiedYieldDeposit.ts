@@ -19,6 +19,9 @@ import { useCallback, useState } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import type { Address, Hash } from 'viem';
 import { parseUnits } from 'viem';
+import * as Sentry from '@sentry/nextjs';
+
+import { isUserRejectionError } from '../../utils/validation/errorHandling';
 
 import { UNIFIED_YIELD_HOOK_ABI } from '../abi/unifiedYieldHookABI';
 import {
@@ -209,6 +212,19 @@ export function useUnifiedYieldDeposit(
         return preview;
       } catch (err) {
         console.warn('Preview failed:', err);
+        // Capture preview failures to Sentry for debugging
+        Sentry.captureException(err, {
+          tags: { component: 'useUnifiedYieldDeposit', operation: 'getPreview' },
+          extra: {
+            hookAddress: params.hookAddress,
+            amount,
+            inputSide,
+            decimals,
+            token0Decimals: params.token0Decimals,
+            token1Decimals: params.token1Decimals,
+            poolId: params.poolId,
+          },
+        });
         return null;
       }
     },
@@ -283,6 +299,27 @@ export function useUnifiedYieldDeposit(
       } catch (err) {
         const error = err instanceof Error ? err : new Error('Deposit failed');
         setError(error);
+
+        // Capture non-rejection errors to Sentry
+        if (!isUserRejectionError(err)) {
+          Sentry.captureException(error, {
+            tags: { component: 'useUnifiedYieldDeposit', operation: 'depositWithPreview' },
+            extra: {
+              hookAddress: params.hookAddress,
+              token0Address: params.token0Address,
+              token1Address: params.token1Address,
+              shares: preview.shares.toString(),
+              amount0: preview.amount0.toString(),
+              amount1: preview.amount1.toString(),
+              userAddress,
+              poolId: params.poolId,
+              chainId: params.chainId,
+              sqrtPriceX96: params.sqrtPriceX96,
+              maxPriceSlippage: params.maxPriceSlippage,
+            },
+          });
+        }
+
         return undefined;
       }
     },
