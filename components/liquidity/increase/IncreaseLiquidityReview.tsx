@@ -14,7 +14,7 @@
  */
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { ExternalLink as ExternalLinkIcon, AlertCircle, RefreshCw } from "lucide-react";
+import { ExternalLink as ExternalLinkIcon, AlertCircle } from "lucide-react";
 import { IconBadgeCheck2 } from "nucleo-micro-bold-essential";
 import Image from "next/image";
 import { useAccount } from "wagmi";
@@ -104,17 +104,13 @@ function mapExecutorStepsToUI(
   });
 }
 
-// Error callout component with permit refresh option
+// Simple error callout component
 function ErrorCallout({
   error,
   onRetry,
-  isPermitError,
-  onRefreshPermit,
 }: {
   error: string | null;
   onRetry: () => void;
-  isPermitError?: boolean;
-  onRefreshPermit?: () => void;
 }) {
   if (!error) return null;
 
@@ -123,23 +119,12 @@ function ErrorCallout({
       <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
         <p className="text-sm text-red-400">{error}</p>
-        <div className="flex gap-3 mt-2">
-          <button
-            onClick={onRetry}
-            className="text-xs text-red-400 hover:text-red-300 underline"
-          >
-            Try again
-          </button>
-          {isPermitError && onRefreshPermit && (
-            <button
-              onClick={onRefreshPermit}
-              className="text-xs text-blue-400 hover:text-blue-300 underline flex items-center gap-1"
-            >
-              <RefreshCw className="w-3 h-3" />
-              Sign new permit
-            </button>
-          )}
-        </div>
+        <button
+          onClick={onRetry}
+          className="text-xs text-red-400 hover:text-red-300 underline mt-2"
+        >
+          Try again
+        </button>
       </div>
     </div>
   );
@@ -179,7 +164,6 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
   const [stepAccepted, setStepAccepted] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [isPermitError, setIsPermitError] = useState(false);
   const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [flowId, setFlowId] = useState<string | undefined>(undefined);
@@ -240,14 +224,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
       setStepAccepted(false);
 
       if (!isUserRejection) {
-        const isNonceError = errorMessage.includes("nonce") || errorMessage.includes("InvalidNonce");
-        if (isNonceError) {
-          setLocalError("The permit signature has expired. Please try again.");
-          setIsPermitError(true);
-        } else {
-          setLocalError(errorMessage);
-          setIsPermitError(false);
-        }
+        setLocalError(errorMessage);
       }
     },
     onStepChange: (stepIndex, _step, accepted) => {
@@ -263,7 +240,6 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
     setView("executing");
     setIsExecuting(true);
     setLocalError(null);
-    setIsPermitError(false);
 
     // Initialize flow tracking for permit recovery
     const flow = getOrCreateFlowState(
@@ -319,16 +295,8 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
   // Handle retry
   const handleRetry = useCallback(() => {
     setLocalError(null);
-    setIsPermitError(false);
     clearError();
   }, [clearError]);
-
-  // Handle permit refresh (retry the flow)
-  const handleRefreshPermit = useCallback(() => {
-    setLocalError(null);
-    setIsPermitError(false);
-    handleConfirm();
-  }, [handleConfirm]);
 
   // Reset state when view changes to review
   useEffect(() => {
@@ -455,8 +423,6 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
         <ErrorCallout
           error={error}
           onRetry={handleRetry}
-          isPermitError={isPermitError}
-          onRefreshPermit={handleRefreshPermit}
         />
       )}
 

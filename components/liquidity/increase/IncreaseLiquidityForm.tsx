@@ -15,7 +15,7 @@
  */
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useAnimation } from "framer-motion";
 import { useAccount } from "wagmi";
 import { Button } from "@/components/ui/button";
@@ -113,17 +113,13 @@ function mapExecutorStepsToUI(
   });
 }
 
-// Error callout component with permit refresh option
+// Simple error callout component
 function ErrorCallout({
   error,
   onRetry,
-  isPermitError,
-  onRefreshPermit,
 }: {
   error: string | null;
   onRetry: () => void;
-  isPermitError?: boolean;
-  onRefreshPermit?: () => void;
 }) {
   if (!error) return null;
 
@@ -132,23 +128,12 @@ function ErrorCallout({
       <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
         <p className="text-sm text-red-400">{error}</p>
-        <div className="flex gap-3 mt-2">
-          <button
-            onClick={onRetry}
-            className="text-xs text-red-400 hover:text-red-300 underline"
-          >
-            Try again
-          </button>
-          {isPermitError && onRefreshPermit && (
-            <button
-              onClick={onRefreshPermit}
-              className="text-xs text-blue-400 hover:text-blue-300 underline flex items-center gap-1"
-            >
-              <RefreshCw className="w-3 h-3" />
-              Sign new permit
-            </button>
-          )}
-        </div>
+        <button
+          onClick={onRetry}
+          className="text-xs text-red-400 hover:text-red-300 underline mt-2"
+        >
+          Try again
+        </button>
       </div>
     </div>
   );
@@ -201,7 +186,6 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
   const [stepAccepted, setStepAccepted] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [isPermitError, setIsPermitError] = useState(false);
   const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
   const [flowId, setFlowId] = useState<string | undefined>(undefined);
 
@@ -296,14 +280,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
       setStepAccepted(false);
 
       if (!isUserRejection) {
-        const isNonceError = errorMessage.includes("nonce") || errorMessage.includes("InvalidNonce");
-        if (isNonceError) {
-          setLocalError("The permit signature has expired. Please try again.");
-          setIsPermitError(true);
-        } else {
-          setLocalError(errorMessage);
-          setIsPermitError(false);
-        }
+        setLocalError(errorMessage);
       }
     },
     onStepChange: (stepIndex, _step, accepted) => {
@@ -329,7 +306,6 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
     setView("executing");
     setIsExecuting(true);
     setLocalError(null);
-    setIsPermitError(false);
 
     // V4 uses permit flow state tracking
     if (!isUnifiedYield) {
@@ -371,16 +347,8 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
   // Handle retry
   const handleRetry = useCallback(() => {
     setLocalError(null);
-    setIsPermitError(false);
     clearError();
   }, [clearError]);
-
-  // Handle permit refresh
-  const handleRefreshPermit = useCallback(() => {
-    setLocalError(null);
-    setIsPermitError(false);
-    handleReview();
-  }, [handleReview]);
 
   // Reset state when view changes to input
   useEffect(() => {
@@ -523,8 +491,6 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
         <ErrorCallout
           error={error}
           onRetry={handleRetry}
-          isPermitError={isPermitError}
-          onRefreshPermit={handleRefreshPermit}
         />
       )}
 

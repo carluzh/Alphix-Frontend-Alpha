@@ -16,7 +16,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useAccount, usePublicClient } from 'wagmi';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, RotateCw, RefreshCw } from 'lucide-react';
 import * as Sentry from '@sentry/nextjs';
 import { isUserRejectionError } from '@/lib/liquidity/utils/validation/errorHandling';
 import { IconXmark } from 'nucleo-micro-bold-essential';
@@ -274,19 +274,13 @@ function DoubleCurrencyLogo({
 // No 'success' view - on success we close modal and navigate (Uniswap pattern)
 type ModalView = 'review' | 'executing';
 
-// Error callout component - inline error display like Uniswap's ErrorCallout
-// Enhanced for C2-C5 permit error handling
-// Truncates long errors and provides Copy functionality
+// Simple error callout component with copy functionality
 function ErrorCallout({
   error,
   onRetry,
-  isPermitError,
-  onRefreshPermit,
 }: {
   error: string | null;
   onRetry: () => void;
-  isPermitError?: boolean;
-  onRefreshPermit?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -350,18 +344,9 @@ function ErrorCallout({
             onClick={onRetry}
             className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1"
           >
-            <RefreshCw className="w-3 h-3" />
+            <RotateCw className="w-3 h-3" />
             Try again
           </button>
-          {isPermitError && onRefreshPermit && (
-            <button
-              onClick={onRefreshPermit}
-              className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
-            >
-              <RefreshCw className="w-3 h-3" />
-              Sign new permit
-            </button>
-          )}
         </div>
       </div>
     </div>
@@ -408,7 +393,6 @@ export function ReviewExecuteModal() {
   const [stepAccepted, setStepAccepted] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isPermitError, setIsPermitError] = useState(false);
   const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
   // C4: Flow tracking for recovery
   const [flowId, setFlowId] = useState<string | undefined>(undefined);
@@ -492,14 +476,7 @@ export function ReviewExecuteModal() {
       setStepAccepted(false);
 
       if (!isUserRejection) {
-        const isNonceError = errorMessage.includes('nonce') || errorMessage.includes('InvalidNonce');
-        if (isNonceError) {
-          setError('The permit signature has expired. Please try again.');
-          setIsPermitError(true);
-        } else {
-          setError(errorMessage);
-          setIsPermitError(false);
-        }
+        setError(errorMessage);
       }
     },
     onStepChange: (stepIndex, _step, accepted) => {
@@ -857,7 +834,6 @@ export function ReviewExecuteModal() {
     setView('executing');
     setIsExecuting(true);
     setError(null);
-    setIsPermitError(false);
 
     // =======================================================================
     // ZAP MODE - Single-token deposit with auto-swap
@@ -1059,16 +1035,7 @@ export function ReviewExecuteModal() {
   // Clear error and retry
   const handleRetry = useCallback(() => {
     setError(null);
-    setIsPermitError(false);
   }, []);
-
-  // Handle permit refresh (retry the flow)
-  const handleRefreshPermit = useCallback(() => {
-    setError(null);
-    setIsPermitError(false);
-    // Auto-start the flow again
-    handleConfirm();
-  }, [handleConfirm]);
 
   // Handle close
   const handleClose = useCallback(() => {
@@ -1086,7 +1053,6 @@ export function ReviewExecuteModal() {
       setExecutorSteps([]);
       setIsExecuting(false);
       setError(null);
-      setIsPermitError(false);
     }
   }, [state.isReviewModalOpen]);
 
@@ -1320,8 +1286,6 @@ export function ReviewExecuteModal() {
                 <ErrorCallout
                   error={error}
                   onRetry={handleRetry}
-                  isPermitError={isPermitError}
-                  onRefreshPermit={handleRefreshPermit}
                 />
               </div>
             )}
