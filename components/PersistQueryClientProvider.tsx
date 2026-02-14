@@ -9,9 +9,24 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode, useMemo } from 'react'
 import { alphixDehydrateOptions } from '@/lib/reactQuery/dehydrateOptions'
 import { MAX_REACT_QUERY_CACHE_TIME_MS } from '@/lib/utils/time'
-import { NETWORK_STORAGE_KEY } from '@/lib/network-mode'
 
 type PersistOptions = Omit<PersistQueryClientOptions, 'queryClient'>
+
+/**
+ * Safe JSON serializer that handles cyclic structures.
+ * Falls back to returning empty object string if serialization fails.
+ * This prevents "JSON.stringify cannot serialize cyclic structures" errors
+ * that can occur with complex query responses (e.g., viem/wagmi error objects).
+ */
+function safeSerialize(data: unknown): string {
+  try {
+    return JSON.stringify(data)
+  } catch {
+    // Cyclic structure or other serialization error - skip persistence
+    // The cache will be rebuilt on next load
+    return '{}'
+  }
+}
 
 /**
  * Version buster - increment to invalidate entire cache.
@@ -58,6 +73,7 @@ export function PersistQueryClientProvider({
     const persister = createSyncStoragePersister({
       storage: localStorage,
       key: cacheKey,
+      serialize: safeSerialize,
     })
 
     // Type cast needed due to Query type version mismatch between packages

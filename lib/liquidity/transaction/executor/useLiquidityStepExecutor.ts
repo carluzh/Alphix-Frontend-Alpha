@@ -13,6 +13,7 @@ import { useAccount, useSendTransaction, useSignTypedData, useWaitForTransaction
 import { waitForTransactionReceipt } from 'wagmi/actions';
 import { useConfig } from 'wagmi';
 import type { Hex } from 'viem';
+import * as Sentry from '@sentry/nextjs';
 import { useTransactionAdder, TransactionType, type LiquidityIncreaseTransactionInfo, type LiquidityDecreaseTransactionInfo, type ApproveTransactionInfo, type Permit2ApproveTransactionInfo } from '@/lib/transactions';
 
 import {
@@ -442,6 +443,32 @@ export function useLiquidityStepExecutor(
             };
           });
         } catch (error) {
+          // Capture to Sentry with full context for debugging
+          const errorObj = error instanceof Error ? error : new Error(String(error));
+          Sentry.captureException(errorObj, {
+            tags: {
+              component: 'LiquidityStepExecutor',
+              stepType: step.type,
+              stepIndex: String(i),
+            },
+            extra: {
+              stepType: step.type,
+              stepIndex: i,
+              totalSteps: steps.length,
+              chainId,
+              // Include step details without sensitive data
+              stepDetails: 'txRequest' in step ? {
+                to: (step as any).txRequest?.to,
+                dataLength: (step as any).txRequest?.data?.length,
+                selector: (step as any).txRequest?.data?.slice(0, 10),
+              } : undefined,
+              // Capture underlying cause if present (e.g., RPC errors)
+              cause: (error as any)?.cause?.message || (error as any)?.cause,
+              shortMessage: (error as any)?.shortMessage,
+              details: (error as any)?.details,
+            },
+          });
+
           // Mark step as errored
           setState(prev => {
             const newSteps = [...prev.steps];

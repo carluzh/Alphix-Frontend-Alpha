@@ -274,6 +274,7 @@ type ModalView = 'review' | 'executing';
 
 // Error callout component - inline error display like Uniswap's ErrorCallout
 // Enhanced for C2-C5 permit error handling
+// Truncates long errors and provides Copy functionality
 function ErrorCallout({
   error,
   onRetry,
@@ -285,24 +286,75 @@ function ErrorCallout({
   isPermitError?: boolean;
   onRefreshPermit?: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
   if (!error) return null;
 
+  // Truncate long errors for display (keep first 120 chars)
+  const MAX_ERROR_LENGTH = 120;
+  const isLongError = error.length > MAX_ERROR_LENGTH;
+  const displayError = isLongError && !expanded
+    ? error.slice(0, MAX_ERROR_LENGTH) + '...'
+    : error;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(error);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy error:', err);
+    }
+  };
+
   return (
-    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 overflow-hidden">
       <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-red-400">{error}</p>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <p className="text-sm text-red-400 break-words">
+          {displayError}
+        </p>
+        {isLongError && !expanded && (
+          <button
+            onClick={() => setExpanded(true)}
+            className="text-xs text-red-400/70 hover:text-red-300 mt-1"
+          >
+            Show more
+          </button>
+        )}
         <div className="flex gap-3 mt-2">
           <button
-            onClick={onRetry}
-            className="text-xs text-red-400 hover:text-red-300 underline"
+            onClick={handleCopy}
+            className="text-xs text-muted-foreground hover:text-white transition-colors flex items-center gap-1"
           >
+            {copied ? (
+              <>
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Copied
+              </>
+            ) : (
+              <>
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Copy
+              </>
+            )}
+          </button>
+          <button
+            onClick={onRetry}
+            className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1"
+          >
+            <RefreshCw className="w-3 h-3" />
             Try again
           </button>
           {isPermitError && onRefreshPermit && (
             <button
               onClick={onRefreshPermit}
-              className="text-xs text-blue-400 hover:text-blue-300 underline flex items-center gap-1"
+              className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
             >
               <RefreshCw className="w-3 h-3" />
               Sign new permit

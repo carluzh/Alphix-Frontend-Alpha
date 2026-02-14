@@ -43,6 +43,7 @@ import { useCheckMintApprovalsWithMode } from '@/lib/liquidity/hooks/approval/us
 import { previewDeposit } from '@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx';
 import type { DepositPreviewResult } from '@/lib/liquidity/unified-yield/types';
 import { usePublicClient } from 'wagmi';
+import * as Sentry from '@sentry/nextjs';
 
 // =============================================================================
 // TYPES
@@ -331,6 +332,23 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
         if (!cancelled) {
           console.warn('Unified Yield preview failed:', err);
           setDepositPreview(null);
+
+          // Capture to Sentry for debugging preview failures
+          Sentry.captureException(err, {
+            tags: {
+              component: 'UnifiedYieldPreview',
+              inputSide: activeInputSide || 'unknown',
+            },
+            extra: {
+              hookAddress,
+              inputAmount: inputWei.toString(),
+              inputSide: activeInputSide,
+              token0Decimals: token0Config?.decimals,
+              token1Decimals: token1Config?.decimals,
+              cause: err?.cause?.message || err?.cause,
+              shortMessage: err?.shortMessage,
+            },
+          });
         }
       })
       .finally(() => {

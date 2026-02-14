@@ -9,14 +9,10 @@ import { APRBreakdownTooltip } from "@/components/liquidity/APRBreakdownTooltip"
 import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
 import type { PoolStats } from "../../hooks";
 
-// Points campaign gives 50% APR bonus
-const POINTS_APR_MULTIPLIER = 0.5;
 
 interface PoolDetailStatsProps {
   poolStats: PoolStats;
   loading?: boolean;
-  /** Whether this pool earns points (shows points badge on APR) */
-  hasPointsRewards?: boolean;
   /** Token symbols for APR tooltip */
   token0Symbol?: string;
   token1Symbol?: string;
@@ -71,12 +67,12 @@ const StatItem = memo(function StatItem({
 export const PoolDetailStats = memo(function PoolDetailStats({
   poolStats,
   loading,
-  hasPointsRewards = true, // Default true for Alphix pools
   token0Symbol,
   token1Symbol,
 }: PoolDetailStatsProps) {
   const isLoading = loading || poolStats.tvlFormatted === "Loading...";
   const hasPositiveApr = poolStats.apr !== "0.00%" && poolStats.aprRaw > 0;
+  const hasUnifiedYield = true; // All Alphix pools have unified yield
 
   // Fetch Aave rates for Lending Yield display
   const { data: aaveRatesData } = useQuery({
@@ -102,19 +98,17 @@ export const PoolDetailStats = memo(function PoolDetailStats({
     return apy0 ?? apy1 ?? 0;
   }, [aaveRatesData, token0Symbol, token1Symbol]);
 
-  // Calculate APR values with points
-  const { poolApr, pointsApr, totalApr, totalAprFormatted } = useMemo(() => {
+  // Calculate APR values (no points bonus - unified yield only)
+  const { poolApr, totalApr, totalAprFormatted } = useMemo(() => {
     const rawApr = poolStats.aprRaw || 0;
-    const pointsBonus = hasPointsRewards ? rawApr * POINTS_APR_MULTIPLIER : 0;
-    const total = rawApr + pointsBonus + unifiedYieldApr;
+    const total = rawApr + unifiedYieldApr;
 
     return {
       poolApr: rawApr,
-      pointsApr: pointsBonus,
       totalApr: total,
       totalAprFormatted: total > 0 ? `${total.toFixed(2)}%` : "0.00%",
     };
-  }, [poolStats.aprRaw, hasPointsRewards, unifiedYieldApr]);
+  }, [poolStats.aprRaw, unifiedYieldApr]);
 
   // Stat card class (solid border, not dashed - the outer wrapper has the dashed border)
   const statCardClass = "flex-1 min-w-[130px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3";
@@ -159,12 +153,12 @@ export const PoolDetailStats = memo(function PoolDetailStats({
                 <div
                   className={cn(
                     "flex-1 min-w-[130px]",
-                    hasPositiveApr && hasPointsRewards && "input-gradient-hover input-gradient-always-visible overflow-visible m-px cursor-pointer"
+                    hasPositiveApr && hasUnifiedYield && "input-gradient-hover input-gradient-always-visible overflow-visible m-px cursor-pointer"
                   )}
                 >
                   <div className={cn(
                     "rounded-lg px-4 py-3 h-full",
-                    hasPositiveApr && hasPointsRewards
+                    hasPositiveApr && hasUnifiedYield
                       ? "relative z-[1] bg-container"
                       : "bg-muted/30 border border-sidebar-border/60"
                   )}>
@@ -175,7 +169,7 @@ export const PoolDetailStats = memo(function PoolDetailStats({
                       <div className="h-6 w-20 bg-muted/60 rounded animate-pulse" />
                     ) : (
                       <div className="text-lg font-semibold font-mono text-foreground">
-                        {hasPointsRewards && hasPositiveApr ? totalAprFormatted : poolStats.apr}
+                        {hasUnifiedYield && hasPositiveApr ? totalAprFormatted : poolStats.apr}
                       </div>
                     )}
                   </div>
@@ -188,7 +182,6 @@ export const PoolDetailStats = memo(function PoolDetailStats({
                 <APRBreakdownTooltip
                   swapApr={poolApr}
                   unifiedYieldApr={unifiedYieldApr}
-                  pointsApr={pointsApr}
                   token0Symbol={token0Symbol}
                   token1Symbol={token1Symbol}
                 />
