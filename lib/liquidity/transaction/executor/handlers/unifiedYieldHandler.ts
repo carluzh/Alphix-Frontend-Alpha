@@ -11,12 +11,16 @@
  */
 
 import type { Hex } from 'viem';
+import { createPublicClient, http } from 'viem';
+import { base } from 'viem/chains';
+import * as Sentry from '@sentry/nextjs';
 import type {
   UnifiedYieldApprovalStep,
   UnifiedYieldDepositStep,
   UnifiedYieldWithdrawStep,
 } from '../../../types';
 import { TransactionStepType } from '../../../types';
+import { ERC20_ABI } from '@/lib/abis/erc20';
 
 // =============================================================================
 // TYPES
@@ -149,29 +153,150 @@ export async function handleUnifiedYieldApprovalStep(
   }) => Promise<`0x${string}`>,
   waitForReceipt: (args: { hash: `0x${string}` }) => Promise<{ status: 'success' | 'reverted' }>,
 ): Promise<`0x${string}`> {
-  const { step, setCurrentStep } = params;
+  const { step, setCurrentStep, address } = params;
 
   // Trigger UI prompting user to accept
   setCurrentStep({ step, accepted: false });
 
-  // Submit approval transaction
-  const hash = await sendTransaction({
-    to: step.txRequest.to,
-    data: step.txRequest.data,
-    value: step.txRequest.value,
-  });
+  try {
+    // Submit approval transaction
+    const hash = await sendTransaction({
+      to: step.txRequest.to,
+      data: step.txRequest.data,
+      value: step.txRequest.value,
+    });
 
-  // Trigger waiting UI after user accepts
-  setCurrentStep({ step, accepted: true });
+    // Trigger waiting UI after user accepts
+    setCurrentStep({ step, accepted: true });
 
-  // Wait for confirmation
-  const receipt = await waitForReceipt({ hash });
+    // Wait for confirmation
+    const receipt = await waitForReceipt({ hash });
 
-  if (receipt.status === 'reverted') {
-    throw new Error(`${step.type} transaction reverted`);
+    if (receipt.status === 'reverted') {
+      throw new Error(`${step.type} transaction reverted`);
+    }
+
+    return hash;
+  } catch (error) {
+    // Capture approval failures to Sentry with FULL context
+    // This is critical for debugging intermittent approval issues
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+
+    // Log to console for immediate visibility during debugging
+    console.error('[UnifiedYieldApprovalHandler] Approval transaction failed:', {
+      userAddress: address,
+      tokenSymbol: step.tokenSymbol,
+      hookAddress: step.hookAddress,
+      txRequestData: step.txRequest.data,
+      error: errorObj.message,
+    });
+
+    // Fetch diagnostic data to understand WHY this specific user is failing
+    let diagnosticData: Record<string, unknown> = {};
+    try {
+      const publicClient = createPublicClient({
+        chain: base,
+        transport: http(),
+      });
+
+      // Check current allowance - might reveal existing approval issues
+      const currentAllowance = await publicClient.readContract({
+        address: step.tokenAddress as `0x${string}`,
+        abi: ERC20_ABI,
+        functionName: 'allowance',
+        args: [address, step.hookAddress as `0x${string}`],
+      });
+
+      // Check user's token balance
+      const tokenBalance = await publicClient.readContract({
+        address: step.tokenAddress as `0x${string}`,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [address],
+      });
+
+      // Check user's ETH balance for gas
+      const ethBalance = await publicClient.getBalance({ address });
+
+      // Try to simulate the approval call to get detailed error
+      let simulationError: string | undefined;
+      try {
+        await publicClient.simulateContract({
+          address: step.tokenAddress as `0x${string}`,
+          abi: ERC20_ABI,
+          functionName: 'approve',
+          args: [step.hookAddress as `0x${string}`, step.amount],
+          account: address,
+        });
+      } catch (simErr: any) {
+        simulationError = simErr?.message || String(simErr);
+      }
+
+      diagnosticData = {
+        currentAllowance: currentAllowance?.toString(),
+        tokenBalance: tokenBalance?.toString(),
+        ethBalance: ethBalance?.toString(),
+        simulationError,
+        // Is the requested amount less than current allowance?
+        alreadyApproved: currentAllowance ? BigInt(currentAllowance as bigint) >= step.amount : false,
+        // Does user have enough tokens?
+        hasSufficientBalance: tokenBalance ? BigInt(tokenBalance as bigint) >= step.amount : false,
+      };
+    } catch (diagErr) {
+      diagnosticData = { diagnosticFetchError: String(diagErr) };
+    }
+
+    // Use withScope to ensure context is properly attached
+    Sentry.withScope((scope) => {
+      // Set level to error to ensure it's not filtered as a warning
+      scope.setLevel('error');
+
+      // Set fingerprint for better grouping of this specific issue
+      scope.setFingerprint(['unified-yield-approval-failure', step.tokenSymbol]);
+
+      scope.setTags({
+        component: 'UnifiedYieldApprovalHandler',
+        stepType: step.type,
+        tokenSymbol: step.tokenSymbol,
+      });
+
+      scope.setExtras({
+        // User context
+        userAddress: address,
+
+        // DIAGNOSTIC DATA - the key to understanding why this user fails
+        ...diagnosticData,
+
+        // Transaction details - FULL calldata for debugging
+        tokenAddress: step.tokenAddress,
+        tokenSymbol: step.tokenSymbol,
+        hookAddress: step.hookAddress,
+        approvalAmount: step.amount.toString(),
+
+        // Full calldata for debugging nibble/encoding issues
+        txRequestTo: step.txRequest.to,
+        txRequestData: step.txRequest.data, // Full calldata
+        txRequestDataLength: step.txRequest.data?.length,
+        txRequestValue: step.txRequest.value?.toString(),
+
+        // Error details from viem
+        errorMessage: errorObj.message,
+        errorCause: (error as any)?.cause?.message || (error as any)?.cause,
+        errorShortMessage: (error as any)?.shortMessage,
+        errorDetails: (error as any)?.details,
+
+        // Parsed calldata components for easy debugging
+        calldataSelector: step.txRequest.data?.slice(0, 10),
+        calldataSpender: step.txRequest.data?.slice(10, 74), // 64 chars after selector
+        calldataAmount: step.txRequest.data?.slice(74), // Remaining chars
+      });
+
+      Sentry.captureException(errorObj);
+    });
+
+    // Re-throw to let the executor handle it
+    throw error;
   }
-
-  return hash;
 }
 
 // =============================================================================

@@ -6,6 +6,7 @@
  */
 
 import { maxUint256, type Address } from 'viem';
+import * as Sentry from '@sentry/nextjs';
 import { getStoredUserSettings } from '@/hooks/useUserSettings';
 import type { ValidatedTransactionRequest } from '../../types';
 
@@ -26,6 +27,17 @@ export function buildApprovalCalldata(
   // approve(address spender, uint256 amount)
   // Function selector: 0x095ea7b3
   const selector = '0x095ea7b3';
+
+  // Validate spender address to catch encoding issues early
+  if (!spender || typeof spender !== 'string' || !spender.startsWith('0x') || spender.length !== 42) {
+    const error = new Error(`Invalid spender address format: ${spender}`);
+    Sentry.captureException(error, {
+      tags: { component: 'buildApprovalCalldata' },
+      extra: { spender, spenderType: typeof spender, spenderLength: spender?.length },
+    });
+    throw error;
+  }
+
   const paddedSpender = spender.slice(2).padStart(64, '0');
 
   // Determine approval amount based on user settings
@@ -45,7 +57,39 @@ export function buildApprovalCalldata(
   }
 
   const paddedAmount = approvalAmount.toString(16).padStart(64, '0');
-  return `${selector}${paddedSpender}${paddedAmount}` as `0x${string}`;
+  const calldata = `${selector}${paddedSpender}${paddedAmount}` as `0x${string}`;
+
+  // Validate calldata length (should be 2 + 8 + 64 + 64 = 138 chars including 0x)
+  if (calldata.length !== 138) {
+    const error = new Error(`Invalid calldata length: expected 138, got ${calldata.length}`);
+    Sentry.captureException(error, {
+      tags: { component: 'buildApprovalCalldata' },
+      extra: {
+        spender,
+        amount: amount?.toString(),
+        approvalAmount: approvalAmount.toString(),
+        paddedSpenderLength: paddedSpender.length,
+        paddedAmountLength: paddedAmount.length,
+        calldataLength: calldata.length,
+        calldata,
+      },
+    });
+    throw error;
+  }
+
+  // Add breadcrumb for debugging - will be included with any subsequent error
+  Sentry.addBreadcrumb({
+    category: 'approval',
+    message: 'Built approval calldata',
+    level: 'info',
+    data: {
+      spender,
+      amount: amount?.toString(),
+      calldataLength: calldata.length,
+    },
+  });
+
+  return calldata;
 }
 
 /**
