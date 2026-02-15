@@ -97,15 +97,7 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
     msUntilStart,
   } = useMemo(() => {
     const now = new Date();
-
-    // =======================================================================
-    // TEMPORARY LAUNCH OVERRIDE - Remove after W1 ends (Thursday Feb 20, 2026)
-    // Override backend's season start to Feb 13 19:00 CET (18:00 UTC) for display
-    // =======================================================================
-    const LAUNCH_OVERRIDE_START = new Date("2026-02-13T18:00:00Z");
-    const effectiveSeasonStart = LAUNCH_OVERRIDE_START;
-    // After removing override, change back to: const effectiveSeasonStart = seasonStartDate;
-    // =======================================================================
+    const effectiveSeasonStart = seasonStartDate;
 
     const seasonEnd = new Date(effectiveSeasonStart);
     seasonEnd.setDate(seasonEnd.getDate() + seasonDurationDays);

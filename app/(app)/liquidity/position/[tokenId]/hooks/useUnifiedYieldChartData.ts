@@ -19,7 +19,7 @@ import {
   fetchUnifiedYieldPoolAprHistory,
   fetchSparkRatesHistory,
 } from "@/lib/backend-client";
-import { fetchAaveHistory, getTokenProtocol } from "@/lib/aave-rates";
+import { fetchAaveHistory, getTokenProtocol, getPoolYieldFactor } from "@/lib/aave-rates";
 import { useNetwork } from "@/lib/network-context";
 import type { YieldSource } from "@/lib/pools-config";
 
@@ -169,6 +169,11 @@ export function useUnifiedYieldChartData({
     const token0Data = token0YieldQuery.data;
     const token1Data = token1YieldQuery.data;
 
+    // Get pool-level yield factor (applies to lending yields, not swap APR)
+    const yieldFactor = token0Symbol && token1Symbol
+      ? getPoolYieldFactor(token0Symbol, token1Symbol)
+      : 1.0;
+
     // Convert each source to sorted arrays for forward-fill lookup
     const swapSorted: Array<{ ts: number; val: number }> = [];
     const token0Sorted: Array<{ ts: number; val: number }> = [];
@@ -240,10 +245,15 @@ export function useUnifiedYieldChartData({
     };
 
     // Build merged chart points with forward-filled values
+    // Apply pool yield factor to lending yields (not swap APR)
     return sortedTimestamps.map((timestamp) => {
       const swapApr = forwardFill(swapSorted, timestamp) ?? 0;
-      const currency0Apy = token0HasYield ? forwardFill(token0Sorted, timestamp) : undefined;
-      const currency1Apy = token1HasYield ? forwardFill(token1Sorted, timestamp) : undefined;
+      const rawCurrency0Apy = token0HasYield ? forwardFill(token0Sorted, timestamp) : undefined;
+      const rawCurrency1Apy = token1HasYield ? forwardFill(token1Sorted, timestamp) : undefined;
+
+      // Apply pool-level yield factor to lending yields
+      const currency0Apy = rawCurrency0Apy !== undefined ? rawCurrency0Apy * yieldFactor : undefined;
+      const currency1Apy = rawCurrency1Apy !== undefined ? rawCurrency1Apy * yieldFactor : undefined;
 
       const totalApr = swapApr + (currency0Apy ?? 0) + (currency1Apy ?? 0);
 
@@ -255,7 +265,7 @@ export function useUnifiedYieldChartData({
         totalApr,
       };
     });
-  }, [swapAprQuery.data, token0YieldQuery.data, token1YieldQuery.data, token0HasYield, token1HasYield]);
+  }, [swapAprQuery.data, token0YieldQuery.data, token1YieldQuery.data, token0HasYield, token1HasYield, token0Symbol, token1Symbol]);
 
   // Append a "live now" point using the current Swap APR from the yield breakdown,
   // so the chart tip reflects the freshest value instead of lagging up to 1h behind.

@@ -8,9 +8,7 @@
  */
 
 import { type NetworkMode } from './network-mode';
-import { LENDING_APR_NET_FACTOR } from './aave-rates';
 
-// Backend URL - defaults to localhost for development
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
 // =============================================================================
@@ -839,12 +837,8 @@ export async function fetchSparkRatesHistory(
       throw new Error(errorData.error || `HTTP ${response.status}`);
     }
 
-    const data: SparkHistoryResponse = await response.json();
-    // Apply net factor to historical lending rates
-    if (data.points) {
-      data.points = data.points.map(p => ({ ...p, apy: p.apy * LENDING_APR_NET_FACTOR }));
-    }
-    return data;
+    // Return RAW rates - pool factor applied at display time via applyPoolYieldFactor()
+    return await response.json() as SparkHistoryResponse;
   } catch (error) {
     return {
       success: false,
@@ -1095,6 +1089,10 @@ export interface PoolMetrics {
   tvlUsd: number;
   volume24hUsd: number;
   fees24hUsd: number;
+  /** 24h lending yield in USD (from Aave/Spark for UY pools) */
+  lendingYield24hUsd?: number;
+  /** 24h total fees in USD (swap fees + lending yield) */
+  totalFees24hUsd?: number;
   lpFee: number;
   token0Price: number;
   token1Price: number;

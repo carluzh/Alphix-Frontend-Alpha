@@ -11,7 +11,7 @@ import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
 type Position = V4ProcessedPosition | UnifiedYieldPosition;
 import type { TokenSymbol } from "@/lib/pools-config";
 import { useQuery } from "@tanstack/react-query";
-import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
+import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 
 import dynamic from "next/dynamic";
 import { PoolDetailHeader } from "./PoolDetailHeader";
@@ -151,25 +151,13 @@ export const PoolDetail = memo(function PoolDetail({
     staleTime: 5 * 60_000, // 5 minutes
   });
 
-  // Calculate Aave APY based on pool tokens
+  // Calculate lending yield APR (with pool-level factor applied)
   const aaveApr = useMemo(() => {
-    if (!poolConfig || !aaveRatesData?.success) return undefined;
-
-    const token0Symbol = poolConfig.tokens[0]?.symbol;
-    const token1Symbol = poolConfig.tokens[1]?.symbol;
-    if (!token0Symbol || !token1Symbol) return undefined;
-
-    const key0 = getAaveKey(token0Symbol);
-    const key1 = getAaveKey(token1Symbol);
-
-    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
-    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
-
-    // Average if both tokens supported, otherwise use single token's APY
-    if (apy0 !== null && apy1 !== null) {
-      return (apy0 + apy1) / 2;
-    }
-    return apy0 ?? apy1 ?? undefined;
+    if (!poolConfig) return undefined;
+    const token0 = poolConfig.tokens[0]?.symbol;
+    const token1 = poolConfig.tokens[1]?.symbol;
+    if (!token0 || !token1) return undefined;
+    return getLendingAprForPair(aaveRatesData, token0, token1) ?? undefined;
   }, [poolConfig, aaveRatesData]);
 
   // =========================================================================

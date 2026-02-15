@@ -21,6 +21,18 @@ export default function AppProviders({
   cookieString: string
   initialNetworkMode: NetworkMode
 }) {
+  // Capture referral code from URL on any page and store in localStorage
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const refCode = urlParams.get("ref")
+    if (refCode) {
+      localStorage.setItem("alphix_pending_referral", refCode)
+      // Clean URL by removing the ref param
+      const newUrl = window.location.pathname
+      window.history.replaceState({}, "", newUrl)
+    }
+  }, [])
+
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | null = null
     const onResize = () => {

@@ -23,7 +23,7 @@ import { prefetchService } from "@/lib/prefetch-service";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 import { APRBadge } from "@/components/liquidity/APRBadge";
-import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
+import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { useWSPools } from "@/lib/websocket";
 
 /**
@@ -150,7 +150,8 @@ export default function LiquidityPage() {
           ...poolConfig,
           tvlUSD: wsPool.tvlUsd,
           volume24hUSD: wsPool.volume24hUsd,
-          fees24hUSD: wsPool.fees24hUsd,
+          // Use totalFees24hUsd (swap fees + lending yield) if available, fallback to swap fees only
+          fees24hUSD: wsPool.totalFees24hUsd ?? wsPool.fees24hUsd,
           apr: aprStr,
         };
       }
@@ -165,21 +166,9 @@ export default function LiquidityPage() {
     staleTime: 5 * 60_000, // 5 minutes
   });
 
-  // Calculate Aave APY for a pool based on its token symbols
+  // Calculate lending yield APR for a pool (with pool-level factor applied)
   const getPoolAaveApy = useCallback((token0Symbol: string, token1Symbol: string): number | undefined => {
-    if (!aaveRatesData?.success) return undefined;
-
-    const key0 = getAaveKey(token0Symbol);
-    const key1 = getAaveKey(token1Symbol);
-
-    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
-    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
-
-    // Average if both tokens supported, otherwise use single token's APY
-    if (apy0 !== null && apy1 !== null) {
-      return (apy0 + apy1) / 2;
-    }
-    return apy0 ?? apy1 ?? undefined;
+    return getLendingAprForPair(aaveRatesData, token0Symbol, token1Symbol) ?? undefined;
   }, [aaveRatesData]);
 
   const isMobile = useIsMobile();

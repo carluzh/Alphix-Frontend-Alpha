@@ -1,24 +1,44 @@
 /**
  * Unified Yield Rates Client
- *
- * Client for fetching lending rates from AlphixBackend.
- * Supports both Aave (USDC, WETH, GHO) and Spark (DAI, USDS) protocols.
- * Used for Unified Yield APR display in position/pool pages.
+ * Fetches lending rates from Aave/Spark via AlphixBackend.
+ * Pool-level yield factors configured in POOL_YIELD_FACTORS.
  */
 
-// Backend URL - defaults to localhost for development
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
-/**
- * Net lending APR factor after protocol fees.
- * Users receive 70% of the gross lending rate from Aave/Spark.
- * Note: ETH/WETH is excluded from this discount.
- */
-export const LENDING_APR_NET_FACTOR = 0.70;
+// ============================================================================
+// POOL YIELD FACTORS - Single source of truth for per-pool yield discounts
+// ============================================================================
 
-/**
- * Protocol source for each token
- */
+/** Pool yield factors: key = sorted symbols joined by '/', value = multiplier (0.70 = 30% fee) */
+const POOL_YIELD_FACTORS: Record<string, number> = {
+  'USDC/USDS': 0.70,
+  'ATDAI/ATUSDC': 0.70,
+};
+
+function makePoolKey(token0: string, token1: string): string {
+  return [token0.toUpperCase(), token1.toUpperCase()].sort().join('/');
+}
+
+export function getPoolYieldFactor(token0Symbol: string, token1Symbol: string): number {
+  return POOL_YIELD_FACTORS[makePoolKey(token0Symbol, token1Symbol)] ?? 1.0;
+}
+
+export function applyPoolYieldFactor(rawYield: number, token0Symbol: string, token1Symbol: string): number {
+  return rawYield * getPoolYieldFactor(token0Symbol, token1Symbol);
+}
+
+export function applyPoolYieldFactorToHistory<T extends { apy: number }>(
+  points: T[],
+  token0Symbol: string,
+  token1Symbol: string
+): T[] {
+  const factor = getPoolYieldFactor(token0Symbol, token1Symbol);
+  return factor === 1.0 ? points : points.map(p => ({ ...p, apy: p.apy * factor }));
+}
+
+// ============================================================================
+
 type ProtocolSource = 'aave' | 'spark';
 
 interface TokenMapping {
@@ -96,12 +116,8 @@ export function getTokenProtocol(tokenSymbol: string): TokenMapping | null {
   return TOKEN_TO_PROTOCOL[upperSymbol] || null;
 }
 
-/**
- * Get the Aave/Spark key for a token symbol (legacy compatibility)
- */
-export function getAaveKey(tokenSymbol: string): string | null {
-  const mapping = getTokenProtocol(tokenSymbol);
-  return mapping?.key || null;
+function getAaveKey(tokenSymbol: string): string | null {
+  return getTokenProtocol(tokenSymbol)?.key || null;
 }
 
 /**
@@ -170,19 +186,17 @@ export async function fetchAaveRates(): Promise<AaveRatesResponse> {
 
     const combinedData: Record<string, AaveTokenRate> = {};
 
-    // Process Aave response
+    // Process Aave response - store RAW rates (no discount applied)
     if (aaveResponse?.ok) {
       const aaveData = await aaveResponse.json();
       if (aaveData.success && aaveData.data) {
         for (const [key, value] of Object.entries(aaveData.data)) {
-          const rate = value as AaveTokenRate;
-          const apyFactor = key === 'WETH' ? 1 : LENDING_APR_NET_FACTOR;
-          combinedData[key] = { ...rate, apy: rate.apy * apyFactor };
+          combinedData[key] = value as AaveTokenRate;
         }
       }
     }
 
-    // Process Spark response
+    // Process Spark response - store RAW rates (no discount applied)
     if (sparkResponse?.ok) {
       const sparkData = await sparkResponse.json();
       if (sparkData.success && sparkData.data) {
@@ -190,7 +204,7 @@ export async function fetchAaveRates(): Promise<AaveRatesResponse> {
           // Spark returns { apy, conversionRate, timestamp } - normalize to AaveTokenRate
           const sparkRate = value as { apy: number; conversionRate?: string; timestamp: number };
           combinedData[key] = {
-            apy: sparkRate.apy * LENDING_APR_NET_FACTOR,
+            apy: sparkRate.apy,
             utilization: 0, // Spark doesn't return utilization
             timestamp: sparkRate.timestamp,
           };
@@ -309,12 +323,8 @@ export async function fetchAaveHistory(
       throw new Error(errorData.error || `HTTP ${response.status}`);
     }
 
-    const data: AaveHistoryResponse = await response.json();
-    // Apply net factor to historical lending rates (except WETH)
-    if (data.points && aaveKey !== 'WETH') {
-      data.points = data.points.map(p => ({ ...p, apy: p.apy * LENDING_APR_NET_FACTOR }));
-    }
-    return data;
+    // Return RAW rates - apply pool factor at display time via applyPoolYieldFactorToHistory()
+    return await response.json() as AaveHistoryResponse;
   } catch (error) {
     return {
       success: false,
@@ -404,8 +414,9 @@ export async function fetchPositionAaveHistory(
 }
 
 /**
- * Calculate lending APR for a token pair from rates data
- * Returns average if both tokens supported, single token's APY if only one supported, null otherwise
+ * Calculate lending APR for a token pair from rates data.
+ * Automatically applies pool-level yield factor.
+ * Returns average if both tokens supported, single token's APY if only one supported, null otherwise.
  */
 export function getLendingAprForPair(
   ratesData: AaveRatesResponse | undefined,
@@ -420,8 +431,16 @@ export function getLendingAprForPair(
   const apy0 = key0 && ratesData.data[key0] ? ratesData.data[key0].apy : null;
   const apy1 = key1 && ratesData.data[key1] ? ratesData.data[key1].apy : null;
 
-  if (apy0 !== null && apy1 !== null) return (apy0 + apy1) / 2;
-  return apy0 ?? apy1 ?? null;
+  // Calculate raw average
+  let rawAvg: number | null = null;
+  if (apy0 !== null && apy1 !== null) {
+    rawAvg = (apy0 + apy1) / 2;
+  } else {
+    rawAvg = apy0 ?? apy1 ?? null;
+  }
+
+  if (rawAvg === null) return null;
+  return applyPoolYieldFactor(rawAvg, token0Symbol, token1Symbol);
 }
 
 /**

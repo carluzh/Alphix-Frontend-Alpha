@@ -53,10 +53,14 @@ export interface PoolData {
   tvlUsd: number;
   volume24hUsd: number;
   fees24hUsd: number;
+  /** 24h lending yield in USD (from Aave/Spark for UY pools) */
+  lendingYield24hUsd?: number;
+  /** 24h total fees in USD (swap fees + lending yield) */
+  totalFees24hUsd?: number;
   lpFee: number;
   token0Price: number;
   token1Price: number;
-  /** Calculated: (fees24hUsd / tvlUsd) * 365 * 100 */
+  /** Calculated: (fees24hUsd / tvlUsd) * 365 * 100 - swap fees only, lending APR added separately */
   apr24h: number;
   lastUpdated: number;
 }
@@ -129,6 +133,7 @@ function calculateApr(fees24hUsd: number, tvlUsd: number): number {
  * Convert PoolMetrics to PoolData with calculated APR
  */
 function toPoolData(metrics: PoolMetrics): PoolData {
+  // APR uses swap fees only (fees24hUsd) - lending APR is added separately by frontend
   return {
     poolId: metrics.poolId,
     name: metrics.name,
@@ -136,6 +141,8 @@ function toPoolData(metrics: PoolMetrics): PoolData {
     tvlUsd: metrics.tvlUsd,
     volume24hUsd: metrics.volume24hUsd,
     fees24hUsd: metrics.fees24hUsd,
+    lendingYield24hUsd: metrics.lendingYield24hUsd,
+    totalFees24hUsd: metrics.totalFees24hUsd,
     lpFee: metrics.lpFee,
     token0Price: metrics.token0Price,
     token1Price: metrics.token1Price,
@@ -249,6 +256,7 @@ export function useWSPools(): UseWSPoolsReturn {
     // Override with WebSocket data (more recent)
     if (ws?.pools) {
       ws.pools.forEach((wsPool, key) => {
+        // APR uses swap fees only (fees24hUsd) - lending APR is added separately by frontend
         merged.set(key, {
           poolId: wsPool.poolId,
           name: wsPool.name,
@@ -256,6 +264,8 @@ export function useWSPools(): UseWSPoolsReturn {
           tvlUsd: wsPool.tvlUsd,
           volume24hUsd: wsPool.volume24hUsd,
           fees24hUsd: wsPool.fees24hUsd,
+          lendingYield24hUsd: wsPool.lendingYield24hUsd,
+          totalFees24hUsd: wsPool.totalFees24hUsd,
           lpFee: wsPool.lpFee,
           token0Price: wsPool.token0Price,
           token1Price: wsPool.token1Price,

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { StatSectionBubble } from "../shared/DetailBubble";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { APRBreakdownTooltip } from "@/components/liquidity/APRBreakdownTooltip";
-import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
+import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import type { PoolStats } from "../../hooks";
 
 
@@ -81,21 +81,10 @@ export const PoolDetailStats = memo(function PoolDetailStats({
     staleTime: 5 * 60_000, // 5 minutes
   });
 
-  // Calculate Aave APY based on pool tokens
+  // Calculate lending yield APR (with pool-level factor applied)
   const unifiedYieldApr = useMemo(() => {
-    if (!aaveRatesData?.success || !token0Symbol || !token1Symbol) return 0;
-
-    const key0 = getAaveKey(token0Symbol);
-    const key1 = getAaveKey(token1Symbol);
-
-    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
-    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
-
-    // Average if both tokens supported, otherwise use single token's APY
-    if (apy0 !== null && apy1 !== null) {
-      return (apy0 + apy1) / 2;
-    }
-    return apy0 ?? apy1 ?? 0;
+    if (!token0Symbol || !token1Symbol) return 0;
+    return getLendingAprForPair(aaveRatesData, token0Symbol, token1Symbol) ?? 0;
   }, [aaveRatesData, token0Symbol, token1Symbol]);
 
   // Calculate APR values (no points bonus - unified yield only)

@@ -22,7 +22,7 @@ import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
 import { getOptimalBaseToken } from '@/lib/denomination-utils';
 import { useQuery } from '@tanstack/react-query';
-import { fetchAaveRates, getAaveKey } from '@/lib/aave-rates';
+import { fetchAaveRates, getLendingAprForPair } from '@/lib/aave-rates';
 import { fetchUnifiedYieldPositionCompoundedFees } from '@/lib/backend-client';
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 import {
@@ -99,20 +99,9 @@ export function UnifiedYieldPositionCard({
         staleTime: 5 * 60_000, // 5 minutes
     });
 
-    // Calculate combined Aave APY
+    // Calculate lending yield APR (with pool-level factor applied)
     const aaveApr = useMemo(() => {
-        if (!aaveRatesData?.success) return undefined;
-
-        const key0 = getAaveKey(token0Symbol);
-        const key1 = getAaveKey(token1Symbol);
-
-        const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
-        const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
-
-        if (apy0 !== null && apy1 !== null) {
-            return (apy0 + apy1) / 2;
-        }
-        return apy0 ?? apy1 ?? undefined;
+        return getLendingAprForPair(aaveRatesData, token0Symbol, token1Symbol) ?? undefined;
     }, [aaveRatesData, token0Symbol, token1Symbol]);
 
     // Determine denomination base

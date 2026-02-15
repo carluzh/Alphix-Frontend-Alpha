@@ -177,8 +177,12 @@ export interface WSPoolData {
   tvlUsd: number;
   /** 24h volume in USD (from poolDayDatas) */
   volume24hUsd: number;
-  /** 24h fees in USD (from poolDayDatas) */
+  /** 24h swap fees in USD (from poolDayDatas) */
   fees24hUsd: number;
+  /** 24h lending yield in USD (from Aave/Spark for UY pools) */
+  lendingYield24hUsd?: number;
+  /** 24h total fees in USD (swap fees + lending yield) */
+  totalFees24hUsd?: number;
   /** LP fee in basis points */
   lpFee: number;
   /** Token0 USD price */

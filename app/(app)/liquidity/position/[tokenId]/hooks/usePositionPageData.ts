@@ -12,7 +12,7 @@ import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 import { usePoolPriceChartData } from "@/lib/chart/hooks/usePoolPriceChartData";
 import { HistoryDuration } from "@/lib/chart/types";
 import { useNetwork } from "@/lib/network-context";
-import { fetchAaveRates, getAaveKey } from "@/lib/aave-rates";
+import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { fetchPositionApr, fetchPoolsMetrics } from "@/lib/backend-client";
 import {
   fetchSingleUnifiedYieldPosition,
@@ -555,23 +555,10 @@ export function usePositionPageData(tokenId: string): PositionPageData {
     staleTime: 5 * 60_000, // 5 minutes - matches backend cache
   });
 
-  // Calculate Aave APY based on position tokens
+  // Calculate lending yield APR (with pool-level factor applied)
   const aaveApr = useMemo(() => {
-    if (lpType !== "rehypo" || !aaveRatesData?.success || !poolConfig) return null;
-
-    const token0Symbol = poolConfig.currency0.symbol;
-    const token1Symbol = poolConfig.currency1.symbol;
-    const key0 = getAaveKey(token0Symbol);
-    const key1 = getAaveKey(token1Symbol);
-
-    const apy0 = key0 && aaveRatesData.data[key0] ? aaveRatesData.data[key0].apy : null;
-    const apy1 = key1 && aaveRatesData.data[key1] ? aaveRatesData.data[key1].apy : null;
-
-    // Average if both tokens supported, otherwise use single token's APY
-    if (apy0 !== null && apy1 !== null) {
-      return (apy0 + apy1) / 2;
-    }
-    return apy0 ?? apy1 ?? null;
+    if (lpType !== "rehypo" || !poolConfig) return null;
+    return getLendingAprForPair(aaveRatesData, poolConfig.currency0.symbol, poolConfig.currency1.symbol);
   }, [lpType, aaveRatesData, poolConfig]);
 
   const totalApr = useMemo(() => {

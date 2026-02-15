@@ -4,7 +4,13 @@ import { memo, useRef, useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { IconClone2, IconCheck, IconChevronLeft, IconChevronRight } from "nucleo-micro-bold-essential";
+import { IconClone2, IconCheck, IconChevronLeft, IconChevronRight, IconLink, IconCircleInfo } from "nucleo-micro-bold-essential";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ReferralCodeIcon, EnterCodeIcon } from "@/components/PointsIcons";
 import { PointsHistoryTable } from "./PointsHistoryTable";
 import { PointsLeaderboardTable } from "./PointsLeaderboardTable";
@@ -174,6 +180,7 @@ export const PointsTabsSection = memo(function PointsTabsSection({
         return (
           <ReferralContent
             isLoading={isLoading}
+            currentUserAddress={currentUserAddress}
             myReferralCode={myReferralCode}
             myReferrer={myReferrer}
             myReferrerCode={myReferrerCode}
@@ -280,6 +287,7 @@ const ITEMS_PER_PAGE = 10;
  */
 function ReferralContent({
   isLoading,
+  currentUserAddress,
   myReferralCode,
   myReferrer,
   myReferrerCode,
@@ -288,6 +296,7 @@ function ReferralContent({
   applyReferralCode,
 }: {
   isLoading?: boolean;
+  currentUserAddress?: string;
   myReferralCode?: string | null;
   myReferrer?: string | null;
   myReferrerCode?: string | null;
@@ -295,6 +304,7 @@ function ReferralContent({
   referees?: CachedRefereesData["referees"];
   applyReferralCode?: (code: string) => Promise<{ success: boolean; error?: string }>;
 }) {
+  const isConnected = !!currentUserAddress;
   const [enteredCode, setEnteredCode] = useState("");
   const [isApplying, setIsApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -394,10 +404,38 @@ function ReferralContent({
                 <span className="text-sm font-medium text-foreground">
                   Your Referral Code
                 </span>
+                <TooltipProvider delayDuration={0}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <IconCircleInfo className="w-3.5 h-3.5 text-muted-foreground/60 cursor-default" />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-[260px]">
+                      <p className="text-xs font-medium mb-1">Requirements</p>
+                      <p className="text-xs text-muted-foreground mb-1.5">
+                        To create a code you need to LP at least $100 or generate $500 of volume.
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Data is verified within 15 min.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
 
-              {/* Code display - always show (loading, code, or requirements not met) */}
-              {displayCode ? (
+              {/* Code display - show based on connection/loading/code state */}
+              {!isConnected ? (
+                <div
+                  className={cn(
+                    "rounded-lg border border-sidebar-border",
+                    "bg-muted/40",
+                    "px-3 py-2.5 flex items-center justify-center"
+                  )}
+                >
+                  <span className="text-sm text-muted-foreground">
+                    Connect wallet to get your code
+                  </span>
+                </div>
+              ) : displayCode ? (
                 <CopyableReferralCode code={displayCode} />
               ) : requirementsNotMet ? (
                 <div
@@ -450,40 +488,52 @@ function ReferralContent({
                 code={myReferrerCode}
                 joinedAt={referrerJoinedAt}
               />
-            ) : (
-              <div className="relative">
-                <input
-                  type="text"
-                  value={enteredCode}
-                  onChange={(e) => setEnteredCode(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => e.key === "Enter" && handleApplyCode()}
-                  placeholder="Enter code..."
-                  disabled={isApplying}
+            ) : enteredCode.trim() ? (
+              /* Show Apply button when code is entered */
+              <div className="flex items-center gap-2">
+                <div
                   className={cn(
-                    "w-full rounded-lg border border-sidebar-border",
-                    "bg-muted/40 hover:bg-muted/60 focus:bg-muted/60",
-                    "px-3 py-2.5 text-sm font-medium text-foreground",
-                    "placeholder:text-muted-foreground/50",
-                    "outline-none focus:border-sidebar-primary/50",
-                    "transition-colors",
-                    isApplying && "opacity-50 cursor-not-allowed"
+                    "flex-1 rounded-lg border border-sidebar-border",
+                    "bg-muted/40",
+                    "px-3 py-2.5 text-sm font-medium text-foreground"
                   )}
                   style={{ fontFamily: "Consolas, monospace" }}
-                />
-                {/* Enter kbd hint or loading */}
-                {enteredCode.trim() && !isApplying && (
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                    <kbd className="px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted/60 border border-sidebar-border rounded">
-                      Enter
-                    </kbd>
-                  </div>
-                )}
-                {isApplying && (
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <span className="text-xs text-muted-foreground">Applying...</span>
-                  </div>
-                )}
+                >
+                  {enteredCode}
+                </div>
+                <button
+                  onClick={handleApplyCode}
+                  disabled={isApplying}
+                  className={cn(
+                    "px-4 py-2.5 rounded-lg text-sm font-semibold",
+                    "bg-button-primary hover-button-primary text-sidebar-primary",
+                    "transition-all active:scale-[0.98]",
+                    "disabled:opacity-50 disabled:cursor-not-allowed"
+                  )}
+                >
+                  {isApplying ? "Applying..." : "Apply"}
+                </button>
               </div>
+            ) : (
+              /* Show input when no code entered */
+              <input
+                type="text"
+                value={enteredCode}
+                onChange={(e) => setEnteredCode(e.target.value.toUpperCase())}
+                onKeyDown={(e) => e.key === "Enter" && handleApplyCode()}
+                placeholder="Enter code..."
+                disabled={isApplying}
+                className={cn(
+                  "w-full rounded-lg border border-sidebar-border",
+                  "bg-muted/40 hover:bg-muted/60 focus:bg-muted/60",
+                  "px-3 py-2.5 text-sm font-medium text-foreground",
+                  "placeholder:text-muted-foreground/50",
+                  "outline-none focus:border-sidebar-primary/50",
+                  "transition-colors",
+                  isApplying && "opacity-50 cursor-not-allowed"
+                )}
+                style={{ fontFamily: "Consolas, monospace" }}
+              />
             )}
 
             {/* Error message */}
@@ -501,24 +551,22 @@ function ReferralContent({
 }
 
 /**
- * CopyableReferralCode - Clickable code cell with copy animation
- * Matches CopyableAddress pattern from Leaderboard
+ * CopyableReferralCode - Code display with dual copy options (raw code + link)
  */
 function CopyableReferralCode({ code }: { code: string }) {
-  const [isCopied, setIsCopied] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
+  const [copiedType, setCopiedType] = useState<"code" | "link" | null>(null);
 
   useEffect(() => {
-    if (isCopied) {
-      const timer = setTimeout(() => setIsCopied(false), 1500);
+    if (copiedType) {
+      const timer = setTimeout(() => setCopiedType(null), 1500);
       return () => clearTimeout(timer);
     }
-  }, [isCopied]);
+  }, [copiedType]);
 
-  const handleCopy = useCallback(async () => {
+  const handleCopyCode = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(code);
-      setIsCopied(true);
+      setCopiedType("code");
       toast.success("Referral code copied");
     } catch (err) {
       console.error("Failed to copy:", err);
@@ -526,57 +574,75 @@ function CopyableReferralCode({ code }: { code: string }) {
     }
   }, [code]);
 
-  return (
-    <div
-      className={cn(
-        "rounded-lg border border-sidebar-border",
-        "bg-muted/40 hover:bg-muted/60",
-        "transition-colors cursor-pointer",
-        "px-3 py-2.5 flex items-center justify-between gap-3"
-      )}
-      onClick={handleCopy}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <span
-        className={cn(
-          "text-sm font-medium text-foreground",
-          "transition-opacity duration-200",
-          isHovered ? "opacity-80" : "opacity-100"
-        )}
-        style={{ fontFamily: "Consolas, monospace" }}
-      >
-        {code}
-      </span>
+  const handleCopyLink = useCallback(async () => {
+    try {
+      // Use overview page as the referral landing page
+      const baseUrl = typeof window !== "undefined" ? window.location.origin : "https://alphix.app";
+      const referralLink = `${baseUrl}/overview?ref=${code}`;
+      await navigator.clipboard.writeText(referralLink);
+      setCopiedType("link");
+      toast.success("Referral link copied");
+    } catch (err) {
+      console.error("Failed to copy:", err);
+      toast.error("Failed to copy link");
+    }
+  }, [code]);
 
-      {/* Icon container */}
+  return (
+    <div className="flex items-center gap-2">
+      {/* Code display */}
       <div
         className={cn(
-          "relative w-5 h-5 flex-shrink-0 transition-opacity duration-200",
-          isHovered || isCopied ? "opacity-100" : "opacity-0"
+          "flex-1 rounded-lg border border-sidebar-border",
+          "bg-muted/40",
+          "px-3 py-2.5"
         )}
       >
-        <IconClone2
-          width={20}
-          height={20}
-          className={cn(
-            "absolute inset-0 text-muted-foreground transition-all duration-200",
-            isCopied
-              ? "opacity-0 translate-y-1"
-              : "opacity-100 translate-y-0"
-          )}
-        />
-        <IconCheck
-          width={20}
-          height={20}
-          className={cn(
-            "absolute inset-0 text-green-500 transition-all duration-200",
-            isCopied
-              ? "opacity-100 translate-y-0"
-              : "opacity-0 -translate-y-1"
-          )}
-        />
+        <span
+          className="text-sm font-medium text-foreground"
+          style={{ fontFamily: "Consolas, monospace" }}
+        >
+          {code}
+        </span>
       </div>
+
+      {/* Copy Code button */}
+      <button
+        onClick={handleCopyCode}
+        className={cn(
+          "h-10 w-10 flex-shrink-0 rounded-lg",
+          "bg-muted/40 hover:bg-muted/60",
+          "border border-sidebar-border",
+          "flex items-center justify-center",
+          "transition-colors"
+        )}
+        title="Copy code"
+      >
+        {copiedType === "code" ? (
+          <IconCheck width={16} height={16} className="text-green-500" />
+        ) : (
+          <IconClone2 width={16} height={16} className="text-muted-foreground" />
+        )}
+      </button>
+
+      {/* Copy Link button */}
+      <button
+        onClick={handleCopyLink}
+        className={cn(
+          "h-10 w-10 flex-shrink-0 rounded-lg",
+          "bg-muted/40 hover:bg-muted/60",
+          "border border-sidebar-border",
+          "flex items-center justify-center",
+          "transition-colors"
+        )}
+        title="Copy referral link"
+      >
+        {copiedType === "link" ? (
+          <IconCheck width={16} height={16} className="text-green-500" />
+        ) : (
+          <IconLink width={16} height={16} className="text-muted-foreground" />
+        )}
+      </button>
     </div>
   );
 }
