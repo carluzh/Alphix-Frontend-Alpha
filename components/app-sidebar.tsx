@@ -185,6 +185,21 @@ export function AppSidebar({ variant = "floating", ...props }: AppSidebarProps) 
                     asChild
                     className="w-full rounded-lg px-1.5 py-1 transition-colors hover:bg-[#1f1f1f] hover:text-white text-muted-foreground"
                   >
+                    <a href="https://dune.com/alphix/unified-pools" target="_blank" rel="noopener noreferrer" className="flex items-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 18 18" className="flex-shrink-0">
+                        <rect x="1.5" y="11" width="4" height="5" rx="1.75" ry="1.75" fill="currentColor"/>
+                        <rect x="7" y="2" width="4" height="14" rx="1.75" ry="1.75" fill="currentColor"/>
+                        <rect x="12.5" y="7" width="4" height="9" rx="1.75" ry="1.75" fill="currentColor"/>
+                      </svg>
+                      <span className="flex-1 truncate ml-2 text-xs font-normal">Analytics</span>
+                    </a>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem className="list-none">
+                  <SidebarMenuButton
+                    asChild
+                    className="w-full rounded-lg px-1.5 py-1 transition-colors hover:bg-[#1f1f1f] hover:text-white text-muted-foreground"
+                  >
                     <a href="https://x.com/AlphixFi" target="_blank" rel="noopener noreferrer" className="flex items-center">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="flex-shrink-0">
                         <path d="M16.9947 2H20.1115L13.5007 9.5L21.2209 20H15.2302L10.5 13.7L5.07938 20H1.96154L9.00025 12L1.60059 2H7.74871L11.9502 7.7L16.9947 2ZM16.0947 18.2L18.0947 18.2L6.89474 3.8L4.79474 3.8L16.0947 18.2Z" fill="currentColor"/>
@@ -206,7 +221,7 @@ export function AppSidebar({ variant = "floating", ...props }: AppSidebarProps) 
                     </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                {/* Version info - shown below Discord */}
+                {/* Version info - shown below links */}
                 <div className="px-1.5 pt-3 sm:hidden">
                   <div className="text-xs text-muted-foreground/50 font-mono select-none">
                     v{latestVersion.version} <span className="opacity-60">+{process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev'}</span>

@@ -237,11 +237,14 @@ const LandingPageFooter = () => {
                     >
                       Smart Contracts
                     </a>
-                    <span
-                      className="block text-sm text-muted-foreground/50 cursor-not-allowed"
+                    <a
+                      href="https://dune.com/alphix/unified-pools"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-sm text-muted-foreground hover:text-foreground transition-colors"
                     >
-                      Brand Kit
-                    </span>
+                      Analytics
+                    </a>
                   </div>
                 </div>
               </div>
