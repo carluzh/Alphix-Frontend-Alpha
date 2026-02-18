@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     description: 'Liquidity protocol on Base with dynamic fee hooks and unified liquidity through rehypothecation. Maximize capital efficiency.',
     images: [
       {
-        url: '/og-image.jpeg',
+        url: '/card.png?v=1',
         width: 1200,
         height: 630,
         alt: 'Alphix - Building Smarter Onchain Markets',
@@ -46,7 +46,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Alphix | Building Smarter Onchain Markets',
     description: 'Liquidity protocol on Base. Dynamic fees. Unified liquidity through rehypothecation.',
-    images: ['/og-image.jpeg'],
+    images: ['/card.png?v=1'],
     creator: '@alphixfi',
   },
   robots: {
