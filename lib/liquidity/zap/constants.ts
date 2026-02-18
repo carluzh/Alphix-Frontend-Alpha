@@ -177,11 +177,19 @@ export const USDS_TO_USDC_DIVISOR = 10n ** 12n;
 /**
  * Check if a pool supports the Zap feature.
  *
- * Currently enabled ONLY for USDS/USDC pool for testing.
+ * Currently enabled ONLY for USDS/USDC pool.
+ * Accepts either pool config id ('usds-usdc') or subgraphId (bytes32 hash)
+ * since positions may use either format.
  *
- * @param poolId - The pool ID to check
+ * @param poolId - The pool ID to check (can be config id or subgraphId)
  * @returns True if the pool supports Zap
  */
 export function isZapEligiblePool(poolId: string | null): boolean {
-  return poolId === USDS_USDC_POOL_CONFIG.poolId;
+  if (!poolId) return false;
+  // Import dynamically to avoid circular dependency
+  // getPoolById handles both pool.id and pool.subgraphId lookups
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getPoolById } = require('@/lib/pools-config');
+  const pool = getPoolById(poolId);
+  return pool?.id === USDS_USDC_POOL_CONFIG.poolId;
 }

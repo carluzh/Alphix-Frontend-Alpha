@@ -155,6 +155,10 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
 
   const hasFees = fee0 > 0 || fee1 > 0;
 
+  // Check if this is a Unified Yield position
+  const poolConfig = position.poolId ? getPoolById(position.poolId) : null;
+  const isUnifiedYield = poolConfig?.rehypoRange !== undefined;
+
   // Map executor steps to UI steps for ProgressIndicator
   const uiSteps = useMemo(() => {
     return mapExecutorStepsToUI(
@@ -392,27 +396,25 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                   </div>
                   {/* Range indicator + pool type badges */}
                   <div className="flex items-center gap-2">
-                    {/* Range badge */}
+                    {/* Range/Earning badge - Unified Yield shows "Earning", V4 shows range status */}
                     <div className="flex items-center gap-1.5">
                       <div
                         className={cn(
                           "w-2 h-2 rounded-full",
-                          position.isInRange ? "bg-green-500" : "bg-red-500"
+                          isUnifiedYield ? "bg-green-500" : (position.isInRange ? "bg-green-500" : "bg-red-500")
                         )}
                       />
                       <span
                         className={cn(
                           "text-xs font-medium",
-                          position.isInRange ? "text-green-500" : "text-red-500"
+                          isUnifiedYield ? "text-green-500" : (position.isInRange ? "text-green-500" : "text-red-500")
                         )}
                       >
-                        {position.isInRange ? "In Range" : "Out of Range"}
+                        {isUnifiedYield ? "Earning" : (position.isInRange ? "In Range" : "Out of Range")}
                       </span>
                     </div>
                     {/* Pool type badge */}
                     {position.poolId && (() => {
-                      const poolConfig = getPoolById(position.poolId);
-                      const isUnifiedYield = poolConfig?.rehypoRange !== undefined;
                       return isUnifiedYield ? (
                         <span
                           className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"

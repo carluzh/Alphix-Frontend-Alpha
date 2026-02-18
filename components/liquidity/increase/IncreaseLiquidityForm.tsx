@@ -220,6 +220,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
     zapApprovals,
     isZapPreviewLoading,
     isZapPreviewFetching,
+    zapDataUpdatedAt,
     refetchZapPreview,
   } = useIncreaseLiquidityTxContext();
 
@@ -237,6 +238,25 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
   const [localError, setLocalError] = useState<string | null>(null);
   const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
   const [flowId, setFlowId] = useState<string | undefined>(undefined);
+
+  // Zap refetch countdown timer
+  const [zapRefetchCountdown, setZapRefetchCountdown] = useState(10);
+
+  // Live countdown for zap refetch timer - matches ReviewExecuteModal pattern
+  useEffect(() => {
+    if (!isZapMode || isZapPreviewLoading || isZapPreviewFetching || isExecuting) {
+      return;
+    }
+    // Calculate initial countdown based on when data was last updated
+    const updateCountdown = () => {
+      const elapsed = Date.now() - (zapDataUpdatedAt || Date.now());
+      const remaining = Math.max(0, Math.ceil((10000 - elapsed) / 1000));
+      setZapRefetchCountdown(remaining);
+    };
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [isZapMode, zapDataUpdatedAt, isZapPreviewLoading, isZapPreviewFetching, isExecuting]);
 
   // Determine deposit disabled states based on position range
   const isOutOfRange = !position.isInRange;
@@ -432,10 +452,11 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
         }
 
         // Build zap execution context
+        // Note: Must use `zapSteps` key - executor checks for this specifically
         const zapContext = {
           type: 'Increase' as const,
           isZapMode: true,
-          steps: zapStepsResult.steps,
+          zapSteps: zapStepsResult.steps,
           hookAddress: poolConfig.hooks,
           chainId,
           token0: {
@@ -551,21 +572,21 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
           </div>
           {/* Range indicator + pool type badges */}
           <div className="flex items-center gap-2">
-            {/* Range badge */}
+            {/* Range/Earning badge - Unified Yield shows "Earning", V4 shows range status */}
             <div className="flex items-center gap-1.5">
               <div
                 className={cn(
                   "w-2 h-2 rounded-full",
-                  position.isInRange ? "bg-green-500" : "bg-red-500"
+                  isUnifiedYield ? "bg-green-500" : (position.isInRange ? "bg-green-500" : "bg-red-500")
                 )}
               />
               <span
                 className={cn(
                   "text-xs font-medium",
-                  position.isInRange ? "text-green-500" : "text-red-500"
+                  isUnifiedYield ? "text-green-500" : (position.isInRange ? "text-green-500" : "text-red-500")
                 )}
               >
-                {position.isInRange ? "In Range" : "Out of Range"}
+                {isUnifiedYield ? "Earning" : (position.isInRange ? "In Range" : "Out of Range")}
               </span>
             </div>
             {/* Pool type badge */}
@@ -585,13 +606,6 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
                 </span>
               );
             })()}
-            {/* Deposit mode toggle - only for zap-eligible Unified Yield positions */}
-            {isUnifiedYield && isZapEligible && (
-              <DepositModeToggle
-                depositMode={depositMode}
-                onModeChange={setDepositMode}
-              />
-            )}
           </div>
         </div>
         {/* Double token logo */}
@@ -638,24 +652,107 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
             tokenClickIcon={<RefreshCw className="w-3.5 h-3.5 text-muted-foreground group-hover/token:text-white transition-colors" />}
           />
 
-          {/* Zap info callout */}
-          {zapPreview && (
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent">
-              <Info className="w-4 h-4 text-muted-foreground shrink-0" />
-              <span className="text-sm text-muted-foreground">
-                Swapping {zapPreview.formatted.swapAmount} {zapPreview.inputTokenInfo.symbol} via {zapPreview.route.type.toUpperCase()}
+          {/* Zap Quote Section - only show when there's input */}
+          {(zapPreview || isZapPreviewLoading || isZapPreviewFetching) && (
+          <div className="flex flex-col gap-2 py-2 px-3 rounded-lg bg-muted/30">
+            {/* Header with countdown badge */}
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm text-muted-foreground">Zap Quote</span>
+              <span
+                className={`text-xs px-2 py-0.5 rounded ${
+                  isZapPreviewLoading || isZapPreviewFetching
+                    ? 'bg-muted/50 text-muted-foreground animate-pulse'
+                    : 'bg-muted/30 text-muted-foreground/80'
+                }`}
+              >
+                {isZapPreviewLoading || isZapPreviewFetching
+                  ? 'Calculating...'
+                  : `Refetches in ${zapRefetchCountdown}s`
+                }
               </span>
             </div>
-          )}
 
-          {/* Loading state for zap preview */}
-          {isZapPreviewLoading && (
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent">
-              <div className="w-4 h-4 border-2 border-muted-foreground/30 border-t-muted-foreground rounded-full animate-spin" />
-              <span className="text-sm text-muted-foreground animate-pulse">
-                Calculating optimal swap...
-              </span>
-            </div>
+            {/* Loading skeleton */}
+            {(isZapPreviewLoading || isZapPreviewFetching) && !zapPreview && (
+              <>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Swap amount</span>
+                  <div className="h-4 w-20 bg-muted/50 rounded animate-pulse" />
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Route</span>
+                  <div className="h-4 w-24 bg-muted/50 rounded animate-pulse" />
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Expected shares</span>
+                  <div className="h-4 w-28 bg-muted/50 rounded animate-pulse" />
+                </div>
+              </>
+            )}
+
+            {/* Zap preview data */}
+            {zapPreview && (
+              <>
+                {/* Swap amount row */}
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Swap amount</span>
+                  <span className="text-white">
+                    {zapPreview.formatted.swapAmount} {zapPreview.inputTokenInfo.symbol}
+                  </span>
+                </div>
+
+                {/* Route row with token icons */}
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground">Route</span>
+                  <div className="flex items-center gap-1">
+                    {/* Input token icon */}
+                    <Image
+                      src={getTokenIcon(zapPreview.inputTokenInfo.symbol)}
+                      alt={zapPreview.inputTokenInfo.symbol}
+                      width={16}
+                      height={16}
+                      className="rounded-full"
+                    />
+                    {/* Chevron */}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
+                      <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                    </svg>
+                    {/* Route label */}
+                    <span className="text-xs text-muted-foreground">
+                      {zapPreview.route.type === 'psm' ? 'PSM' : 'Unified Pool'}
+                    </span>
+                    {/* Chevron */}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
+                      <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                    </svg>
+                    {/* Output token icon */}
+                    <Image
+                      src={getTokenIcon(zapPreview.inputTokenInfo.symbol === 'USDS' ? 'USDC' : 'USDS')}
+                      alt={zapPreview.inputTokenInfo.symbol === 'USDS' ? 'USDC' : 'USDS'}
+                      width={16}
+                      height={16}
+                      className="rounded-full"
+                    />
+                  </div>
+                </div>
+
+                {/* Expected shares row with USD value */}
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Expected shares</span>
+                  <span>
+                    <span className="text-muted-foreground">
+                      {parseFloat(zapPreview.formatted.expectedShares).toFixed(6)}
+                    </span>
+                    {zapPreview.shareValue && (
+                      <span className="text-white ml-1">
+                        (~${(parseFloat(zapPreview.shareValue.formatted0) + parseFloat(zapPreview.shareValue.formatted1)).toFixed(2)})
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
           )}
         </>
       ) : (
@@ -683,6 +780,16 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
           formatUsdAmount={formatCalculatedAmount}
           inputLabel="Add"
         />
+      )}
+
+      {/* Deposit mode toggle - only show before any input, bottom right */}
+      {isUnifiedYield && isZapEligible && !hasValidAmounts && (
+        <div className="flex justify-end">
+          <DepositModeToggle
+            depositMode={depositMode}
+            onModeChange={setDepositMode}
+          />
+        </div>
       )}
 
       {/* Position Segment */}

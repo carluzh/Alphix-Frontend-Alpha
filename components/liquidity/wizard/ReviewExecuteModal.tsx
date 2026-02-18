@@ -1309,23 +1309,11 @@ export function ReviewExecuteModal() {
                           <span className="text-muted-foreground">
                             {parseFloat(zapPreviewQuery.data.formatted.expectedShares).toFixed(6)}
                           </span>
-                          <span className="text-white ml-1">
-                            {(() => {
-                              // Use on-chain share valuation if available
-                              if (zapPreviewQuery.data.shareValue) {
-                                // USDS (amount0) is ~$1, USDC (amount1) is ~$1
-                                const usdsValue = parseFloat(zapPreviewQuery.data.shareValue.formatted0);
-                                const usdcValue = parseFloat(zapPreviewQuery.data.shareValue.formatted1);
-                                const totalUSD = usdsValue + usdcValue;
-                                return `($${totalUSD.toFixed(2)})`;
-                              }
-                              // Fallback: estimate from input minus dust
-                              const inputUSD = parseFloat(usdValues?.[zapInputToken === 'USDS' ? 'TOKEN0' : 'TOKEN1'] || '0');
-                              const dustPercent = zapPreviewQuery.data.leftoverPercent || 0;
-                              const shareValueUSD = inputUSD * (1 - dustPercent / 100);
-                              return `($${shareValueUSD.toFixed(2)})`;
-                            })()}
-                          </span>
+                          {zapPreviewQuery.data.shareValue && (
+                            <span className="text-white ml-1">
+                              (~${(parseFloat(zapPreviewQuery.data.shareValue.formatted0) + parseFloat(zapPreviewQuery.data.shareValue.formatted1)).toFixed(2)})
+                            </span>
+                          )}
                         </span>
                       </div>
                     </div>
