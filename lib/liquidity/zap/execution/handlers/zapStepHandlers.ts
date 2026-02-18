@@ -46,8 +46,6 @@ export const handleZapSwapApprovalStep: TransactionStepHandler = async (
 ): Promise<`0x${string}`> => {
   const typedStep = step as unknown as ZapSwapApprovalStep;
 
-  console.log(`[ZapSwapApproval] Approving ${typedStep.tokenSymbol} to ${typedStep.spender}`);
-
   // Signal step is starting (waiting for user)
   context.setCurrentStep({ step, accepted: false });
 
@@ -58,8 +56,6 @@ export const handleZapSwapApprovalStep: TransactionStepHandler = async (
     value: typedStep.txRequest.value,
   });
 
-  console.log(`[ZapSwapApproval] Transaction submitted: ${hash}`);
-
   // Signal transaction was accepted
   context.setCurrentStep({ step, accepted: true });
 
@@ -69,8 +65,6 @@ export const handleZapSwapApprovalStep: TransactionStepHandler = async (
   if (receipt.status !== 'success') {
     throw new Error(`Swap approval failed: ${hash}`);
   }
-
-  console.log(`[ZapSwapApproval] Confirmed: ${hash}`);
 
   return hash;
 };
@@ -91,10 +85,6 @@ export const handleZapPSMSwapStep: TransactionStepHandler = async (
 ): Promise<`0x${string}`> => {
   const typedStep = step as unknown as ZapPSMSwapStep;
 
-  console.log(
-    `[ZapPSMSwap] Swapping ${typedStep.direction}: ${typedStep.inputAmount} -> ${typedStep.expectedOutputAmount}`
-  );
-
   // Signal step is starting
   context.setCurrentStep({ step, accepted: false });
 
@@ -105,8 +95,6 @@ export const handleZapPSMSwapStep: TransactionStepHandler = async (
     value: typedStep.txRequest.value,
   });
 
-  console.log(`[ZapPSMSwap] Transaction submitted: ${hash}`);
-
   // Signal transaction was accepted
   context.setCurrentStep({ step, accepted: true });
 
@@ -116,8 +104,6 @@ export const handleZapPSMSwapStep: TransactionStepHandler = async (
   if (receipt.status !== 'success') {
     throw new Error(`PSM swap failed: ${hash}`);
   }
-
-  console.log(`[ZapPSMSwap] Confirmed: ${hash}`);
 
   return hash;
 };
@@ -139,11 +125,6 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
   txFunctions
 ): Promise<`0x${string}`> => {
   const typedStep = step as unknown as ZapPoolSwapStep;
-
-  console.log(
-    `[ZapPoolSwap] Swapping ${typedStep.inputToken} -> ${typedStep.outputToken}: ${typedStep.inputAmount}`
-  );
-
   const inputDecimals = getTokenDecimals(typedStep.inputToken);
   const outputDecimals = getTokenDecimals(typedStep.outputToken);
   const chainId = context.chainId || 8453; // Default to Base mainnet
@@ -152,7 +133,6 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
   const userSettings = getStoredUserSettings();
 
   // Step 1: Call prepare-permit to check if we need a Permit2 signature
-  console.log('[ZapPoolSwap] Calling prepare-permit API...');
   const preparePermitResponse = await fetch('/api/swap/prepare-permit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -177,11 +157,6 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
     throw new Error(`Prepare permit failed: ${permitResult.message}`);
   }
 
-  console.log('[ZapPoolSwap] Permit result:', {
-    needsPermit: permitResult.needsPermit,
-    isApproved: permitResult.isApproved,
-  });
-
   // Step 2: If permit needed, sign it
   let permitSignature = '0x';
   let permitData = {
@@ -196,8 +171,6 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
     if (!context.signTypedData) {
       throw new Error('signTypedData not available in context - cannot sign Permit2 permit');
     }
-
-    console.log('[ZapPoolSwap] Signing Permit2 permit...');
 
     // Convert message amounts back to bigint for signing
     const typedMessage = {
@@ -218,8 +191,6 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
       message: typedMessage,
     });
 
-    console.log('[ZapPoolSwap] Permit signed');
-
     // Store permit data for build-tx call
     permitData = {
       permitTokenAddress: permitResult.permitData.message.details.token,
@@ -233,7 +204,6 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
   // Step 3: Build swap transaction using existing API
   // Use formatUnits to avoid precision loss when converting bigint to decimal string
   // (JavaScript Number loses precision for values > 2^53, USDS/USDC amounts can exceed this)
-  console.log('[ZapPoolSwap] Calling build-tx API...');
   const buildTxResponse = await fetch('/api/swap/build-tx', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -263,8 +233,6 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
   if (!txData.ok) {
     throw new Error(`Pool swap build failed: ${txData.message}`);
   }
-
-  console.log(`[ZapPoolSwap] Built transaction to ${txData.to}`);
 
   // Signal step is starting (user will confirm tx)
   context.setCurrentStep({ step, accepted: false });
@@ -296,8 +264,6 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
     value: BigInt(txData.value || '0'),
   });
 
-  console.log(`[ZapPoolSwap] Transaction submitted: ${hash}`);
-
   // Signal transaction was accepted
   context.setCurrentStep({ step, accepted: true });
 
@@ -307,8 +273,6 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
   if (receipt.status !== 'success') {
     throw new Error(`Pool swap failed: ${hash}`);
   }
-
-  console.log(`[ZapPoolSwap] Confirmed: ${hash}`);
 
   return hash;
 };
@@ -352,8 +316,6 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
 ): Promise<`0x${string}`> => {
   const typedStep = step as unknown as ZapDynamicDepositStep;
 
-  console.log(`[ZapDynamicDeposit] Building deposit with actual balances...`);
-
   // Create a public client for RPC calls
   const publicClient = createPublicClient({
     chain: base,
@@ -376,79 +338,97 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
     }) as Promise<bigint>,
   ]);
 
-  console.log(`[ZapDynamicDeposit] Actual balances: token0=${balance0}, token1=${balance1}`);
+  // Cap balances to expected amounts to avoid over-spending allowance
+  // User may have existing balance beyond what's approved for this zap
+  // Ensure BigInt for arithmetic (values may come from JSON as strings)
+  const bal0 = BigInt(balance0);
+  const bal1 = BigInt(balance1);
+  const exp0 = BigInt(typedStep.expectedDepositAmount0);
+  const exp1 = BigInt(typedStep.expectedDepositAmount1);
+  const cappedBalance0 = bal0 < exp0 ? bal0 : exp0;
+  const cappedBalance1 = bal1 < exp1 ? bal1 : exp1;
 
-  // Determine which token was the input token
-  // and call the appropriate preview function
+  // Try both deposit directions and pick the one with less dust
+  // This helps when the pool ratio shifted between preview and execution
+  //
+  // Option A: Constrain by token0 (USDS) - may leave token1 (USDC) dust
+  // Option B: Constrain by token1 (USDC) - may leave token0 (USDS) dust
+
+  // Get previews for both directions
+  const [previewFrom0, previewFrom1] = await Promise.all([
+    publicClient.readContract({
+      address: typedStep.hookAddress,
+      abi: UNIFIED_YIELD_HOOK_ABI,
+      functionName: 'previewAddFromAmount0',
+      args: [cappedBalance0],
+    }) as Promise<[bigint, bigint]>,
+    publicClient.readContract({
+      address: typedStep.hookAddress,
+      abi: UNIFIED_YIELD_HOOK_ABI,
+      functionName: 'previewAddFromAmount1',
+      args: [cappedBalance1],
+    }) as Promise<[bigint, bigint]>,
+  ]);
+
+  // Ensure BigInt for arithmetic (contract calls may return various types)
+  const requiredToken1ForToken0 = BigInt(previewFrom0[0]);
+  const sharesFromToken0 = BigInt(previewFrom0[1]);
+  const requiredToken0ForToken1 = BigInt(previewFrom1[0]);
+  const sharesFromToken1 = BigInt(previewFrom1[1]);
+
+  // Determine which option is viable and has less dust
+  // Option A: Use all of token0, need requiredToken1ForToken0 of token1
+  const canDoOptionA = requiredToken1ForToken0 <= cappedBalance1;
+  const dustAToken1 = canDoOptionA ? cappedBalance1 - requiredToken1ForToken0 : 0n;
+  // Convert token1 dust (6 decimals) to token0 equivalent (18 decimals) for comparison
+  const dustANormalized = dustAToken1 * (10n ** 12n);
+
+  // Option B: Use all of token1, need requiredToken0ForToken1 of token0
+  const canDoOptionB = requiredToken0ForToken1 <= cappedBalance0;
+  const dustBToken0 = canDoOptionB ? cappedBalance0 - requiredToken0ForToken1 : 0n;
+  // token0 dust is already in 18 decimals
+  const dustBNormalized = dustBToken0;
+
   let shares: bigint;
   let amount0: bigint;
   let amount1: bigint;
 
-  if (typedStep.inputToken === 'USDS') {
-    // Input was USDS (token0) - use token0 balance for preview
-    // This gives us shares based on available USDS
-    const preview = await publicClient.readContract({
-      address: typedStep.hookAddress,
-      abi: UNIFIED_YIELD_HOOK_ABI,
-      functionName: 'previewAddFromAmount0',
-      args: [balance0],
-    }) as [bigint, bigint];
-
-    const [requiredAmount1, previewShares] = preview;
-
-    // Use the smaller of required vs actual for token1 (the swapped token)
-    // This handles the case where swap output was less than expected
-    amount0 = balance0;
-    amount1 = requiredAmount1 <= balance1 ? requiredAmount1 : balance1;
-    shares = previewShares;
-
-    // If we don't have enough token1, recalculate based on token1
-    if (requiredAmount1 > balance1) {
-      console.log(`[ZapDynamicDeposit] Token1 limited, recalculating from token1 balance`);
-      const preview1 = await publicClient.readContract({
-        address: typedStep.hookAddress,
-        abi: UNIFIED_YIELD_HOOK_ABI,
-        functionName: 'previewAddFromAmount1',
-        args: [balance1],
-      }) as [bigint, bigint];
-      const [requiredAmount0, shares1] = preview1;
-      amount0 = requiredAmount0 <= balance0 ? requiredAmount0 : balance0;
-      amount1 = balance1;
-      shares = shares1;
+  // Pick the option with less dust (prefer viable options)
+  if (canDoOptionA && canDoOptionB) {
+    // Both viable, pick the one with less normalized dust
+    if (dustANormalized <= dustBNormalized) {
+      amount0 = cappedBalance0;
+      amount1 = requiredToken1ForToken0;
+      shares = sharesFromToken0;
+    } else {
+      amount0 = requiredToken0ForToken1;
+      amount1 = cappedBalance1;
+      shares = sharesFromToken1;
     }
+  } else if (canDoOptionA) {
+    amount0 = cappedBalance0;
+    amount1 = requiredToken1ForToken0;
+    shares = sharesFromToken0;
+  } else if (canDoOptionB) {
+    amount0 = requiredToken0ForToken1;
+    amount1 = cappedBalance1;
+    shares = sharesFromToken1;
   } else {
-    // Input was USDC (token1) - use token1 balance for preview
-    const preview = await publicClient.readContract({
-      address: typedStep.hookAddress,
-      abi: UNIFIED_YIELD_HOOK_ABI,
-      functionName: 'previewAddFromAmount1',
-      args: [balance1],
-    }) as [bigint, bigint];
+    // Neither option is fully viable - use partial amounts
+    console.warn(`[ZapDynamicDeposit] Neither option fully viable, using partial amounts`);
+    const token0Ratio = (cappedBalance0 * 1000n) / (requiredToken0ForToken1 > 0n ? requiredToken0ForToken1 : 1n);
+    const token1Ratio = (cappedBalance1 * 1000n) / (requiredToken1ForToken0 > 0n ? requiredToken1ForToken0 : 1n);
 
-    const [requiredAmount0, previewShares] = preview;
-
-    // Use the smaller of required vs actual for token0 (the swapped token)
-    amount0 = requiredAmount0 <= balance0 ? requiredAmount0 : balance0;
-    amount1 = balance1;
-    shares = previewShares;
-
-    // If we don't have enough token0, recalculate based on token0
-    if (requiredAmount0 > balance0) {
-      console.log(`[ZapDynamicDeposit] Token0 limited, recalculating from token0 balance`);
-      const preview0 = await publicClient.readContract({
-        address: typedStep.hookAddress,
-        abi: UNIFIED_YIELD_HOOK_ABI,
-        functionName: 'previewAddFromAmount0',
-        args: [balance0],
-      }) as [bigint, bigint];
-      const [requiredAmount1, shares0] = preview0;
-      amount0 = balance0;
-      amount1 = requiredAmount1 <= balance1 ? requiredAmount1 : balance1;
-      shares = shares0;
+    if (token0Ratio <= token1Ratio) {
+      amount0 = cappedBalance0;
+      amount1 = requiredToken1ForToken0 <= cappedBalance1 ? requiredToken1ForToken0 : cappedBalance1;
+      shares = sharesFromToken0;
+    } else {
+      amount0 = requiredToken0ForToken1 <= cappedBalance0 ? requiredToken0ForToken1 : cappedBalance0;
+      amount1 = cappedBalance1;
+      shares = sharesFromToken1;
     }
   }
-
-  console.log(`[ZapDynamicDeposit] Calculated: shares=${shares}, amount0=${amount0}, amount1=${amount1}`);
 
   // Apply shares haircut (0.0001%) to account for yield accrual
   const sharesReduction = shares / 1000000n;
@@ -461,7 +441,9 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
     args: [adjustedShares, 0n, 0], // Skip slippage check (0n sqrtPrice, 0 maxSlippage)
   });
 
-  console.log(`[ZapDynamicDeposit] Built deposit with ${adjustedShares} shares`);
+  console.log(`[ZapDynamicDeposit] Sending deposit tx to ${typedStep.hookAddress}`);
+  console.log(`[ZapDynamicDeposit] Shares to mint: ${adjustedShares.toString()}`);
+  console.log(`[ZapDynamicDeposit] Deposit amounts: ${formatUnits(amount0, typedStep.token0Decimals)} ${typedStep.token0Symbol} + ${formatUnits(amount1, typedStep.token1Decimals)} ${typedStep.token1Symbol}`);
 
   // Signal step is starting
   context.setCurrentStep({ step, accepted: false });
@@ -473,7 +455,7 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
     value: 0n,
   });
 
-  console.log(`[ZapDynamicDeposit] Transaction submitted: ${hash}`);
+  console.log(`[ZapDynamicDeposit] Deposit tx sent: ${hash}`);
 
   // Signal transaction was accepted
   context.setCurrentStep({ step, accepted: true });
@@ -481,11 +463,11 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
   // Wait for confirmation
   const receipt = await txFunctions.waitForReceipt({ hash });
 
+  console.log(`[ZapDynamicDeposit] Deposit tx confirmed: status=${receipt.status}`);
+
   if (receipt.status !== 'success') {
     throw new Error(`Dynamic deposit failed: ${hash}`);
   }
-
-  console.log(`[ZapDynamicDeposit] Confirmed: ${hash}`);
 
   // =========================================================================
   // DUST CALCULATION AND REPORTING
@@ -509,22 +491,48 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
         }) as Promise<bigint>,
       ]);
 
+      // Debug: log balance values to trace dust calculation
+      console.log(`[ZapDynamicDeposit] DEBUG - Balance tracking:`);
+      console.log(`[ZapDynamicDeposit]   Initial: ${formatUnits(typedStep.initialBalance0, typedStep.token0Decimals)} ${typedStep.token0Symbol} + ${formatUnits(typedStep.initialBalance1, typedStep.token1Decimals)} ${typedStep.token1Symbol}`);
+      console.log(`[ZapDynamicDeposit]   Final: ${formatUnits(finalBalance0, typedStep.token0Decimals)} ${typedStep.token0Symbol} + ${formatUnits(finalBalance1, typedStep.token1Decimals)} ${typedStep.token1Symbol}`);
+      console.log(`[ZapDynamicDeposit]   Input amount: ${typedStep.inputAmount?.toString() ?? 'undefined'} ${typedStep.inputToken}`);
+
       // Calculate dust as delta from initial balances
+      // Pass inputToken and inputAmount for accurate dust calculation
       const { dust0, dust1 } = calculateDustFromDelta(
         typedStep.initialBalance0,
         typedStep.initialBalance1,
         finalBalance0,
-        finalBalance1
+        finalBalance1,
+        typedStep.inputToken,
+        typedStep.inputAmount
       );
 
-      console.log(`[ZapDynamicDeposit] Dust calculation:`, {
-        initialBalance0: typedStep.initialBalance0.toString(),
-        initialBalance1: typedStep.initialBalance1.toString(),
-        finalBalance0: finalBalance0.toString(),
-        finalBalance1: finalBalance1.toString(),
-        dust0: dust0.toString(),
-        dust1: dust1.toString(),
-      });
+      // Calculate dust percentages for summary
+      const inputUSD = typedStep.inputAmountUSD ?? 0;
+      const dust0USD = Number(formatUnits(dust0, typedStep.token0Decimals));
+      const dust1USD = Number(formatUnits(dust1, typedStep.token1Decimals));
+      const totalDustUSD = dust0USD + dust1USD;
+      const dustPercent = inputUSD > 0 ? ((totalDustUSD / inputUSD) * 100).toFixed(4) : '0';
+
+      // Calculate approval usage
+      const approved0 = typedStep.expectedDepositAmount0 + 1n; // We approved amount + 1 wei
+      const approved1 = typedStep.expectedDepositAmount1 + 1n;
+      const leftoverApproval0 = approved0 > amount0 ? approved0 - amount0 : 0n;
+      const leftoverApproval1 = approved1 > amount1 ? approved1 - amount1 : 0n;
+
+      console.log(`[ZapDynamicDeposit] === ZAP EXECUTION COMPLETE ===`);
+      console.log(`[ZapDynamicDeposit] Input: ~$${inputUSD.toFixed(2)} USD`);
+      console.log(`[ZapDynamicDeposit] --- DEPOSIT ---`);
+      console.log(`[ZapDynamicDeposit] Deposited: ${formatUnits(amount0, typedStep.token0Decimals)} ${typedStep.token0Symbol} + ${formatUnits(amount1, typedStep.token1Decimals)} ${typedStep.token1Symbol}`);
+      console.log(`[ZapDynamicDeposit] --- APPROVALS ---`);
+      console.log(`[ZapDynamicDeposit] Approved: ${formatUnits(approved0, typedStep.token0Decimals)} ${typedStep.token0Symbol} + ${formatUnits(approved1, typedStep.token1Decimals)} ${typedStep.token1Symbol}`);
+      console.log(`[ZapDynamicDeposit] Leftover approval: ${formatUnits(leftoverApproval0, typedStep.token0Decimals)} ${typedStep.token0Symbol} + ${formatUnits(leftoverApproval1, typedStep.token1Decimals)} ${typedStep.token1Symbol}`);
+      console.log(`[ZapDynamicDeposit] --- DUST ---`);
+      console.log(`[ZapDynamicDeposit] Dust: ${formatUnits(dust0, typedStep.token0Decimals)} ${typedStep.token0Symbol} + ${formatUnits(dust1, typedStep.token1Decimals)} ${typedStep.token1Symbol}`);
+      console.log(`[ZapDynamicDeposit] Dust %: ${dustPercent}% of input`);
+      console.log(`[ZapDynamicDeposit] Status: ${totalDustUSD < 0.01 ? '✓ OPTIMAL' : totalDustUSD < 1 ? '~ ACCEPTABLE' : '⚠ HIGH DUST'}`);
+      console.log(`[ZapDynamicDeposit] ==============================`);
 
       // Report dust if it exceeds threshold
       reportZapDust({

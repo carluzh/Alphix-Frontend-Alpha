@@ -93,22 +93,57 @@ export function reportZapDust(dust: DustReport): void {
  *
  * Used to compute actual dust by comparing balances before and after Zap.
  *
+ * For the OUTPUT token (received from swap):
+ *   dust = finalBalance - initialBalance (if positive)
+ *   This is what we got from swap but couldn't fully deposit.
+ *
+ * For the INPUT token (spent in zap):
+ *   dust = inputAmount - amountSpent = inputAmount - (initialBalance - finalBalance)
+ *   This calculates how much of the INPUT wasn't fully utilized.
+ *   If user had pre-existing balance, only the portion from inputAmount is counted.
+ *
  * @param initialBalance0 - Token0 balance before Zap
  * @param initialBalance1 - Token1 balance before Zap
  * @param finalBalance0 - Token0 balance after Zap
  * @param finalBalance1 - Token1 balance after Zap
- * @returns Dust amounts (positive if balance increased, 0 if decreased)
+ * @param inputToken - Which token was the input ('USDS' = token0, 'USDC' = token1)
+ * @param inputAmount - The amount user intended to zap (in wei)
+ * @returns Dust amounts
  */
 export function calculateDustFromDelta(
   initialBalance0: bigint,
   initialBalance1: bigint,
   finalBalance0: bigint,
-  finalBalance1: bigint
+  finalBalance1: bigint,
+  inputToken?: 'USDS' | 'USDC',
+  inputAmount?: bigint
 ): { dust0: bigint; dust1: bigint } {
-  // Dust is any remaining balance increase
-  // If balance decreased, dust is 0 (used for deposit)
-  const dust0 = finalBalance0 > initialBalance0 ? finalBalance0 - initialBalance0 : 0n;
-  const dust1 = finalBalance1 > initialBalance1 ? finalBalance1 - initialBalance1 : 0n;
+  let dust0: bigint;
+  let dust1: bigint;
+
+  if (inputToken === 'USDS') {
+    // USDS is input (token0), USDC is output (token1)
+    // Input token dust = inputAmount - amountSpent
+    const amountSpent0 = initialBalance0 > finalBalance0 ? initialBalance0 - finalBalance0 : 0n;
+    dust0 = inputAmount !== undefined && inputAmount > amountSpent0
+      ? inputAmount - amountSpent0
+      : 0n;
+    // Output token: only count the increase (what we got from swap but didn't deposit)
+    dust1 = finalBalance1 > initialBalance1 ? finalBalance1 - initialBalance1 : 0n;
+  } else if (inputToken === 'USDC') {
+    // USDC is input (token1), USDS is output (token0)
+    // Output token: only count the increase
+    dust0 = finalBalance0 > initialBalance0 ? finalBalance0 - initialBalance0 : 0n;
+    // Input token dust = inputAmount - amountSpent
+    const amountSpent1 = initialBalance1 > finalBalance1 ? initialBalance1 - finalBalance1 : 0n;
+    dust1 = inputAmount !== undefined && inputAmount > amountSpent1
+      ? inputAmount - amountSpent1
+      : 0n;
+  } else {
+    // Fallback for backwards compatibility: use the old logic
+    dust0 = finalBalance0 > initialBalance0 ? finalBalance0 - initialBalance0 : 0n;
+    dust1 = finalBalance1 > initialBalance1 ? finalBalance1 - initialBalance1 : 0n;
+  }
 
   return { dust0, dust1 };
 }

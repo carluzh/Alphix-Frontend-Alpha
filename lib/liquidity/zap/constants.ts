@@ -177,13 +177,11 @@ export const USDS_TO_USDC_DIVISOR = 10n ** 12n;
 /**
  * Check if a pool supports the Zap feature.
  *
- * TEMPORARILY DISABLED for launch - needs more testing.
- * TODO: Re-enable after testing by returning: poolId === USDS_USDC_POOL_CONFIG.poolId
+ * Currently enabled ONLY for USDS/USDC pool for testing.
  *
  * @param poolId - The pool ID to check
- * @returns True if the pool supports Zap (currently always false)
+ * @returns True if the pool supports Zap
  */
-export function isZapEligiblePool(_poolId: string | null): boolean {
-  // Zap feature disabled for launch - only Dual Token mode available
-  return false;
+export function isZapEligiblePool(poolId: string | null): boolean {
+  return poolId === USDS_USDC_POOL_CONFIG.poolId;
 }

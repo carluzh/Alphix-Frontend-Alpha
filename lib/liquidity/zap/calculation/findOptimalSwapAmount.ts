@@ -55,6 +55,21 @@ export interface FindOptimalSwapParams {
 /** Minimum convergence threshold as fraction of input (1/10000 = 0.01%) */
 const CONVERGENCE_THRESHOLD_DIVISOR = 10000n;
 
+/**
+ * Swap reduction factor to account for price impact on deposit ratio.
+ *
+ * When swapping token A → token B, the swap itself affects the pool ratio.
+ * Buying token B makes it more valuable, so the subsequent deposit needs
+ * LESS of token B per unit of token A. This means we'll have excess token B.
+ *
+ * By reducing the swap amount slightly, we get less token B from the swap,
+ * but the post-swap ratio also shifts less, resulting in better alignment.
+ *
+ * 997/1000 = 0.3% reduction
+ */
+const SWAP_REDUCTION_NUMERATOR = 997n;
+const SWAP_REDUCTION_DENOMINATOR = 1000n;
+
 /** USDS decimals */
 const USDS_DECIMALS = 18;
 
@@ -199,6 +214,53 @@ export async function findOptimalSwapAmount(
 
   if (!bestResult) {
     throw new Error('Binary search failed to converge - could not find optimal swap amount');
+  }
+
+  // Apply swap reduction to account for swap's price impact on deposit ratio
+  // The swap changes the pool state, which affects how much the deposit needs
+  // Ensure BigInt for arithmetic (values may come from JSON as strings)
+  const adjustedSwapAmount = (BigInt(bestResult.swapAmount) * SWAP_REDUCTION_NUMERATOR) / SWAP_REDUCTION_DENOMINATOR;
+
+  // Recalculate with adjusted swap amount for accurate preview
+  try {
+    const adjustedRoute = await selectSwapRoute({
+      inputToken,
+      swapAmount: adjustedSwapAmount,
+      publicClient,
+    });
+
+    const adjustedRemaining = inputAmount - adjustedSwapAmount;
+
+    let adjustedPreview: { otherAmount: bigint; shares: bigint } | null;
+    if (inputToken === 'USDC') {
+      adjustedPreview = await previewAddFromAmount1(hookAddress, adjustedRemaining, publicClient);
+    } else {
+      adjustedPreview = await previewAddFromAmount0(hookAddress, adjustedRemaining, publicClient);
+    }
+
+    if (adjustedPreview) {
+      // Ensure BigInt for arithmetic (values may come from different sources)
+      const outputAmt = BigInt(adjustedRoute.outputAmount);
+      const otherAmt = BigInt(adjustedPreview.otherAmount);
+      const adjustedDust = outputAmt > otherAmt
+        ? outputAmt - otherAmt
+        : otherAmt - outputAmt;
+      const normalizedAdjustedDust = normalizeToInputDecimals(adjustedDust, inputToken);
+      const adjustedDustPercent = Number(normalizedAdjustedDust * 10000n / BigInt(inputAmount)) / 100;
+
+      bestResult = {
+        swapAmount: adjustedSwapAmount,
+        swapOutput: adjustedRoute.outputAmount,
+        route: adjustedRoute.route,
+        remainingInput: adjustedRemaining,
+        requiredOther: adjustedPreview.otherAmount,
+        expectedShares: adjustedPreview.shares,
+        estimatedDustPercent: adjustedDustPercent,
+      };
+    }
+  } catch (adjustError) {
+    // If adjustment fails, use the original result
+    console.warn('[findOptimalSwapAmount] Adjustment failed, using original result:', adjustError);
   }
 
   console.log(`[findOptimalSwapAmount] Converged:`, {

@@ -34,9 +34,8 @@ const isE2EMode = customRpcUrl?.includes('127.0.0.1') || customRpcUrl?.includes(
 
 // Detect if custom RPC URL is for testnet or mainnet
 const isCustomUrlTestnet = customRpcUrl?.includes('sepolia') || customRpcUrl?.includes('testnet');
-const isCustomUrlMainnet = customRpcUrl?.includes('mainnet') ||
-                           customRpcUrl?.includes('base.g.alchemy') ||
-                           customRpcUrl?.includes('base-mainnet');
+// If URL doesn't look like testnet, assume mainnet
+const isCustomUrlMainnet = customRpcUrl && !isCustomUrlTestnet;
 
 // Alchemy first, public RPCs as fallback
 const testnetRpcUrlsFinal = isE2EMode

@@ -15,9 +15,10 @@
  */
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, RefreshCw, Info } from "lucide-react";
 import { useAnimation } from "framer-motion";
 import { useAccount } from "wagmi";
+import { type Address } from "viem";
 import { Button } from "@/components/ui/button";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
@@ -26,11 +27,18 @@ import { toast } from "sonner";
 import { formatCalculatedAmount, getTokenIcon } from "../liquidity-form-utils";
 import { DepositInputForm, type PositionField } from "../shared/DepositInputForm";
 import { PositionAmountsDisplay } from "../shared/PositionAmountsDisplay";
+import { TokenInputCard } from "../TokenInputCard";
+import { DepositModeToggle } from "../shared/DepositModeToggle";
 import { useIncreaseLiquidityContext } from "./IncreaseLiquidityContext";
 import { useIncreaseLiquidityTxContext } from "./IncreaseLiquidityTxContext";
 import type { TokenSymbol } from "@/lib/pools-config";
-import { getPoolById } from "@/lib/pools-config";
+import { getPoolById, getTokenDefinitions } from "@/lib/pools-config";
 import Image from "next/image";
+
+// Zap utilities
+import { generateZapSteps, isPreviewFresh } from "@/lib/liquidity/zap";
+import type { ZapToken } from "@/lib/liquidity/zap";
+import { getStoredUserSettings } from "@/hooks/useUserSettings";
 
 // Flow state tracking for permit recovery
 import {
@@ -94,12 +102,37 @@ function mapExecutorStepsToUI(
       case "IncreasePositionTransaction":
       case "IncreasePositionTransactionAsync":
       case "UnifiedYieldDeposit": // UY deposit maps to increase position UI
+      case "ZapDynamicDeposit": // Zap deposit step
         return {
           type: UIStepType.IncreasePositionTransaction,
           token0Symbol,
           token1Symbol,
           token0Icon,
           token1Icon,
+        };
+      // Zap step types
+      case "ZapSwapApproval": {
+        const zapStep = step as any;
+        return {
+          type: UIStepType.TokenApprovalTransaction,
+          tokenSymbol: zapStep.tokenSymbol || token0Symbol,
+          tokenAddress: zapStep.tokenAddress || "",
+          tokenIcon: zapStep.tokenSymbol === token0Symbol ? token0Icon : token1Icon,
+        };
+      }
+      case "ZapPSMSwap":
+        return {
+          type: UIStepType.SwapTransaction,
+          inputTokenSymbol: (step as any).inputToken || token0Symbol,
+          outputTokenSymbol: (step as any).outputToken || token1Symbol,
+          routeType: 'psm' as const,
+        };
+      case "ZapPoolSwap":
+        return {
+          type: UIStepType.SwapTransaction,
+          inputTokenSymbol: (step as any).inputToken || token0Symbol,
+          outputTokenSymbol: (step as any).outputToken || token1Symbol,
+          routeType: 'pool' as const,
         };
       default:
         return {
@@ -159,6 +192,12 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
     isOverBalance0,
     isOverBalance1,
     isUnifiedYield,
+    // Zap mode state
+    isZapEligible,
+    depositMode,
+    zapInputToken,
+    setDepositMode,
+    setZapInputToken,
   } = useIncreaseLiquidityContext();
 
   const {
@@ -175,7 +214,17 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
     fetchAndBuildContext,
     refetchBalances,
     clearError,
+    // Zap mode data
+    isZapMode,
+    zapPreview,
+    zapApprovals,
+    isZapPreviewLoading,
+    isZapPreviewFetching,
+    refetchZapPreview,
   } = useIncreaseLiquidityTxContext();
+
+  const { networkMode } = useNetwork();
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
   const { position } = increaseLiquidityState;
   const { formattedAmounts } = derivedIncreaseLiquidityInfo;
@@ -307,6 +356,116 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
     setIsExecuting(true);
     setLocalError(null);
 
+    // =========================================================================
+    // ZAP MODE - Single-token deposit with auto-swap
+    // =========================================================================
+    if (isZapMode && zapPreview && zapApprovals) {
+      try {
+        console.log('[IncreaseLiquidityForm] Starting Zap execution...');
+
+        // Ensure preview is fresh (< 30 seconds old)
+        let preview = zapPreview;
+        if (!isPreviewFresh(preview)) {
+          console.log('[IncreaseLiquidityForm] Zap preview is stale, refetching...');
+          const freshResult = await refetchZapPreview();
+          if (!freshResult.data) {
+            throw new Error('Failed to refresh zap preview');
+          }
+          preview = freshResult.data;
+        }
+
+        // Get pool config for hook address
+        const poolConfig = getPoolById(position.poolId);
+        if (!poolConfig?.hooks) {
+          throw new Error('Pool hook address not found');
+        }
+
+        // Calculate token amounts after swap
+        const inputToken = preview.inputTokenInfo.symbol as ZapToken;
+        const token0Amount = inputToken === 'USDS'
+          ? preview.remainingInputAmount
+          : preview.swapOutputAmount;
+        const token1Amount = inputToken === 'USDC'
+          ? preview.remainingInputAmount
+          : preview.swapOutputAmount;
+
+        // Apply shares haircut (0.1%)
+        const sharesWithHaircut = (preview.expectedShares * 999n) / 1000n;
+
+        // Get user settings
+        const userSettings = getStoredUserSettings();
+
+        console.log('[IncreaseLiquidityForm] Generating Zap steps:', {
+          inputToken,
+          swapAmount: preview.swapAmount.toString(),
+          remainingInput: preview.remainingInputAmount.toString(),
+          token0Amount: token0Amount.toString(),
+          token1Amount: token1Amount.toString(),
+          sharesWithHaircut: sharesWithHaircut.toString(),
+        });
+
+        // Generate zap steps using existing function
+        const zapStepsResult = generateZapSteps({
+          calculation: preview,
+          approvals: zapApprovals,
+          hookAddress: poolConfig.hooks as Address,
+          userAddress: address,
+          sharesToMint: sharesWithHaircut,
+          slippageTolerance: userSettings.slippage,
+          token0Symbol: position.token0.symbol,
+          token1Symbol: position.token1.symbol,
+          poolId: position.poolId,
+          inputToken,
+          token0Address: tokenDefinitions[position.token0.symbol as TokenSymbol]?.address as Address,
+          token1Address: tokenDefinitions[position.token1.symbol as TokenSymbol]?.address as Address,
+          token0Amount,
+          token1Amount,
+          approvalMode: userSettings.approvalMode,
+        });
+
+        console.log('[IncreaseLiquidityForm] Generated', zapStepsResult.totalStepCount, 'zap steps');
+        setExecutorSteps(zapStepsResult.steps as TransactionStep[]);
+
+        if (zapStepsResult.steps.length > 0) {
+          setCurrentStepIndex(0);
+          setStepAccepted(false);
+        }
+
+        // Build zap execution context
+        const zapContext = {
+          type: 'Increase' as const,
+          isZapMode: true,
+          steps: zapStepsResult.steps,
+          hookAddress: poolConfig.hooks,
+          chainId,
+          token0: {
+            address: tokenDefinitions[position.token0.symbol as TokenSymbol]?.address as Address,
+            symbol: position.token0.symbol,
+            decimals: tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals ?? 18,
+            chainId,
+          },
+          token1: {
+            address: tokenDefinitions[position.token1.symbol as TokenSymbol]?.address as Address,
+            symbol: position.token1.symbol,
+            decimals: tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals ?? 6,
+            chainId,
+          },
+        };
+
+        await executor.execute(zapContext as any);
+      } catch (err: any) {
+        console.error('[IncreaseLiquidityForm] Zap error:', err);
+        setIsExecuting(false);
+        setView("input");
+        setLocalError(err?.message || 'Zap transaction failed');
+      }
+      return;
+    }
+
+    // =========================================================================
+    // BALANCED MODE - existing dual-token flow (V4 and Unified Yield)
+    // =========================================================================
+
     // V4 uses permit flow state tracking
     if (!isUnifiedYield) {
       const flow = getOrCreateFlowState(
@@ -342,7 +501,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
       setView("input");
       setLocalError(err?.message || "Transaction failed");
     }
-  }, [address, chainId, position, hasValidAmounts, fetchAndBuildContext, executor, isUnifiedYield]);
+  }, [address, chainId, position, hasValidAmounts, fetchAndBuildContext, executor, isUnifiedYield, isZapMode, zapPreview, zapApprovals, refetchZapPreview, tokenDefinitions]);
 
   // Handle retry
   const handleRetry = useCallback(() => {
@@ -358,17 +517,21 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
   }, [view]);
 
   // Button state
+  const isZapDisabled = isZapMode && (!zapPreview || isZapPreviewLoading || isZapPreviewFetching);
   const isDisabled =
     !hasValidAmounts ||
     isOverBalance0 ||
     isOverBalance1 ||
     isCalculating ||
     isLoading ||
-    isExecuting;
+    isExecuting ||
+    isZapDisabled;
 
   const buttonText = isOverBalance0 || isOverBalance1
     ? "Insufficient Balance"
-    : "Add Liquidity";
+    : isZapMode
+      ? (isZapPreviewLoading ? "Calculating..." : "Zap & Add Liquidity")
+      : "Add Liquidity";
 
   // Input/Executing view
   return (
@@ -422,6 +585,13 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
                 </span>
               );
             })()}
+            {/* Deposit mode toggle - only for zap-eligible Unified Yield positions */}
+            {isUnifiedYield && isZapEligible && (
+              <DepositModeToggle
+                depositMode={depositMode}
+                onModeChange={setDepositMode}
+              />
+            )}
           </div>
         </div>
         {/* Double token logo */}
@@ -431,42 +601,89 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
             alt=""
             width={36}
             height={36}
-            className="rounded-full ring-2 ring-container"
+            className="rounded-full "
           />
           <Image
             src={getTokenIcon(position.token1.symbol)}
             alt=""
             width={36}
             height={36}
-            className="rounded-full ring-2 ring-container"
+            className="rounded-full "
           />
         </div>
       </div>
 
-      {/* Deposit Input Form */}
-      <DepositInputForm
-        token0Symbol={position.token0.symbol}
-        token1Symbol={position.token1.symbol}
-        formattedAmounts={formattedAmounts}
-        currencyBalances={{
-          TOKEN0: token0Balance,
-          TOKEN1: token1Balance,
-        }}
-        onUserInput={handleUserInput}
-        onCalculateDependentAmount={calculateDependentAmount}
-        deposit0Disabled={deposit0Disabled}
-        deposit1Disabled={deposit1Disabled}
-        token0USDPrice={token0USDPrice}
-        token1USDPrice={token1USDPrice}
-        isAmount0OverBalance={isOverBalance0}
-        isAmount1OverBalance={isOverBalance1}
-        wiggleControls0={wiggleControls0}
-        wiggleControls1={wiggleControls1}
-        onToken0PercentageClick={handlePercentage0}
-        onToken1PercentageClick={handlePercentage1}
-        formatUsdAmount={formatCalculatedAmount}
-        inputLabel="Add"
-      />
+      {/* Deposit Input - Zap mode or Balanced mode */}
+      {isZapMode ? (
+        <>
+          {/* Zap mode: Single token input with switch capability */}
+          <TokenInputCard
+            id="increase-zap-input"
+            tokenSymbol={zapInputToken === 'token0' ? position.token0.symbol : position.token1.symbol}
+            value={zapInputToken === 'token0' ? formattedAmounts?.TOKEN0 || '' : formattedAmounts?.TOKEN1 || ''}
+            onChange={(value) => zapInputToken === 'token0' ? setAmount0(value) : setAmount1(value)}
+            label="Add"
+            maxAmount={zapInputToken === 'token0' ? token0Balance : token1Balance}
+            usdPrice={zapInputToken === 'token0' ? token0USDPrice : token1USDPrice}
+            formatUsdAmount={formatCalculatedAmount}
+            isOverBalance={zapInputToken === 'token0' ? isOverBalance0 : isOverBalance1}
+            isLoading={false}
+            animationControls={zapInputToken === 'token0' ? wiggleControls0 : wiggleControls1}
+            onPercentageClick={(percentage) =>
+              zapInputToken === 'token0'
+                ? handlePercentage0(percentage)
+                : handlePercentage1(percentage)
+            }
+            onTokenClick={() => setZapInputToken(zapInputToken === 'token0' ? 'token1' : 'token0')}
+            tokenClickIcon={<RefreshCw className="w-3.5 h-3.5 text-muted-foreground group-hover/token:text-white transition-colors" />}
+          />
+
+          {/* Zap info callout */}
+          {zapPreview && (
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent">
+              <Info className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="text-sm text-muted-foreground">
+                Swapping {zapPreview.formatted.swapAmount} {zapPreview.inputTokenInfo.symbol} via {zapPreview.route.type.toUpperCase()}
+              </span>
+            </div>
+          )}
+
+          {/* Loading state for zap preview */}
+          {isZapPreviewLoading && (
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent">
+              <div className="w-4 h-4 border-2 border-muted-foreground/30 border-t-muted-foreground rounded-full animate-spin" />
+              <span className="text-sm text-muted-foreground animate-pulse">
+                Calculating optimal swap...
+              </span>
+            </div>
+          )}
+        </>
+      ) : (
+        /* Balanced mode: Dual token input */
+        <DepositInputForm
+          token0Symbol={position.token0.symbol}
+          token1Symbol={position.token1.symbol}
+          formattedAmounts={formattedAmounts}
+          currencyBalances={{
+            TOKEN0: token0Balance,
+            TOKEN1: token1Balance,
+          }}
+          onUserInput={handleUserInput}
+          onCalculateDependentAmount={calculateDependentAmount}
+          deposit0Disabled={deposit0Disabled}
+          deposit1Disabled={deposit1Disabled}
+          token0USDPrice={token0USDPrice}
+          token1USDPrice={token1USDPrice}
+          isAmount0OverBalance={isOverBalance0}
+          isAmount1OverBalance={isOverBalance1}
+          wiggleControls0={wiggleControls0}
+          wiggleControls1={wiggleControls1}
+          onToken0PercentageClick={handlePercentage0}
+          onToken1PercentageClick={handlePercentage1}
+          formatUsdAmount={formatCalculatedAmount}
+          inputLabel="Add"
+        />
+      )}
 
       {/* Position Segment */}
       <PositionAmountsDisplay

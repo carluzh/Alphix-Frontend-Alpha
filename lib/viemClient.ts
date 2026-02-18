@@ -26,14 +26,12 @@ function getRpcUrlsForNetwork(networkMode: NetworkMode): string[] {
 
   if (customRpcUrl) {
     const isTestnetUrl = customRpcUrl.includes('sepolia') || customRpcUrl.includes('testnet');
-    const isMainnetUrl = customRpcUrl.includes('mainnet') ||
-                         customRpcUrl.includes('base.g.alchemy') ||
-                         customRpcUrl.includes('base-mainnet');
     const isLocalUrl = customRpcUrl.includes('127.0.0.1') || customRpcUrl.includes('localhost');
 
+    // Use custom URL if: local dev, or testnet URL for testnet mode, or non-testnet URL for mainnet mode
     if (isLocalUrl ||
         (networkMode === 'testnet' && isTestnetUrl) ||
-        (networkMode === 'mainnet' && isMainnetUrl)) {
+        (networkMode === 'mainnet' && !isTestnetUrl)) {
       return [customRpcUrl, ...networkUrls];
     }
   }
@@ -130,13 +128,11 @@ export function getRpcUrlForNetwork(networkMode: NetworkMode): string {
   const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;
 
   if (customRpcUrl) {
-    const isMainnetUrl = customRpcUrl.includes('mainnet') ||
-                         customRpcUrl.includes('base.g.alchemy') ||
-                         customRpcUrl.includes('base-mainnet');
     const isTestnetUrl = customRpcUrl.includes('sepolia') ||
                          customRpcUrl.includes('testnet');
 
-    if (networkMode === 'mainnet' && (isMainnetUrl || (!isMainnetUrl && !isTestnetUrl))) {
+    // Use custom URL if: testnet URL for testnet mode, or non-testnet URL for mainnet mode
+    if (networkMode === 'mainnet' && !isTestnetUrl) {
       return customRpcUrl;
     }
     if (networkMode === 'testnet' && isTestnetUrl) {

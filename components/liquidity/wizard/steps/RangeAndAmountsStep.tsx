@@ -36,6 +36,7 @@ import { PriceDeviationCallout } from '@/components/ui/PriceDeviationCallout';
 import { HighRiskConfirmModal, createPriceDeviationWarning } from '@/components/ui/HighRiskConfirmModal';
 import { TokenInputCard, TokenInputStyles } from '@/components/liquidity/TokenInputCard';
 import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
+import { DepositModeToggle } from '@/components/liquidity/shared/DepositModeToggle';
 import { formatCalculatedAmount } from '@/components/liquidity/liquidity-form-utils';
 import { calculateTicksFromPercentage, getFieldsDisabled, PositionField, isInvalidRange } from '@/lib/liquidity/utils/calculations';
 import { DEFAULT_TICK_SPACING } from '@/lib/liquidity/utils/validation/feeTiers';
@@ -1336,7 +1337,7 @@ export function RangeAndAmountsStep() {
         {/* Unified Yield info - show after range inputs */}
         {isRehypoMode && (
           <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent hover:border-muted-foreground/30 transition-colors">
-            <IconCircleInfo className="w-5 h-5 text-muted-foreground shrink-0" />
+            <IconCircleInfo className="w-4 h-4 text-muted-foreground shrink-0" />
             <span className="text-sm text-muted-foreground">
               Unified Yield uses an optimized range to offer lending yield
             </span>
@@ -1424,23 +1425,12 @@ export function RangeAndAmountsStep() {
               Swap to USDS
             </Link>
           )}
-          {/* Dual Deposit link - Only shown for Unified Yield in zap mode */}
-          {isRehypoMode && zapEnabled && state.depositMode === 'zap' && (
-            <button
-              onClick={() => setDepositMode('balanced')}
-              className="text-sm text-muted-foreground underline hover:text-white transition-colors"
-            >
-              Dual Deposit
-            </button>
-          )}
-          {/* Single Token link - Only shown for Unified Yield in balanced mode AND zap-eligible pools */}
-          {isRehypoMode && zapEnabled && state.depositMode === 'balanced' && (
-            <button
-              onClick={() => setDepositMode('zap')}
-              className="text-sm text-muted-foreground underline hover:text-white transition-colors"
-            >
-              Single Token
-            </button>
+          {/* Deposit mode toggle - Only shown for Unified Yield zap-eligible pools */}
+          {isRehypoMode && zapEnabled && (
+            <DepositModeToggle
+              depositMode={state.depositMode}
+              onModeChange={setDepositMode}
+            />
           )}
         </div>
 

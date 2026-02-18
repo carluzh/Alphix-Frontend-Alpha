@@ -27,7 +27,7 @@ const BASE_CSP: Record<string, string[]> = {
   'connect-src': [
     "'self'", "blob:", "data:",
     // RPC providers (Uniswap + Alphix)
-    "https://*.alchemy.com", "https://*.infura.io", "https://*.drpc.org",
+    "https://*.alchemy.com", "https://*.infura.io", "https://*.drpc.org", "https://*.drpc.live",
     "https://*.publicnode.com", "https://*.quiknode.pro", "https://*.nodereal.io",
     "https://1rpc.io", "https://rpc.ankr.com", "https://cloudflare-eth.com",
     "https://*.base.org", "https://mainnet.base.org", "https://sepolia.base.org",

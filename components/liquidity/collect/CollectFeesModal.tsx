@@ -435,14 +435,14 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                     alt=""
                     width={36}
                     height={36}
-                    className="rounded-full ring-2 ring-container"
+                    className="rounded-full "
                   />
                   <Image
                     src={getTokenIcon(position.token1.symbol)}
                     alt=""
                     width={36}
                     height={36}
-                    className="rounded-full ring-2 ring-container"
+                    className="rounded-full "
                   />
                 </div>
               </div>
