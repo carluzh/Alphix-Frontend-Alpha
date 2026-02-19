@@ -64,7 +64,10 @@ function formatCompact(value: number): string {
   if (value >= 1_000) {
     return `${(value / 1_000).toFixed(1)}K`;
   }
-  return value.toLocaleString("en-US");
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 /**

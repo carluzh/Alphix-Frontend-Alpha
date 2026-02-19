@@ -20,12 +20,12 @@ interface PointsInventoryCardProps {
 }
 
 /**
- * Format points with 4 decimal places
+ * Format points with 2 decimal places
  */
 function formatPoints(value: number): string {
   return value.toLocaleString("en-US", {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 }
 

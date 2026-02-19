@@ -22,7 +22,12 @@ export function PointsRewardsCard({
   const [isCtaHovered, setIsCtaHovered] = useState(false);
 
   const formattedPoints = useMemo(() => {
-    return totalPoints.toLocaleString("en-US", { maximumFractionDigits: 0 });
+    // Show 2 decimals if below 100, otherwise 0
+    const decimals = totalPoints < 100 ? 2 : 0;
+    return totalPoints.toLocaleString("en-US", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
   }, [totalPoints]);
 
   const renderRewardsAmount = () => {

@@ -20,7 +20,10 @@ export const OverviewStatsTiles = memo(function OverviewStatsTiles({
   const DASH = "-";
 
   const formatPoints = (value: number) => {
-    return value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+    return value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
   };
 
   return (
