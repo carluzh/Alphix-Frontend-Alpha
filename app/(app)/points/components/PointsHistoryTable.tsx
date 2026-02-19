@@ -41,7 +41,7 @@ function formatPoints(value: number): string {
   const sign = value >= 0 ? "+" : "";
   return `${sign}${value.toLocaleString("en-US", {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 4,
+    maximumFractionDigits: 2,
   })}`;
 }
 

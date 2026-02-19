@@ -124,9 +124,11 @@ export const AnimatedPoints = memo(function AnimatedPoints({
   delay?: number;
 }) {
   const formatPoints = (v: number) => {
+    // Show 2 decimals if below 100, otherwise 0
+    const decimals = v < 100 ? 2 : 0;
     return v.toLocaleString("en-US", {
-      minimumFractionDigits: 4,
-      maximumFractionDigits: 4,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
     });
   };
 
