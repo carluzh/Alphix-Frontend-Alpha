@@ -1,5 +1,5 @@
 export const runtime = 'nodejs';
-export const preferredRegion = 'auto';
+export const preferredRegion = 'iad1';
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
