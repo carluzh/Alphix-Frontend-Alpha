@@ -211,7 +211,10 @@ export function useLiquidityStepExecutor(
 ): UseLiquidityStepExecutorReturn {
   const { onSuccess, onFailure, onStepChange } = options;
 
-  const { address, chainId } = useAccount();
+  const { address, chainId, connector } = useAccount();
+
+  // Check if using Phantom wallet - needs delay between txs due to Blowfish simulation cache
+  const isPhantom = connector?.name?.toLowerCase().includes('phantom') ?? false;
   const config = useConfig();
   const publicClient = usePublicClient();
   const { sendTransactionAsync } = useSendTransaction();
@@ -363,6 +366,11 @@ export function useLiquidityStepExecutor(
             isExecuting: false,
           }));
           return;
+        }
+
+        // Phantom wallet needs delay between transactions due to Blowfish simulation cache lag
+        if (isPhantom && i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
         try {
@@ -549,7 +557,7 @@ export function useLiquidityStepExecutor(
 
       onSuccess?.(lastTxHash);
     },
-    [address, chainId, sendTransaction, waitForReceipt, signTypedData, setCurrentStep, onSuccess, onFailure, addTransaction],
+    [address, chainId, isPhantom, sendTransaction, waitForReceipt, signTypedData, setCurrentStep, onSuccess, onFailure, addTransaction],
   );
 
   return {

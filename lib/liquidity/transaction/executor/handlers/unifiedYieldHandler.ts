@@ -159,8 +159,8 @@ export async function handleUnifiedYieldApprovalStep(
   // Trigger UI prompting user to accept
   setCurrentStep({ step, accepted: false });
 
-  // Helper to attempt the approval transaction
-  const attemptApproval = async (): Promise<`0x${string}`> => {
+  try {
+    // Submit approval transaction
     const hash = await sendTransaction({
       to: step.txRequest.to,
       data: step.txRequest.data,
@@ -176,44 +176,6 @@ export async function handleUnifiedYieldApprovalStep(
     if (receipt.status === 'reverted') {
       throw new Error(`${step.type} transaction reverted`);
     }
-
-    return hash;
-  };
-
-  try {
-    let hash: `0x${string}`;
-
-    try {
-      // First attempt
-      hash = await attemptApproval();
-    } catch (firstError) {
-      // Log retry attempt to Sentry
-      const firstErrorObj = firstError instanceof Error ? firstError : new Error(String(firstError));
-      Sentry.captureMessage('Approval transaction retry attempt', {
-        level: 'warning',
-        tags: {
-          component: 'UnifiedYieldApprovalHandler',
-          tokenSymbol: step.tokenSymbol,
-          retryAttempt: '1',
-        },
-        extra: {
-          userAddress: address,
-          tokenSymbol: step.tokenSymbol,
-          hookAddress: step.hookAddress,
-          firstErrorMessage: firstErrorObj.message,
-        },
-      });
-
-      // Wait 500ms before retry
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Single retry attempt - if this fails, error propagates to outer catch
-      hash = await attemptApproval();
-    }
-
-    // Delay after approval to let wallet simulation state sync
-    // Required for Phantom wallet which needs time between back-to-back transactions
-    await new Promise(resolve => setTimeout(resolve, 1500));
 
     return hash;
   } catch (error) {
