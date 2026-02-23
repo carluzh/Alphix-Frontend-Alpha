@@ -86,7 +86,7 @@ interface IncreaseLiquidityTxContextType {
 const IncreaseLiquidityTxContext = createContext<IncreaseLiquidityTxContextType | null>(null);
 
 export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildren) {
-  const { address: accountAddress } = useAccount();
+  const { address: accountAddress, isConnected } = useAccount();
   const { chainId, networkMode } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { increaseLiquidityState, derivedIncreaseLiquidityInfo, setDerivedInfo, setAmount0, setAmount1, isUnifiedYield } = useIncreaseLiquidityContext();
@@ -147,14 +147,14 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const token0USDPrice = increasePrices[position.token0.symbol] || null;
   const token1USDPrice = increasePrices[position.token1.symbol] || null;
 
-  // Balances
+  // Balances - check isConnected first to prevent fetching before wallet connection is established
   const { data: token0BalanceData, refetch: refetchToken0Balance } = useBalance({
     address: accountAddress,
     token: tokenDefinitions[position.token0.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
       : tokenDefinitions[position.token0.symbol as TokenSymbol]?.address as `0x${string}`,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId }
+    query: { enabled: isConnected && !!accountAddress && !!chainId }
   });
 
   const { data: token1BalanceData, refetch: refetchToken1Balance } = useBalance({
@@ -163,7 +163,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       ? undefined
       : tokenDefinitions[position.token1.symbol as TokenSymbol]?.address as `0x${string}`,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId }
+    query: { enabled: isConnected && !!accountAddress && !!chainId }
   });
 
   const token0Balance = token0BalanceData?.formatted || "0";

@@ -14,6 +14,8 @@ Sentry.init({
     if (errorValue.includes('User rejected')) return null;
     if (errorValue.includes('EPIPE')) return null;
     if (errorValue.includes('broken pipe')) return null;
+    // Filter browser extension service worker errors (not actionable from our code)
+    if (errorValue.includes('disconnected port object')) return null;
     return event;
   },
   environment: process.env.NODE_ENV,

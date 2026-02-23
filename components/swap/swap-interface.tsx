@@ -231,12 +231,13 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Chain mismatch toast is now handled by useChainMismatch hook globally
 
   // --- Dynamic Balance Fetching for current tokens ---
+  // IMPORTANT: Check isConnected first - Phantom wallet can provide accountAddress before connection is fully established
   const { data: fromTokenBalanceData, isLoading: isLoadingFromTokenBalance, error: fromTokenBalanceError, refetch: refetchFromTokenBalance } = useBalance({
     address: accountAddress,
     token: fromToken.address === "0x0000000000000000000000000000000000000000" ? undefined : fromToken.address,
     chainId: TARGET_CHAIN_ID,
     query: {
-      enabled: !!accountAddress && !!fromToken.address,
+      enabled: isConnected && !!accountAddress && !!fromToken.address,
       staleTime: 30000,
       refetchOnWindowFocus: false,
     }
@@ -247,7 +248,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     token: toToken.address === "0x0000000000000000000000000000000000000000" ? undefined : toToken.address,
     chainId: TARGET_CHAIN_ID,
     query: {
-      enabled: !!accountAddress && !!toToken.address,
+      enabled: isConnected && !!accountAddress && !!toToken.address,
       staleTime: 30000,
       refetchOnWindowFocus: false,
     }
@@ -310,12 +311,13 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         return { ...prevToken, balance: "~", value: "$0.00" };
       }
       
-      if (!isLoadingFromTokenBalance && isConnected && prevToken.balance !== displayBalance) {
+      // Only update balance if we have actual data - prevents setting to "0" when query is disabled
+      if (!isLoadingFromTokenBalance && isConnected && fromTokenBalanceData && prevToken.balance !== displayBalance) {
         return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
       }
-      
+
       if (!isConnected && prevToken.balance !== "~") {
-        return { ...prevToken, balance: "~", value: "$0.00" }; 
+        return { ...prevToken, balance: "~", value: "$0.00" };
       }
 
       // If no changes, return the existing token object to prevent re-renders
@@ -346,14 +348,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         return { ...prevToken, balance: "~", value: "$0.00" };
       }
       
-      if (!isLoadingToTokenBalance && isConnected && prevToken.balance !== displayBalance) {
+      // Only update balance if we have actual data - prevents setting to "0" when query is disabled
+      if (!isLoadingToTokenBalance && isConnected && toTokenBalanceData && prevToken.balance !== displayBalance) {
         return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
       }
-      
+
       if (!isConnected && prevToken.balance !== "~") {
         return { ...prevToken, balance: "~", value: "$0.00" };
       }
-      
+
       return prevToken;
     });
   }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, toToken.symbol, toToken.usdPrice]);

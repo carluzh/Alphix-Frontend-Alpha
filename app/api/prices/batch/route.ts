@@ -3,6 +3,7 @@ export const runtime = 'nodejs';
 import { NextResponse } from 'next/server';
 import { batchQuotePrices } from '@/lib/swap/quote-prices';
 import { MAINNET_CHAIN_ID, type NetworkMode } from '@/lib/network-mode';
+import { checkRateLimit } from '@/lib/api/ratelimit';
 
 /**
  * POST /api/prices/batch
@@ -13,6 +14,9 @@ import { MAINNET_CHAIN_ID, type NetworkMode } from '@/lib/network-mode';
  * Server-side Redis caching (60s fresh / 5min stale) prevents excessive RPC calls.
  */
 export async function POST(request: Request) {
+  const rateLimited = await checkRateLimit(request);
+  if (rateLimited) return rateLimited;
+
   try {
     const body = await request.json();
     const symbols: string[] = body.symbols || [];

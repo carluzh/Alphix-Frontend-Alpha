@@ -6,8 +6,9 @@
  */
 
 import type { Hex, Address, PublicClient } from 'viem';
-import { formatUnits, createPublicClient, http, encodeFunctionData } from 'viem';
-import { base } from 'viem/chains';
+import { formatUnits, createPublicClient, encodeFunctionData } from 'viem';
+import { baseMainnet } from '@/lib/chains';
+import { createFallbackTransport } from '@/lib/viemClient';
 import type {
   ZapSwapApprovalStep,
   ZapPSMSwapStep,
@@ -356,8 +357,8 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
 
   // Create a public client for RPC calls
   const publicClient = createPublicClient({
-    chain: base,
-    transport: http(),
+    chain: baseMainnet,
+    transport: createFallbackTransport(baseMainnet),
   });
 
   // Query actual token balances

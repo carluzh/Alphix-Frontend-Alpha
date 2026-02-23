@@ -311,7 +311,7 @@ export function RangeAndAmountsStep() {
     pool: sdkPool, // V4Pool SDK instance
   } = useAddLiquidityContext();
 
-  const { address: accountAddress } = useAccount();
+  const { address: accountAddress, isConnected } = useAccount();
   const { chainId, networkMode } = useNetwork();
 
   // Get calculation data from TxContext (real liquidity math)
@@ -591,14 +591,14 @@ export function RangeAndAmountsStep() {
     return `${sign}${percentDiff.toFixed(2)}%`;
   }, [maxPrice, currentPriceRaw, priceInverted]);
 
-  // Get balances
+  // Get balances - check isConnected first to prevent fetching before wallet connection is established
   const { data: token0BalanceData } = useBalance({
     address: accountAddress,
     token: token0Def?.address === "0x0000000000000000000000000000000000000000"
       ? undefined
       : token0Def?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!token0Def },
+    query: { enabled: isConnected && !!accountAddress && !!chainId && !!token0Def },
   });
 
   const { data: token1BalanceData } = useBalance({
@@ -607,7 +607,7 @@ export function RangeAndAmountsStep() {
       ? undefined
       : token1Def?.address as `0x${string}` | undefined,
     chainId,
-    query: { enabled: !!accountAddress && !!chainId && !!token1Def },
+    query: { enabled: isConnected && !!accountAddress && !!chainId && !!token1Def },
   });
 
   // USD prices

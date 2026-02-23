@@ -30,7 +30,13 @@ export function getErrorLink(
   const errorLink = onError(({ graphQLErrors, networkError, operation }) => {
     if (graphQLErrors) {
       const operationName = operation.operationName
-      const operationVariables = JSON.stringify(operation.variables)
+      // Safely stringify variables - some edge cases (iOS WKWebView, extensions) can cause cyclic refs
+      let operationVariables: string
+      try {
+        operationVariables = JSON.stringify(operation.variables)
+      } catch (e) {
+        operationVariables = `[stringify failed: ${e instanceof Error ? e.message : 'unknown'}]`
+      }
       graphQLErrors.forEach(({ message, locations, path }) => {
         sample(
           () =>

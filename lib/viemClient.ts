@@ -1,55 +1,14 @@
-import { createPublicClient, custom, type PublicClient, type Chain } from 'viem';
+import { createPublicClient, custom, fallback, http, type PublicClient, type Chain } from 'viem';
 // Import from chains.ts (no WalletConnect dependencies) instead of wagmiConfig.ts
-import { baseSepolia, baseMainnet } from './chains';
-import { type NetworkMode, getStoredNetworkMode } from './network-mode';
+import { baseSepolia, baseMainnet, getOrderedRpcUrls } from './chains';
+import { type NetworkMode } from './network-mode';
 import { AppRpcClient } from './rpc/AppRpcClient';
 
-// Network-specific RPC endpoints
-const TESTNET_RPC_URLS = [
-  "https://sepolia.base.org",
-  "https://base-sepolia.drpc.org",
-];
-
-const MAINNET_RPC_URLS = [
-  "https://mainnet.base.org",
-  "https://base.drpc.org",
-];
-
 // OVERRIDE: Always use mainnet (testnet removed)
-const defaultNetworkMode = 'mainnet' as const;
-const isMainnet = true;
 const activeChain = baseMainnet;
 
-function getRpcUrlsForNetwork(networkMode: NetworkMode): string[] {
-  const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;
-  const networkUrls = networkMode === 'mainnet' ? MAINNET_RPC_URLS : TESTNET_RPC_URLS;
-
-  if (customRpcUrl) {
-    const isTestnetUrl = customRpcUrl.includes('sepolia') || customRpcUrl.includes('testnet');
-    const isMainnetUrl = customRpcUrl.includes('mainnet') ||
-                         customRpcUrl.includes('base.g.alchemy') ||
-                         customRpcUrl.includes('base-mainnet');
-    const isLocalUrl = customRpcUrl.includes('127.0.0.1') || customRpcUrl.includes('localhost');
-
-    if (isLocalUrl ||
-        (networkMode === 'testnet' && isTestnetUrl) ||
-        (networkMode === 'mainnet' && isMainnetUrl)) {
-      return [customRpcUrl, ...networkUrls];
-    }
-  }
-
-  return networkUrls;
-}
-
-// Alchemy first, public RPCs as fallback
-const RPC_URLS = [
-  process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL,
-  ...(isMainnet ? MAINNET_RPC_URLS : TESTNET_RPC_URLS),
-].filter(Boolean) as string[];
-
-if (RPC_URLS.length === 0) {
-    throw new Error("No RPC URLs are defined. Please set NEXT_PUBLIC_RPC_URL or RPC_URL environment variable.");
-}
+// Get RPC URLs from chains.ts (includes NEXT_PUBLIC_RPC_URL as primary)
+const RPC_URLS = getOrderedRpcUrls(baseMainnet);
 
 // AppRpcClient transport with exponential backoff (Uniswap pattern)
 // This uses the Controller pattern from Uniswap's AppJsonRpcProvider
@@ -88,8 +47,8 @@ export { baseSepolia };
  * Uses AppRpcClient with exponential backoff for reliability.
  */
 export function createNetworkClient(networkMode: NetworkMode): PublicClient {
-  const rpcUrls = getRpcUrlsForNetwork(networkMode);
   const chain = networkMode === 'mainnet' ? baseMainnet : baseSepolia;
+  const rpcUrls = getOrderedRpcUrls(chain);
 
   // Use AppRpcClient with exponential backoff (Uniswap pattern)
   const networkAppRpcClient = new AppRpcClient(rpcUrls, {
@@ -121,31 +80,18 @@ export function getChainForNetwork(networkMode: NetworkMode): Chain {
 
 /**
  * Get the primary RPC URL for a specific network mode.
- * Useful for ethers.js providers that need a single URL.
- *
- * Note: Custom RPC URL is only used if it matches the requested network,
- * otherwise we fall back to default public endpoints.
  */
 export function getRpcUrlForNetwork(networkMode: NetworkMode): string {
-  const customRpcUrl = process.env.NEXT_PUBLIC_RPC_URL || process.env.RPC_URL;
+  const chain = networkMode === 'mainnet' ? baseMainnet : baseSepolia;
+  const urls = getOrderedRpcUrls(chain);
+  return urls[0];
+}
 
-  if (customRpcUrl) {
-    const isMainnetUrl = customRpcUrl.includes('mainnet') ||
-                         customRpcUrl.includes('base.g.alchemy') ||
-                         customRpcUrl.includes('base-mainnet');
-    const isTestnetUrl = customRpcUrl.includes('sepolia') ||
-                         customRpcUrl.includes('testnet');
-
-    if (networkMode === 'mainnet' && (isMainnetUrl || (!isMainnetUrl && !isTestnetUrl))) {
-      return customRpcUrl;
-    }
-    if (networkMode === 'testnet' && isTestnetUrl) {
-      return customRpcUrl;
-    }
-    // Custom URL doesn't match requested network, fall through to defaults
-  }
-
-  return networkMode === 'mainnet'
-    ? MAINNET_RPC_URLS[0]
-    : TESTNET_RPC_URLS[0];
-} 
+/**
+ * Create a fallback transport using the ordered RPC URLs.
+ * Useful for one-off clients that need fallback support.
+ */
+export function createFallbackTransport(chain: Chain) {
+  const urls = getOrderedRpcUrls(chain);
+  return fallback(urls.map(url => http(url, { timeout: 10_000 })));
+}

@@ -206,6 +206,11 @@ export const resolvers = {
       args: { chain: string; poolId: string; skip?: number; first?: number },
       ctx: Context
     ) => {
+      // Cap maximum ticks to prevent amplification attacks
+      const MAX_TICKS = 1000;
+      const requestedFirst = args.first ?? 500;
+      const cappedFirst = Math.min(requestedFirst, MAX_TICKS);
+
       const data = await fetchInternal(
         ctx,
         `/api/liquidity/get-ticks`,
@@ -213,7 +218,7 @@ export const resolvers = {
           method: 'POST',
           body: JSON.stringify({
             poolId: args.poolId,
-            first: args.first ?? 500,
+            first: cappedFirst,
           }),
         }
       )
@@ -327,13 +332,14 @@ export const resolvers = {
         return []
       }
 
+      // Cap maximum ticks to prevent amplification attacks
+      const MAX_TICKS = 1000;
       let ticks = data.ticks
       if (args.skip) {
         ticks = ticks.slice(args.skip)
       }
-      if (args.first) {
-        ticks = ticks.slice(0, args.first)
-      }
+      const cappedFirst = args.first ? Math.min(args.first, MAX_TICKS) : MAX_TICKS;
+      ticks = ticks.slice(0, cappedFirst);
 
       return ticks.map((tick: any) => ({
         id: `${parent.poolId}:${tick.tickIdx}`,

@@ -283,14 +283,12 @@ function ErrorCallout({
   onRetry: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const [expanded, setExpanded] = useState(false);
 
   if (!error) return null;
 
   // Truncate long errors for display (keep first 120 chars)
   const MAX_ERROR_LENGTH = 120;
-  const isLongError = error.length > MAX_ERROR_LENGTH;
-  const displayError = isLongError && !expanded
+  const displayError = error.length > MAX_ERROR_LENGTH
     ? error.slice(0, MAX_ERROR_LENGTH) + '...'
     : error;
 
@@ -311,18 +309,10 @@ function ErrorCallout({
         <p className="text-sm text-red-400 break-words">
           {displayError}
         </p>
-        {isLongError && !expanded && (
-          <button
-            onClick={() => setExpanded(true)}
-            className="text-xs text-red-400/70 hover:text-red-300 mt-1"
-          >
-            Show more
-          </button>
-        )}
         <div className="flex gap-3 mt-2">
           <button
             onClick={handleCopy}
-            className="text-xs text-muted-foreground hover:text-white transition-colors flex items-center gap-1"
+            className="text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1"
           >
             {copied ? (
               <>
@@ -446,12 +436,13 @@ export function ReviewExecuteModal() {
 
   // Uniswap step-based executor
   const executor = useLiquidityStepExecutor({
-    onSuccess: async () => {
+    onSuccess: () => {
       setIsExecuting(false);
       setCurrentStepIndex(0);
       setStepAccepted(false);
 
       // C4: Clear flow state and cached permit on success
+      // Note: These are synchronous operations
       if (flowId) {
         clearFlowState(flowId);
       }
