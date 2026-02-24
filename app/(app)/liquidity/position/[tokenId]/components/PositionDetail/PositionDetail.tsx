@@ -51,7 +51,7 @@ function ChartLoadingSkeleton() {
       </div>
       {/* Time period selector skeleton */}
       <div className="flex flex-row items-center gap-1 opacity-50">
-        {["1W", "1M", "1Y", "ALL"].map((opt) => (
+        {["1W", "1M", "1Y"].map((opt) => (
           <div key={opt} className="h-7 px-2.5 text-xs rounded-md bg-muted/20 text-muted-foreground">
             {opt}
           </div>

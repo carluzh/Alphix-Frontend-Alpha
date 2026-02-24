@@ -23,7 +23,7 @@ import { fetchAaveHistory, getTokenProtocol, getPoolYieldFactor } from "@/lib/aa
 import { useNetwork } from "@/lib/network-context";
 import type { YieldSource } from "@/lib/pools-config";
 
-export type ChartPeriod = "1W" | "1M" | "1Y" | "ALL";
+export type ChartPeriod = "1W" | "1M" | "1Y";
 
 export interface UnifiedYieldChartPoint {
   timestamp: number;
@@ -71,7 +71,6 @@ function mapPeriodToBackend(period: ChartPeriod): 'DAY' | 'WEEK' | 'MONTH' {
     case '1W': return 'WEEK';
     case '1M': return 'MONTH';
     case '1Y': return 'MONTH';
-    case 'ALL': return 'MONTH';
     default: return 'WEEK';
   }
 }

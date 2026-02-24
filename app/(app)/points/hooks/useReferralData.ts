@@ -115,14 +115,15 @@ export function useReferralData(): UseReferralDataReturn {
 
   // Fetch all referral data when connected
   useEffect(() => {
+    // Reset state whenever address changes (including disconnect)
+    setMyCode(null);
+    setMyCodeUsageCount(0);
+    setMyReferrer(null);
+    setMyReferrerCode(null);
+    setJoinedAt(null);
+    setRefereesData(DEFAULT_REFEREES_DATA);
+
     if (!isConnected || !address) {
-      // Reset state when disconnected
-      setMyCode(null);
-      setMyCodeUsageCount(0);
-      setMyReferrer(null);
-      setMyReferrerCode(null);
-      setJoinedAt(null);
-      setRefereesData(DEFAULT_REFEREES_DATA);
       return;
     }
 

@@ -54,8 +54,8 @@ const TIME_SCALE_HEIGHT = 26; // Height of x-axis labels
 const PRICE_SCALE_WIDTH = 55; // Width of y-axis labels
 const CHART_DATA_PADDING = 10; // Padding between chart data and Y-axis (via XAxis padding)
 
-// Time period options
-type TimePeriod = "1W" | "1M" | "All";
+// Time period options (removed "All" - data is limited to 60 days anyway)
+type TimePeriod = "1W" | "1M";
 
 // Hover state for chart values
 interface HoverData {
@@ -112,11 +112,6 @@ export const ChartSection = memo(function ChartSection({
       ...d,
       timestamp: Math.floor(new Date(d.date).getTime() / 1000),
     }));
-
-    // For "All" period, return all data
-    if (timePeriod === "All") {
-      return dataWithTimestamps;
-    }
 
     // Filter data within the period range
     return dataWithTimestamps.filter(d => d.timestamp >= periodFrom && d.timestamp <= periodTo);
@@ -650,7 +645,7 @@ interface TimePeriodSelectorProps {
 }
 
 const TimePeriodSelector = memo(function TimePeriodSelector({ period, onPeriodChange, disabled }: TimePeriodSelectorProps) {
-  const options: TimePeriod[] = ["1W", "1M", "All"];
+  const options: TimePeriod[] = ["1W", "1M"];
 
   return (
     <div className={cn("flex flex-row items-center gap-1", disabled && "opacity-50 pointer-events-none")}>

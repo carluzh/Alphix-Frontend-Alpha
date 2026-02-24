@@ -23,7 +23,7 @@ import { DeltaArrow } from "@/app/(app)/overview/components/Charts/Delta";
 // Types
 // ============================================================================
 
-export type TimePeriod = "1D" | "1W" | "1M" | "1Y" | "ALL";
+export type TimePeriod = "1D" | "1W" | "1M" | "1Y";
 
 // Accept any data with time and value properties
 interface ChartDataPoint {
@@ -125,7 +125,7 @@ const TimePeriodSelector = memo(function TimePeriodSelector({
   onPeriodChange,
   disabled,
 }: TimePeriodSelectorProps) {
-  const options: TimePeriod[] = ["1W", "1M", "1Y", "ALL"];
+  const options: TimePeriod[] = ["1W", "1M", "1Y"];
 
   return (
     <div

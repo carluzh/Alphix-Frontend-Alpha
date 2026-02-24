@@ -309,12 +309,28 @@ function ReferralContent({
   const [isApplying, setIsApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
+  // Reset local state when wallet changes
+  useEffect(() => {
+    setEnteredCode("");
+    setApplyError(null);
+    setIsApplying(false);
+  }, [currentUserAddress]);
+
   // Check if user doesn't meet requirements
   const requirementsNotMet = myReferralCode === "REQUIREMENTS_NOT_MET";
   const displayCode = requirementsNotMet ? null : myReferralCode;
 
   const handleApplyCode = useCallback(async () => {
     if (!enteredCode.trim() || !applyReferralCode || isApplying) return;
+
+    // Prevent self-referral on frontend
+    const normalizedInput = enteredCode.trim().toUpperCase();
+    const normalizedMyCode = myReferralCode?.toUpperCase();
+    if (normalizedMyCode && normalizedInput === normalizedMyCode) {
+      setApplyError("You cannot refer yourself");
+      toast.error("You cannot refer yourself");
+      return;
+    }
 
     setIsApplying(true);
     setApplyError(null);
@@ -334,7 +350,7 @@ function ReferralContent({
     } finally {
       setIsApplying(false);
     }
-  }, [enteredCode, applyReferralCode, isApplying]);
+  }, [enteredCode, applyReferralCode, isApplying, myReferralCode]);
 
   // Convert referees to the format expected by ReferredUsersTable
   const referredUsers: ReferredUser[] = referees.map((r) => ({
@@ -519,7 +535,7 @@ function ReferralContent({
               <input
                 type="text"
                 value={enteredCode}
-                onChange={(e) => setEnteredCode(e.target.value.toUpperCase())}
+                onChange={(e) => setEnteredCode(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleApplyCode()}
                 placeholder="Enter code..."
                 disabled={isApplying}
@@ -750,6 +766,11 @@ function ReferredUsersTable({
   isLoading: boolean;
 }) {
   const [currentPage, setCurrentPage] = useState(0);
+
+  // Reset pagination when users list changes (e.g., wallet switch)
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [users]);
 
   const totalItems = users.length;
   const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);

@@ -27,7 +27,7 @@ import { usePriceOrdering, useGetRangeDisplay } from "@/lib/uniswap/liquidity/ho
 
 export type LPType = "rehypo" | "concentrated";
 
-export type ChartDuration = "1D" | "1W" | "1M" | "1Y" | "ALL";
+export type ChartDuration = "1D" | "1W" | "1M" | "1Y";
 
 // Map UI duration to HistoryDuration enum
 const DURATION_MAP: Record<ChartDuration, HistoryDuration> = {
@@ -35,7 +35,6 @@ const DURATION_MAP: Record<ChartDuration, HistoryDuration> = {
   "1W": HistoryDuration.WEEK,
   "1M": HistoryDuration.MONTH,
   "1Y": HistoryDuration.YEAR,
-  "ALL": HistoryDuration.YEAR, // Use YEAR as fallback for ALL
 };
 
 export interface PositionInfo {

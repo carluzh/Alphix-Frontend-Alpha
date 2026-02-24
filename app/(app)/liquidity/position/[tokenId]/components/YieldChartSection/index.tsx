@@ -27,7 +27,7 @@ import {
 // Types
 // ============================================================================
 
-export type TimePeriod = "1W" | "1M" | "1Y" | "ALL";
+export type TimePeriod = "1W" | "1M" | "1Y";
 
 /** Keys for chart series that can be toggled via legend */
 type SeriesKey = "totalApr" | "apr" | "currency0Apy" | "currency1Apy" | "feesUsd" | "accumulatedFeesUsd";
@@ -152,7 +152,7 @@ const TimePeriodSelector = memo(function TimePeriodSelector({
   onPeriodChange,
   disabled,
 }: TimePeriodSelectorProps) {
-  const options: TimePeriod[] = ["1W", "1M", "1Y", "ALL"];
+  const options: TimePeriod[] = ["1W", "1M", "1Y"];
 
   return (
     <div
@@ -457,8 +457,6 @@ export const YieldChartSection = memo(function YieldChartSection({
       totalApr: d.totalApr ?? d.apr, // Use totalApr if available, otherwise use apr
     });
 
-    // For ALL period, show all data
-    if (timePeriod === "ALL") return chartData.map(normalizePoint);
     // Filter data within period range
     return chartData
       .filter(d => d.timestamp >= periodFrom && d.timestamp <= periodTo)

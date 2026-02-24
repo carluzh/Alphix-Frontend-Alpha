@@ -1,8 +1,8 @@
 'use client'
 
-import { config, wagmiAdapter, projectId, isMainnet } from '@/lib/wagmiConfig'
+import { config, wagmiAdapter, projectId } from '@/lib/wagmiConfig'
 import { createAppKit } from '@reown/appkit'
-import { base as appKitBase, baseSepolia as appKitBaseSepolia } from '@reown/appkit/networks'
+import { base as appKitBase } from '@reown/appkit/networks'
 import { QueryClient } from '@tanstack/react-query'
 import { ApolloProvider } from '@apollo/client'
 import { type ReactNode } from 'react'
@@ -19,8 +19,8 @@ export const appKit = typeof window !== 'undefined' && projectId
   ? createAppKit({
       adapters: [wagmiAdapter],
       projectId,
-      networks: isMainnet ? [appKitBase, appKitBaseSepolia] : [appKitBaseSepolia, appKitBase],
-      defaultNetwork: isMainnet ? appKitBase : appKitBaseSepolia,
+      networks: [appKitBase],
+      defaultNetwork: appKitBase,
       metadata: { name: 'Alphix', description: 'Alphix AMM', url: window.location.origin, icons: ['/favicon.ico'] },
       features: { analytics: true, email: false, socials: [] },
       themeMode: 'dark',

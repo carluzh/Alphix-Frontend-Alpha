@@ -71,6 +71,19 @@ function formatCompact(value: number): string {
 }
 
 /**
+ * Format integer count (no decimals)
+ */
+function formatCount(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(1)}K`;
+  }
+  return Math.floor(value).toLocaleString("en-US");
+}
+
+/**
  * PointsStatsPanel - Dynamic stats panel that changes based on selected tab
  *
  * When History tab is active:
@@ -528,7 +541,7 @@ function ReferralStatsPanel({
             <StatRow
               icon={<UsersIcon className="w-4 h-4 text-muted-foreground" />}
               label="Total Referrals"
-              value={formatCompact(totalReferees)}
+              value={formatCount(totalReferees)}
               isLoading={isLoading}
               isMobile={isMobile}
             />

@@ -19,7 +19,7 @@ import { fetchPositionFees } from "@/lib/backend-client";
 import { fetchPositionAaveHistory } from "@/lib/aave-rates";
 import { useNetwork } from "@/lib/network-context";
 
-export type ChartPeriod = "1W" | "1M" | "1Y" | "ALL";
+export type ChartPeriod = "1W" | "1M" | "1Y";
 
 export interface FeeChartPoint {
   timestamp: number;

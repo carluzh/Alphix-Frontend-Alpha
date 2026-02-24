@@ -24,12 +24,10 @@ const chainId = MAINNET_CHAIN_ID;
 
 export const activeChain = isMainnet ? baseMainnet : baseSepolia;
 
-// Export all networks (both available for wallet switching)
-// Put the default network first in the array
+// Export all networks available for wallet switching
 // Include Ethereum mainnet for ENS resolution (required for .eth name lookups)
-export const networks = isMainnet
-  ? [baseMainnet, baseSepolia, mainnet]
-  : [baseSepolia, baseMainnet, mainnet];
+// Note: Base Sepolia removed - mainnet only
+export const networks = [baseMainnet, mainnet];
 
 // Create the Wagmi adapter instance.
 // The adapter internally creates a wagmi config.
