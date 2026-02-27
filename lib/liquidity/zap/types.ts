@@ -127,6 +127,17 @@ export interface ZapPreviewResult extends ZapCalculationResult {
     decimals: number;
     address: Address;
   };
+  /** Share valuation from on-chain preview (what shares are worth) */
+  shareValue?: {
+    /** Amount of token0 (USDS) the shares represent */
+    amount0: bigint;
+    /** Amount of token1 (USDC) the shares represent */
+    amount1: bigint;
+    /** Formatted amount0 */
+    formatted0: string;
+    /** Formatted amount1 */
+    formatted1: string;
+  };
   /** Timestamp of preview calculation */
   timestamp: number;
 }
@@ -288,6 +299,8 @@ export interface UseZapPreviewParams {
   hookAddress: Address;
   /** Whether to enable the query */
   enabled?: boolean;
+  /** Whether to enable auto-refetch (disable during execution) */
+  refetchEnabled?: boolean;
 }
 
 // =============================================================================

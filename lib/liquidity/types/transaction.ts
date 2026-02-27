@@ -412,6 +412,12 @@ export interface ZapDynamicDepositStep {
   initialBalance1?: bigint;
   /** Total input amount in USD (for dust percentage calculation) */
   inputAmountUSD?: number;
+  /** Total input amount in wei (for accurate dust calculation) */
+  inputAmount?: bigint;
+  /** Expected token0 amount to deposit (caps actual deposit to avoid over-spending allowance) */
+  expectedDepositAmount0: bigint;
+  /** Expected token1 amount to deposit (caps actual deposit to avoid over-spending allowance) */
+  expectedDepositAmount1: bigint;
 }
 
 // =============================================================================

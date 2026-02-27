@@ -28,6 +28,7 @@ import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useCreatePositionTxContext } from './CreatePositionTxContext';
 import dynamic from 'next/dynamic';
 import { getPoolById, getAllTokens, getToken, type TokenSymbol } from '@/lib/pools-config';
+import { cn } from '@/lib/utils';
 import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
 
 const PositionRangeChart = dynamic(() => import('@/components/liquidity/PositionRangeChart/PositionRangeChart').then(mod => mod.PositionRangeChart), { ssr: false });
@@ -253,16 +254,16 @@ function DoubleCurrencyLogo({
   return (
     <div className="flex items-center -space-x-2">
       {icon0 ? (
-        <Image src={icon0} alt={symbol0} width={36} height={36} className="rounded-full ring-2 ring-container" />
+        <Image src={icon0} alt={symbol0} width={36} height={36} className="rounded-full " />
       ) : (
-        <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white ring-2 ring-container">
+        <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white ">
           {symbol0.charAt(0)}
         </div>
       )}
       {icon1 ? (
-        <Image src={icon1} alt={symbol1} width={36} height={36} className="rounded-full ring-2 ring-container" />
+        <Image src={icon1} alt={symbol1} width={36} height={36} className="rounded-full " />
       ) : (
-        <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white ring-2 ring-container">
+        <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white ">
           {symbol1.charAt(0)}
         </div>
       )}
@@ -384,6 +385,7 @@ export function ReviewExecuteModal() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [executorSteps, setExecutorSteps] = useState<TransactionStep[]>([]);
+  const [isRefetchingPreview, setIsRefetchingPreview] = useState(false);
   // C4: Flow tracking for recovery
   const [flowId, setFlowId] = useState<string | undefined>(undefined);
 
@@ -408,7 +410,25 @@ export function ReviewExecuteModal() {
     inputAmount: zapInputAmount || '',
     hookAddress: (pool?.hooks ?? '0x0000000000000000000000000000000000000000') as Address,
     enabled: isZapMode && !!zapInputToken && !!zapInputAmount && !!pool?.hooks,
+    refetchEnabled: !isExecuting, // Disable refetch during transaction execution
   });
+
+  // Live countdown for zap refetch timer
+  const [zapRefetchCountdown, setZapRefetchCountdown] = useState(10);
+  useEffect(() => {
+    if (!isZapMode || zapPreviewQuery.isLoading || zapPreviewQuery.isFetching || isRefetchingPreview || isExecuting) {
+      return;
+    }
+    // Calculate initial countdown based on when data was last updated
+    const updateCountdown = () => {
+      const elapsed = Date.now() - (zapPreviewQuery.dataUpdatedAt || Date.now());
+      const remaining = Math.max(0, Math.ceil((10000 - elapsed) / 1000));
+      setZapRefetchCountdown(remaining);
+    };
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [isZapMode, zapPreviewQuery.dataUpdatedAt, zapPreviewQuery.isLoading, zapPreviewQuery.isFetching, isRefetchingPreview, isExecuting]);
 
   // Zap approvals hook
   const zapApprovalsQuery = useZapApprovals({
@@ -433,6 +453,11 @@ export function ReviewExecuteModal() {
     if (uiSteps.length === 0 || currentStepIndex >= uiSteps.length) return undefined;
     return { step: uiSteps[currentStepIndex], accepted: stepAccepted };
   }, [uiSteps, currentStepIndex, stepAccepted]);
+
+  // Compute button disabled state
+  const isCreateButtonDisabled = isZapMode
+    ? !zapPreviewQuery.data || !zapApprovalsQuery.approvals || zapPreviewQuery.isLoading || zapPreviewQuery.isFetching || isRefetchingPreview
+    : isUnifiedYield && !depositPreview;
 
   // Uniswap step-based executor
   const executor = useLiquidityStepExecutor({
@@ -839,11 +864,16 @@ export function ReviewExecuteModal() {
         // Preview is stale if older than MAX_PREVIEW_AGE_MS (30 seconds)
         if (!isPreviewFresh(preview)) {
           console.log('[ReviewExecuteModal] Zap preview is stale, refetching...');
-          const freshPreview = await zapPreviewQuery.refetch();
-          if (!freshPreview.data) {
-            throw new Error('Failed to refresh zap preview');
+          setIsRefetchingPreview(true);
+          try {
+            const freshPreview = await zapPreviewQuery.refetch();
+            if (!freshPreview.data) {
+              throw new Error('Failed to refresh zap preview');
+            }
+            preview = freshPreview.data;
+          } finally {
+            setIsRefetchingPreview(false);
           }
-          preview = freshPreview.data;
         }
 
         // Get user settings for slippage and approval mode
@@ -865,8 +895,7 @@ export function ReviewExecuteModal() {
         // may fail if yield was distributed. Request slightly fewer shares (0.1% less).
         const sharesWithHaircut = (preview.expectedShares * 999n) / 1000n;
 
-        // Query initial balances for dust tracking
-        // These are recorded before any swaps so we can calculate dust delta after deposit
+        // Query initial balances for dust tracking (blockTag: latest to bypass cache)
         let initialBalance0: bigint | undefined;
         let initialBalance1: bigint | undefined;
         if (publicClient) {
@@ -877,12 +906,14 @@ export function ReviewExecuteModal() {
                 abi: ERC20_BALANCE_ABI,
                 functionName: 'balanceOf',
                 args: [address],
+                blockTag: 'latest',
               }) as Promise<bigint>,
               publicClient.readContract({
                 address: pool.currency1.address as Address,
                 abi: ERC20_BALANCE_ABI,
                 functionName: 'balanceOf',
                 args: [address],
+                blockTag: 'latest',
               }) as Promise<bigint>,
             ]);
             initialBalance0 = balance0;
@@ -1146,26 +1177,63 @@ export function ReviewExecuteModal() {
 
             {/* Depositing Section */}
             <div className="px-4 py-3 mt-2">
-              <span className="text-sm text-muted-foreground mb-3 block">
-                {isZapMode ? 'Zap Deposit' : 'Depositing'}
-              </span>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm text-muted-foreground">
+                  {isZapMode ? 'Zap Deposit' : 'Depositing'}
+                </span>
+                {/* Zap mode status badge */}
+                {isZapMode && (
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded ${
+                      zapPreviewQuery.isLoading || zapPreviewQuery.isFetching || isRefetchingPreview
+                        ? 'bg-muted/50 text-muted-foreground animate-pulse'
+                        : 'bg-muted/30 text-muted-foreground/80'
+                    }`}
+                  >
+                    {zapPreviewQuery.isLoading || zapPreviewQuery.isFetching || isRefetchingPreview
+                      ? 'Calculating...'
+                      : `Refetches in ${zapRefetchCountdown}s`
+                    }
+                  </span>
+                )}
+              </div>
               <div className="flex flex-col gap-4">
-                {/* Zap mode loading state */}
-                {isZapMode && zapPreviewQuery.isLoading && (
-                  <div className="flex items-center justify-center py-4">
-                    <RefreshCw className="w-5 h-5 animate-spin text-muted-foreground" />
-                    <span className="ml-2 text-sm text-muted-foreground">Calculating optimal swap...</span>
-                  </div>
+                {/* Zap mode loading state - show known values, skeleton for calculated */}
+                {isZapMode && (zapPreviewQuery.isLoading || zapPreviewQuery.isFetching || isRefetchingPreview) && (
+                  <>
+                    {/* Input token - show actual values (already known) */}
+                    <TokenInfoRow
+                      symbol={zapInputToken === 'USDS' ? pool.currency0.symbol : pool.currency1.symbol}
+                      icon={zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon}
+                      amount={zapInputAmount || '0'}
+                      usdValue={usdValues?.[zapInputToken === 'USDS' ? 'TOKEN0' : 'TOKEN1'] || '0.00'}
+                    />
+                    {/* Skeleton for calculated Swap info */}
+                    <div className="flex flex-col gap-2 py-2 px-3 rounded-lg bg-muted/30">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Swap amount</span>
+                        <div className="h-4 w-24 bg-muted/40 rounded animate-pulse" />
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Route</span>
+                        <div className="h-4 w-28 bg-muted/40 rounded animate-pulse" />
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Expected shares</span>
+                        <div className="h-4 w-32 bg-muted/40 rounded animate-pulse" />
+                      </div>
+                    </div>
+                  </>
                 )}
                 {/* Zap mode error state */}
-                {isZapMode && zapPreviewQuery.isError && (
+                {isZapMode && zapPreviewQuery.isError && !zapPreviewQuery.isFetching && (
                   <div className="flex flex-col gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
                     <span className="text-sm text-red-400">Failed to calculate zap preview</span>
                     <span className="text-xs text-muted-foreground">{zapPreviewQuery.error?.message}</span>
                   </div>
                 )}
                 {/* Zap mode: Show single input token with swap info */}
-                {isZapMode && !zapPreviewQuery.isLoading && !zapPreviewQuery.isError && zapPreviewQuery.data ? (
+                {isZapMode && !zapPreviewQuery.isLoading && !zapPreviewQuery.isFetching && !isRefetchingPreview && !zapPreviewQuery.isError && zapPreviewQuery.data ? (
                   <>
                     {/* Input token */}
                     <TokenInfoRow
@@ -1182,16 +1250,62 @@ export function ReviewExecuteModal() {
                           {zapPreviewQuery.data.formatted.swapAmount} {zapInputToken}
                         </span>
                       </div>
-                      <div className="flex justify-between text-sm">
+                      <div className="flex justify-between items-center text-sm">
                         <span className="text-muted-foreground">Route</span>
-                        <span className="text-white">
-                          {zapPreviewQuery.data.route.type === 'psm' ? 'PSM (1:1)' : 'Pool swap'}
-                        </span>
+                        <div className="flex items-center gap-1">
+                          {/* Input token icon */}
+                          {(zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon) ? (
+                            <Image
+                              src={(zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon)!}
+                              alt={zapInputToken || ''}
+                              width={16}
+                              height={16}
+                              className="rounded-full"
+                            />
+                          ) : (
+                            <div className="w-4 h-4 rounded-full bg-muted flex items-center justify-center text-[8px] font-bold">
+                              {zapInputToken?.charAt(0)}
+                            </div>
+                          )}
+                          {/* Chevron */}
+                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
+                            <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                          </svg>
+                          {/* Route label */}
+                          <span className="text-xs text-muted-foreground">
+                            {zapPreviewQuery.data.route.type === 'psm' ? 'PSM' : 'Unified Pool'}
+                          </span>
+                          {/* Chevron */}
+                          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
+                            <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                          </svg>
+                          {/* Output token icon */}
+                          {(zapInputToken === 'USDS' ? token1Config?.icon : token0Config?.icon) ? (
+                            <Image
+                              src={(zapInputToken === 'USDS' ? token1Config?.icon : token0Config?.icon)!}
+                              alt={zapInputToken === 'USDS' ? 'USDC' : 'USDS'}
+                              width={16}
+                              height={16}
+                              className="rounded-full"
+                            />
+                          ) : (
+                            <div className="w-4 h-4 rounded-full bg-muted flex items-center justify-center text-[8px] font-bold">
+                              {zapInputToken === 'USDS' ? 'U' : 'U'}
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Expected shares</span>
-                        <span className="text-white">
-                          {parseFloat(zapPreviewQuery.data.formatted.expectedShares).toFixed(6)}
+                        <span>
+                          <span className="text-muted-foreground">
+                            {parseFloat(zapPreviewQuery.data.formatted.expectedShares).toFixed(6)}
+                          </span>
+                          {zapPreviewQuery.data.shareValue && (
+                            <span className="text-white ml-1">
+                              (~${(parseFloat(zapPreviewQuery.data.shareValue.formatted0) + parseFloat(zapPreviewQuery.data.shareValue.formatted1)).toFixed(2)})
+                            </span>
+                          )}
                         </span>
                       </div>
                     </div>
@@ -1307,12 +1421,14 @@ export function ReviewExecuteModal() {
               ) : (
                 <Button
                   onClick={handleConfirm}
-                  disabled={
-                    isZapMode
-                      ? !zapPreviewQuery.data || !zapApprovalsQuery.approvals
-                      : isUnifiedYield && !depositPreview
-                  }
-                  className="w-full h-12 text-base font-semibold bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isCreateButtonDisabled}
+                  className={cn(
+                    "w-full h-12 text-base font-semibold",
+                    isCreateButtonDisabled
+                      ? "relative border border-sidebar-border bg-button text-white/75 !opacity-100"
+                      : "bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90"
+                  )}
+                  style={isCreateButtonDisabled ? { backgroundImage: 'url(/patterns/button-wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
                 >
                   {isZapMode ? 'Zap & Create' : 'Create'}
                 </Button>

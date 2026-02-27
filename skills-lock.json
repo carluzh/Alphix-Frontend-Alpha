@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "swap-integration": {
+      "source": "uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "9f450826b5bcc58e8d5a7bd7b69ef1089720c950e78fe4365f7ea32d8c983b45"
+    }
+  }
+}

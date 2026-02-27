@@ -10,7 +10,8 @@
  */
 
 import React from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { IconXmark } from "nucleo-micro-bold-essential";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import { DecreaseLiquidityContextProvider } from "./DecreaseLiquidityContext";
 import { DecreaseLiquidityTxContextProvider } from "./DecreaseLiquidityTxContext";
@@ -43,18 +44,30 @@ export function DecreaseLiquidityModal({
         />
       )}
       <DialogContent
-          className="sm:max-w-[440px] bg-container border-sidebar-border"
-          onOpenAutoFocus={(e) => e.preventDefault()}
-        >
-        <DialogHeader>
-          <DialogTitle className="text-base font-medium text-muted-foreground">Withdraw Liquidity</DialogTitle>
-        </DialogHeader>
+        className="sm:max-w-[440px] bg-container border-sidebar-border p-0 gap-0 [&>button]:hidden"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        {/* Header: Title + Close X - matches ReviewExecuteModal pattern */}
+        <div className="flex items-center justify-between px-4 pt-4 pb-2">
+          <span className="text-base font-medium text-muted-foreground">
+            Withdraw Liquidity
+          </span>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-white transition-colors"
+          >
+            <IconXmark className="w-5 h-5" />
+          </button>
+        </div>
 
-        <DecreaseLiquidityContextProvider position={position}>
-          <DecreaseLiquidityTxContextProvider>
-            <DecreaseLiquidityForm onClose={onClose} onSuccess={onSuccess} />
-          </DecreaseLiquidityTxContextProvider>
-        </DecreaseLiquidityContextProvider>
+        {/* Form content */}
+        <div className="px-4 pb-4">
+          <DecreaseLiquidityContextProvider position={position}>
+            <DecreaseLiquidityTxContextProvider>
+              <DecreaseLiquidityForm onClose={onClose} onSuccess={onSuccess} />
+            </DecreaseLiquidityTxContextProvider>
+          </DecreaseLiquidityContextProvider>
+        </div>
       </DialogContent>
     </Dialog>
   );

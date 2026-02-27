@@ -340,21 +340,21 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
           </div>
           {/* Range indicator + pool type badges */}
           <div className="flex items-center gap-2">
-            {/* Range badge */}
+            {/* Range/Earning badge - Unified Yield shows "Earning", V4 shows range status */}
             <div className="flex items-center gap-1.5">
               <div
                 className={cn(
                   "w-2 h-2 rounded-full",
-                  position.isInRange ? "bg-green-500" : "bg-red-500"
+                  isUnifiedYield ? "bg-green-500" : (position.isInRange ? "bg-green-500" : "bg-red-500")
                 )}
               />
               <span
                 className={cn(
                   "text-xs font-medium",
-                  position.isInRange ? "text-green-500" : "text-red-500"
+                  isUnifiedYield ? "text-green-500" : (position.isInRange ? "text-green-500" : "text-red-500")
                 )}
               >
-                {position.isInRange ? "In Range" : "Out of Range"}
+                {isUnifiedYield ? "Earning" : (position.isInRange ? "In Range" : "Out of Range")}
               </span>
             </div>
             {/* Pool type badge */}
@@ -383,14 +383,14 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
             alt=""
             width={36}
             height={36}
-            className="rounded-full ring-2 ring-container"
+            className="rounded-full "
           />
           <Image
             src={getTokenIcon(position.token1.symbol)}
             alt=""
             width={36}
             height={36}
-            className="rounded-full ring-2 ring-container"
+            className="rounded-full "
           />
         </div>
       </div>

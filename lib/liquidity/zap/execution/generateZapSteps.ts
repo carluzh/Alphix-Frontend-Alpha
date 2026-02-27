@@ -213,8 +213,12 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
   // STEP 4: Deposit to Hook (Dynamic - rebuilds at execution time)
   // =========================================================================
 
+  // Calculate total input amount (swapAmount + remainingInputAmount)
+  const totalInputAmount = calculation.swapAmount + calculation.remainingInputAmount;
+
   // Use dynamic deposit step that queries actual balances at execution time
   // This fixes the "insufficient balance" error when swap output differs from preview
+  // Pass expected deposit amounts to cap the actual deposit (prevents over-spending allowance)
   const depositStep = createZapDynamicDepositStep(
     hookAddress,
     poolId,
@@ -224,12 +228,35 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
     token1Address,
     sharesToMint,
     inputToken,
+    token0Amount, // Expected deposit amount for token0
+    token1Amount, // Expected deposit amount for token1
     initialBalance0,
     initialBalance1,
-    inputAmountUSD
+    inputAmountUSD,
+    totalInputAmount // Total input amount for accurate dust calculation
   );
   steps.push(depositStep);
   depositStepCount++;
+
+  // Calculate approval amounts for logging
+  const swapApprovalAmount = approvalMode === 'infinite' ? 'INFINITE' : `${calculation.swapAmount + 1n}`;
+  const token0ApprovalAmount = approvalMode === 'infinite' ? 'INFINITE' : `${token0Amount + 1n}`;
+  const token1ApprovalAmount = approvalMode === 'infinite' ? 'INFINITE' : `${token1Amount + 1n}`;
+
+  // Comprehensive summary log for flow verification
+  console.log(`[generateZapSteps] === ZAP FLOW SUMMARY ===`);
+  console.log(`[generateZapSteps] Input: ${totalInputAmount.toString()} ${inputToken} (~$${inputAmountUSD?.toFixed(2) ?? '?'} USD)`);
+  console.log(`[generateZapSteps] Route: ${calculation.route.type.toUpperCase()}`);
+  console.log(`[generateZapSteps] Swap: ${calculation.swapAmount.toString()} ${inputToken} → ${calculation.swapOutputAmount.toString()} ${inputToken === 'USDC' ? 'USDS' : 'USDC'}`);
+  console.log(`[generateZapSteps] Keep: ${calculation.remainingInputAmount.toString()} ${inputToken} (for deposit)`);
+  console.log(`[generateZapSteps] Deposit amounts: token0=${token0Amount.toString()}, token1=${token1Amount.toString()}`);
+  console.log(`[generateZapSteps] Expected shares: ${sharesToMint.toString()}`);
+  console.log(`[generateZapSteps] --- APPROVALS ---`);
+  console.log(`[generateZapSteps] Swap approval needed: ${!approvals.inputTokenApprovedForSwap} ${!approvals.inputTokenApprovedForSwap ? `(amount: ${swapApprovalAmount})` : ''}`);
+  console.log(`[generateZapSteps] Hook token0 approval needed: ${needsToken0Approval} ${needsToken0Approval ? `(amount: ${token0ApprovalAmount}, current: ${currentToken0Allowance.toString()})` : `(current: ${currentToken0Allowance.toString()})`}`);
+  console.log(`[generateZapSteps] Hook token1 approval needed: ${needsToken1Approval} ${needsToken1Approval ? `(amount: ${token1ApprovalAmount}, current: ${currentToken1Allowance.toString()})` : `(current: ${currentToken1Allowance.toString()})`}`);
+  console.log(`[generateZapSteps] Steps: ${steps.length} total (${swapStepCount} swap-related, ${depositStepCount} deposit-related)`);
+  console.log(`[generateZapSteps] ========================`);
 
   return {
     steps,
@@ -260,10 +287,10 @@ function createSwapApprovalStep(
   const spender = usePSM ? getAddress(PSM_CONFIG.address) : PERMIT2_ADDRESS;
 
   // Use exact amount or infinite based on user preference
-  // For exact mode, add 1% buffer to account for any rounding
+  // For exact mode, add minimal buffer (+1 wei) - sufficient for ERC20 approvals
   const approvalAmount = approvalMode === 'infinite'
     ? maxUint256
-    : (amount * 101n) / 100n;
+    : amount + 1n;
 
   // Build approval calldata
   const calldata = encodeFunctionData({
@@ -371,10 +398,10 @@ function createHookApprovalStep(
   approvalMode: 'exact' | 'infinite' = 'exact'
 ): UnifiedYieldApprovalStep {
   // Use exact amount or infinite based on user preference
-  // For exact mode, add 1% buffer to account for any rounding
+  // For exact mode, add minimal buffer (+1 wei) - sufficient for ERC20 approvals
   const approvalAmount = approvalMode === 'infinite'
     ? maxUint256
-    : (amount * 101n) / 100n;
+    : amount + 1n;
 
   const calldata = encodeFunctionData({
     abi: ERC20_APPROVE_ABI,
@@ -414,9 +441,12 @@ function createZapDynamicDepositStep(
   token1Address: Address,
   fallbackSharesEstimate: bigint,
   inputToken: 'USDS' | 'USDC',
+  expectedDepositAmount0: bigint,
+  expectedDepositAmount1: bigint,
   initialBalance0?: bigint,
   initialBalance1?: bigint,
-  inputAmountUSD?: number
+  inputAmountUSD?: number,
+  inputAmount?: bigint
 ): ZapDynamicDepositStep {
   return {
     type: TransactionStepType.ZapDynamicDeposit,
@@ -430,9 +460,12 @@ function createZapDynamicDepositStep(
     token1Decimals: USDS_USDC_POOL_CONFIG.token1.decimals,
     fallbackSharesEstimate,
     inputToken,
+    expectedDepositAmount0,
+    expectedDepositAmount1,
     initialBalance0,
     initialBalance1,
     inputAmountUSD,
+    inputAmount,
   };
 }
 

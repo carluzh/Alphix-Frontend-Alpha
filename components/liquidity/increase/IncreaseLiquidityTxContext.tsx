@@ -50,6 +50,10 @@ import { useUnifiedYieldApprovals } from "@/lib/liquidity/unified-yield/useUnifi
 import { buildUnifiedYieldDepositTx, buildDepositParamsFromPreview } from "@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx";
 import type { DepositPreviewResult, UnifiedYieldApprovalStatus } from "@/lib/liquidity/unified-yield/types";
 
+// Zap hooks for single-token deposits
+import { useZapPreview, useZapApprovals } from "@/lib/liquidity/zap/hooks";
+import type { ZapToken, ZapPreviewResult, ZapApprovalStatus } from "@/lib/liquidity/zap";
+
 interface IncreaseLiquidityTxContextType {
   // API/Context state
   isLoading: boolean;
@@ -81,6 +85,15 @@ interface IncreaseLiquidityTxContextType {
   unifiedYieldApprovalStatus: UnifiedYieldApprovalStatus | null;
   isCheckingApprovals: boolean;
   refetchApprovals: (overrideAmounts?: { amount0Wei: bigint; amount1Wei: bigint }) => Promise<UnifiedYieldApprovalStatus | null>;
+
+  // Zap mode (single-token deposit with auto-swap)
+  isZapMode: boolean;
+  zapPreview: ZapPreviewResult | null;
+  zapApprovals: ZapApprovalStatus | null;
+  isZapPreviewLoading: boolean;
+  isZapPreviewFetching: boolean;
+  zapDataUpdatedAt: number;
+  refetchZapPreview: () => Promise<any>;
 }
 
 const IncreaseLiquidityTxContext = createContext<IncreaseLiquidityTxContextType | null>(null);
@@ -89,7 +102,17 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const { address: accountAddress, isConnected } = useAccount();
   const { chainId, networkMode } = useNetwork();
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
-  const { increaseLiquidityState, derivedIncreaseLiquidityInfo, setDerivedInfo, setAmount0, setAmount1, isUnifiedYield } = useIncreaseLiquidityContext();
+  const {
+    increaseLiquidityState,
+    derivedIncreaseLiquidityInfo,
+    setDerivedInfo,
+    setAmount0,
+    setAmount1,
+    isUnifiedYield,
+    isZapEligible,
+    depositMode,
+    zapInputToken,
+  } = useIncreaseLiquidityContext();
   const { position, exactField } = increaseLiquidityState;
 
   // Get pool config for Unified Yield (hook address)
@@ -132,6 +155,56 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       enabled: isUnifiedYield && !!unifiedYieldDeposit.lastPreview && !!accountAddress,
     }
   );
+
+  // =========================================================================
+  // ZAP MODE HOOKS - Single-token deposit with auto-swap (USDS/USDC only)
+  // =========================================================================
+
+  // Determine if we're in zap mode
+  const isZapMode = isUnifiedYield && isZapEligible && depositMode === 'zap' && zapInputToken !== null;
+
+  // Map zapInputToken to ZapToken type
+  const zapToken: ZapToken | undefined = isZapMode
+    ? (zapInputToken === 'token0' ? 'USDS' : 'USDC')
+    : undefined;
+
+  // Get the input amount for zap (from the active input field)
+  const zapInputAmount = isZapMode
+    ? (zapInputToken === 'token0'
+      ? derivedIncreaseLiquidityInfo.formattedAmounts?.TOKEN0
+      : derivedIncreaseLiquidityInfo.formattedAmounts?.TOKEN1)
+    : undefined;
+
+  // Zap preview hook - calculates optimal swap amount via binary search
+  const zapPreviewQuery = useZapPreview({
+    inputToken: zapToken ?? null,
+    inputAmount: zapInputAmount || '',
+    hookAddress: (poolConfig?.hooks ?? '0x0') as Address,
+    enabled: isZapMode && !!zapToken && !!zapInputAmount && parseFloat(zapInputAmount) > 0 && !!poolConfig?.hooks,
+    refetchEnabled: true, // Enable auto-refetch
+  });
+
+  // Zap approvals hook - checks approval status for swap + Hook deposit
+  const zapApprovalsQuery = useZapApprovals({
+    userAddress: accountAddress,
+    inputToken: zapToken,
+    swapAmount: zapPreviewQuery.data?.swapAmount,
+    route: zapPreviewQuery.data?.route,
+    hookAddress: poolConfig?.hooks as Address,
+    inputAmount: zapPreviewQuery.data
+      ? zapPreviewQuery.data.swapAmount + zapPreviewQuery.data.remainingInputAmount
+      : undefined,
+    enabled: isZapMode && !!zapPreviewQuery.data && !!accountAddress && !!poolConfig?.hooks,
+  });
+
+  console.log('[IncreaseLiquidityTxContext] Zap mode:', {
+    isZapMode,
+    zapToken,
+    zapInputAmount,
+    hasPreview: !!zapPreviewQuery.data,
+    hasApprovals: !!zapApprovalsQuery.approvals,
+    isPreviewLoading: zapPreviewQuery.isLoading,
+  });
 
   // State
   const [isLoading, setIsLoading] = useState(false);
@@ -693,6 +766,14 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     unifiedYieldApprovalStatus,
     isCheckingApprovals,
     refetchApprovals,
+    // Zap mode (single-token deposit with auto-swap)
+    isZapMode,
+    zapPreview: zapPreviewQuery.data ?? null,
+    zapApprovals: zapApprovalsQuery.approvals ?? null,
+    isZapPreviewLoading: zapPreviewQuery.isLoading,
+    isZapPreviewFetching: zapPreviewQuery.isFetching,
+    zapDataUpdatedAt: zapPreviewQuery.dataUpdatedAt ?? 0,
+    refetchZapPreview: zapPreviewQuery.refetch,
   }), [
     isLoading,
     error,
@@ -713,6 +794,14 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     unifiedYieldApprovalStatus,
     isCheckingApprovals,
     refetchApprovals,
+    // Zap dependencies
+    isZapMode,
+    zapPreviewQuery.data,
+    zapPreviewQuery.isLoading,
+    zapPreviewQuery.isFetching,
+    zapPreviewQuery.dataUpdatedAt,
+    zapPreviewQuery.refetch,
+    zapApprovalsQuery.approvals,
   ]);
 
   return (

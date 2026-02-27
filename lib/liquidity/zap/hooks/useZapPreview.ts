@@ -15,6 +15,7 @@ import { findOptimalSwapAmount } from '../calculation';
 import { USDS_USDC_POOL_CONFIG, MAX_PREVIEW_AGE_MS } from '../constants';
 import type { ZapToken, ZapPreviewResult, UseZapPreviewParams } from '../types';
 import { ZapError, ZapErrorCode } from '../types';
+import { UNIFIED_YIELD_HOOK_ABI } from '../../unified-yield/abi/unifiedYieldHookABI';
 
 // =============================================================================
 // CONSTANTS
@@ -40,7 +41,7 @@ const USDC_DECIMALS = 6;
  * @returns Query result with preview data
  */
 export function useZapPreview(params: UseZapPreviewParams) {
-  const { inputToken, inputAmount, hookAddress, enabled = true } = params;
+  const { inputToken, inputAmount, hookAddress, enabled = true, refetchEnabled = true } = params;
   const publicClient = usePublicClient();
 
   return useQuery({
@@ -84,6 +85,40 @@ export function useZapPreview(params: UseZapPreviewParams) {
       const leftover0 = outputToken === 'USDS' ? dustInOutputToken : 0n;
       const leftover1 = outputToken === 'USDC' ? dustInOutputToken : 0n;
 
+      // Get on-chain share valuation
+      let shareValue: ZapPreviewResult['shareValue'] | undefined;
+      try {
+        console.log('[useZapPreview] Fetching share valuation for shares:', optimalResult.expectedShares.toString());
+
+        const [shareAmount0, shareAmount1] = await publicClient.readContract({
+          address: hookAddress,
+          abi: UNIFIED_YIELD_HOOK_ABI,
+          functionName: 'previewRemoveReHypothecatedLiquidity',
+          args: [optimalResult.expectedShares],
+        }) as [bigint, bigint];
+
+        const formatted0 = formatUnits(shareAmount0, USDS_DECIMALS);
+        const formatted1 = formatUnits(shareAmount1, USDC_DECIMALS);
+
+        console.log('[useZapPreview] Share valuation result:', {
+          expectedShares: formatUnits(optimalResult.expectedShares, 18),
+          shareAmount0: formatted0,
+          shareAmount1: formatted1,
+          totalUSD: parseFloat(formatted0) + parseFloat(formatted1),
+          inputAmount,
+        });
+
+        shareValue = {
+          amount0: shareAmount0,
+          amount1: shareAmount1,
+          formatted0,
+          formatted1,
+        };
+      } catch (e) {
+        // Non-critical - continue without share valuation
+        console.warn('[useZapPreview] Failed to get share valuation:', e);
+      }
+
       // Build preview result
       const result: ZapPreviewResult = {
         swapAmount: optimalResult.swapAmount,
@@ -121,14 +156,17 @@ export function useZapPreview(params: UseZapPreviewParams) {
               ? USDS_USDC_POOL_CONFIG.token0.address
               : USDS_USDC_POOL_CONFIG.token1.address,
         },
+        shareValue,
         timestamp: Date.now(),
       };
 
       return result;
     },
     enabled: enabled && !!inputToken && !!inputAmount && parseFloat(inputAmount || '0') > 0 && !!hookAddress && !!publicClient,
-    staleTime: MAX_PREVIEW_AGE_MS,
+    staleTime: 10_000, // 10 seconds - consider data stale quickly for fresh quotes
     gcTime: MAX_PREVIEW_AGE_MS * 2,
+    refetchOnMount: 'always', // Always refetch when component mounts (e.g., modal reopens)
+    refetchInterval: refetchEnabled ? 10_000 : false, // Auto-refetch every 10 seconds, disabled during execution
     retry: 1,
   });
 }

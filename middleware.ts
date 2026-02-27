@@ -12,7 +12,7 @@ const ALLOWED_ORIGINS = [
   'http://127.0.0.1:3000',
 ];
 
-// CSP based on Uniswap's configuration with Alphix-specific additions
+// CSP configuration - wildcards used for RPC providers to support NEXT_PUBLIC_RPC_URL flexibility
 const BASE_CSP: Record<string, string[]> = {
   'default-src': ["'self'"],
   'script-src': IS_PRODUCTION
@@ -21,46 +21,63 @@ const BASE_CSP: Record<string, string[]> = {
   'style-src': ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
   'font-src': ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
   'img-src': ["*", "blob:", "data:"],
-  'media-src': ["'self'", "*"],
+  'media-src': ["'self'"],
   'frame-src': ["'self'", "https://verify.walletconnect.com", "https://verify.walletconnect.org"],
   'form-action': ["'none'"],
   'connect-src': [
     "'self'", "blob:", "data:",
-    // RPC providers (Uniswap + Alphix)
-    "https://*.alchemy.com", "https://*.infura.io", "https://*.drpc.org", "https://*.drpc.live",
-    "https://*.publicnode.com", "https://*.quiknode.pro", "https://*.nodereal.io",
-    "https://1rpc.io", "https://rpc.ankr.com", "https://cloudflare-eth.com",
-    "https://*.base.org", "https://mainnet.base.org", "https://sepolia.base.org",
-    "https://*.arbitrum.io", "https://*.optimism.io",
-    "https://polygon-rpc.com", "https://rpc-mainnet.maticvigil.com",
-    "https://api.avax.network", "https://bsc-dataseed1.binance.org",
-    "https://rpc.blast.io", "https://rpc.zora.energy", "https://rpc.scroll.io",
-    "https://forno.celo.org", "https://mainnet.era.zksync.io",
-    // Wallet providers
-    "https://*.walletconnect.com", "https://*.walletconnect.org",
-    "https://api.web3modal.org", "https://*.coinbase.com",
-    "https://wallet.crypto.com", "https://trustwallet.com",
-    "wss://relay.walletconnect.com", "wss://relay.walletconnect.org",
+    // RPC providers (wildcards for flexibility with NEXT_PUBLIC_RPC_URL)
+    "https://*.alchemy.com",
+    "https://*.infura.io",
+    "https://*.drpc.org",
+    "https://*.drpc.live",
+    "https://*.publicnode.com",
+    "https://*.quiknode.pro",
+    "https://mainnet.base.org",
+    "https://sepolia.base.org",
+    "https://1rpc.io",
+    "https://rpc.ankr.com",
+    "https://cloudflare-eth.com",
+    // WalletConnect
+    "https://*.walletconnect.com",
+    "https://*.walletconnect.org",
+    "wss://relay.walletconnect.com",
+    "wss://relay.walletconnect.org",
+    "https://api.web3modal.org",
+    "https://api.web3modal.com",
+    // Coinbase
+    "https://*.coinbase.com",
     "wss://www.walletlink.org",
-    // Data & APIs
-    "https://*.coingecko.com", "https://*.coinmarketcap.com",
-    "https://*.googleapis.com", "https://api.opensea.io",
-    "https://raw.githubusercontent.com",
-    // Alphix-specific
-    "https://*.satsuma-prod.com", "https://subgraph.satsuma-prod.com",
-    "https://*.supabase.co", "https://*.upstash.io",
-    // Uniswap APIs (for potential future integration)
-    "https://*.uniswap.org",
-    // AlphixBackend API
+    // Alphix
     "https://api.alphix.fi",
     "wss://api.alphix.fi",
-    "https://*.ingest.de.sentry.io", "https://*.sentry.io",
-    // IPFS
-    "https://ipfs.io", "https://gateway.ipfs.io", "https://cloudflare-ipfs.com",
+    "https://api.goldsky.com",
+    "https://gateway.thegraph.com",
+    // Data providers
+    "https://api.coingecko.com",
+    "https://pro-api.coingecko.com",
+    "https://raw.githubusercontent.com",
+    "https://ipfs.io",
+    "https://gateway.ipfs.io",
+    "https://cloudflare-ipfs.com",
+    // Upstash (client-side points/cache - wildcard required for dynamic subdomains)
+    "https://*.upstash.io",
+    // Monitoring
+    "https://o4510478966980608.ingest.de.sentry.io",
+    "https://sentry.io",
     // Vercel
-    "https://vercel.com", "https://vercel.live", "https://va.vercel-scripts.com",
+    "https://vercel.com",
+    "https://vercel.live",
+    "https://va.vercel-scripts.com",
     // Dev only
-    ...(IS_PRODUCTION ? [] : ["http://127.0.0.1:8545", "http://localhost:8545", "ws://localhost:3000"]),
+    ...(IS_PRODUCTION ? [] : [
+      "http://127.0.0.1:8545",
+      "http://localhost:8545",
+      "http://localhost:3001",
+      "ws://localhost:3000",
+      "ws://localhost:3001",
+      "ws://34.60.82.34:3001",
+    ]),
   ],
   'worker-src': ["'self'", "blob:"],
   'frame-ancestors': ["'none'"],
@@ -69,7 +86,6 @@ const BASE_CSP: Record<string, string[]> = {
   'upgrade-insecure-requests': [],
 };
 
-// Precompute CSP header string ONCE at module load (not per-request)
 const CSP_HEADER = Object.entries(BASE_CSP)
   .map(([key, values]) => values.length === 0 ? key : `${key} ${values.join(' ')}`)
   .join('; ');
