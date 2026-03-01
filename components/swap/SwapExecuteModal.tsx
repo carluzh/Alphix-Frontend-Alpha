@@ -24,7 +24,6 @@ import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { TokenImage } from "@/components/ui/token-image"
 import { ProgressIndicator } from "@/components/transactions/ProgressIndicator"
-import { getExplorerUrl } from "@/lib/wagmiConfig"
 
 import { useSwapStepExecutor, type UseSwapStepExecutorArgs } from "./useSwapStepExecutor"
 import { formatTokenAmountDisplay } from "./useSwapTrade"
@@ -34,7 +33,6 @@ import type { Token } from "./swap-interface"
 interface SwapExecuteModalProps extends UseSwapStepExecutorArgs {
   isOpen: boolean
   onClose: () => void
-  onSwapAgain: () => void
   displayFromToken: Token
   displayToToken: Token
   routeInfo?: { path: string[]; hops: number; isDirectRoute: boolean; pools: string[] } | null
@@ -114,7 +112,6 @@ type ModalView = "review" | "executing"
 export function SwapExecuteModal({
   isOpen,
   onClose,
-  onSwapAgain,
   displayFromToken,
   displayToToken,
   routeInfo,
@@ -158,8 +155,9 @@ export function SwapExecuteModal({
           onClick: () => window.open(state.txInfo!.explorerUrl, "_blank"),
         },
       })
+      onClose()
     }
-  }, [state.status, state.txInfo])
+  }, [state.status, state.txInfo, onClose])
 
   // Reset when modal closes
   useEffect(() => {
@@ -189,19 +187,13 @@ export function SwapExecuteModal({
     reset()
   }
 
-  const isCompleted = state.status === "completed"
   const isExecuting = state.status === "executing"
 
   // Map step states to TransactionStep array for ProgressIndicator
   const progressSteps = state.steps.map(s => s.step)
 
-  // Resolve amounts for display (use final tx amounts on success)
-  const displayFromAmount = isCompleted && state.txInfo?.fromAmount
-    ? formatTokenAmountDisplay(state.txInfo.fromAmount, displayFromToken)
-    : formatTokenAmountDisplay(executorArgs.fromAmount, displayFromToken)
-  const displayToAmount = isCompleted && state.txInfo?.toAmount
-    ? formatTokenAmountDisplay(state.txInfo.toAmount, displayToToken)
-    : formatTokenAmountDisplay(executorArgs.toAmount, displayToToken)
+  const displayFromAmount = formatTokenAmountDisplay(executorArgs.fromAmount, displayFromToken)
+  const displayToAmount = formatTokenAmountDisplay(executorArgs.toAmount, displayToToken)
 
   // USD values
   const fromUsd = parseFloat(executorArgs.fromAmount || "0") * (displayFromToken.usdPrice || 0)
@@ -380,31 +372,9 @@ export function SwapExecuteModal({
 
         {/* Bottom Section: Button OR Progress Indicator */}
         <div className="p-4 pt-2">
-          {view === "executing" && !isCompleted && progressSteps.length > 0 ? (
+          {view === "executing" && progressSteps.length > 0 ? (
             <ProgressIndicator steps={progressSteps} currentStep={currentStep} />
-          ) : isCompleted ? (
-            /* Success */
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-center gap-2 py-2">
-                <Button
-                  variant="link"
-                  className="text-xs font-normal text-muted-foreground hover:text-muted-foreground/80"
-                  onClick={() =>
-                    window.open(state.txInfo?.explorerUrl || getExplorerUrl(), "_blank")
-                  }
-                >
-                  View on Explorer
-                </Button>
-              </div>
-              <Button
-                className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
-                onClick={onSwapAgain}
-              >
-                Swap again
-              </Button>
-            </div>
           ) : (
-            /* Review state — action button */
             <Button
               onClick={handleConfirm}
               className="w-full h-12 text-base font-semibold bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90"

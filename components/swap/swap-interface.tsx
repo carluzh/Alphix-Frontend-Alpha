@@ -1068,10 +1068,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         <SwapExecuteModal
           isOpen={showSwapModal}
           onClose={() => setShowSwapModal(false)}
-          onSwapAgain={() => {
-            setShowSwapModal(false)
-            handleSwapAgain()
-          }}
           displayFromToken={displayFromToken}
           displayToToken={displayToToken}
           queryClient={null}
