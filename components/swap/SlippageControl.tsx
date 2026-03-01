@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { cn } from '@/lib/utils';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+
 import { useSlippageValidation } from '@/hooks/useSlippage';
 import { MAX_CUSTOM_SLIPPAGE_TOLERANCE } from '@/lib/slippage/slippage-constants';
 
@@ -142,21 +142,7 @@ export function SlippageControl({
   return (
     <div ref={containerRef} className="h-5">
       <div className="flex items-center justify-between text-xs text-muted-foreground h-5">
-        <TooltipProvider delayDuration={0}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>Max Slippage</span>
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8} className="px-2 py-1 text-xs max-w-xs">
-              <p>
-                The maximum difference between your expected price and the execution price.
-                {isAuto && (
-                  <> Auto-slippage is calculated based on market conditions, route complexity, and token pair volatility.</>
-                )}
-              </p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <span>Max Slippage</span>
 
         <div className="flex items-center gap-1 h-5">
           {!isPickerOpen ? (

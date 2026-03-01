@@ -320,50 +320,15 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   if (alwaysShowSkeleton) {
     return (
       <div
-        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
-        onClick={handleClick}
-        onMouseEnter={(e) => {
-          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
-          if (arrow) arrow.style.color = 'white';
-        }}
-        onMouseLeave={(e) => {
-          const arrow = e.currentTarget.querySelector('[data-arrow]') as HTMLElement;
-          if (arrow) arrow.style.color = '';
-        }}
+        className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative bg-container-secondary"
+        style={{ cursor: 'default' }}
       >
         <div className="flex items-center justify-between px-4 py-2 border-b border-primary">
           <h2 className="mt-0.5 text-xs tracking-wider text-muted-foreground font-mono font-bold">DYNAMIC FEE TREND</h2>
-                     <div className="flex items-center gap-3">
-             {poolInfo && (
-               <div className="flex items-center">
-                 <div className="relative w-8 h-4">
-                   <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
-                     <Image 
-                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
-                       alt={poolInfo.token0Symbol} 
-                       width={16} 
-                       height={16} 
-                       className="w-full h-full object-cover" 
-                     />
-                   </div>
-                   <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
-                     <Image 
-                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
-                       alt={poolInfo.token1Symbol} 
-                       width={16} 
-                       height={16} 
-                       className="w-full h-full object-cover" 
-                     />
-                   </div>
-                 </div>
-                 <span className="text-xs text-muted-foreground">{poolInfo.token0Symbol}/{poolInfo.token1Symbol}</span>
-               </div>
-             )}
-             <ArrowUpRight aria-hidden="true" data-arrow className="h-4 w-4 text-muted-foreground transition-colors duration-150" />
-          </div>
         </div>
         <div className="px-2 pb-2 pt-2 h-[100px] relative">
-          <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
+          <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: "radial-gradient(circle, #333333 1px, transparent 1px)", backgroundSize: "24px 24px", top: 0 }} />
+          <div className="w-full h-full flex items-center justify-center relative">
             <div className="animate-pulse">
               <Image
                 src="/logos/alphix-icon-white.svg"
@@ -375,7 +340,6 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             </div>
           </div>
         </div>
-
       </div>
     );
   }
@@ -427,7 +391,8 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           </div>
         </div>
         <div className="px-2 pb-2 pt-2 h-[100px] relative">
-          <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
+          <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: "radial-gradient(circle, #333333 1px, transparent 1px)", backgroundSize: "24px 24px", top: 0 }} />
+          <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center relative">
             <div className="animate-pulse">
               <Image
                 src="/logos/alphix-icon-white.svg"
@@ -439,7 +404,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
             </div>
           </div>
         </div>
-        
+
       </div>
     );
   } else {
@@ -494,8 +459,9 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
           </div>
         </div>
         <div className="px-2 py-2 h-[120px] relative">
+          <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: "radial-gradient(circle, #333333 1px, transparent 1px)", backgroundSize: "24px 24px", top: 0 }} />
           <div
-            className="w-full h-full cursor-pointer [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none"
+            className="w-full h-full cursor-pointer relative [&_.recharts-wrapper]:outline-none [&_.recharts-wrapper]:focus:outline-none [&_.recharts-surface]:outline-none"
             onMouseMove={isMobile ? undefined : (e) => {
               // Calculate which data point based on mouse position
               if (chartData && chartData.length > 0) {

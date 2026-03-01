@@ -55,8 +55,11 @@ import { SwapRoute } from "@/lib/swap/routing-engine";
 
 // Import the new view components
 import { SwapInputView } from './SwapInputView';
-import { SwapReviewView } from './SwapReviewView';
-import { SwapSuccessView } from './SwapSuccessView';
+// DEPRECATED: Old stepwise flow - kept for reference
+// import { SwapReviewView } from './SwapReviewView';
+// import { SwapSuccessView } from './SwapSuccessView';
+import { SwapExecuteModal } from './SwapExecuteModal';
+import { SwapRoutePreview } from './SwapRoutePreview';
 import type { TokenSelectorToken } from './TokenSelector';
 
 const TARGET_CHAIN_ID = activeChainId;
@@ -81,7 +84,7 @@ export type { SwapProgressState } from "./useSwapExecution";
 const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC: number; ETH?: number; DAI?: number } = { BTC: 77000, USDC: 1, ETH: 3500, DAI: 1 }): Token | null => {
   const tokenConfig = getToken(tokenSymbol);
   if (!tokenConfig) return null;
-  
+
   const priceType = getTokenPriceMapping(tokenSymbol);
   const usdPrice = prices[priceType] || 1;
 
@@ -97,7 +100,8 @@ const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC:
   };
 };
 
-// Get available tokens for swap
+// Get available tokens for swap (pool tokens only - ETH, USDC, USDS)
+// Additional tokens with balances are fetched from Alchemy via TokenSelector
 const getAvailableTokens = (prices?: { BTC: number; USDC: number; ETH?: number; DAI?: number }): Token[] => {
   const allTokens = getAllTokens();
   return Object.keys(allTokens)
@@ -166,6 +170,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Removed route-row hover logic; arrows only show on preview hover
   const [isAttemptingSwitch, setIsAttemptingSwitch] = useState(false);
 
+  // Swap wizard modal state
+  const [showSwapModal, setShowSwapModal] = useState(false);
+
   // Chain mismatch handling - hook manages the toast globally
   const { isMismatched: isChainMismatched, switchToExpectedChain } = useChainMismatch();
 
@@ -177,9 +184,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const initialTokenData = getInitialTokens();
 
   // Tokens for swap (with token data stored in state)
+  // Internal state keeps non-null defaults for hooks; "selected" booleans control UI presentation
   const [fromToken, setFromToken] = useState<Token>(initialTokenData.defaultFrom);
   const [toToken, setToToken] = useState<Token>(initialTokenData.defaultTo);
+  const [fromTokenSelected, setFromTokenSelected] = useState(false);
+  const [toTokenSelected, setToTokenSelected] = useState(false);
   const [tokenList, setTokenList] = useState<Token[]>(initialTokenData.availableTokens);
+  // Controlled open state for token selectors (allows click zones to open them)
+  const [fromSelectorOpen, setFromSelectorOpen] = useState(false);
+  const [toSelectorOpen, setToSelectorOpen] = useState(false);
   const fromAmount = useSwapStore((s) => s.fromAmount)
   const toAmount = useSwapStore((s) => s.toAmount)
   const independentField = useSwapStore((s) => s.independentField)
@@ -388,6 +401,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     currentSlippage,
     isAutoSlippage,
     updateAutoSlippage,
+    // Aggregator integration
+    userAddress: accountAddress,
   });
 
   const {
@@ -410,33 +425,22 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     fromTokenUsdPrice: fromToken.usdPrice,
     refetchFromTokenBalance,
     refetchToTokenBalance,
+    // Aggregator integration
+    source: trade.source,
+    kyberswapData: trade.kyberswapData,
   });
 
-  // Effect for Success Notification
-  useEffect(() => {
-    if (swapState === "success" && swapTxInfo?.hash) {
-      const swapDescription = `Swapped ${swapTxInfo.fromAmount} ${swapTxInfo.fromSymbol} to ${swapTxInfo.toAmount} ${swapTxInfo.toSymbol} successfully`;
-      toast.success("Swap Successful", {
-        icon: <IconBadgeCheck2 className="h-4 w-4 text-green-500" />,
-        description: swapDescription,
-        duration: 4000,
-            action: {
-          label: "View Transaction",
-          onClick: () => window.open(swapTxInfo.explorerUrl, "_blank"),
-        },
-      });
-    }
-  }, [swapState, swapTxInfo]);
+  // DEPRECATED: Success notification now handled by SwapExecuteModal
   // calculatedValues + auto-slippage moved into `useSwapTrade`
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    if (/^\d*\.?\d*$/.test(value)) {
-        swapStore.actions.setFromAmount(value);
+    if (value === "") {
+        swapStore.actions.setFromAmount("");
         setSelectedPercentageIndex(-1);
         swapStore.actions.setIndependentField('from');
-    } else if (value === "") {
-        swapStore.actions.setFromAmount("");
+    } else if (/^\d*\.?\d*$/.test(value) && value.length <= 16) {
+        swapStore.actions.setFromAmount(value);
         setSelectedPercentageIndex(-1);
         swapStore.actions.setIndependentField('from');
     }
@@ -445,40 +449,76 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Allow editing Buy (toAmount) directly for ExactOut flow
   const handleToAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    if (/^\d*\.?\d*$/.test(value)) {
-      swapStore.actions.setToAmount(value);
-      swapStore.actions.setIndependentField('to');
-    } else if (value === "") {
+    if (value === "") {
       swapStore.actions.setToAmount("");
+      swapStore.actions.setIndependentField('to');
+    } else if (/^\d*\.?\d*$/.test(value) && value.length <= 16) {
+      swapStore.actions.setToAmount(value);
       swapStore.actions.setIndependentField('to');
     }
   };
 
   const handleSwapTokens = () => {
-    const tempLogicalToken = fromToken; // This is just swapping our state for YUSD/BTCRL
-    const tempDisplayAmount = fromAmount;
+    const tempLogicalToken = fromToken;
+    const tempFromSelected = fromTokenSelected;
 
     setFromToken(toToken);
     setToToken(tempLogicalToken);
+    setFromTokenSelected(toTokenSelected);
+    setToTokenSelected(tempFromSelected);
     
     swapStore.actions.setFromAmount(toAmount); // Old toAmount becomes new fromAmount for input field
     // toAmount will be recalculated by useEffect based on the new fromAmount and swapped tokens
   };
 
+  // Convert TokenSelectorToken to full Token (with defaults for missing fields)
+  const tokenSelectorToToken = (token: TokenSelectorToken): Token => ({
+    address: token.address,
+    symbol: token.symbol,
+    name: token.name,
+    decimals: token.decimals,
+    icon: token.icon || '/placeholder-logo.svg',
+    balance: token.balance || '~',
+    value: token.value || '$0.00',
+    usdPrice: token.usdPrice || 0,
+  });
+
   // Token selection handlers
   const handleFromTokenSelect = (token: TokenSelectorToken) => {
-    // TokenSelectorToken is compatible with Token for our purposes
-    if (token.address !== fromToken.address) {
-      setFromToken(token as Token);
+    if (token.address !== fromToken.address || !fromTokenSelected) {
+      const fullToken = tokenSelectorToToken(token);
+      setFromToken(fullToken);
+      setFromTokenSelected(true);
+
+      // Add to tokenList if not already present (for dynamic token selection)
+      setTokenList(prev => {
+        const exists = prev.some(t => t.address.toLowerCase() === token.address.toLowerCase());
+        if (!exists) {
+          return [...prev, fullToken];
+        }
+        return prev;
+      });
+
       swapStore.actions.setAmounts("", "")
       // Let the centralized fetchFee() effect handle route + fee fetching to avoid duplicate API calls
     }
   };
 
   const handleToTokenSelect = (token: TokenSelectorToken) => {
-    // TokenSelectorToken is compatible with Token for our purposes
-    if (token.address !== toToken.address) {
-      setToToken(token as Token);
+    if (token.address !== toToken.address || !toTokenSelected) {
+      const fullToken = tokenSelectorToToken(token);
+      setToToken(fullToken);
+      setToTokenSelected(true);
+
+      // Add to tokenList if not already present (for dynamic token selection)
+      setTokenList(prev => {
+        const exists = prev.some(t => t.address.toLowerCase() === token.address.toLowerCase());
+        if (!exists) {
+          return [...prev, fullToken];
+        }
+        return prev;
+      });
+
       swapStore.actions.setAmounts("", "")
       // Let the centralized fetchFee() effect handle route + fee fetching to avoid duplicate API calls
     }
@@ -535,7 +575,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     // Uniswap-style: perform a fresh "binding" quote at review time.
     const ok = await trade.refreshBindingQuote().catch(() => false)
     if (!ok) return
-    swapActions.handleSwap()
+    // Open the swap wizard modal instead of the old stepwise flow
+    setShowSwapModal(true)
   };
 
   // Handle high-risk modal confirmation (after all pages acknowledged)
@@ -562,12 +603,13 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const handleFeePercentageClick = () => {};
 
 
-  const handleConfirmSwap = () => swapActions.handleConfirmSwap();
+  // DEPRECATED: Old stepwise flow used this - now handled by SwapExecuteModal
+  // const handleConfirmSwap = () => swapActions.handleConfirmSwap();
 
 
   // --- RENDER LOGIC ---
-  const displayFromToken = fromToken;
-  const displayToToken = toToken;
+  const displayFromToken: Token | null = fromTokenSelected ? fromToken : null;
+  const displayToToken: Token | null = toTokenSelected ? toToken : null;
 
   // isLoading for balances - now using dynamic loading states
   const isLoadingCurrentFromTokenBalance = isLoadingFromTokenBalance;
@@ -716,15 +758,23 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
   const strokeWidth = 2; // Define strokeWidth for the SVG rect elements
 
+  // For Alphix routes, segment 0 is the route preview, 1+ are fee charts.
+  // Fee history needs the actual pool index (offset by -1).
+  const isAlphixWithRouteEarly = trade.source === "alphix" && !!currentRoute && currentRoute.pools.length >= 1 && !!trade.routeInfo;
+  const feeChartPoolIndexEarly = isAlphixWithRouteEarly ? Math.max(0, selectedPoolIndexForChart - 1) : selectedPoolIndexForChart;
+
   const { feeHistoryData, isFeeHistoryLoading, poolInfo, fallbackPoolInfo } = useFeeHistory({
     isMounted,
     isConnected,
     currentRoute,
-    selectedPoolIndexForChart,
+    selectedPoolIndexForChart: feeChartPoolIndexEarly,
   });
 
   // Helper functions for action button text and disabled state
   const getActionButtonText = (): string => {
+    if (!fromTokenSelected || !toTokenSelected) {
+      return "Swap";
+    }
     if (!isMounted) {
       return "Connect Wallet";
     } else if (isConnected) {
@@ -733,10 +783,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
         return "Swap";
       } else {
-        // Check for insufficient balance
+        // Check for insufficient balance (relative tolerance to avoid float precision issues)
         const fromAmountNum = parseFloat(fromAmount || "0");
         const fromBalanceNum = parseFloat(fromToken.balance || "0");
-        if (fromAmountNum > 0 && fromBalanceNum < fromAmountNum) {
+        if (fromAmountNum > 0 && fromBalanceNum < fromAmountNum * 0.999999) {
           return "Insufficient Balance";
         }
         return "Swap";
@@ -747,6 +797,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   };
 
   const getActionButtonDisabled = (): boolean => {
+    if (!fromTokenSelected || !toTokenSelected) {
+      return true;
+    }
     if (!isMounted) {
       return true;
     } else if (isConnected) {
@@ -885,31 +938,38 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     trade.calculatedValues,
   ])
   
-  // NEW: Add navigation handlers for chart preview
+  // For ALL Alphix routes (single-hop and multi-hop), the preview area has N+1 segments:
+  // segment 0 = Route preview (Sankey), segments 1..N = Dynamic Fee Chart per pool.
+  // Kyberswap routes always show just the route preview (no fee charts).
+  const isAlphixWithRoute = trade.source === "alphix" && !!currentRoute && currentRoute.pools.length >= 1 && !!trade.routeInfo;
+  const totalPreviewSegments = isAlphixWithRoute ? 1 + currentRoute!.pools.length : (currentRoute?.pools?.length || 1);
+  // For fee history, offset by -1 (segment 0 is route, not a pool)
+  const feeChartPoolIndex = isAlphixWithRoute ? Math.max(0, selectedPoolIndexForChart - 1) : selectedPoolIndexForChart;
+
   const handleNextPool = useCallback(() => {
-    if (currentRoute && selectedPoolIndexForChart < currentRoute.pools.length - 1) {
+    if (selectedPoolIndexForChart < totalPreviewSegments - 1) {
       setSelectedPoolIndexForChart(prevIndex => prevIndex + 1);
     }
-  }, [currentRoute, selectedPoolIndexForChart]);
+  }, [totalPreviewSegments, selectedPoolIndexForChart]);
 
   const handlePreviousPool = useCallback(() => {
-    if (currentRoute && selectedPoolIndexForChart > 0) {
+    if (selectedPoolIndexForChart > 0) {
       setSelectedPoolIndexForChart(prevIndex => prevIndex - 1);
     }
-  }, [currentRoute, selectedPoolIndexForChart]);
+  }, [selectedPoolIndexForChart]);
 
   // Mobile: swipe left/right on the preview to navigate multihop pools without losing click navigation.
   const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null)
   const handlePreviewTouchStart = (e: React.TouchEvent) => {
     if (!isMobile) return
-    if (!currentRoute || currentRoute.pools.length <= 1) return
+    if (totalPreviewSegments <= 1) return
     const t = e.touches?.[0]
     if (!t) return
     swipeStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
   }
   const handlePreviewTouchEnd = (e: React.TouchEvent) => {
     if (!isMobile) return
-    if (!currentRoute || currentRoute.pools.length <= 1) return
+    if (totalPreviewSegments <= 1) return
     const start = swipeStartRef.current
     swipeStartRef.current = null
     if (!start) return
@@ -929,9 +989,16 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     else handlePreviousPool()
   }
 
-  // NEW: Determine if chart preview should be shown at all (always show; content decides skeleton vs data)
-  // Force show preview container even when not mounted/connected; content will skeletonize as needed
-  const showChartPreviewRegardlessOfData = true;
+  // Show chart preview for Alphix routes when selected segment >= 1 (fee chart view)
+  const showChartPreview = fromTokenSelected && toTokenSelected && isAlphixWithRoute && selectedPoolIndexForChart >= 1;
+
+  // Show route preview for:
+  // - Kyberswap routes (always show Sankey)
+  // - Alphix routes when viewing segment 0 (the route overview)
+  const showRoutePreview = fromTokenSelected && toTokenSelected && (
+    (trade.source === "kyberswap" && !!trade.kyberswapData?.routeSummary) ||
+    (isAlphixWithRoute && selectedPoolIndexForChart === 0)
+  );
 
   return (
     <div className="flex flex-col">
@@ -982,95 +1049,141 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                 }}
                 priceDeviation={priceDeviation}
                 fromTokenRawBalance={fromTokenBalanceData?.formatted}
+                fromSelectorOpen={fromSelectorOpen}
+                toSelectorOpen={toSelectorOpen}
+                onFromSelectorOpenChange={setFromSelectorOpen}
+                onToSelectorOpenChange={setToSelectorOpen}
               />
             )}
 
-            {/* Swapping State UI (largely preserved, uses calculatedValues) */}
-            {swapState === "review" && (
-              <SwapReviewView
-                displayFromToken={displayFromToken}
-                displayToToken={displayToToken}
-                trade={trade}
-                handleChangeButton={handleChangeButton}
-                handleConfirmSwap={handleConfirmSwap}
-                swapProgressState={swapProgressState}
-                completedSteps={completedSteps}
-                isSwapping={isSwapping}
-              />
-            )}
-
-            {/* Success State UI (largely preserved, uses calculatedValues) */}
-            {swapState === "success" && (
-              <SwapSuccessView
-                displayFromToken={displayFromToken}
-                displayToToken={displayToToken}
-                trade={trade}
-                swapTxInfo={swapTxInfo}
-                handleChangeButton={handleSwapAgain} // Use full reset for "Swap again"
-                formatTokenAmountDisplay={trade.formatTokenAmountDisplay}
-              />
-            )}
+            {/* DEPRECATED: Old stepwise review/success flow - kept for reference, replaced by SwapExecuteModal */}
+            {/* swapState === "review" && <SwapReviewView ... /> */}
+            {/* swapState === "success" && <SwapSuccessView ... /> */}
           </AnimatePresence>
         </CardContent>
       </Card>
 
-      {/* Preview Chart Row with external nav arrows */}
+      {/* Swap Wizard Modal — only mount when both tokens are selected */}
+      {displayFromToken && displayToToken && (
+        <SwapExecuteModal
+          isOpen={showSwapModal}
+          onClose={() => setShowSwapModal(false)}
+          onSwapAgain={() => {
+            setShowSwapModal(false)
+            handleSwapAgain()
+          }}
+          displayFromToken={displayFromToken}
+          displayToToken={displayToToken}
+          queryClient={null}
+          fromToken={fromToken}
+          toToken={toToken}
+          fromAmount={fromAmount}
+          toAmount={toAmount}
+          lastEditedSideRef={lastEditedSideRef}
+          trade={trade.execution}
+          tradeState={trade.tradeState}
+          currentSlippage={currentSlippage}
+          fromTokenUsdPrice={fromToken.usdPrice}
+          refetchFromTokenBalance={refetchFromTokenBalance}
+          refetchToTokenBalance={refetchToTokenBalance}
+          source={trade.source}
+          kyberswapData={trade.kyberswapData}
+          routeInfo={trade.routeInfo}
+        />
+      )}
+
+      {/* Preview Chart / Route Preview Row with external nav arrows */}
       <div className="w-full relative">
         <div className="w-full relative group overflow-x-hidden overflow-y-visible sm:overflow-visible">
           {/* Hover buffer extends horizontally so arrows remain clickable while visible */}
           <div className="absolute inset-y-0 left-0 right-0 sm:left-[-2.75rem] sm:right-[-2.75rem]"></div>
           <div className="relative touch-pan-y" onTouchStart={handlePreviewTouchStart} onTouchEnd={handlePreviewTouchEnd}>
-          <AnimatePresence>
-            {/* The motion.div is now always mounted, and its animation controls its visibility/size. */}
-            <motion.div
-              key="dynamic-fee-preview-auto"
-              className="w-full"
-              initial={{ y: -10, opacity: 0.5, height: '80px', marginTop: '24px' }}
-              animate={showChartPreviewRegardlessOfData ? { y: 0, opacity: 1, height: 'auto', marginTop: '16px' } : { y: -10, opacity: 0, height: '0px', marginTop: '0px' }}
-              transition={{ type: "spring", stiffness: 300, damping: 30, duration: 0.2 }}
-              onAnimationComplete={() => {
-                setCombinedRect(getContainerRect());
-              }}
-            >
-              {isMobile ? (
-                <DynamicFeeChartPreview 
-                  data={isFeeHistoryLoading ? [] : feeHistoryData} 
+          <AnimatePresence mode="wait">
+            {/* Alphix routes: Dynamic Fee Chart */}
+            {showChartPreview && (
+              <motion.div
+                key={`dynamic-fee-preview-${feeChartPoolIndex}`}
+                className="w-full"
+                initial={{ opacity: 0, height: 'auto', marginTop: '16px' }}
+                animate={{ opacity: 1, height: 'auto', marginTop: '16px' }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: "easeInOut" }}
+                onAnimationComplete={() => {
+                  setCombinedRect(getContainerRect());
+                }}
+              >
+                <DynamicFeeChartPreview
+                  data={isFeeHistoryLoading ? [] : feeHistoryData}
                   poolInfo={poolInfo || fallbackPoolInfo}
                   isLoading={isFeeHistoryLoading}
                   alwaysShowSkeleton={false}
                   totalPools={currentRoute?.pools?.length}
-                  activePoolIndex={selectedPoolIndexForChart}
+                  activePoolIndex={isAlphixWithRoute ? feeChartPoolIndex : selectedPoolIndexForChart}
                 />
-              ) : (
-                <DynamicFeeChartPreview 
-                  data={isFeeHistoryLoading ? [] : feeHistoryData} 
-                  poolInfo={poolInfo || fallbackPoolInfo}
-                  isLoading={isFeeHistoryLoading}
-                  alwaysShowSkeleton={false}
-                  totalPools={currentRoute?.pools?.length}
-                  activePoolIndex={selectedPoolIndexForChart}
+              </motion.div>
+            )}
+            {/* Sankey Route Preview — Kyberswap routes OR multi-hop Alphix segment 0 */}
+            {showRoutePreview && (
+              <motion.div
+                key="route-preview"
+                className="w-full"
+                initial={{ opacity: 0, height: 'auto', marginTop: '16px' }}
+                animate={{ opacity: 1, height: 'auto', marginTop: '16px' }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: "easeInOut" }}
+                onAnimationComplete={() => {
+                  setCombinedRect(getContainerRect());
+                }}
+              >
+                <SwapRoutePreview
+                  source={trade.source}
+                  fromToken={displayFromToken ?? fromToken}
+                  toToken={displayToToken ?? toToken}
+                  routeInfo={trade.routeInfo}
+                  kyberswapRouteSummary={trade.kyberswapData?.routeSummary}
+                  tokenMetadata={trade.kyberswapData?.tokenMetadata}
+                  isLoading={trade.quoteLoading}
                 />
-              )}
-            </motion.div>
+              </motion.div>
+            )}
+            {/* Default skeleton: no route selected yet */}
+            {!showChartPreview && !showRoutePreview && (
+              <motion.div
+                key="skeleton-preview"
+                className="w-full"
+                initial={{ y: -10, opacity: 0, height: '0px', marginTop: '0px' }}
+                animate={{ y: 0, opacity: 1, height: 'auto', marginTop: '16px' }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: "easeInOut" }}
+                onAnimationComplete={() => {
+                  setCombinedRect(getContainerRect());
+                }}
+              >
+                <DynamicFeeChartPreview
+                  data={[]}
+                  alwaysShowSkeleton={true}
+                />
+              </motion.div>
+            )}
           </AnimatePresence>
 
-          {/* External nav arrows - positioned outside the preview container by 1rem (16px) */}
-          {currentRoute && currentRoute.pools.length > 1 && (
+          {/* External nav arrows — for multi-segment previews (multi-pool charts OR multi-hop route+charts) */}
+          {(showChartPreview || showRoutePreview) && totalPreviewSegments > 1 && (
             <>
               {selectedPoolIndexForChart > 0 && (
                 <button
                   type="button"
-                  aria-label="Previous pool"
+                  aria-label="Previous segment"
                   onClick={handlePreviousPool}
                   className="absolute left-0 sm:left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
                 >
                   <ChevronLeftIcon className="h-4 w-4" />
                 </button>
               )}
-              {selectedPoolIndexForChart < currentRoute.pools.length - 1 && (
+              {selectedPoolIndexForChart < totalPreviewSegments - 1 && (
                 <button
                   type="button"
-                  aria-label="Next pool"
+                  aria-label="Next segment"
                   onClick={handleNextPool}
                   className="absolute right-0 sm:right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
                 >
@@ -1079,10 +1192,10 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               )}
             </>
           )}
-          {/* Dots below container for multihop */}
-          {currentRoute && currentRoute.pools.length > 1 && (
+          {/* Dots below container — for multi-segment previews */}
+          {(showChartPreview || showRoutePreview) && totalPreviewSegments > 1 && (
             <div className="w-full flex justify-center gap-1.5 mt-2">
-              {currentRoute.pools.map((_, i) => (
+              {Array.from({ length: totalPreviewSegments }, (_, i) => (
                 <span
                   key={i}
                   className={`h-[5px] w-[5px] rounded-full ${i === selectedPoolIndexForChart ? 'bg-muted-foreground/60' : 'bg-[var(--sidebar-border)]'}`}

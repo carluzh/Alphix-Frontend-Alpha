@@ -47,7 +47,11 @@ export function useSwapRoutingFees({
     ) as TokenSymbol | undefined
 
     if (!fromTokenSymbol || !toTokenSymbol) {
-      setRouteError("Token configuration error")
+      // Token not in Alphix pools - Kyberswap will handle routing
+      // This is NOT an error, just means we don't have a local route
+      setCurrentRoute(null)
+      setRouteInfo(null)
+      setRouteError(null)
       return
     }
 

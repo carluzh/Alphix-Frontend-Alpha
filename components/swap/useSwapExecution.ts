@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/nextjs"
 import { createElement, useCallback, useMemo, useState } from "react"
-import { useAccount, usePublicClient, useSignTypedData, useWriteContract } from "wagmi"
+import { useAccount, usePublicClient, useSignTypedData, useWriteContract, useSendTransaction } from "wagmi"
 import { getAddress, formatUnits, maxUint256, parseUnits, type Address, type Hex } from "viem"
 import { toast } from "sonner"
 import { IconBadgeCheck2, IconCircleXmarkFilled, IconCircleInfo } from "nucleo-micro-bold-essential"
@@ -13,6 +13,9 @@ import { useTransactionAdder, TransactionType, TradeType, type ExactInputSwapTra
 
 import type { Token, SwapTxInfo } from "./swap-interface"
 import type { ExecutionTradeParams } from "./useSwapTrade"
+import type { AggregatorSource } from "@/lib/aggregators/types"
+import type { KyberswapQuoteData } from "./useSwapQuote"
+import { getKyberswapRouterAddress } from "@/lib/aggregators/kyberswap"
 
 declare global {
   interface Window {
@@ -126,6 +129,9 @@ type UseSwapExecutionArgs = {
   fromTokenUsdPrice: number
   refetchFromTokenBalance?: () => Promise<any>
   refetchToTokenBalance?: () => Promise<any>
+  // Aggregator integration
+  source?: AggregatorSource
+  kyberswapData?: KyberswapQuoteData | null
 }
 
 export function useSwapExecution({
@@ -141,6 +147,8 @@ export function useSwapExecution({
   fromTokenUsdPrice,
   refetchFromTokenBalance,
   refetchToTokenBalance,
+  source = "alphix",
+  kyberswapData,
 }: UseSwapExecutionArgs) {
   const publicClient = usePublicClient()
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount()
@@ -148,6 +156,7 @@ export function useSwapExecution({
   const { signTypedDataAsync } = useSignTypedData()
   const { writeContractAsync: sendSwapTx } = useWriteContract()
   const { writeContractAsync: sendApprovalTx } = useWriteContract()
+  const { sendTransactionAsync: sendRawTx } = useSendTransaction() // For Kyberswap direct calls
 
   // Transaction tracking
   const addTransaction = useTransactionAdder()
@@ -268,11 +277,14 @@ export function useSwapExecution({
   const ensureTradeReady = useCallback(() => {
     if (tradeState && tradeState !== "ready") return { ok: false as const, reason: tradeState }
     if (!trade) return { ok: false as const, reason: "missing_trade" as const }
-    if (!trade.route) return { ok: false as const, reason: "missing_route" as const }
+    // For Kyberswap-only swaps, we don't have a local route - that's OK
+    // Kyberswap provides its own routing via kyberswapData
+    if (!trade.route && source !== "kyberswap") return { ok: false as const, reason: "missing_route" as const }
+    if (source === "kyberswap" && !kyberswapData?.encodedSwapData) return { ok: false as const, reason: "missing_kyberswap_data" as const }
     if (trade.dynamicSwapFee === null) return { ok: false as const, reason: "missing_fee" as const }
     if (!trade.amountDecimalsStr || !trade.limitAmountDecimalsStr) return { ok: false as const, reason: "missing_amounts" as const }
     return { ok: true as const }
-  }, [trade, tradeState])
+  }, [trade, tradeState, source, kyberswapData])
 
   const resetForChange = useCallback(() => {
     window.swapBuildData = undefined
@@ -309,6 +321,7 @@ export function useSwapExecution({
     setIsSwapping(true)
     setSwapProgressState("checking_allowance")
 
+    // Native ETH swaps bypass all approval/permit logic
     if (fromToken.symbol === "ETH") {
       setCompletedSteps(["approval_complete", "signature_complete"])
       setSwapProgressState("ready_to_swap")
@@ -318,6 +331,35 @@ export function useSwapExecution({
 
     try {
       const parsedAmount = safeParseUnits(fromAmount, fromToken.decimals)
+
+      // ================================================================
+      // KYBERSWAP: Check approval to Kyberswap router (no Permit2 flow)
+      // ================================================================
+      if (source === "kyberswap") {
+        const kyberRouter = getKyberswapRouterAddress() as Address
+        const allowance = (await publicClient.readContract({
+          address: fromToken.address,
+          abi: Erc20AbiDefinition,
+          functionName: "allowance",
+          args: [accountAddress as Address, kyberRouter],
+        })) as bigint
+
+        if (allowance < parsedAmount) {
+          setSwapProgressState("needs_approval")
+          setIsSwapping(false)
+          return
+        }
+
+        // Kyberswap doesn't need permit signature - go directly to ready
+        setCompletedSteps(["approval_complete", "signature_complete"])
+        setSwapProgressState("ready_to_swap")
+        setIsSwapping(false)
+        return
+      }
+
+      // ================================================================
+      // ALPHIX: Check approval to Permit2 and fetch permit data
+      // ================================================================
       const allowance = (await publicClient.readContract({
         address: fromToken.address,
         abi: Erc20AbiDefinition,
@@ -345,7 +387,7 @@ export function useSwapExecution({
     } catch (error: any) {
       console.error("Error during initial swap checks:", error)
       Sentry.captureException(error, {
-        tags: { operation: "swap_checks" },
+        tags: { operation: "swap_checks", source },
         extra: { fromToken: fromToken?.symbol, toToken: toToken?.symbol, fromAmount },
       })
       setIsSwapping(false)
@@ -368,6 +410,7 @@ export function useSwapExecution({
     syncPermitAndSignature,
     tradeState,
     toToken.symbol,
+    source,
   ])
 
   const handleConfirmSwap = useCallback(async () => {
@@ -385,11 +428,16 @@ export function useSwapExecution({
         const isInfinite = isInfiniteApprovalEnabled()
         const approvalAmount = isInfinite ? maxUint256 : parsedAmount + 1n
 
+        // Determine approval spender based on source
+        const approvalSpender = source === "kyberswap"
+          ? (getKyberswapRouterAddress() as Address)
+          : PERMIT2_ADDRESS
+
         const approveTxHash = await sendApprovalTx({
           address: fromToken.address,
           abi: Erc20AbiDefinition,
           functionName: "approve",
-          args: [PERMIT2_ADDRESS, approvalAmount],
+          args: [approvalSpender, approvalAmount],
         })
         if (!approveTxHash) throw new Error("Failed to send approval transaction")
 
@@ -398,7 +446,7 @@ export function useSwapExecution({
           const approveInfo: ApproveTransactionInfo = {
             type: TransactionType.Approve,
             tokenAddress: fromToken.address,
-            spender: PERMIT2_ADDRESS,
+            spender: approvalSpender,
           }
           addTransaction(
             { hash: approveTxHash, chainId: currentChainId, from: accountAddress, to: fromToken.address } as any,
@@ -417,6 +465,16 @@ export function useSwapExecution({
         })
 
         setCompletedSteps((prev) => [...prev, "approval_complete"])
+
+        // Kyberswap: No permit needed - go directly to ready
+        if (source === "kyberswap") {
+          setCompletedSteps((prev) => [...prev, "signature_complete"])
+          setSwapProgressState("ready_to_swap")
+          setIsSwapping(false)
+          return
+        }
+
+        // Alphix: Continue with permit flow
         const freshPermitData = await fetchPermitData()
         const signatureForThisAttempt = syncPermitAndSignature(freshPermitData)
         if (freshPermitData.needsPermit && !signatureForThisAttempt) {
@@ -492,8 +550,8 @@ export function useSwapExecution({
         return
       }
 
-      // Native ETH swaps bypass permit logic
-      if (fromToken.symbol === "ETH") {
+      // Native ETH and Kyberswap swaps bypass Permit2 logic entirely
+      if (fromToken.symbol === "ETH" || source === "kyberswap") {
         setSwapProgressState("building_tx")
       } else {
         const needsSig = currentPermitDetailsForSign?.needsPermit === true
@@ -538,14 +596,22 @@ export function useSwapExecution({
         return
       }
 
-      const route = trade!.route!
+      const route = trade!.route // May be null for Kyberswap-only swaps
       const fetchedDynamicFee = trade!.dynamicSwapFee!
       const swapType = trade!.swapType
       const amountDecimalsStr = trade!.amountDecimalsStr
       const limitAmountDecimalsStr = trade!.limitAmountDecimalsStr
 
       let bodyForSwapTx: any
-      if (fromToken.symbol === "ETH") {
+
+      // ================================================================
+      // KYBERSWAP: Send pre-encoded swap data directly
+      // ================================================================
+      if (source === "kyberswap") {
+        if (!kyberswapData?.encodedSwapData || !kyberswapData?.routerAddress) {
+          throw new Error("Missing Kyberswap swap data")
+        }
+
         bodyForSwapTx = {
           userAddress: accountAddress,
           fromTokenSymbol: fromToken.symbol,
@@ -561,6 +627,39 @@ export function useSwapExecution({
           permitSigDeadline: "0",
           chainId: currentChainId,
           dynamicSwapFee: fetchedDynamicFee,
+          // Token metadata for non-pool tokens (Kyberswap may route arbitrary tokens)
+          fromTokenAddress: fromToken.address,
+          fromTokenDecimals: fromToken.decimals,
+          toTokenDecimals: toToken.decimals,
+          // Aggregator integration
+          source: "kyberswap",
+          kyberswapData: {
+            routerAddress: kyberswapData.routerAddress,
+            encodedSwapData: kyberswapData.encodedSwapData,
+            routeSummary: kyberswapData.routeSummary,
+          },
+        }
+      }
+      // ================================================================
+      // ALPHIX: Build V4 swap with permit signature
+      // ================================================================
+      else if (fromToken.symbol === "ETH") {
+        bodyForSwapTx = {
+          userAddress: accountAddress,
+          fromTokenSymbol: fromToken.symbol,
+          toTokenSymbol: toToken.symbol,
+          swapType,
+          amountDecimalsStr,
+          limitAmountDecimalsStr,
+          permitSignature: "0x",
+          permitTokenAddress: fromToken.address,
+          permitAmount: "0",
+          permitNonce: 0,
+          permitExpiration: 0,
+          permitSigDeadline: "0",
+          chainId: currentChainId,
+          dynamicSwapFee: fetchedDynamicFee,
+          source: "alphix",
         }
       } else {
         const permitDetailsToUse = currentPermitDetailsForSign
@@ -601,6 +700,7 @@ export function useSwapExecution({
           permitSigDeadline,
           chainId: currentChainId,
           dynamicSwapFee: fetchedDynamicFee,
+          source: "alphix",
         }
       }
 
@@ -621,13 +721,30 @@ export function useSwapExecution({
       setSwapProgressState("executing_swap")
       toast("Confirm Swap", { icon: createElement(IconCircleInfo, { className: "h-4 w-4" }) })
 
-      const txHash = await sendSwapTx({
-        address: getAddress(buildTxApiData.to),
-        abi: UniversalRouterAbi,
-        functionName: "execute",
-        args: [buildTxApiData.commands as Hex, buildTxApiData.inputs as Hex[], BigInt(buildTxApiData.deadline)],
-        value: BigInt(buildTxApiData.value),
-      })
+      let txHash: string | undefined
+
+      // ================================================================
+      // KYBERSWAP: Send raw transaction with pre-encoded data
+      // ================================================================
+      if (source === "kyberswap" && buildTxApiData.data) {
+        txHash = await sendRawTx({
+          to: getAddress(buildTxApiData.to) as Address,
+          data: buildTxApiData.data as Hex,
+          value: BigInt(buildTxApiData.value),
+        })
+      }
+      // ================================================================
+      // ALPHIX: Call Universal Router execute function
+      // ================================================================
+      else {
+        txHash = await sendSwapTx({
+          address: getAddress(buildTxApiData.to),
+          abi: UniversalRouterAbi,
+          functionName: "execute",
+          args: [buildTxApiData.commands as Hex, buildTxApiData.inputs as Hex[], BigInt(buildTxApiData.deadline)],
+          value: BigInt(buildTxApiData.value),
+        })
+      }
       if (!txHash) throw new Error("Failed to send swap transaction (no hash received)")
 
       // Track swap transaction in Redux store for cache invalidation
@@ -752,6 +869,7 @@ export function useSwapExecution({
     refetchToTokenBalance,
     sendApprovalTx,
     sendSwapTx,
+    sendRawTx,
     signTypedDataAsync,
     swapProgressState,
     toAmount,
@@ -759,6 +877,8 @@ export function useSwapExecution({
     toToken.decimals,
     toToken.symbol,
     addTransaction,
+    source,
+    kyberswapData,
   ])
 
   const actions = useMemo(

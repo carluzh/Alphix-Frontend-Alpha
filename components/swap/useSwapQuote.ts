@@ -3,11 +3,24 @@ import { toast } from "sonner"
 import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential"
 import { MAINNET_CHAIN_ID } from "@/lib/network-mode"
 
+import type { AggregatorSource, KyberswapRouteSummary } from "@/lib/aggregators/types"
+
 export type QuoteMode = "indicative" | "binding"
 
+// Token metadata map returned from the server for Kyberswap route display
+export type RouteTokenMetadata = Record<string, { symbol: string; logoURI?: string }>
+
+// Kyberswap data returned from quote API when source is 'kyberswap'
+export type KyberswapQuoteData = {
+  routerAddress: string
+  encodedSwapData?: string
+  routeSummary?: KyberswapRouteSummary
+  tokenMetadata?: RouteTokenMetadata
+}
+
 type Args = {
-  fromToken: { symbol: string; address: string } | null
-  toToken: { symbol: string; address: string } | null
+  fromToken: { symbol: string; address: string; decimals: number } | null
+  toToken: { symbol: string; address: string; decimals: number } | null
   fromAmount: string
   toAmount: string
   setFromAmount: (v: string) => void
@@ -15,6 +28,9 @@ type Args = {
   lastEditedSideRef: React.MutableRefObject<"from" | "to">
   setRouteInfo: (routeInfo: any | null) => void
   targetChainId: number
+  // Aggregator integration params
+  userAddress?: string // For Kyberswap executable calldata
+  slippageBps?: number // Slippage tolerance in basis points
 }
 
 export function useSwapQuote({
@@ -27,11 +43,16 @@ export function useSwapQuote({
   lastEditedSideRef,
   setRouteInfo,
   targetChainId,
+  userAddress,
+  slippageBps = 50,
 }: Args) {
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
   const [priceImpact, setPriceImpact] = useState<number | null>(null)
   const [dynamicFeeBps, setDynamicFeeBps] = useState<number | null>(null)
+  // Aggregator integration state
+  const [source, setSource] = useState<AggregatorSource>("alphix")
+  const [kyberswapData, setKyberswapData] = useState<KyberswapQuoteData | null>(null)
   const requestIdRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -83,6 +104,13 @@ export function useSwapQuote({
             binding: mode === "binding",
             // cache-bust only for binding; harmless if backend ignores
             _t: mode === "binding" ? Date.now() : undefined,
+            // Aggregator integration params
+            userAddress,                          // For Kyberswap executable calldata
+            slippageBps,                          // Slippage tolerance for comparison
+            fromTokenAddress: fromToken.address,  // Token addresses for Kyberswap
+            toTokenAddress: toToken.address,
+            fromTokenDecimals: fromToken.decimals, // Decimals for proper amount conversion
+            toTokenDecimals: toToken.decimals,
           }),
           signal: controller.signal,
         })
@@ -99,9 +127,13 @@ export function useSwapQuote({
         if (response.ok && data.success) {
           if (requestId !== requestIdRef.current) return
           if (data.swapType === "ExactOut") {
-            setFromAmount(String(data.fromAmount ?? ""))
+            let amt = String(data.fromAmount ?? "")
+            if (amt.length > 16) amt = amt.slice(0, 16).replace(/\.$/, '')
+            setFromAmount(amt)
           } else {
-            setToAmount(String(data.toAmount ?? ""))
+            let amt = String(data.toAmount ?? "")
+            if (amt.length > 16) amt = amt.slice(0, 16).replace(/\.$/, '')
+            setToAmount(amt)
           }
 
           setRouteInfo(data.route || null)
@@ -117,6 +149,14 @@ export function useSwapQuote({
             setDynamicFeeBps(data.dynamicFeeBps)
           } else {
             setDynamicFeeBps(null)
+          }
+
+          // Store aggregator source and Kyberswap data
+          setSource(data.source || "alphix")
+          if (data.source === "kyberswap" && data.kyberswapData) {
+            setKyberswapData(data.kyberswapData)
+          } else {
+            setKyberswapData(null)
           }
 
           setQuoteError(null)
@@ -146,14 +186,9 @@ export function useSwapQuote({
             },
           })
         } else {
-          toast.error("Quote Error", {
-            icon: createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
-            description: "No Quote received. Input a smaller amount and try again.",
-            action: {
-              label: "Open Ticket",
-              onClick: () => window.open("https://discord.com/invite/NTXRarFbTr", "_blank"),
-            },
-          })
+          // Generic / transient server error — silently let polling retry
+          console.warn("⏳ Transient quote server error, will retry on next poll:", errorMsg)
+          return
         }
 
         setQuoteError(errorMsg)
@@ -163,6 +198,28 @@ export function useSwapQuote({
         if (error?.name === "AbortError") return
         console.error("❌ V4 Quoter Exception:", error)
         if (requestId !== requestIdRef.current) return
+
+        // Classify the error: transient network/timeout errors are silently retried
+        // by the 10s polling loop. Only business errors get toasts.
+        let isTransient = false
+
+        if (error instanceof Error) {
+          const errorStr = error.message.toLowerCase()
+          if (
+            errorStr.includes("network") || errorStr.includes("connection") ||
+            errorStr.includes("timeout") || errorStr.includes("fetch") ||
+            errorStr.includes("http") || errorStr.includes("failed to fetch") ||
+            errorStr.includes("load failed") || errorStr.includes("aborted")
+          ) {
+            isTransient = true
+          }
+        }
+
+        if (isTransient) {
+          // Silently skip — polling will retry in ~10s, or user can click Swap
+          console.warn("⏳ Transient quote error, will retry on next poll:", error?.message)
+          return
+        }
 
         let errorMsg = "Failed to fetch quote"
         let toastDescription = "No Quote received. Input a smaller amount and try again."
@@ -182,12 +239,6 @@ export function useSwapQuote({
               errorMsg = "Not enough liquidity"
               toastDescription = "No Quote received. Input a smaller amount and try again."
             }
-          } else if (errorStr.includes("network") || errorStr.includes("connection") || errorStr.includes("timeout")) {
-            errorMsg = "Network error - please try again"
-            toastDescription = "Network error while fetching quote. Please try again."
-          } else if (errorStr.includes("fetch") || errorStr.includes("http")) {
-            errorMsg = "Connection error - please try again"
-            toastDescription = "Network error while fetching quote. Please try again."
           }
         }
 
@@ -275,6 +326,8 @@ export function useSwapQuote({
     setQuoteError(null)
     setPriceImpact(null)
     setDynamicFeeBps(null)
+    setSource("alphix")
+    setKyberswapData(null)
   }, [])
 
   return {
@@ -285,6 +338,9 @@ export function useSwapQuote({
     dynamicFeeBps,
     clearQuote,
     refreshBindingQuote,
+    // Aggregator integration
+    source,
+    kyberswapData,
   }
 }
 

@@ -3,13 +3,48 @@ import { getAddress, type Address } from 'viem';
 import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
 import { RetryUtility } from '../../../lib/retry-utility';
 import { safeParseUnits } from '../../../lib/liquidity/utils/parsing/amountParsing';
+import { getKyberswapQuote } from '../../../lib/aggregators/kyberswap';
+import { selectBestQuote } from '../../../lib/aggregators/comparison';
+import type { AggregatorQuote, QuoteRequest, AggregatorSource, KyberswapRouteSummary } from '../../../lib/aggregators/types';
+import { ensureTokenListLoaded, getTokenInfoSync } from '../../../lib/aggregators/token-registry';
+
+/**
+ * Build a token metadata map for all addresses in a Kyberswap route.
+ * Sent to the client so SwapRoutePreview can resolve symbols + icons.
+ */
+function buildRouteTokenMetadata(
+  routeSummary: KyberswapRouteSummary | undefined
+): Record<string, { symbol: string; logoURI?: string }> | undefined {
+  if (!routeSummary?.route) return undefined;
+
+  const addresses = new Set<string>();
+  addresses.add(routeSummary.tokenIn.toLowerCase());
+  addresses.add(routeSummary.tokenOut.toLowerCase());
+  for (const split of routeSummary.route) {
+    for (const step of split) {
+      addresses.add(step.tokenIn.toLowerCase());
+      addresses.add(step.tokenOut.toLowerCase());
+    }
+  }
+
+  const metadata: Record<string, { symbol: string; logoURI?: string }> = {};
+  for (const addr of addresses) {
+    const info = getTokenInfoSync(addr);
+    if (info) {
+      metadata[addr] = { symbol: info.symbol, logoURI: info.logoURI };
+    }
+  }
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
 
 // Simple in-memory cache with 15s TTL (matches Uniswap's 10s pattern)
 const quoteCache = new Map<string, { result: any; timestamp: number }>();
 const QUOTE_CACHE_TTL = 15_000;
 
 function getCacheKey(body: any): string {
-  return `${body.fromTokenSymbol}-${body.toTokenSymbol}-${body.amountDecimalsStr}-${body.swapType || 'ExactIn'}-${body.chainId}`;
+  // Include userAddress to differentiate aggregator quotes (which need user for calldata)
+  const userPart = body.userAddress ? `-user:${body.userAddress.slice(0, 10)}` : '-nouser';
+  return `${body.fromTokenSymbol}-${body.toTokenSymbol}-${body.amountDecimalsStr}-${body.swapType || 'ExactIn'}-${body.chainId}${userPart}`;
 }
 
 // Retry only network errors, not contract reverts (liquidity errors should fail fast)
@@ -21,15 +56,16 @@ const shouldRetryRpc = (_attempt: number, error: any): boolean => {
 import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '../../../lib/network-mode';
 import { Token, CurrencyAmount } from '@uniswap/sdk-core';
 import { tickToPrice } from '@uniswap/v3-sdk';
-import { 
-  TokenSymbol, 
+import {
+  TokenSymbol,
   getPoolConfigForTokens,
   createTokenSDK,
   createPoolKeyFromConfig,
   createCanonicalPoolKey,
   getQuoterAddress,
   getStateViewAddress,
-  getPoolById
+  getPoolById,
+  getUniversalRouterAddress
 } from '../../../lib/pools-config';
 import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
 import { V4QuoterAbi, EMPTY_BYTES } from '@/lib/swap/swap-constants';
@@ -62,6 +98,14 @@ interface GetQuoteRequest extends NextApiRequest {
     chainId: number;
     debug?: boolean;
     network?: 'mainnet' | 'testnet';
+    // Aggregator integration fields
+    userAddress?: string;             // Required for building executable Kyberswap calldata
+    slippageBps?: number;             // Slippage tolerance in basis points (e.g., 50 = 0.5%)
+    fromTokenAddress?: string;        // Token addresses for Kyberswap
+    toTokenAddress?: string;
+    fromTokenDecimals?: number;       // Decimals from frontend (for non-pool tokens)
+    toTokenDecimals?: number;
+    binding?: boolean;                // If true, bypass cache and return fresh quote
   };
 }
 
@@ -366,14 +410,15 @@ async function getV4QuoteExactInputMultiHop(
   networkMode?: NetworkMode
 ): Promise<{ amountOut: bigint; gasEstimate: bigint; dynamicFeeBps?: number }> {
 
+  console.log(`[V4 MultiHop] Quoting ${route.path.join('→')} | amount: ${amountInSmallestUnits} | hops: ${route.hops}`);
+
   if (!fromToken.address) {
     throw new Error(`From token ${fromToken.symbol} has undefined address`);
   }
 
   // Encode the multi-hop path
   const pathKeys = encodeMultihopPath(route, chainId, networkMode);
-  
-  
+
 
   // Structure the parameters as QuoteExactParams struct
   // ABI expects: (address,(address,uint24,int24,address,bytes)[],uint128)
@@ -549,16 +594,19 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       return res.status(400).json({ message: 'From and To tokens cannot be the same' });
     }
 
-    // Check cache first (15s TTL)
+    // Check cache first (15s TTL) - skip for binding requests (need fresh data for execution)
     const cacheKey = getCacheKey(req.body);
-    const cached = quoteCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < QUOTE_CACHE_TTL) {
-      const ageSeconds = Math.floor((Date.now() - cached.timestamp) / 1000);
-      const maxAgeRemaining = Math.max(0, Math.floor((QUOTE_CACHE_TTL - (Date.now() - cached.timestamp)) / 1000));
-      res.setHeader('X-Cache', 'HIT');
-      res.setHeader('Age', ageSeconds.toString());
-      res.setHeader('Cache-Control', `private, max-age=${maxAgeRemaining}`);
-      return res.status(200).json(cached.result);
+    const isBindingRequest = req.body.binding === true;
+    if (!isBindingRequest) {
+      const cached = quoteCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < QUOTE_CACHE_TTL) {
+        const ageSeconds = Math.floor((Date.now() - cached.timestamp) / 1000);
+        const maxAgeRemaining = Math.max(0, Math.floor((QUOTE_CACHE_TTL - (Date.now() - cached.timestamp)) / 1000));
+        res.setHeader('X-Cache', 'HIT');
+        res.setHeader('Age', ageSeconds.toString());
+        res.setHeader('Cache-Control', `private, max-age=${maxAgeRemaining}`);
+        return res.status(200).json(cached.result);
+      }
     }
 
     // Only log if not a price quote (amount > 1) to reduce noise
@@ -570,23 +618,119 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     const fromToken = createTokenSDK(fromTokenSymbol, req.body.chainId, networkMode);
     const toToken = createTokenSDK(toTokenSymbol, req.body.chainId, networkMode);
 
-    // Additional validation - check for undefined addresses
+    // Check if this is a Kyberswap-only swap (token not in pools-config)
+    const isKyberswapOnly = !fromToken || !toToken;
+
+    // Ensure token list is loaded for Kyberswap route resolution (non-blocking, cached 6h)
+    if (isKyberswapOnly || req.body.fromTokenAddress || req.body.toTokenAddress) {
+      await ensureTokenListLoaded().catch(() => {/* non-critical */});
+    }
+
+    // For Kyberswap-only swaps, we need token addresses from the request
+    if (isKyberswapOnly) {
+      const { fromTokenAddress, toTokenAddress, userAddress, slippageBps = 50, fromTokenDecimals, toTokenDecimals } = req.body;
+
+      if (!fromTokenAddress || !toTokenAddress) {
+        return res.status(400).json({
+          message: 'Token addresses required for tokens not in Alphix pools',
+          hint: 'Include fromTokenAddress and toTokenAddress in the request'
+        });
+      }
+
+      // Use decimals from frontend request first, then fallback to static registry
+      const { getTokenInfoSync } = await import('../../../lib/aggregators/token-registry');
+      const fromTokenInfo = getTokenInfoSync(fromTokenAddress);
+      const toTokenInfo = getTokenInfoSync(toTokenAddress);
+
+      // Priority: frontend-provided decimals > token registry > default 18
+      const fromDecimals = fromTokenDecimals ?? fromTokenInfo?.decimals ?? 18;
+      const toDecimals = toTokenDecimals ?? toTokenInfo?.decimals ?? 18;
+
+      // Parse amount
+      const amountInSmallestUnits = swapType === 'ExactIn'
+        ? safeParseUnits(amountDecimalsStr, fromDecimals)
+        : 0n;
+
+      if (amountInSmallestUnits === 0n && amountDecimalsStr !== '0' && amountDecimalsStr !== '0.0') {
+        return res.status(400).json({ message: 'Invalid amount format' });
+      }
+
+      // Only Kyberswap quote for these tokens
+      const kyberRequest: QuoteRequest = {
+        fromTokenAddress,
+        toTokenAddress,
+        fromTokenDecimals: fromDecimals,
+        toTokenDecimals: toDecimals,
+        amount: amountInSmallestUnits.toString(),
+        slippageBps,
+        userAddress,
+        isExactIn: swapType === 'ExactIn',
+      };
+
+      try {
+        const kyberQuote = await getKyberswapQuote(kyberRequest);
+
+        if (!kyberQuote) {
+          return res.status(500).json({
+            success: false,
+            error: 'No quote available from Kyberswap for this token pair'
+          });
+        }
+
+        const responseData = {
+          success: true,
+          swapType,
+          fromAmount: kyberQuote.inputAmount,
+          fromToken: fromTokenSymbol,
+          toAmount: kyberQuote.outputAmount,
+          toToken: toTokenSymbol,
+          gasEstimate: kyberQuote.gasEstimate.toString(),
+          priceImpact: kyberQuote.priceImpact?.toString(),
+          // Kyberswap aggregator handles fees internally - use 0 to indicate no Alphix protocol fee
+          dynamicFeeBps: kyberQuote.dynamicFeeBps ?? 0,
+          route: {
+            path: kyberQuote.routeDisplay || [fromTokenSymbol, toTokenSymbol],
+            hops: (kyberQuote.routeDisplay?.length || 2) - 1,
+            isDirectRoute: (kyberQuote.routeDisplay?.length || 2) <= 2,
+            pools: ['Kyberswap Aggregator']
+          },
+          source: 'kyberswap' as const,
+          selectionReason: 'only_kyberswap_available' as const,
+          kyberswapData: {
+            routerAddress: kyberQuote.routerAddress,
+            encodedSwapData: kyberQuote.encodedSwapData,
+            routeSummary: kyberQuote.routeSummary,
+            tokenMetadata: buildRouteTokenMetadata(kyberQuote.routeSummary),
+          },
+        };
+
+        // Cache and return
+        quoteCache.set(cacheKey, { result: responseData, timestamp: Date.now() });
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-Cache', 'MISS');
+        return res.status(200).json(responseData);
+      } catch (err: any) {
+        console.error('[Kyberswap-only] Quote failed:', err?.message || err);
+        return res.status(500).json({
+          success: false,
+          error: err?.message || 'Failed to get Kyberswap quote'
+        });
+      }
+    }
+
+    // Additional validation for Alphix tokens - check for undefined addresses
     if (fromToken?.address === undefined || fromToken?.address === 'undefined') {
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: `From token ${fromTokenSymbol} has undefined address`,
         debug: { fromTokenAddress: fromToken?.address, type: typeof fromToken?.address }
       });
     }
-    
+
     if (toToken?.address === undefined || toToken?.address === 'undefined') {
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: `To token ${toTokenSymbol} has undefined address`,
         debug: { toTokenAddress: toToken?.address, type: typeof toToken?.address }
       });
-    }
-    
-    if (!fromToken || !toToken) {
-      return res.status(400).json({ message: 'Failed to create token instances' });
     }
     
     // Parse amount according to swap type
@@ -617,91 +761,189 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
 
     const route = routeResult.bestRoute;
 
-    let amountOut: bigint = 0n;
-    let amountIn: bigint = 0n;
-    let gasEstimate: bigint;
-    let midPrice: number | null = null;
-    let dynamicFeeBps: number | undefined;
+    // Extract aggregator-related params
+    const { userAddress, slippageBps = 50, fromTokenAddress, toTokenAddress } = req.body;
 
-    if (swapType === 'ExactIn') {
-      if (route.isDirectRoute) {
-        const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol, networkMode);
-        if (!poolConfig) {
-          return res.status(400).json({ message: `Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}` });
-        }
-        const result = await getV4QuoteExactInputSingle(fromToken, toToken, amountInSmallestUnits, poolConfig, networkMode);
-        amountOut = result.amountOut;
-        gasEstimate = result.gasEstimate;
-        midPrice = result.midPrice || null;
-        dynamicFeeBps = result.dynamicFeeBps;
-      } else {
-        const result = await getV4QuoteExactInputMultiHop(fromToken, route, amountInSmallestUnits, req.body.chainId, networkMode);
-        amountOut = result.amountOut;
-        gasEstimate = result.gasEstimate;
-        midPrice = await computeRouteMidPrice(route, req.body.chainId, networkMode);
-        dynamicFeeBps = result.dynamicFeeBps;
-      }
-    } else { // ExactOut
-      if (route.isDirectRoute) {
-        const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol, networkMode);
-        if (!poolConfig) {
-          return res.status(400).json({ message: `Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}` });
-        }
-        const result = await getV4QuoteExactOutputSingle(fromToken, toToken, amountOutSmallestUnits, poolConfig, networkMode);
-        amountIn = result.amountIn;
-        gasEstimate = result.gasEstimate;
-        midPrice = result.midPrice || null;
-        dynamicFeeBps = result.dynamicFeeBps;
-      } else {
-        const result = await getV4QuoteExactOutputMultiHop(toToken, route, amountOutSmallestUnits, req.body.chainId, networkMode);
-        amountIn = result.amountIn;
-        gasEstimate = result.gasEstimate;
-        midPrice = await computeRouteMidPrice(route, req.body.chainId, networkMode);
-        dynamicFeeBps = result.dynamicFeeBps;
-      }
+    // Start Kyberswap quote fetch in parallel (only for ExactIn swaps with token addresses)
+    // Kyberswap doesn't support ExactOut, so we only fetch for ExactIn
+    let kyberswapPromise: Promise<AggregatorQuote | null> | null = null;
+    if (swapType === 'ExactIn' && fromTokenAddress && toTokenAddress) {
+      const kyberRequest: QuoteRequest = {
+        fromTokenAddress,
+        toTokenAddress,
+        fromTokenDecimals: fromToken.decimals,
+        toTokenDecimals: toToken.decimals,
+        amount: amountInSmallestUnits.toString(),
+        slippageBps,
+        userAddress, // Optional - if provided, we get executable calldata
+        isExactIn: true,
+      };
+      kyberswapPromise = getKyberswapQuote(kyberRequest).catch((err) => {
+        console.warn('[Kyberswap] Quote failed, using Alphix only:', err?.message || err);
+        return null;
+      });
     }
-    
-    // Format using ethers like the guide
-    const toAmountDecimals = swapType === 'ExactIn' ? ethers.utils.formatUnits(amountOut, toToken.decimals) : amountDecimalsStr;
-    const fromAmountDecimals = swapType === 'ExactOut' ? ethers.utils.formatUnits(amountIn, fromToken.decimals) : amountDecimalsStr;
 
-    // Calculate price impact: (midPrice - executionPrice) / midPrice
-    // Execution price = toAmount / fromAmount
-    // Uniswap sign convention (ref: interface/packages/uniswap/src/features/transactions/swap/utils/formatPriceImpact.ts):
-    //   POSITIVE = unfavorable (user receives less than mid price → triggers warnings)
-    //   NEGATIVE = favorable (user receives more than mid price → no warning)
-    let priceImpact: number | null = null;
-    if (midPrice !== null && parseFloat(fromAmountDecimals) > 0 && parseFloat(toAmountDecimals) > 0) {
-      const executionPrice = parseFloat(toAmountDecimals) / parseFloat(fromAmountDecimals);
-      if (midPrice > 0) {
-        priceImpact = ((midPrice - executionPrice) / midPrice) * 100; // Convert to percentage
-        // DO NOT use abs() - sign is meaningful per Uniswap convention:
-        // Positive → unfavorable (show warning), Negative → favorable (no warning)
+    // Fetch Alphix quote (may fail for large amounts due to liquidity)
+    let alphixQuote: AggregatorQuote | null = null;
+    let alphixError: string | null = null;
+    let alphixMidPrice: number | null = null;
 
-        if (priceImpact < -50 || priceImpact > 500) {
-          priceImpact = null;
+    try {
+      let amountOut: bigint = 0n;
+      let amountIn: bigint = 0n;
+      let gasEstimate: bigint = 0n;
+      let midPrice: number | null = null;
+      let dynamicFeeBps: number | undefined;
+
+      if (swapType === 'ExactIn') {
+        if (route.isDirectRoute) {
+          const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol, networkMode);
+          if (!poolConfig) {
+            throw new Error(`Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}`);
+          }
+          const result = await getV4QuoteExactInputSingle(fromToken, toToken, amountInSmallestUnits, poolConfig, networkMode);
+          amountOut = result.amountOut;
+          gasEstimate = result.gasEstimate;
+          midPrice = result.midPrice || null;
+          dynamicFeeBps = result.dynamicFeeBps;
+        } else {
+          const result = await getV4QuoteExactInputMultiHop(fromToken, route, amountInSmallestUnits, req.body.chainId, networkMode);
+          amountOut = result.amountOut;
+          gasEstimate = result.gasEstimate;
+          midPrice = await computeRouteMidPrice(route, req.body.chainId, networkMode);
+          dynamicFeeBps = result.dynamicFeeBps;
+        }
+      } else { // ExactOut
+        if (route.isDirectRoute) {
+          const poolConfig = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol, networkMode);
+          if (!poolConfig) {
+            throw new Error(`Pool configuration not found for direct route: ${fromTokenSymbol} → ${toTokenSymbol}`);
+          }
+          const result = await getV4QuoteExactOutputSingle(fromToken, toToken, amountOutSmallestUnits, poolConfig, networkMode);
+          amountIn = result.amountIn;
+          gasEstimate = result.gasEstimate;
+          midPrice = result.midPrice || null;
+          dynamicFeeBps = result.dynamicFeeBps;
+        } else {
+          const result = await getV4QuoteExactOutputMultiHop(toToken, route, amountOutSmallestUnits, req.body.chainId, networkMode);
+          amountIn = result.amountIn;
+          gasEstimate = result.gasEstimate;
+          midPrice = await computeRouteMidPrice(route, req.body.chainId, networkMode);
+          dynamicFeeBps = result.dynamicFeeBps;
         }
       }
+
+      // Format amounts
+      const toAmountDecimals = swapType === 'ExactIn' ? ethers.utils.formatUnits(amountOut, toToken.decimals) : amountDecimalsStr;
+      const fromAmountDecimals = swapType === 'ExactOut' ? ethers.utils.formatUnits(amountIn, fromToken.decimals) : amountDecimalsStr;
+
+      // Calculate price impact
+      let priceImpact: number | null = null;
+      if (midPrice !== null && parseFloat(fromAmountDecimals) > 0 && parseFloat(toAmountDecimals) > 0) {
+        const executionPrice = parseFloat(toAmountDecimals) / parseFloat(fromAmountDecimals);
+        if (midPrice > 0) {
+          priceImpact = ((midPrice - executionPrice) / midPrice) * 100;
+          if (priceImpact < -50 || priceImpact > 500) {
+            priceImpact = null;
+          }
+        }
+      }
+
+      // Create Alphix quote
+      const outputWei = swapType === 'ExactIn'
+        ? BigInt(amountOut.toString())
+        : safeParseUnits(toAmountDecimals.toString(), toToken.decimals);
+      const inputWei = swapType === 'ExactIn'
+        ? BigInt(amountInSmallestUnits.toString())
+        : BigInt(amountIn.toString());
+      const gasWei = BigInt(gasEstimate.toString());
+
+      alphixQuote = {
+        source: 'alphix',
+        outputAmount: toAmountDecimals.toString(),
+        outputAmountWei: outputWei,
+        inputAmount: fromAmountDecimals,
+        inputAmountWei: inputWei,
+        priceImpact: priceImpact,
+        gasEstimate: gasWei,
+        routerAddress: getUniversalRouterAddress(networkMode),
+        routeDisplay: route.path,
+        dynamicFeeBps,
+      };
+      alphixMidPrice = midPrice;
+    } catch (err: any) {
+      console.log('[Alphix V4] Quote FAILED for', fromTokenSymbol, '→', toTokenSymbol, '| route:', route.path.join('→'), '| hops:', route.hops, '| error:', err?.message || err);
+      alphixError = err?.message || 'Alphix quote failed';
     }
+
+    // Wait for Kyberswap quote
+    let kyberQuote: AggregatorQuote | null = null;
+    if (kyberswapPromise) {
+      kyberQuote = await kyberswapPromise;
+    }
+
+    // If both failed, return error
+    if (!alphixQuote && !kyberQuote) {
+      return res.status(500).json({
+        success: false,
+        error: alphixError || 'No quotes available from any source',
+      });
+    }
+
+    // Compare quotes and select the best one
+    const comparison = selectBestQuote(alphixQuote, kyberQuote, slippageBps);
+    const selectedQuote = comparison.selectedQuote;
+    const selectedSource: AggregatorSource = comparison.selectedSource;
+
+    // Log comparison result for debugging
+    if (amountDecimalsStr !== '1') {
+      console.log(`[Quote Selection] ${fromTokenSymbol}→${toTokenSymbol}: source=${selectedSource} reason=${comparison.reason}`,
+        alphixQuote ? `alphix=${alphixQuote.outputAmount}` : 'alphix=FAILED',
+        kyberQuote ? `kyber=${kyberQuote.outputAmount}` : 'kyber=N/A',
+      );
+    }
+
+    // Use selected quote values for response
+    const finalToAmount = selectedQuote.outputAmount;
+    const finalFromAmount = selectedQuote.inputAmount;
+    const finalGasEstimate = selectedQuote.gasEstimate;
+    const finalPriceImpact = selectedQuote.priceImpact;
+    // For Kyberswap quotes, dynamicFeeBps may be undefined - default to 0 (aggregator handles fees internally)
+    const finalDynamicFeeBps = selectedQuote.dynamicFeeBps ?? 0;
 
     // Build response and cache it
     const responseData = {
       success: true,
       swapType,
-      fromAmount: fromAmountDecimals,
+      fromAmount: finalFromAmount,
       fromToken: fromTokenSymbol,
-      toAmount: toAmountDecimals.toString(),
+      toAmount: finalToAmount,
       toToken: toTokenSymbol,
-      gasEstimate: gasEstimate.toString(),
-      midPrice: midPrice !== null ? midPrice.toString() : undefined,
-      priceImpact: priceImpact !== null ? priceImpact.toString() : undefined,
-      dynamicFeeBps,
-      route: {
+      gasEstimate: finalGasEstimate.toString(),
+      priceImpact: finalPriceImpact !== null ? finalPriceImpact.toString() : undefined,
+      midPrice: selectedSource === 'alphix' && alphixMidPrice !== null ? alphixMidPrice.toString() : undefined,
+      dynamicFeeBps: finalDynamicFeeBps,
+      route: selectedSource === 'alphix' ? {
         path: route.path,
         hops: route.hops,
         isDirectRoute: route.isDirectRoute,
         pools: route.pools.map(pool => pool.poolName)
+      } : {
+        path: selectedQuote.routeDisplay || [],
+        hops: (selectedQuote.routeDisplay?.length || 1) - 1,
+        isDirectRoute: (selectedQuote.routeDisplay?.length || 2) <= 2,
+        pools: ['Kyberswap Aggregator']
       },
+      // Aggregator integration fields
+      source: selectedSource,
+      selectionReason: comparison.reason,
+      kyberswapData: selectedSource === 'kyberswap' && kyberQuote ? {
+        routerAddress: kyberQuote.routerAddress,
+        encodedSwapData: kyberQuote.encodedSwapData,
+        routeSummary: kyberQuote.routeSummary,
+        tokenMetadata: buildRouteTokenMetadata(kyberQuote.routeSummary),
+      } : undefined,
       debug: process.env.NODE_ENV !== 'production'
     };
 

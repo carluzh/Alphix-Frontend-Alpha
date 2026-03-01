@@ -67,6 +67,19 @@ const nextConfig = {
     // Enable Next.js image optimization (WebP conversion, responsive sizes)
     unoptimized: false,
     formats: ['image/avif', 'image/webp'],
+    // Allow external images from CoinGecko for token logos
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'assets.coingecko.com',
+        pathname: '/coins/images/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'coin-images.coingecko.com',
+        pathname: '/coins/images/**',
+      },
+    ],
   },
   experimental: {
     webpackBuildWorker: true,

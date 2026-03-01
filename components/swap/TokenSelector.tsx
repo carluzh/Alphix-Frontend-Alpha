@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import Image from 'next/image';
-import { ChevronDownIcon, SearchIcon } from 'lucide-react';
+import { ChevronDownIcon, SearchIcon, Loader2 } from 'lucide-react';
+import { TokenImage } from '@/components/ui/token-image';
 import { IconCheck, IconXmark } from 'nucleo-micro-bold-essential';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,8 @@ import { readContracts, getBalance } from '@wagmi/core';
 import { erc20Abi, formatUnits } from 'viem';
 import { config } from '@/lib/wagmiConfig';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useUserTokens } from '@/hooks/useUserTokens';
+import { type TokenInfo } from '@/lib/aggregators';
 
 export interface TokenSelectorToken {
   address: `0x${string}`;
@@ -36,14 +38,24 @@ export interface TokenSelectorToken {
 }
 
 interface TokenSelectorProps {
-  selectedToken: TokenSelectorToken;
+  selectedToken: TokenSelectorToken | null;
   availableTokens: TokenSelectorToken[];
   onTokenSelect: (token: TokenSelectorToken) => void;
   disabled?: boolean;
   excludeToken?: TokenSelectorToken;
   className?: string;
-  swapContainerRect: { top: number; left: number; width: number; height: number; };
+  swapContainerRect?: { top: number; left: number; width: number; height: number; }; // Deprecated: no longer used
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
+
+// Popular tokens for quick selection (addresses must be lowercase)
+const POPULAR_TOKEN_ADDRESSES = [
+  '0x0000000000000000000000000000000000000000', // ETH
+  '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
+  '0x820c137fa70c8691f0e44dc420a5e53c168921dc', // USDS
+  '0x4200000000000000000000000000000000000006', // WETH
+];
 
 const formatTokenAddress = (address: string): string => {
   if (address.length <= 11) return address;
@@ -71,11 +83,100 @@ const getFormattedDisplayBalance = (numericBalance: number | undefined): string 
   }
 };
 
-
 interface TokenBalanceData {
   balance: string;
   usdValue: number;
   isLoading: boolean;
+}
+
+// Token item component for the list
+interface TokenItemProps {
+  token: TokenSelectorToken;
+  isSelected: boolean;
+  balanceData?: TokenBalanceData;
+  onClick: () => void;
+}
+
+function TokenItem({ token, isSelected, balanceData, onClick }: TokenItemProps) {
+  const isLoadingBalance = balanceData?.isLoading || false;
+  const displayBalance = balanceData?.balance || "~";
+  const usdValue = balanceData?.usdValue || 0;
+
+  return (
+    <button
+      className={cn(
+        "w-full flex items-center gap-3 px-5 py-3.5 hover:bg-muted/50 text-left transition-colors",
+        { "bg-muted/30": isSelected }
+      )}
+      onClick={onClick}
+    >
+      <div className="relative w-8 h-8">
+        <TokenImage
+          src={token.icon || '/placeholder-logo.svg'}
+          alt={token.symbol}
+          size={32}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">{token.symbol}</span>
+              {isSelected && <IconCheck className="h-3 w-3 text-primary" />}
+            </div>
+            <div className="text-xs text-muted-foreground font-mono">
+              {formatTokenAddress(token.address)}
+            </div>
+          </div>
+          <div className="text-right">
+            {isLoadingBalance ? (
+              <>
+                <div className="h-4 w-16 bg-muted/60 rounded loading-skeleton mb-1"></div>
+                <div className="h-3 w-12 bg-muted/60 rounded loading-skeleton"></div>
+              </>
+            ) : (
+              <>
+                <div className="text-sm font-medium">{displayBalance}</div>
+                <div className="text-xs text-muted-foreground">
+                  {formatCurrency(usdValue.toString())}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// Popular token chip for quick selection
+interface PopularTokenChipProps {
+  token: TokenSelectorToken;
+  isSelected: boolean;
+  isExcluded: boolean;
+  onClick: () => void;
+}
+
+function PopularTokenChip({ token, isSelected, isExcluded, onClick }: PopularTokenChipProps) {
+  return (
+    <button
+      className={cn(
+        "flex items-center gap-1.5 px-3 py-2 rounded-lg border transition-all",
+        "hover:bg-muted/50 hover:border-muted-foreground/30",
+        isSelected && "bg-primary/10 border-primary/30",
+        isExcluded && "opacity-40 cursor-not-allowed"
+      )}
+      onClick={isExcluded ? undefined : onClick}
+      disabled={isExcluded}
+    >
+      <TokenImage
+        src={token.icon || '/placeholder-logo.svg'}
+        alt={token.symbol}
+        size={20}
+      />
+      <span className="text-sm font-medium">{token.symbol}</span>
+    </button>
+  );
 }
 
 export function TokenSelector({
@@ -85,10 +186,14 @@ export function TokenSelector({
   disabled = false,
   excludeToken,
   className,
-  swapContainerRect // New prop
+  swapContainerRect: _swapContainerRect, // Deprecated: no longer used for positioning
+  isOpen: controlledIsOpen,
+  onOpenChange: controlledOnOpenChange,
 }: TokenSelectorProps) {
   const isMobile = useIsMobile();
-  const [isOpen, setIsOpen] = useState(false);
+  const [internalIsOpen, setInternalIsOpen] = useState(false);
+  const isOpen = controlledIsOpen ?? internalIsOpen;
+  const setIsOpen = controlledOnOpenChange ?? setInternalIsOpen;
   const [searchTerm, setSearchTerm] = useState('');
   const sheetDragStartYRef = useRef<number | null>(null);
   const sheetTranslateYRef = useRef(0);
@@ -99,6 +204,14 @@ export function TokenSelector({
   const [tokenPrices, setTokenPrices] = useState<Record<string, number>>({});
   const [tokenBalances, setTokenBalances] = useState<Record<string, TokenBalanceData>>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  // Track whether we've already loaded data for this "open session" — prevents re-fetching
+  const hasLoadedForSessionRef = useRef(false);
+
+  // Dynamic token search state
+  const [searchResults, setSearchResults] = useState<TokenInfo[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const { address: accountAddress, isConnected, chain } = useAccount();
   const currentChainId = chain?.id;
@@ -116,7 +229,122 @@ export function TokenSelector({
     return availableTokens;
   }, [availableTokensKey, availableTokens]);
 
-  const excludeAddress = excludeToken?.address;
+  const excludeAddress = excludeToken?.address?.toLowerCase();
+
+  // Fetch user's tokens from Alchemy (includes balances, metadata, logos)
+  const { tokens: userTokens, isLoading: isLoadingUserTokens } = useUserTokens();
+
+  // REMOVED: CoinGecko token list / "All Tokens" — only show pool tokens + user's owned tokens
+
+  // Merge pool tokens with user's tokens from Alchemy
+  const allTokens = useMemo((): TokenSelectorToken[] => {
+    const poolTokenAddresses = new Set(stableAvailableTokens.map(t => t.address.toLowerCase()));
+
+    // Convert user tokens from Uniswap Portfolio API to TokenSelectorToken format
+    const userTokensConverted: TokenSelectorToken[] = userTokens
+      .filter(t => !poolTokenAddresses.has(t.address.toLowerCase())) // Exclude duplicates
+      .map(t => ({
+        address: t.address as `0x${string}`,
+        symbol: t.symbol,
+        name: t.name,
+        decimals: t.decimals,
+        icon: t.logo || '/placeholder-logo.svg',
+        balance: t.balance,
+        // Pass through USD value from Uniswap API (formatted as string for consistency)
+        value: t.balanceUSD != null ? `$${t.balanceUSD.toFixed(2)}` : undefined,
+        usdPrice: t.balanceUSD != null && parseFloat(t.balance) > 0
+          ? t.balanceUSD / parseFloat(t.balance)
+          : undefined,
+      }));
+
+    // Pool tokens first, then user's other tokens
+    return [...stableAvailableTokens, ...userTokensConverted];
+  }, [stableAvailableTokens, userTokens]);
+
+  // Popular tokens from all tokens
+  const popularTokens = useMemo(() => {
+    return POPULAR_TOKEN_ADDRESSES
+      .map(addr => allTokens.find(t => t.address.toLowerCase() === addr))
+      .filter((t): t is TokenSelectorToken => t !== undefined);
+  }, [allTokens]);
+
+  // Pool tokens (always shown in "Supported Tokens" section)
+  const poolTokenAddressSet = useMemo(
+    () => new Set(stableAvailableTokens.map(t => t.address.toLowerCase())),
+    [stableAvailableTokens]
+  );
+
+  // User-owned tokens that are NOT pool tokens (shown in "Your Tokens" section)
+  const userOwnedTokens = useMemo(() => {
+    return allTokens.filter(token => {
+      // Exclude pool tokens — they're shown in the "Supported Tokens" section
+      if (poolTokenAddressSet.has(token.address.toLowerCase())) return false;
+      // Must have a positive balance
+      const balance = tokenBalances[token.address];
+      if (!balance) return false;
+      const numericBalance = parseFloat(balance.balance);
+      return !isNaN(numericBalance) && numericBalance > 0;
+    });
+  }, [allTokens, tokenBalances, poolTokenAddressSet]);
+
+  // Handle search input change with debouncing
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchTerm(value);
+
+    // Clear previous debounce
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+
+    // Abort previous search
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+
+    // Clear results if no search term
+    if (!value.trim()) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    // Debounce the API call
+    searchDebounceRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+
+      try {
+        setIsSearching(true);
+        const response = await fetch(
+          `/api/tokens/search?q=${encodeURIComponent(value)}&limit=30`,
+          { signal: controller.signal }
+        );
+        const data = await response.json();
+
+        if (data.success && data.tokens) {
+          setSearchResults(data.tokens);
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.error('Token search failed:', err);
+        }
+      } finally {
+        setIsSearching(false);
+      }
+    }, 200);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -138,6 +366,8 @@ export function TokenSelector({
       if (sheetRafRef.current != null) cancelAnimationFrame(sheetRafRef.current);
       sheetRafRef.current = null;
       if (sheetContentRef.current) sheetContentRef.current.style.transform = "translate3d(0, 0, 0)";
+      // Reset session flag so next open triggers a fresh load
+      hasLoadedForSessionRef.current = false;
     }
   }, [isOpen]);
 
@@ -186,9 +416,10 @@ export function TokenSelector({
     if (shouldClose) setIsOpen(false);
   };
 
-  const filteredTokens = useMemo(() => {
-    return stableAvailableTokens
-      .filter(token => excludeAddress ? token.address !== excludeAddress : true)
+  // Filter all tokens based on search
+  const filteredAvailableTokens = useMemo(() => {
+    return allTokens
+      .filter(token => excludeAddress ? token.address.toLowerCase() !== excludeAddress : true)
       .filter(token => {
         if (!searchTerm) return true;
         const search = searchTerm.toLowerCase();
@@ -198,36 +429,64 @@ export function TokenSelector({
           token.address.toLowerCase().includes(search)
         );
       });
-  }, [stableAvailableTokens, excludeAddress, searchTerm]);
+  }, [allTokens, excludeAddress, searchTerm]);
 
   const filteredTokensKey = useMemo(
-    () => filteredTokens.map((t) => t.address).join("|"),
-    [filteredTokens]
+    () => filteredAvailableTokens.map((t) => t.address).join("|"),
+    [filteredAvailableTokens]
   );
   const filteredTokensRef = useRef<{ key: string; value: TokenSelectorToken[] } | null>(null);
   useEffect(() => {
-    filteredTokensRef.current = { key: filteredTokensKey, value: filteredTokens };
-  }, [filteredTokensKey, filteredTokens]);
+    filteredTokensRef.current = { key: filteredTokensKey, value: filteredAvailableTokens };
+  }, [filteredTokensKey, filteredAvailableTokens]);
 
   const tokenPricesKey = useMemo(
     () => Object.entries(tokenPrices).map(([k, v]) => `${k}:${v}`).join('|'),
     [tokenPrices]
   );
 
+  // Fetch prices once when modal opens — don't re-fetch while open
+  const hasFetchedPricesRef = useRef(false);
   useEffect(() => {
-    if (isOpen && filteredTokens.length > 0) {
-      const symbols = filteredTokens.map(t => t.symbol);
+    if (!isOpen) { hasFetchedPricesRef.current = false; return; }
+    if (hasFetchedPricesRef.current) return;
+    if (filteredAvailableTokens.length > 0) {
+      hasFetchedPricesRef.current = true;
+      const symbols = filteredAvailableTokens.map(t => t.symbol);
       batchQuotePrices(symbols, targetChainId).then(setTokenPrices).catch(() => {});
     }
-  }, [isOpen, filteredTokens, targetChainId]);
+  }, [isOpen, filteredAvailableTokens, targetChainId]);
 
+  // Store fetched raw balances so we can re-compute USD values when prices arrive
+  const rawBalancesRef = useRef<Record<string, { balance: string; numericBalance: number }>>({});
+
+  // Helper to parse USD value from token (either from API or formatted string)
+  const getTokenUsdValue = useCallback((token: TokenSelectorToken): number => {
+    if (token.usdPrice && token.balance) {
+      const bal = parseFloat(token.balance);
+      if (!isNaN(bal) && bal > 0) return bal * token.usdPrice;
+    }
+    if (token.value) {
+      const parsed = parseFloat(token.value.replace(/[~$,]/g, '') || "0");
+      if (!isNaN(parsed)) return parsed;
+    }
+    return 0;
+  }, []);
+
+  // Fetch balances once when modal opens — don't re-fetch while open
   useEffect(() => {
-    if (!isOpen || !isConnected || currentChainId !== targetChainId || !accountAddress) {
+    if (!isOpen) {
+      hasLoadedForSessionRef.current = false;
+      rawBalancesRef.current = {};
+      return;
+    }
+
+    if (!isConnected || currentChainId !== targetChainId || !accountAddress) {
       const resetBalances: Record<string, TokenBalanceData> = {};
-      (filteredTokensRef.current?.value || filteredTokens).forEach(token => {
+      (filteredTokensRef.current?.value || filteredAvailableTokens).forEach(token => {
         resetBalances[token.address] = {
           balance: token.balance || "~",
-          usdValue: token.value ? parseFloat(token.value.replace(/[~$,]/g, '') || "0") : 0,
+          usdValue: getTokenUsdValue(token),
           isLoading: false
         };
       });
@@ -235,12 +494,18 @@ export function TokenSelector({
       return;
     }
 
+    // Only fetch once per open session
+    if (hasLoadedForSessionRef.current) return;
+    hasLoadedForSessionRef.current = true;
+
+    const tokens = filteredTokensRef.current?.value || filteredAvailableTokens;
+
+    // Show loading skeletons
     const initialBalances: Record<string, TokenBalanceData> = {};
-    const tokens = filteredTokensRef.current?.value || filteredTokens;
     tokens.forEach(token => {
       initialBalances[token.address] = {
         balance: token.balance || "Loading...",
-        usdValue: token.value ? parseFloat(token.value.replace(/[~$,]/g, '') || "0") : 0,
+        usdValue: getTokenUsdValue(token),
         isLoading: true
       };
     });
@@ -248,78 +513,98 @@ export function TokenSelector({
 
     const fetchBalances = async () => {
       const newBalances: Record<string, TokenBalanceData> = {};
+      const rawBals: Record<string, { balance: string; numericBalance: number }> = {};
 
-      // Separate native token from ERC20 tokens
       const nativeToken = tokens.find(t => t.address === "0x0000000000000000000000000000000000000000");
       const erc20Tokens = tokens.filter(t => t.address !== "0x0000000000000000000000000000000000000000");
 
-      // Fetch native balance if needed
       if (nativeToken) {
         try {
-          const ethBalance = await getBalance(config, {
-            address: accountAddress,
-            chainId: targetChainId,
-          });
+          const ethBalance = await getBalance(config, { address: accountAddress, chainId: targetChainId });
           const balance = formatUnits(ethBalance.value, 18);
-          const usdPrice = tokenPrices[nativeToken.symbol] || 0;
           const numericBalance = parseFloat(balance);
-          newBalances[nativeToken.address] = {
-            balance: getFormattedDisplayBalance(numericBalance),
-            usdValue: numericBalance * usdPrice,
-            isLoading: false
-          };
+          const displayBal = getFormattedDisplayBalance(numericBalance);
+          rawBals[nativeToken.address] = { balance: displayBal, numericBalance };
+          newBalances[nativeToken.address] = { balance: displayBal, usdValue: 0, isLoading: false };
         } catch {
+          rawBals[nativeToken.address] = { balance: "Error", numericBalance: 0 };
           newBalances[nativeToken.address] = { balance: "Error", usdValue: 0, isLoading: false };
         }
       }
 
-      // Batch all ERC20 balance reads into single multicall
       if (erc20Tokens.length > 0) {
         const contracts = erc20Tokens.map(token => ({
-          address: token.address,
-          abi: erc20Abi,
-          functionName: 'balanceOf' as const,
-          args: [accountAddress] as const,
+          address: token.address, abi: erc20Abi,
+          functionName: 'balanceOf' as const, args: [accountAddress] as const,
           chainId: targetChainId,
         }));
-
         try {
           const results = await readContracts(config, { contracts });
-
           erc20Tokens.forEach((token, index) => {
             const result = results[index];
             if (result.status === 'success') {
               const balance = formatUnits(result.result as bigint, token.decimals);
-              const usdPrice = tokenPrices[token.symbol] || 0;
               const numericBalance = parseFloat(balance);
-              newBalances[token.address] = {
-                balance: getFormattedDisplayBalance(numericBalance),
-                usdValue: numericBalance * usdPrice,
-                isLoading: false
-              };
+              const displayBal = getFormattedDisplayBalance(numericBalance);
+              let usdValue = 0;
+              if (token.usdPrice) usdValue = numericBalance * token.usdPrice;
+              rawBals[token.address] = { balance: displayBal, numericBalance };
+              newBalances[token.address] = { balance: displayBal, usdValue, isLoading: false };
             } else {
-              newBalances[token.address] = { balance: "Error", usdValue: 0, isLoading: false };
+              rawBals[token.address] = { balance: "0.000", numericBalance: 0 };
+              newBalances[token.address] = { balance: "0.000", usdValue: 0, isLoading: false };
             }
           });
         } catch {
-          // If batch fails, mark all as error
           erc20Tokens.forEach(token => {
-            newBalances[token.address] = { balance: "Error", usdValue: 0, isLoading: false };
+            rawBals[token.address] = { balance: "0.000", numericBalance: 0 };
+            newBalances[token.address] = { balance: "0.000", usdValue: 0, isLoading: false };
           });
         }
       }
 
+      rawBalancesRef.current = rawBals;
       setTokenBalances(newBalances);
     };
 
     fetchBalances();
-  }, [isOpen, isConnected, currentChainId, targetChainId, accountAddress, filteredTokensKey, tokenPricesKey]);
+  }, [isOpen, isConnected, currentChainId, targetChainId, accountAddress, filteredTokensKey, getTokenUsdValue]);
+
+  // When prices arrive, update USD values in-place (no skeleton flash)
+  useEffect(() => {
+    if (!isOpen || Object.keys(tokenPrices).length === 0) return;
+    const raw = rawBalancesRef.current;
+    if (Object.keys(raw).length === 0) return;
+
+    setTokenBalances(prev => {
+      const updated = { ...prev };
+      const tokens = filteredTokensRef.current?.value || filteredAvailableTokens;
+      for (const token of tokens) {
+        const r = raw[token.address];
+        const existing = prev[token.address];
+        if (!r || !existing || existing.isLoading) continue;
+        const price = tokenPrices[token.symbol] || token.usdPrice || 0;
+        updated[token.address] = { ...existing, usdValue: r.numericBalance * price };
+      }
+      return updated;
+    });
+  }, [isOpen, tokenPrices, filteredAvailableTokens]);
 
   const handleTokenSelect = (token: TokenSelectorToken) => {
     onTokenSelect(token);
     setIsOpen(false);
     setSearchTerm('');
+    setSearchResults([]);
   };
+
+  // Convert search result to TokenSelectorToken
+  const convertSearchResultToToken = (info: TokenInfo): TokenSelectorToken => ({
+    address: info.address as `0x${string}`,
+    symbol: info.symbol,
+    name: info.name,
+    decimals: info.decimals,
+    icon: info.logoURI || '/placeholder-logo.svg',
+  });
 
   const handleToggle = () => {
     if (!disabled) {
@@ -330,93 +615,180 @@ export function TokenSelector({
   const handleClose = () => {
     setIsOpen(false);
     setSearchTerm('');
+    setSearchResults([]);
   };
 
+  // Determine which tokens to show based on search state
+  const displayTokens = useMemo(() => {
+    // If actively searching with results, show search results
+    if (searchTerm.trim() && searchResults.length > 0) {
+      return searchResults.map(convertSearchResultToToken);
+    }
+    // If searching but no results yet, show filtered available tokens
+    if (searchTerm.trim()) {
+      return filteredAvailableTokens;
+    }
+    // Otherwise show all available tokens
+    return filteredAvailableTokens;
+  }, [searchTerm, searchResults, filteredAvailableTokens]);
+
+  // Unified loading flag — true until user tokens + balances are all resolved
+  const isInitialLoading = isLoadingUserTokens || Object.values(tokenBalances).some(b => b.isLoading);
+
   const tokenListContent = (
-    <>
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+      <style dangerouslySetInnerHTML={{__html: `
+        .token-list-scroll::-webkit-scrollbar { width: 6px; }
+        .token-list-scroll::-webkit-scrollbar-track { background: transparent; }
+        .token-list-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+        .token-list-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+        .token-list-scroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.12) transparent; }
+      `}} />
       {/* Search Input */}
-      <div className="p-4">
+      <div className="p-4 pb-3">
         <div className="relative">
           <SearchIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search token"
+            placeholder="Search name or paste address"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 rounded-lg bg-muted/30 border-0 focus-visible:ring-1 focus-visible:ring-muted-foreground/30 h-12 text-base"
+            onChange={(e) => handleSearchChange(e.target.value)}
+            className="pl-10 pr-10 rounded-lg bg-muted/30 border-0 focus-visible:ring-1 focus-visible:ring-muted-foreground/30 h-12 text-base"
             autoFocus={!isMobile}
           />
+          {isSearching && (
+            <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground animate-spin" />
+          )}
         </div>
       </div>
 
-      {/* Token List */}
-      <div
-        className={cn("overflow-y-auto", isMobile ? "flex-1 overscroll-contain" : "")}
-        style={isMobile ? undefined : { maxHeight: `calc(100% - 125px)` }}
-      >
-        {filteredTokens.length === 0 ? (
-          <div className="p-6 text-center text-muted-foreground text-sm">
-            No tokens found matching "{searchTerm}"
+      {/* Popular Tokens - Quick Select */}
+      {!searchTerm && popularTokens.length > 0 && (
+        <div className="px-4 pb-3">
+          <div className="flex flex-wrap gap-2">
+            {popularTokens.map((token) => (
+              <PopularTokenChip
+                key={token.address}
+                token={token}
+                isSelected={selectedToken ? token.address === selectedToken.address : false}
+                isExcluded={token.address.toLowerCase() === excludeAddress}
+                onClick={() => handleTokenSelect(token)}
+              />
+            ))}
           </div>
-        ) : (
-          <div className="py-2">
-            {filteredTokens.map((token) => {
-              const isSelected = token.address === selectedToken.address;
-              const balanceData = tokenBalances[token.address];
-              const isLoadingBalance = balanceData?.isLoading || false;
-              const displayBalance = balanceData?.balance || "~";
-              const usdValue = balanceData?.usdValue || 0;
+        </div>
+      )}
 
-              return (
-                <button
-                  key={token.address}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-5 py-3.5 hover:bg-muted/50 text-left",
-                    { "bg-muted/30": isSelected }
-                  )}
-                  onClick={() => handleTokenSelect(token)}
-                >
-                  <Image
-                    src={token.icon}
-                    alt={token.symbol}
-                    width={32}
-                    height={32}
-                    className="rounded-full"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">{token.symbol}</span>
-                          {isSelected && <IconCheck className="h-3 w-3 text-primary" />}
-                        </div>
-                        <div className="text-xs text-muted-foreground font-mono">
-                          {formatTokenAddress(token.address)}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        {isLoadingBalance ? (
-                          <>
-                            <div className="h-4 w-16 bg-muted/60 rounded loading-skeleton mb-1"></div>
-                            <div className="h-3 w-12 bg-muted/60 rounded loading-skeleton"></div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="text-sm font-medium">{displayBalance}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {formatCurrency(usdValue.toString())}
-                            </div>
-                          </>
-                        )}
-                      </div>
+      {/* Divider */}
+      {!searchTerm && <div className="border-t border-sidebar-border/60" />}
+
+      {/* Scrollable token list — Your Tokens + All Tokens */}
+      <div
+        className={cn("overflow-y-auto flex-1 min-h-0 token-list-scroll", isMobile ? "overscroll-contain" : "")}
+      >
+        {/* Loading skeleton — shown until user tokens + balances are resolved */}
+        {isInitialLoading && !searchTerm ? (
+          <div className="py-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-5 py-3.5">
+                <div className="w-8 h-8 rounded-full bg-muted/60 animate-pulse" />
+                <div className="flex-1">
+                  <div className="flex justify-between">
+                    <div>
+                      <div className="h-4 w-14 bg-muted/60 rounded animate-pulse mb-1.5" />
+                      <div className="h-3 w-24 bg-muted/40 rounded animate-pulse" />
+                    </div>
+                    <div className="text-right">
+                      <div className="h-4 w-16 bg-muted/60 rounded animate-pulse mb-1.5" />
+                      <div className="h-3 w-12 bg-muted/40 rounded animate-pulse" />
                     </div>
                   </div>
-                </button>
-              );
-            })}
+                </div>
+              </div>
+            ))}
           </div>
+        ) : displayTokens.length === 0 ? (
+          <div className="p-6 text-center text-muted-foreground text-sm">
+            {isSearching ? (
+              <div className="flex items-center justify-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Searching...</span>
+              </div>
+            ) : searchTerm ? (
+              `No tokens found matching "${searchTerm}"`
+            ) : (
+              "No tokens available"
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Supported Tokens — pool tokens, always shown */}
+            {!searchTerm && (
+              <div className="py-2">
+                <div className="px-5 py-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Supported Tokens
+                  </span>
+                </div>
+                {stableAvailableTokens
+                  .filter(token => token.address.toLowerCase() !== excludeAddress)
+                  .map((token) => (
+                    <TokenItem
+                      key={`pool-${token.address}`}
+                      token={token}
+                      isSelected={selectedToken ? token.address === selectedToken.address : false}
+                      balanceData={tokenBalances[token.address]}
+                      onClick={() => handleTokenSelect(token)}
+                    />
+                  ))}
+              </div>
+            )}
+
+            {/* Your Tokens — user-owned tokens not in pool config */}
+            {!searchTerm && isConnected && userOwnedTokens.length > 0 && (
+              <>
+                <div className="border-t border-sidebar-border/60" />
+                <div className="py-2">
+                  <div className="px-5 py-2">
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      Your Tokens
+                    </span>
+                  </div>
+                  {userOwnedTokens
+                    .filter(token => token.address.toLowerCase() !== excludeAddress)
+                    .map((token) => (
+                      <TokenItem
+                        key={`yours-${token.address}`}
+                        token={token}
+                        isSelected={selectedToken ? token.address === selectedToken.address : false}
+                        balanceData={tokenBalances[token.address]}
+                        onClick={() => handleTokenSelect(token)}
+                      />
+                    ))}
+                </div>
+              </>
+            )}
+
+            {/* Search results */}
+            {searchTerm && (
+              <div className="py-2">
+                {displayTokens.map((token) => {
+                  if (token.address.toLowerCase() === excludeAddress) return null;
+                  return (
+                    <TokenItem
+                      key={token.address}
+                      token={token}
+                      isSelected={selectedToken ? token.address === selectedToken.address : false}
+                      balanceData={tokenBalances[token.address]}
+                      onClick={() => handleTokenSelect(token)}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </div>
-    </>
+    </div>
   );
 
   return (
@@ -440,14 +812,18 @@ export function TokenSelector({
         }}
         disabled={disabled}
       >
-        <Image
-          src={selectedToken.icon}
-          alt={selectedToken.symbol}
-          width={20}
-          height={20}
-          className="rounded-full"
-        />
-        <span className="text-sm font-medium">{selectedToken.symbol}</span>
+        {selectedToken ? (
+          <>
+            <TokenImage
+              src={selectedToken.icon || '/placeholder-logo.svg'}
+              alt={selectedToken.symbol}
+              size={20}
+            />
+            <span className="text-sm font-medium">{selectedToken.symbol}</span>
+          </>
+        ) : (
+          <span className="text-sm font-medium text-muted-foreground">Select Token</span>
+        )}
         <ChevronDownIcon
           className={cn(
             "h-4 w-4 text-muted-foreground transition-transform duration-200",
@@ -501,26 +877,19 @@ export function TokenSelector({
           </SheetContent>
         </Sheet>
       ) : (
-        /* Desktop: Portal Modal */
+        /* Desktop: Portal Modal - Centered */
         isOpen && typeof document !== 'undefined' && createPortal(
           <div
-            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
-            onClick={() => setIsOpen(false)}
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={(e) => { e.stopPropagation(); setIsOpen(false); }}
           >
-            {/* Modal positioned to overlay SwapInputView */}
             <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="fixed rounded-lg shadow-2xl border border-primary overflow-hidden bg-popover"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="rounded-lg shadow-2xl border border-primary bg-popover w-full max-w-md h-[70vh] flex flex-col overflow-hidden"
               onClick={(e) => e.stopPropagation()}
-              style={{
-                top: swapContainerRect.top,
-                left: swapContainerRect.left,
-                width: swapContainerRect.width,
-                height: swapContainerRect.height,
-              }}
             >
               {/* Header */}
               <div className="flex items-center justify-between p-4 border-b border-primary">
@@ -546,4 +915,4 @@ export function TokenSelector({
       )}
     </div>
   );
-} 
+}

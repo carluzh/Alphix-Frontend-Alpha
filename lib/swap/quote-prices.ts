@@ -143,16 +143,23 @@ export async function getQuotePrice(
 
     if (cached.data && cached.data > 0) {
       if (cached.isStale) {
-        // Background refresh - fire and forget, with CoinGecko fallback
-        fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
-          .then(async (quoterPrice) => {
-            let price = quoterPrice
+        // Background refresh - fire and forget
+        // Same priority as fresh fetch: CoinGecko first for known tokens, quoter for others
+        const hasCgId = symbol in COINGECKO_IDS
+        const refreshPrice = async () => {
+          let price: number
+          if (hasCgId) {
+            price = await fetchCoinGeckoFallback(symbol)
+            if (price === 0) price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+          } else {
+            price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
             if (price === 0) price = await fetchCoinGeckoFallback(symbol)
-            if (price > 0) {
-              cacheService.set(cacheKey, price, PRICE_TTL.stale).catch(() => {})
-            }
-          })
-          .catch(() => {})
+          }
+          if (price > 0) {
+            cacheService.set(cacheKey, price, PRICE_TTL.stale).catch(() => {})
+          }
+        }
+        refreshPrice().catch(() => {})
       }
       return cached.data
     }
@@ -160,10 +167,18 @@ export async function getQuotePrice(
     // Cache lookup failed, continue to fetch fresh
   }
 
-  // No cache or cache miss - fetch fresh from quoter, fallback to CoinGecko
-  let price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
-  if (price === 0) {
+  // No cache or cache miss - fetch fresh price
+  // For tokens with CoinGecko IDs (ETH, BTC, etc.), prefer CoinGecko for accurate market prices
+  // since our pool liquidity may cause slippage-distorted pricing via the quoter.
+  // For protocol-specific tokens without CoinGecko IDs, use the on-chain quoter.
+  const hasCoinGeckoId = symbol in COINGECKO_IDS
+  let price: number
+  if (hasCoinGeckoId) {
     price = await fetchCoinGeckoFallback(symbol)
+    if (price === 0) price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+  } else {
+    price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+    if (price === 0) price = await fetchCoinGeckoFallback(symbol)
   }
 
   if (price > 0) {

@@ -2,11 +2,11 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import Image from 'next/image';
 import {
   ChevronRightIcon,
   CircleCheck
 } from "lucide-react";
+import { TokenImage } from '@/components/ui/token-image';
 
 import { Button } from "@/components/ui/button";
 import { Token, SwapTxInfo } from './swap-interface';
@@ -38,7 +38,7 @@ export function SwapSuccessView({
         onClick={handleChangeButton}
       >
         <div className="flex items-center gap-3">
-          <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={32} height={32} className="rounded-full"/>
+          <TokenImage src={displayFromToken.icon} alt={displayFromToken.symbol} size={32} />
           <div className="text-left flex flex-col">
             <div className="font-medium flex items-baseline">
               {(() => {
@@ -70,7 +70,7 @@ export function SwapSuccessView({
             </div>
             <div className="text-xs text-muted-foreground">{trade.calculatedValues.toTokenValue}</div>
           </div>
-          <Image src={displayToToken.icon} alt={displayToToken.symbol} width={32} height={32} className="rounded-full"/>
+          <TokenImage src={displayToToken.icon} alt={displayToToken.symbol} size={32} />
         </div>
       </div>
       <div className="my-8 flex flex-col items-center justify-center">

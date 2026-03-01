@@ -13,8 +13,8 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import { TokenImage } from '@/components/ui/token-image';
 import { useAccount, usePublicClient } from 'wagmi';
 import { AlertCircle, RotateCw, RefreshCw } from 'lucide-react';
 import * as Sentry from '@sentry/nextjs';
@@ -223,13 +223,7 @@ function TokenInfoRow({ symbol, icon, amount, usdValue }: TokenInfoRowProps) {
         )}
       </div>
       {icon ? (
-        <Image
-          src={icon}
-          alt={symbol}
-          width={36}
-          height={36}
-          className="rounded-full"
-        />
+        <TokenImage src={icon} alt={symbol} size={36} />
       ) : (
         <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white">
           {symbol.charAt(0)}
@@ -254,14 +248,14 @@ function DoubleCurrencyLogo({
   return (
     <div className="flex items-center -space-x-2">
       {icon0 ? (
-        <Image src={icon0} alt={symbol0} width={36} height={36} className="rounded-full " />
+        <TokenImage src={icon0} alt={symbol0} size={36} />
       ) : (
         <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white ">
           {symbol0.charAt(0)}
         </div>
       )}
       {icon1 ? (
-        <Image src={icon1} alt={symbol1} width={36} height={36} className="rounded-full " />
+        <TokenImage src={icon1} alt={symbol1} size={36} />
       ) : (
         <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white ">
           {symbol1.charAt(0)}
@@ -1255,12 +1249,10 @@ export function ReviewExecuteModal() {
                         <div className="flex items-center gap-1">
                           {/* Input token icon */}
                           {(zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon) ? (
-                            <Image
+                            <TokenImage
                               src={(zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon)!}
                               alt={zapInputToken || ''}
-                              width={16}
-                              height={16}
-                              className="rounded-full"
+                              size={16}
                             />
                           ) : (
                             <div className="w-4 h-4 rounded-full bg-muted flex items-center justify-center text-[8px] font-bold">
@@ -1281,12 +1273,10 @@ export function ReviewExecuteModal() {
                           </svg>
                           {/* Output token icon */}
                           {(zapInputToken === 'USDS' ? token1Config?.icon : token0Config?.icon) ? (
-                            <Image
+                            <TokenImage
                               src={(zapInputToken === 'USDS' ? token1Config?.icon : token0Config?.icon)!}
                               alt={zapInputToken === 'USDS' ? 'USDC' : 'USDS'}
-                              width={16}
-                              height={16}
-                              className="rounded-full"
+                              size={16}
                             />
                           ) : (
                             <div className="w-4 h-4 rounded-full bg-muted flex items-center justify-center text-[8px] font-bold">

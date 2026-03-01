@@ -4,9 +4,10 @@ import { formatUnits, parseUnits } from "viem"
 import { getAutoSlippage } from "@/lib/slippage/slippage-api"
 
 import type { Token } from "./swap-interface"
-import { useSwapQuote } from "./useSwapQuote"
+import { useSwapQuote, type KyberswapQuoteData } from "./useSwapQuote"
 import { useSwapRoutingFees } from "./useSwapRoutingFees"
 import type { SwapRoute } from "@/lib/swap/routing-engine"
+import type { AggregatorSource } from "@/lib/aggregators/types"
 
 export type FeeDetail = {
   name: string
@@ -60,6 +61,9 @@ type Args = {
   currentSlippage: number
   isAutoSlippage: boolean
   updateAutoSlippage: (v: number) => void
+
+  // Aggregator integration
+  userAddress?: string // For Kyberswap executable calldata
 }
 
 export const formatCurrency = (valueString: string): string => {
@@ -129,6 +133,7 @@ export function useSwapTrade({
   currentSlippage,
   isAutoSlippage,
   updateAutoSlippage,
+  userAddress,
 }: Args) {
   const {
     routeInfo,
@@ -143,7 +148,10 @@ export function useSwapTrade({
     setSelectedPoolIndexForChart,
   })
 
-  const { quoteLoading, quoteError, setQuoteError, priceImpact, dynamicFeeBps, clearQuote, refreshBindingQuote } = useSwapQuote({
+  // Convert slippage percentage to basis points (e.g., 0.5% -> 50 bps)
+  const slippageBps = Math.round(currentSlippage * 100)
+
+  const { quoteLoading, quoteError, setQuoteError, priceImpact, dynamicFeeBps, clearQuote, refreshBindingQuote, source, kyberswapData } = useSwapQuote({
     fromToken,
     toToken,
     fromAmount,
@@ -153,6 +161,9 @@ export function useSwapTrade({
     lastEditedSideRef,
     setRouteInfo,
     targetChainId,
+    // Aggregator integration params
+    userAddress,
+    slippageBps,
   })
 
   const tryParseUnits = (amountStr: string, decimals: number): bigint | null => {
@@ -181,8 +192,12 @@ export function useSwapTrade({
 
     if (quoteError) return "error"
 
-    if (!currentRoute || currentRoute.pools.length === 0) return "no_route"
-    if (routeError && routeError.toLowerCase().includes("no route")) return "no_route"
+    // For Kyberswap-only swaps, we have routeInfo from API but no local currentRoute
+    // A valid route exists if: we have an Alphix route OR we have a Kyberswap route from API
+    const hasAlphixRoute = currentRoute && currentRoute.pools.length > 0
+    const hasKyberswapRoute = source === 'kyberswap' && routeInfo !== null
+    if (!hasAlphixRoute && !hasKyberswapRoute) return "no_route"
+    if (routeError && routeError.toLowerCase().includes("no route") && !hasKyberswapRoute) return "no_route"
 
     const hasQuote = inParsed !== null && inParsed > 0n && outParsed !== null && outParsed > 0n
     if (!hasQuote) return "loading"
@@ -194,6 +209,8 @@ export function useSwapTrade({
     currentRoute,
     dynamicFeeBps,
     routeError,
+    routeInfo,
+    source,
     fromAmount,
     fromToken.decimals,
     quoteError,
@@ -389,6 +406,10 @@ export function useSwapTrade({
 
     tradeState,
     tradeError,
+
+    // Aggregator integration
+    source,
+    kyberswapData,
   }
 }
 

@@ -8,6 +8,8 @@ import { Pool, Route as V4Route, PoolKey, V4Planner, Actions, encodeRouteToPath 
 import { BigNumber } from 'ethers'; // For V4Planner compatibility if it expects Ethers BigNumber
 
 import { createNetworkClient } from '../../../lib/viemClient';
+import type { AggregatorSource, KyberswapRouteSummary } from '../../../lib/aggregators/types';
+import { getKyberswapRouterAddress, getKyberswapRoute, buildKyberswapSwap } from '../../../lib/aggregators/kyberswap';
 import {
     TokenSymbol,
     getPoolConfigForTokens,
@@ -228,7 +230,6 @@ async function prepareV4ExactOutSwapData(
     amountOutSmallestUnits: bigint,
     poolConfig: any,
     limitPrice?: string,
-    permitAmount?: bigint // The actual permitted amount (may differ slightly from maxAmountIn)
 ): Promise<V4PlanBuild> {
     const v4PoolKey: PoolKey = createPoolKeyFromConfig(poolConfig.pool);
 
@@ -245,13 +246,10 @@ async function prepareV4ExactOutSwapData(
         sqrtPriceLimitX96 = calculatePriceLimitX96(limitPrice, inputToken, outputToken, zeroForOne);
     }
 
-    // See module-level comment for action ordering rationale (SETTLE → SWAP → TAKE → TAKE)
-    // Use permitAmount for SETTLE (matches what user authorized via Permit2)
-    const settleAmount = permitAmount ?? maxAmountInSmallestUnits;
-
+    // SETTLE → SWAP → TAKE → TAKE (see module-level comment)
     v4Planner.addAction(Actions.SETTLE, [
         inputCurrency,
-        BigNumber.from(settleAmount.toString()),
+        BigNumber.from(maxAmountInSmallestUnits.toString()),
         true // payerIsUser = true
     ]);
 
@@ -341,7 +339,6 @@ async function prepareV4MultiHopExactOutSwapData(
     amountOutSmallestUnits: bigint,
     chainId: number,
     networkMode: 'mainnet' | 'testnet',
-    permitAmount?: bigint // The actual permitted amount (may differ slightly from maxAmountIn)
 ): Promise<V4PlanBuild> {
     const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId, networkMode);
     const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
@@ -365,13 +362,10 @@ async function prepareV4MultiHopExactOutSwapData(
 
     const v4Planner = new V4Planner();
 
-    // See module-level comment for action ordering rationale (SETTLE → SWAP → TAKE → TAKE)
-    // Use permitAmount for SETTLE (matches what user authorized via Permit2)
-    const settleAmount = permitAmount ?? maxAmountInSmallestUnits;
-
+    // SETTLE → SWAP → TAKE → TAKE (see module-level comment)
     v4Planner.addAction(Actions.SETTLE, [
         inputToken.address,
-        BigNumber.from(settleAmount.toString()),
+        BigNumber.from(maxAmountInSmallestUnits.toString()),
         true // payerIsUser = true
     ]);
 
@@ -402,15 +396,30 @@ interface BuildSwapTxRequest extends NextApiRequest {
         amountDecimalsStr: string;      // Amount to swap (input for ExactIn, output for ExactOut)
         limitAmountDecimalsStr: string; // Min output for ExactIn, Max input for ExactOut
         limitPrice?: string;            // Optional: V4 price limit for partial fills
-        
+
         permitSignature: Hex;
         permitTokenAddress: string; // Address of the token that was permitted (INPUT_TOKEN)
         permitAmount: string;       // Amount (smallest units, string) that was permitted
         permitNonce: number;
         permitExpiration: number;   // Timestamp (seconds)
         permitSigDeadline: string;  // Timestamp (seconds, string for bigint)
-        
+
         chainId: number;
+
+        // Aggregator integration fields (for Kyberswap swaps)
+        source?: AggregatorSource;              // 'alphix' | 'kyberswap'
+        kyberswapData?: {
+            routerAddress: string;
+            encodedSwapData: string;            // Pre-encoded calldata from Kyberswap
+            routeSummary?: KyberswapRouteSummary;
+        };
+
+        // Token metadata passed from client (for non-pool tokens that aren't in pools-config)
+        fromTokenAddress?: string;
+        toTokenAddress?: string;
+        fromTokenDecimals?: number;
+        toTokenDecimals?: number;
+        slippageBps?: number;
     };
 }
 
@@ -490,7 +499,15 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             permitNonce,
             permitExpiration,
             permitSigDeadline,
-            chainId
+            chainId,
+            source = 'alphix', // Default to Alphix for backward compatibility
+            kyberswapData,
+            // Token metadata passed from client (needed for Kyberswap with non-pool tokens)
+            fromTokenAddress,
+            toTokenAddress,
+            fromTokenDecimals,
+            toTokenDecimals,
+            slippageBps,
         } = req.body;
 
         // Get network mode from cookies for proper chain-specific addresses
@@ -526,6 +543,130 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         if (fromTokenSymbol === toTokenSymbol) {
             return res.status(400).json({ ok: false, message: 'From and To tokens cannot be the same.' });
         }
+
+        // ============================================================
+        // KYBERSWAP SOURCE: Fresh route + build at execution time
+        // ============================================================
+        if (source === 'kyberswap') {
+            if (!kyberswapData?.routerAddress) {
+                return res.status(400).json({
+                    ok: false,
+                    message: 'Missing Kyberswap router address.'
+                });
+            }
+
+            const fromTokenConfig = getToken(fromTokenSymbol, networkMode);
+            const isNativeInputKyber = fromTokenConfig?.address === NATIVE_TOKEN_ADDRESS
+                || fromTokenAddress === NATIVE_TOKEN_ADDRESS;
+            const fromDecimals = fromTokenConfig?.decimals ?? fromTokenDecimals ?? 18;
+            const toDecimals = getToken(toTokenSymbol, networkMode)?.decimals ?? toTokenDecimals ?? 18;
+            const parsedAmountIn = safeParseUnits(amountDecimalsStr, fromDecimals);
+            const txValueKyber = isNativeInputKyber ? parsedAmountIn : 0n;
+
+            // Resolve token addresses for Kyberswap API
+            const kyberFromAddress = fromTokenAddress || fromTokenConfig?.address;
+            const kyberToAddress = toTokenAddress || getToken(toTokenSymbol, networkMode)?.address;
+            if (!kyberFromAddress || !kyberToAddress) {
+                return res.status(400).json({
+                    ok: false,
+                    message: 'Cannot resolve token addresses for Kyberswap route.'
+                });
+            }
+
+            // Step 1: Fetch fresh route from Kyberswap (GET /routes)
+            const routeResponse = await getKyberswapRoute({
+                fromTokenAddress: kyberFromAddress,
+                toTokenAddress: kyberToAddress,
+                amount: parsedAmountIn.toString(),
+                fromTokenDecimals: fromDecimals,
+                toTokenDecimals: toDecimals,
+                isExactIn: true,
+                slippageBps: 50,
+            });
+
+            if (!routeResponse?.data?.routeSummary) {
+                return res.status(502).json({
+                    ok: false,
+                    message: 'Kyberswap route request failed. The route may no longer be available.'
+                });
+            }
+
+            // Step 2: Build swap calldata (POST /route/build)
+            const kyberSlippageBps = slippageBps ?? 50;
+            const buildResponse = await buildKyberswapSwap(
+                routeResponse.data.routeSummary,
+                userAddress,
+                kyberSlippageBps
+            );
+
+            if (!buildResponse?.data?.data) {
+                return res.status(502).json({
+                    ok: false,
+                    message: 'Kyberswap build request failed. Please try again.'
+                });
+            }
+
+            // Validate router address matches
+            const kyberRouter = getKyberswapRouterAddress();
+            const responseRouter = buildResponse.data.routerAddress || routeResponse.data.routerAddress;
+            if (getAddress(responseRouter) !== getAddress(kyberRouter)) {
+                return res.status(400).json({
+                    ok: false,
+                    message: 'Invalid Kyberswap router address returned from API'
+                });
+            }
+
+            const freshEncodedData = buildResponse.data.data;
+            const freshRouteSummary = routeResponse.data.routeSummary;
+
+            // Step 3: Simulate the transaction to catch real reverts before user signs.
+            // NOTE: By this point the user has already approved the Kyberswap router
+            // (approval step completed before swap step in useSwapStepExecutor).
+            try {
+                await publicClient.call({
+                    account: getAddress(userAddress) as Address,
+                    to: getAddress(kyberRouter) as Address,
+                    data: freshEncodedData as Hex,
+                    value: txValueKyber,
+                });
+            } catch (simError: any) {
+                const simMsg = simError?.shortMessage || simError?.message || 'Unknown simulation error';
+                console.warn(`[build-tx] Kyberswap simulation failed: ${simMsg}`);
+                console.warn(`[build-tx] Debug: userAddress=${userAddress}, isNativeInput=${isNativeInputKyber}, amountIn=${parsedAmountIn.toString()}, value=${txValueKyber.toString()}`);
+                console.warn(`[build-tx] Debug: routeAmountIn=${freshRouteSummary.amountIn}, routeAmountOut=${freshRouteSummary.amountOut}`);
+                return res.status(422).json({
+                    ok: false,
+                    message: `Swap simulation failed: ${simMsg}. The route may have gone stale.`,
+                    errorDetails: 'SIMULATION_FAILED',
+                });
+            }
+
+            // Calculate deadline
+            const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+            const txDeadline = currentTimestamp + BigInt(TX_DEADLINE_SECONDS);
+
+            res.setHeader('Cache-Control', 'no-store');
+
+            return res.status(200).json({
+                ok: true,
+                source: 'kyberswap',
+                to: kyberRouter,
+                data: freshEncodedData,
+                value: txValueKyber.toString(),
+                deadline: txDeadline.toString(),
+                commands: null,
+                inputs: null,
+                route: {
+                    source: 'kyberswap',
+                    amountIn: freshRouteSummary.amountIn,
+                    amountOut: freshRouteSummary.amountOut,
+                },
+            });
+        }
+
+        // ============================================================
+        // ALPHIX SOURCE: Build V4 swap transaction (existing logic)
+        // ============================================================
 
         // Find the best route using the routing engine
         const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol, networkMode);
@@ -658,26 +799,21 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             const maxAmountInSmallestUnits = actualLimitAmount; // max INPUT limit
 
             if (route.isDirectRoute) {
-                // Single-hop swap using existing logic
-                // Pass parsedPermitAmount to use as SETTLE amount (what user actually authorized)
                 v4Plan = await prepareV4ExactOutSwapData(
                     INPUT_TOKEN,
                     OUTPUT_TOKEN,
-                    maxAmountInSmallestUnits, // Max Input is the limit amount
-                    amountOutSmallestUnits, // Actual output amount
+                    maxAmountInSmallestUnits,
+                    amountOutSmallestUnits,
                     poolConfig,
                     limitPrice,
-                    parsedPermitAmount // Use permitted amount for SETTLE to avoid InsufficientAllowance
                 );
             } else {
-                // Multi-hop swap using new logic
                 v4Plan = await prepareV4MultiHopExactOutSwapData(
                     route,
                     maxAmountInSmallestUnits,
                     amountOutSmallestUnits,
                     chainId,
                     networkMode,
-                    parsedPermitAmount // Use permitted amount for SETTLE to avoid InsufficientAllowance
                 );
             }
         }
@@ -739,6 +875,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
 
         res.status(200).json({
             ok: true,
+            source: 'alphix', // Explicitly mark as Alphix source
             commands: routePlanner.commands as Hex,
             inputs: routePlanner.inputs as Hex[],
             deadline: txDeadline.toString(),

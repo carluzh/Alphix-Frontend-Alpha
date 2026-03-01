@@ -183,7 +183,7 @@ export function getPoolById(poolId: string, networkModeOverride?: NetworkMode): 
 export function createTokenSDK(tokenSymbol: string, chainId: number, networkModeOverride?: NetworkMode): Token | null {
   const tokenConfig = getToken(tokenSymbol, networkModeOverride);
   if (!tokenConfig) {
-    console.log(`[createTokenSDK] No token config found for ${tokenSymbol}`);
+    // Don't log - this is expected for tokens not in pool config (e.g., user wallet tokens)
     return null;
   }
 

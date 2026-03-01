@@ -11,7 +11,8 @@ export default function Page() {
 
   const handleSelectPoolForChart = useCallback((poolIndex: number) => {
     if (currentRoute && poolIndex >= 0 && poolIndex < currentRoute.pools.length) {
-      setSelectedPoolIndexForChart(poolIndex);
+      // Segment 0 = Route preview, so pool N maps to segment N+1
+      setSelectedPoolIndexForChart(poolIndex + 1);
     }
   }, [currentRoute]);
 

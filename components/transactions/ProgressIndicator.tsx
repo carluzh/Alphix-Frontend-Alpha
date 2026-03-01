@@ -5,8 +5,8 @@
  */
 
 import { Fragment } from 'react'
-import Image from 'next/image'
 import { cn } from '@/lib/utils'
+import { TokenImage } from '@/components/ui/token-image'
 import {
   IconCheckboxCheckedFilled,
   IconPenWriting,
@@ -131,7 +131,7 @@ function getStepText(step: TransactionStep, status: StepStatus): { title: string
 
     case TransactionStepType.SwapTransaction: {
       const swapStep = step as SwapStep
-      const routeLabel = swapStep.routeType === 'psm' ? 'PSM' : 'Pool'
+      const routeLabel = swapStep.routeType === 'psm' ? 'PSM' : swapStep.routeType === 'kyberswap' ? 'Kyberswap' : 'Pool'
       return isComplete
         ? { title: `Swapped ${swapStep.inputTokenSymbol} → ${swapStep.outputTokenSymbol}` }
         : { title: `Swapping via ${routeLabel}`, subtitle: 'Confirm in wallet' }
@@ -185,7 +185,7 @@ function StepRow({
     }
     if (iconInfo.type === 'token') {
       if (iconInfo.icon) {
-        return <Image src={iconInfo.icon} alt={iconInfo.symbol || 'token'} width={20} height={20} className="rounded-full" />
+        return <TokenImage src={iconInfo.icon} alt={iconInfo.symbol || 'token'} size={20} />
       }
       if (iconInfo.symbol) {
         return <span className="text-xs font-semibold text-white">{iconInfo.symbol.charAt(0)}</span>
