@@ -6,6 +6,7 @@
  */
 
 import { type Address, getAddress } from 'viem';
+import type { ZapToken } from './types';
 
 // =============================================================================
 // PSM (PEG STABILITY MODULE) CONFIGURATION
@@ -72,6 +73,60 @@ export const USDS_USDC_POOL_CONFIG = {
   fee: 8388608,
 };
 
+/**
+ * ETH/USDC Unified Yield pool configuration
+ */
+export const ETH_USDC_POOL_CONFIG = {
+  /** Pool ID */
+  poolId: 'eth-usdc',
+
+  /** Hook contract address (also the share token) - checksummed */
+  hookAddress: getAddress('0x831CfDf7c0E194f5369f204b3DD2481B843d60c0'),
+
+  /** Token0 is ETH (native, 18 decimals) */
+  token0: {
+    symbol: 'ETH' as const,
+    address: '0x0000000000000000000000000000000000000000' as Address,
+    decimals: 18,
+  },
+
+  /** Token1 is USDC (6 decimals) */
+  token1: {
+    symbol: 'USDC' as const,
+    address: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
+    decimals: 6,
+  },
+
+  /** Pool tick spacing */
+  tickSpacing: 60,
+
+  /** Pool fee (dynamic fee flag) */
+  fee: 8388608,
+};
+
+// =============================================================================
+// ZAP POOL CONFIG INTERFACE
+// =============================================================================
+
+/**
+ * Generalized pool configuration for the zap system.
+ * Allows the same zap logic to work across different pool types.
+ */
+export interface ZapPoolConfig {
+  poolId: string;
+  hookAddress: Address;
+  token0: { symbol: ZapToken; address: Address; decimals: number };
+  token1: { symbol: ZapToken; address: Address; decimals: number };
+  tickSpacing: number;
+  fee: number;
+  /** Which fallback route to use when price impact exceeds threshold */
+  fallbackRoute: 'psm' | 'kyberswap';
+  /** Price impact threshold for switching to fallback (as percentage) */
+  priceImpactThreshold: number;
+  /** Whether the pair is pegged (stablecoins) - affects price impact calculation */
+  isPegged: boolean;
+}
+
 // =============================================================================
 // THRESHOLDS & SAFETY PARAMETERS
 // =============================================================================
@@ -85,6 +140,69 @@ export const USDS_USDC_POOL_CONFIG = {
  * 0.01 = 0.01% price impact
  */
 export const PSM_PRICE_IMPACT_THRESHOLD = 0.01;
+
+/**
+ * Price impact threshold for Kyberswap fallback (as percentage)
+ *
+ * For non-pegged pools (ETH/USDC), if pool swap price impact >= this,
+ * we route through Kyberswap aggregator instead.
+ *
+ * 0.5 = 0.5% price impact
+ */
+export const KYBERSWAP_PRICE_IMPACT_THRESHOLD = 0.5;
+
+/** All zap pool configs */
+const ZAP_POOL_CONFIGS: ZapPoolConfig[] = [
+  {
+    ...USDS_USDC_POOL_CONFIG,
+    fallbackRoute: 'psm',
+    priceImpactThreshold: PSM_PRICE_IMPACT_THRESHOLD,
+    isPegged: true,
+  },
+  {
+    ...ETH_USDC_POOL_CONFIG,
+    fallbackRoute: 'kyberswap',
+    priceImpactThreshold: KYBERSWAP_PRICE_IMPACT_THRESHOLD,
+    isPegged: false,
+  },
+];
+
+/**
+ * Get the ZapPoolConfig for a given pool ID.
+ * Returns null if the pool doesn't support zap.
+ */
+export function getZapPoolConfig(poolId: string): ZapPoolConfig | null {
+  // Also check via getPoolById for subgraphId lookups
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getPoolById } = require('@/lib/pools-config');
+  const pool = getPoolById(poolId);
+  const resolvedId = pool?.id;
+
+  return ZAP_POOL_CONFIGS.find(c => c.poolId === resolvedId) ?? null;
+}
+
+/**
+ * Get the ZapPoolConfig by hook contract address.
+ * Returns null if no zap pool matches the hook address.
+ */
+export function getZapPoolConfigByHook(hookAddress: Address): ZapPoolConfig | null {
+  const normalizedHook = hookAddress.toLowerCase();
+  return ZAP_POOL_CONFIGS.find(c => c.hookAddress.toLowerCase() === normalizedHook) ?? null;
+}
+
+/**
+ * Get the ZapPoolConfig by matching a pair of token addresses.
+ * Returns null if no zap pool matches.
+ */
+export function getZapPoolConfigByTokens(tokenA: Address, tokenB: Address): ZapPoolConfig | null {
+  const a = tokenA.toLowerCase();
+  const b = tokenB.toLowerCase();
+  return ZAP_POOL_CONFIGS.find(c => {
+    const t0 = c.token0.address.toLowerCase();
+    const t1 = c.token1.address.toLowerCase();
+    return (t0 === a && t1 === b) || (t0 === b && t1 === a);
+  }) ?? null;
+}
 
 /**
  * Maximum acceptable price impact for pool swap (as percentage)
@@ -177,8 +295,8 @@ export const USDS_TO_USDC_DIVISOR = 10n ** 12n;
 /**
  * Check if a pool supports the Zap feature.
  *
- * Currently enabled ONLY for USDS/USDC pool.
- * Accepts either pool config id ('usds-usdc') or subgraphId (bytes32 hash)
+ * Enabled for USDS/USDC and ETH/USDC Unified Yield pools.
+ * Accepts either pool config id ('usds-usdc', 'eth-usdc') or subgraphId (bytes32 hash)
  * since positions may use either format.
  *
  * @param poolId - The pool ID to check (can be config id or subgraphId)
@@ -186,10 +304,5 @@ export const USDS_TO_USDC_DIVISOR = 10n ** 12n;
  */
 export function isZapEligiblePool(poolId: string | null): boolean {
   if (!poolId) return false;
-  // Import dynamically to avoid circular dependency
-  // getPoolById handles both pool.id and pool.subgraphId lookups
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { getPoolById } = require('@/lib/pools-config');
-  const pool = getPoolById(poolId);
-  return pool?.id === USDS_USDC_POOL_CONFIG.poolId;
+  return getZapPoolConfig(poolId) !== null;
 }

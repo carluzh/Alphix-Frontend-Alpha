@@ -98,7 +98,9 @@ export interface PriceImpactAnalysis {
   impact: number;
   /** Absolute value of impact */
   absoluteImpact: number;
-  /** Whether PSM should be used */
+  /** Whether the fallback route should be used (PSM for stablecoins, Kyberswap for volatile) */
+  shouldUseFallback: boolean;
+  /** @deprecated Use shouldUseFallback instead */
   shouldUsePSM: boolean;
   /** Whether to show warning to user */
   showWarning: boolean;
@@ -114,13 +116,19 @@ export interface PriceImpactAnalysis {
  * Analyze price impact and determine recommended action.
  *
  * @param priceImpact - Price impact percentage
+ * @param fallbackThreshold - Threshold for switching to fallback route (defaults to PSM_PRICE_IMPACT_THRESHOLD)
+ * @param fallbackLabel - Label for the fallback route in messages (defaults to 'PSM')
  * @returns Analysis with recommendations
  */
-export function analyzePriceImpact(priceImpact: number): PriceImpactAnalysis {
+export function analyzePriceImpact(
+  priceImpact: number,
+  fallbackThreshold: number = PSM_PRICE_IMPACT_THRESHOLD,
+  fallbackLabel: string = 'PSM',
+): PriceImpactAnalysis {
   const absoluteImpact = Math.abs(priceImpact);
 
-  // Determine if PSM should be used
-  const shouldUsePSM = absoluteImpact > PSM_PRICE_IMPACT_THRESHOLD;
+  // Determine if fallback route should be used
+  const shouldUseFallback = absoluteImpact > fallbackThreshold;
 
   // Determine severity and messaging
   let severity: PriceImpactAnalysis['severity'];
@@ -128,7 +136,7 @@ export function analyzePriceImpact(priceImpact: number): PriceImpactAnalysis {
   let shouldBlock: boolean;
   let message: string;
 
-  if (absoluteImpact <= PSM_PRICE_IMPACT_THRESHOLD) {
+  if (absoluteImpact <= fallbackThreshold) {
     severity = 'low';
     showWarning = false;
     shouldBlock = false;
@@ -137,12 +145,12 @@ export function analyzePriceImpact(priceImpact: number): PriceImpactAnalysis {
     severity = 'medium';
     showWarning = false;
     shouldBlock = false;
-    message = 'Using PSM for 1:1 swap (better rate)';
+    message = `Using ${fallbackLabel} for better rate`;
   } else if (absoluteImpact <= MAX_ACCEPTABLE_PRICE_IMPACT) {
     severity = 'high';
     showWarning = true;
     shouldBlock = false;
-    message = `High price impact (${absoluteImpact.toFixed(2)}%). Using PSM.`;
+    message = `High price impact (${absoluteImpact.toFixed(2)}%). Using ${fallbackLabel}.`;
   } else {
     severity = 'critical';
     showWarning = true;
@@ -153,7 +161,8 @@ export function analyzePriceImpact(priceImpact: number): PriceImpactAnalysis {
   return {
     impact: priceImpact,
     absoluteImpact,
-    shouldUsePSM,
+    shouldUseFallback,
+    shouldUsePSM: shouldUseFallback,
     showWarning,
     shouldBlock,
     severity,

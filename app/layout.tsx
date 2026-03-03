@@ -49,6 +49,9 @@ export const metadata: Metadata = {
     images: ['/card.png?v=1'],
     creator: '@alphixfi',
   },
+  other: {
+    'base:app_id': '69a7222814fc33c964120f3b',
+  },
   robots: {
     index: true,
     follow: true,

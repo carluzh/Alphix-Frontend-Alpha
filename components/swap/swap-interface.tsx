@@ -301,69 +301,60 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   }, [accountAddress, refetchFromTokenBalance, refetchToTokenBalance]);
 
   // Update fromToken balance
+  // NOTE: symbol/usdPrice are read from prevToken inside the updater so they are NOT
+  // deps.  This prevents the effect from firing when the token identity changes but
+  // balance data hasn't resolved yet for the new token (root cause of the "0.000" bug).
   useEffect(() => {
-    const numericBalance = fromTokenBalanceData ? parseFloat(fromTokenBalanceData.formatted) : 0;
-    const displayBalance = formatTokenDisplayAmount(numericBalance.toString(), fromToken.symbol as TokenSymbol);
-
     setFromToken(prevToken => {
-      // Only create a new object if the balance or value has actually changed
+      const numericBalance = fromTokenBalanceData ? parseFloat(fromTokenBalanceData.formatted) : 0;
+      const displayBalance = formatTokenDisplayAmount(numericBalance.toString(), prevToken.symbol as TokenSymbol);
+      const displayValue = `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`;
+
       if (
         fromTokenBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID &&
-        (prevToken.balance !== displayBalance || prevToken.value !== `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`)
+        (prevToken.balance !== displayBalance || prevToken.value !== displayValue)
       ) {
-        return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
+        return { ...prevToken, balance: displayBalance, value: displayValue };
       }
-      
-      // Handle other states if they result in a change
+
       if (fromTokenBalanceError && isConnected && currentChainId === TARGET_CHAIN_ID && prevToken.balance !== "Error") {
         console.error("Error fetching fromToken balance:", fromTokenBalanceError);
         return { ...prevToken, balance: "Error", value: "$0.00" };
       }
-      
+
       if (isConnected && currentChainId !== TARGET_CHAIN_ID && prevToken.balance !== "~") {
         return { ...prevToken, balance: "~", value: "$0.00" };
-      }
-      
-      // Only update balance if we have actual data - prevents setting to "0" when query is disabled
-      if (!isLoadingFromTokenBalance && isConnected && fromTokenBalanceData && prevToken.balance !== displayBalance) {
-        return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
       }
 
       if (!isConnected && prevToken.balance !== "~") {
         return { ...prevToken, balance: "~", value: "$0.00" };
       }
 
-      // If no changes, return the existing token object to prevent re-renders
       return prevToken;
     });
-  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected, fromToken.symbol, fromToken.usdPrice]);
+  }, [fromTokenBalanceData, fromTokenBalanceError, isLoadingFromTokenBalance, currentChainId, isConnected]);
 
-  // Update toToken balance
+  // Update toToken balance (same pattern as fromToken above)
   useEffect(() => {
-    const numericBalance = toTokenBalanceData ? parseFloat(toTokenBalanceData.formatted) : 0;
-    const displayBalance = formatTokenDisplayAmount(numericBalance.toString(), toToken.symbol as TokenSymbol);
-
     setToToken(prevToken => {
-      // Only create a new object if the balance or value has actually changed
+      const numericBalance = toTokenBalanceData ? parseFloat(toTokenBalanceData.formatted) : 0;
+      const displayBalance = formatTokenDisplayAmount(numericBalance.toString(), prevToken.symbol as TokenSymbol);
+      const displayValue = `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`;
+
       if (
         toTokenBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID &&
-        (prevToken.balance !== displayBalance || prevToken.value !== `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`)
+        (prevToken.balance !== displayBalance || prevToken.value !== displayValue)
       ) {
-        return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
+        return { ...prevToken, balance: displayBalance, value: displayValue };
       }
-      
+
       if (toTokenBalanceError && isConnected && currentChainId === TARGET_CHAIN_ID && prevToken.balance !== "Error") {
         console.error("Error fetching toToken balance:", toTokenBalanceError);
         return { ...prevToken, balance: "Error", value: "$0.00" };
       }
-      
+
       if (isConnected && currentChainId !== TARGET_CHAIN_ID && prevToken.balance !== "~") {
         return { ...prevToken, balance: "~", value: "$0.00" };
-      }
-      
-      // Only update balance if we have actual data - prevents setting to "0" when query is disabled
-      if (!isLoadingToTokenBalance && isConnected && toTokenBalanceData && prevToken.balance !== displayBalance) {
-        return { ...prevToken, balance: displayBalance, value: `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}` };
       }
 
       if (!isConnected && prevToken.balance !== "~") {
@@ -372,7 +363,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
 
       return prevToken;
     });
-  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected, toToken.symbol, toToken.usdPrice]);
+  }, [toTokenBalanceData, toTokenBalanceError, isLoadingToTokenBalance, currentChainId, isConnected]);
 
   // formatCurrency + formatTokenAmountDisplay moved into `useSwapTrade`
 

@@ -11,9 +11,11 @@
 
 import { type Address, encodeFunctionData, getAddress, maxUint256 } from 'viem';
 import type { ZapCalculationResult, ZapApprovalStatus, ZapToken } from '../types';
-import { PSM_CONFIG, PERMIT2_ADDRESS, USDS_USDC_POOL_CONFIG } from '../constants';
+import { PSM_CONFIG, PERMIT2_ADDRESS, USDS_USDC_POOL_CONFIG, type ZapPoolConfig } from '../constants';
 import { buildPSMSwapCalldata } from '../routing/psmQuoter';
 import { calculateMinOutput } from '../calculation';
+import { getKyberswapRouterAddress } from '@/lib/aggregators/kyberswap';
+import { isNativeToken } from '@/lib/aggregators/types';
 import type {
   TransactionStep,
   UnifiedYieldApprovalStep,
@@ -62,6 +64,12 @@ export interface GenerateZapStepsParams {
   initialBalance1?: bigint;
   /** Total input amount in USD (for dust percentage calculation) */
   inputAmountUSD?: number;
+  /** Pool configuration (for dynamic token handling) */
+  poolConfig?: ZapPoolConfig;
+  /** Token0 price in USD (for non-stablecoin dust calculation) */
+  token0Price?: number;
+  /** Token1 price in USD (for non-stablecoin dust calculation) */
+  token1Price?: number;
 }
 
 export interface GenerateZapStepsResult {
@@ -122,7 +130,15 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
     initialBalance0,
     initialBalance1,
     inputAmountUSD,
+    poolConfig,
+    token0Price,
+    token1Price,
   } = params;
+
+  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+  const isInputToken0 = inputToken === config.token0.symbol;
+  const inputTokenAddress = isInputToken0 ? config.token0.address : config.token1.address;
+  const isInputNative = isNativeToken(inputTokenAddress);
 
   const steps: TransactionStep[] = [];
   let swapStepCount = 0;
@@ -130,14 +146,16 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
 
   // =========================================================================
   // STEP 1: Approve input token for swap (if needed)
+  // Skip for native tokens (ETH) - no ERC20 approval needed
   // =========================================================================
 
-  if (!approvals.inputTokenApprovedForSwap && calculation.swapAmount > 0n) {
+  if (!isInputNative && !approvals.inputTokenApprovedForSwap && calculation.swapAmount > 0n) {
     const swapApprovalStep = createSwapApprovalStep(
       inputToken,
       calculation.swapAmount,
-      calculation.route.type === 'psm',
-      approvalMode
+      calculation.route.type,
+      approvalMode,
+      poolConfig
     );
     steps.push(swapApprovalStep);
     swapStepCount++;
@@ -149,20 +167,33 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
 
   if (calculation.swapAmount > 0n) {
     if (calculation.route.type === 'psm') {
+      // Calculate the approved swap amount (matches approval step logic)
+      const psmApprovalBuffer = calculation.swapAmount / 10n;
+      const approvedPsmAmount = approvalMode === 'infinite'
+        ? calculation.swapAmount * 2n // effectively unlimited
+        : calculation.swapAmount + (psmApprovalBuffer > 1n ? psmApprovalBuffer : 1n);
+
       const psmSwapStep = createPSMSwapStep(
         inputToken,
         calculation.swapAmount,
         calculation.swapOutputAmount,
-        userAddress
+        userAddress,
+        hookAddress,
+        calculation.swapAmount + calculation.remainingInputAmount,
+        approvedPsmAmount
       );
       steps.push(psmSwapStep);
     } else {
+      // Pool swap or Kyberswap - same step type with swapSource field
+      const swapSource = calculation.route.type === 'kyberswap' ? 'kyberswap' : 'pool';
       const poolSwapStep = createPoolSwapStep(
         inputToken,
         calculation.swapAmount,
         calculation.swapOutputAmount,
         slippageTolerance,
-        userAddress
+        userAddress,
+        swapSource,
+        poolConfig
       );
       steps.push(poolSwapStep);
     }
@@ -182,15 +213,18 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
   const currentToken1Allowance = approvals.allowances?.token1ForHook ?? 0n;
 
   // Need approval if current allowance < actual amount we're depositing
-  const needsToken0Approval = token0Amount > 0n && currentToken0Allowance < token0Amount;
-  const needsToken1Approval = token1Amount > 0n && currentToken1Allowance < token1Amount;
+  // Skip for native tokens (ETH uses msg.value, not ERC20 approve)
+  const isToken0Native = isNativeToken(config.token0.address);
+  const isToken1Native = isNativeToken(config.token1.address);
+  const needsToken0Approval = !isToken0Native && token0Amount > 0n && currentToken0Allowance < token0Amount;
+  const needsToken1Approval = !isToken1Native && token1Amount > 0n && currentToken1Allowance < token1Amount;
 
   if (needsToken0Approval) {
     const token0ApprovalStep = createHookApprovalStep(
-      getAddress(USDS_USDC_POOL_CONFIG.token0.address),
+      getAddress(config.token0.address),
       token0Symbol,
       hookAddress,
-      token0Amount, // Use actual deposit amount
+      token0Amount,
       approvalMode
     );
     steps.push(token0ApprovalStep);
@@ -199,10 +233,10 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
 
   if (needsToken1Approval) {
     const token1ApprovalStep = createHookApprovalStep(
-      getAddress(USDS_USDC_POOL_CONFIG.token1.address),
+      getAddress(config.token1.address),
       token1Symbol,
       hookAddress,
-      token1Amount, // Use actual deposit amount
+      token1Amount,
       approvalMode
     );
     steps.push(token1ApprovalStep);
@@ -228,12 +262,16 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
     token1Address,
     sharesToMint,
     inputToken,
-    token0Amount, // Expected deposit amount for token0
-    token1Amount, // Expected deposit amount for token1
+    token0Amount,
+    token1Amount,
     initialBalance0,
     initialBalance1,
     inputAmountUSD,
-    totalInputAmount // Total input amount for accurate dust calculation
+    totalInputAmount,
+    isToken0Native,
+    token0Price,
+    token1Price,
+    poolConfig
   );
   steps.push(depositStep);
   depositStepCount++;
@@ -247,7 +285,8 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
   console.log(`[generateZapSteps] === ZAP FLOW SUMMARY ===`);
   console.log(`[generateZapSteps] Input: ${totalInputAmount.toString()} ${inputToken} (~$${inputAmountUSD?.toFixed(2) ?? '?'} USD)`);
   console.log(`[generateZapSteps] Route: ${calculation.route.type.toUpperCase()}`);
-  console.log(`[generateZapSteps] Swap: ${calculation.swapAmount.toString()} ${inputToken} → ${calculation.swapOutputAmount.toString()} ${inputToken === 'USDC' ? 'USDS' : 'USDC'}`);
+  const outputToken = isInputToken0 ? config.token1.symbol : config.token0.symbol;
+  console.log(`[generateZapSteps] Swap: ${calculation.swapAmount.toString()} ${inputToken} → ${calculation.swapOutputAmount.toString()} ${outputToken}`);
   console.log(`[generateZapSteps] Keep: ${calculation.remainingInputAmount.toString()} ${inputToken} (for deposit)`);
   console.log(`[generateZapSteps] Deposit amounts: token0=${token0Amount.toString()}, token1=${token1Amount.toString()}`);
   console.log(`[generateZapSteps] Expected shares: ${sharesToMint.toString()}`);
@@ -276,23 +315,32 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
 function createSwapApprovalStep(
   inputToken: ZapToken,
   amount: bigint,
-  usePSM: boolean,
-  approvalMode: 'exact' | 'infinite' = 'exact'
+  routeType: string,
+  approvalMode: 'exact' | 'infinite' = 'exact',
+  poolConfig?: ZapPoolConfig
 ): ZapSwapApprovalStep {
-  const tokenAddress = inputToken === 'USDS'
-    ? getAddress(USDS_USDC_POOL_CONFIG.token0.address)
-    : getAddress(USDS_USDC_POOL_CONFIG.token1.address);
+  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+  const isInputToken0 = inputToken === config.token0.symbol;
+  const tokenAddress = getAddress(isInputToken0 ? config.token0.address : config.token1.address);
 
-  // Spender is PSM for PSM swaps, Permit2 for pool swaps
-  const spender = usePSM ? getAddress(PSM_CONFIG.address) : PERMIT2_ADDRESS;
+  // Spender based on route type
+  let spender: Address;
+  if (routeType === 'psm') {
+    spender = getAddress(PSM_CONFIG.address);
+  } else if (routeType === 'kyberswap') {
+    spender = getAddress(getKyberswapRouterAddress());
+  } else {
+    spender = PERMIT2_ADDRESS;
+  }
 
-  // Use exact amount or infinite based on user preference
-  // For exact mode, add minimal buffer (+1 wei) - sufficient for ERC20 approvals
+  const usePSM = routeType === 'psm';
+  const psmBuffer = amount / 10n;
   const approvalAmount = approvalMode === 'infinite'
     ? maxUint256
-    : amount + 1n;
+    : usePSM
+      ? amount + (psmBuffer > 1n ? psmBuffer : 1n)
+      : amount + 1n;
 
-  // Build approval calldata
   const calldata = encodeFunctionData({
     abi: ERC20_APPROVE_ABI,
     functionName: 'approve',
@@ -320,7 +368,10 @@ function createPSMSwapStep(
   inputToken: ZapToken,
   inputAmount: bigint,
   expectedOutputAmount: bigint,
-  recipient: Address
+  recipient: Address,
+  hookAddress?: Address,
+  totalInputAmount?: bigint,
+  approvedSwapAmount?: bigint
 ): ZapPSMSwapStep {
   const direction = inputToken === 'USDS' ? 'USDS_TO_USDC' : 'USDC_TO_USDS';
   // For PSM3, apply minimal slippage (0.1%) since it's 1:1
@@ -343,42 +394,47 @@ function createPSMSwapStep(
       data: calldata,
       value: 0n,
     },
+    // Data for just-in-time recalculation at execution time
+    hookAddress,
+    totalInputAmount,
+    inputToken,
+    approvedSwapAmount,
   };
 }
 
 /**
- * Create pool swap step.
+ * Create pool swap step (also used for Kyberswap route).
  *
- * Note: This creates a placeholder - actual calldata would be built
- * by the swap API with proper routing.
+ * Note: This creates a placeholder - actual calldata is built
+ * at execution time via the swap API.
  */
 function createPoolSwapStep(
   inputToken: ZapToken,
   inputAmount: bigint,
   expectedOutputAmount: bigint,
   slippageTolerance: number,
-  recipient: Address
+  recipient: Address,
+  swapSource: 'pool' | 'kyberswap' = 'pool',
+  poolConfig?: ZapPoolConfig
 ): ZapPoolSwapStep {
-  const outputToken: ZapToken = inputToken === 'USDS' ? 'USDC' : 'USDS';
+  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+  const isInputToken0 = inputToken === config.token0.symbol;
+  const outputToken: ZapToken = isInputToken0 ? config.token1.symbol : config.token0.symbol;
   const minOutputAmount = calculateMinOutput(expectedOutputAmount, slippageTolerance);
 
   // Deadline 20 minutes from now
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 20 * 60);
 
-  // Placeholder - actual calldata built at execution time via API
   return {
     type: TransactionStepType.ZapPoolSwap,
     inputToken,
-    inputTokenAddress: inputToken === 'USDS'
-      ? getAddress(USDS_USDC_POOL_CONFIG.token0.address)
-      : getAddress(USDS_USDC_POOL_CONFIG.token1.address),
+    inputTokenAddress: getAddress(isInputToken0 ? config.token0.address : config.token1.address),
     outputToken,
-    outputTokenAddress: outputToken === 'USDS'
-      ? getAddress(USDS_USDC_POOL_CONFIG.token0.address)
-      : getAddress(USDS_USDC_POOL_CONFIG.token1.address),
+    outputTokenAddress: getAddress(isInputToken0 ? config.token1.address : config.token0.address),
     inputAmount,
     minOutputAmount,
     deadline,
+    swapSource,
     txRequest: {
       to: '0x0000000000000000000000000000000000000000' as Address, // Placeholder
       data: '0x' as `0x${string}`, // Placeholder
@@ -398,10 +454,13 @@ function createHookApprovalStep(
   approvalMode: 'exact' | 'infinite' = 'exact'
 ): UnifiedYieldApprovalStep {
   // Use exact amount or infinite based on user preference
-  // For exact mode, add minimal buffer (+1 wei) - sufficient for ERC20 approvals
+  // For exact mode, add ~3% buffer to accommodate post-swap balance variations
+  // (the dynamic deposit handler may deposit slightly more than expected
+  // if the swap was favorable, up to this buffer ceiling)
+  const buffer = amount / 33n; // ~3%
   const approvalAmount = approvalMode === 'infinite'
     ? maxUint256
-    : amount + 1n;
+    : amount + (buffer > 1n ? buffer : 1n);
 
   const calldata = encodeFunctionData({
     abi: ERC20_APPROVE_ABI,
@@ -440,14 +499,20 @@ function createZapDynamicDepositStep(
   token0Address: Address,
   token1Address: Address,
   fallbackSharesEstimate: bigint,
-  inputToken: 'USDS' | 'USDC',
+  inputToken: ZapToken,
   expectedDepositAmount0: bigint,
   expectedDepositAmount1: bigint,
   initialBalance0?: bigint,
   initialBalance1?: bigint,
   inputAmountUSD?: number,
-  inputAmount?: bigint
+  inputAmount?: bigint,
+  isToken0Native?: boolean,
+  token0Price?: number,
+  token1Price?: number,
+  poolConfig?: ZapPoolConfig
 ): ZapDynamicDepositStep {
+  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+
   return {
     type: TransactionStepType.ZapDynamicDeposit,
     hookAddress,
@@ -456,10 +521,13 @@ function createZapDynamicDepositStep(
     token1Address,
     token0Symbol,
     token1Symbol,
-    token0Decimals: USDS_USDC_POOL_CONFIG.token0.decimals,
-    token1Decimals: USDS_USDC_POOL_CONFIG.token1.decimals,
+    token0Decimals: config.token0.decimals,
+    token1Decimals: config.token1.decimals,
     fallbackSharesEstimate,
     inputToken,
+    isToken0Native,
+    token0Price,
+    token1Price,
     expectedDepositAmount0,
     expectedDepositAmount1,
     initialBalance0,

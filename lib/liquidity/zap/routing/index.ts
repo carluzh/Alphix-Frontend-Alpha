@@ -16,6 +16,7 @@ export {
 export {
   selectSwapRoute,
   getPoolQuote,
+  getPoolMidPrice,
   compareRoutes,
   type RouteSelectionParams,
   type RouteSelectionResult,

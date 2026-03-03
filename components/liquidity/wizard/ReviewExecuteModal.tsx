@@ -73,6 +73,8 @@ import {
 
 // Zap (single-token deposit) support
 import { useZapPreview, useZapApprovals, generateZapSteps, isPreviewFresh, isZapEligiblePool, type ZapToken } from '@/lib/liquidity/zap';
+import { getZapPoolConfig } from '@/lib/liquidity/zap/constants';
+import { isNativeToken } from '@/lib/aggregators/types';
 
 // Map executor step types to UI step types
 function mapExecutorStepsToUI(
@@ -389,10 +391,10 @@ export function ReviewExecuteModal() {
   const token0Config = pool ? tokens[pool.currency0.symbol] : null;
   const token1Config = pool ? tokens[pool.currency1.symbol] : null;
 
-  // Determine if using zap mode (only for USDS/USDC pool)
+  // Determine if using zap mode (for Unified Yield pools)
   const isZapMode = isUnifiedYield && isZapEligiblePool(state.poolId) && state.depositMode === 'zap' && state.zapInputToken !== null;
   const zapInputToken: ZapToken | undefined = isZapMode
-    ? (state.zapInputToken === 'token0' ? 'USDS' : 'USDC')
+    ? (state.zapInputToken === 'token0' ? pool?.currency0.symbol as ZapToken : pool?.currency1.symbol as ZapToken)
     : undefined;
   const zapInputAmount = isZapMode
     ? (state.zapInputToken === 'token0' ? state.amount0 : state.amount1)
@@ -874,15 +876,16 @@ export function ReviewExecuteModal() {
         const userSettings = getStoredUserSettings();
 
         // Calculate token amounts after swap
-        // If input is USDS (token0): we have remaining USDS + swapped USDC
-        // If input is USDC (token1): we have swapped USDS + remaining USDC
+        // If input is token0: we have remaining token0 + swapped token1
+        // If input is token1: we have swapped token0 + remaining token1
         const inputToken = preview.inputTokenInfo.symbol as ZapToken;
-        const token0Amount = inputToken === 'USDS'
-          ? preview.remainingInputAmount  // Remaining USDS
-          : preview.swapOutputAmount;      // USDS from swap
-        const token1Amount = inputToken === 'USDC'
-          ? preview.remainingInputAmount  // Remaining USDC
-          : preview.swapOutputAmount;      // USDC from swap
+        const isInputToken0 = inputToken === pool.currency0.symbol;
+        const token0Amount = isInputToken0
+          ? preview.remainingInputAmount  // Remaining input (token0)
+          : preview.swapOutputAmount;      // Swapped output (token0)
+        const token1Amount = isInputToken0
+          ? preview.swapOutputAmount       // Swapped output (token1)
+          : preview.remainingInputAmount;  // Remaining input (token1)
 
         // Apply haircut to shares to account for yield accrual between preview and execution
         // The pool accrues yield block-by-block, so requesting the exact preview shares
@@ -892,23 +895,29 @@ export function ReviewExecuteModal() {
         // Query initial balances for dust tracking (blockTag: latest to bypass cache)
         let initialBalance0: bigint | undefined;
         let initialBalance1: bigint | undefined;
+        const isToken0Native = isNativeToken(pool.currency0.address);
+        const isToken1Native = isNativeToken(pool.currency1.address);
         if (publicClient) {
           try {
             const [balance0, balance1] = await Promise.all([
-              publicClient.readContract({
-                address: pool.currency0.address as Address,
-                abi: ERC20_BALANCE_ABI,
-                functionName: 'balanceOf',
-                args: [address],
-                blockTag: 'latest',
-              }) as Promise<bigint>,
-              publicClient.readContract({
-                address: pool.currency1.address as Address,
-                abi: ERC20_BALANCE_ABI,
-                functionName: 'balanceOf',
-                args: [address],
-                blockTag: 'latest',
-              }) as Promise<bigint>,
+              isToken0Native
+                ? publicClient.getBalance({ address, blockTag: 'latest' })
+                : publicClient.readContract({
+                    address: pool.currency0.address as Address,
+                    abi: ERC20_BALANCE_ABI,
+                    functionName: 'balanceOf',
+                    args: [address],
+                    blockTag: 'latest',
+                  }) as Promise<bigint>,
+              isToken1Native
+                ? publicClient.getBalance({ address, blockTag: 'latest' })
+                : publicClient.readContract({
+                    address: pool.currency1.address as Address,
+                    abi: ERC20_BALANCE_ABI,
+                    functionName: 'balanceOf',
+                    args: [address],
+                    blockTag: 'latest',
+                  }) as Promise<bigint>,
             ]);
             initialBalance0 = balance0;
             initialBalance1 = balance1;
@@ -921,8 +930,7 @@ export function ReviewExecuteModal() {
           }
         }
 
-        // Calculate input amount in USD (stablecoins ≈ $1)
-        const inputDecimals = inputToken === 'USDS' ? 18 : 6;
+        // Calculate input amount in USD
         const inputAmountUSD = Number(preview.formatted.inputAmount);
 
         const zapStepsResult = generateZapSteps({
@@ -944,6 +952,7 @@ export function ReviewExecuteModal() {
           initialBalance0,
           initialBalance1,
           inputAmountUSD,
+          poolConfig: getZapPoolConfig(state.poolId!) ?? undefined,
         });
 
         // Cast zap steps to TransactionStep[] for UI display
@@ -1197,10 +1206,10 @@ export function ReviewExecuteModal() {
                   <>
                     {/* Input token - show actual values (already known) */}
                     <TokenInfoRow
-                      symbol={zapInputToken === 'USDS' ? pool.currency0.symbol : pool.currency1.symbol}
-                      icon={zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon}
+                      symbol={state.zapInputToken === 'token0' ? pool.currency0.symbol : pool.currency1.symbol}
+                      icon={state.zapInputToken === 'token0' ? token0Config?.icon : token1Config?.icon}
                       amount={zapInputAmount || '0'}
-                      usdValue={usdValues?.[zapInputToken === 'USDS' ? 'TOKEN0' : 'TOKEN1'] || '0.00'}
+                      usdValue={usdValues?.[state.zapInputToken === 'token0' ? 'TOKEN0' : 'TOKEN1'] || '0.00'}
                     />
                     {/* Skeleton for calculated Swap info */}
                     <div className="flex flex-col gap-2 py-2 px-3 rounded-lg bg-muted/30">
@@ -1221,9 +1230,9 @@ export function ReviewExecuteModal() {
                 )}
                 {/* Zap mode error state */}
                 {isZapMode && zapPreviewQuery.isError && !zapPreviewQuery.isFetching && (
-                  <div className="flex flex-col gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                  <div className="flex flex-col gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 overflow-hidden">
                     <span className="text-sm text-red-400">Failed to calculate zap preview</span>
-                    <span className="text-xs text-muted-foreground">{zapPreviewQuery.error?.message}</span>
+                    <span className="text-xs text-muted-foreground break-words line-clamp-2">{zapPreviewQuery.error?.message}</span>
                   </div>
                 )}
                 {/* Zap mode: Show single input token with swap info */}
@@ -1231,10 +1240,10 @@ export function ReviewExecuteModal() {
                   <>
                     {/* Input token */}
                     <TokenInfoRow
-                      symbol={zapInputToken === 'USDS' ? pool.currency0.symbol : pool.currency1.symbol}
-                      icon={zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon}
+                      symbol={state.zapInputToken === 'token0' ? pool.currency0.symbol : pool.currency1.symbol}
+                      icon={state.zapInputToken === 'token0' ? token0Config?.icon : token1Config?.icon}
                       amount={zapInputAmount || '0'}
-                      usdValue={usdValues?.[zapInputToken === 'USDS' ? 'TOKEN0' : 'TOKEN1'] || '0.00'}
+                      usdValue={usdValues?.[state.zapInputToken === 'token0' ? 'TOKEN0' : 'TOKEN1'] || '0.00'}
                     />
                     {/* Swap info */}
                     <div className="flex flex-col gap-2 py-2 px-3 rounded-lg bg-muted/30">
@@ -1248,9 +1257,9 @@ export function ReviewExecuteModal() {
                         <span className="text-muted-foreground">Route</span>
                         <div className="flex items-center gap-1">
                           {/* Input token icon */}
-                          {(zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon) ? (
+                          {(state.zapInputToken === 'token0' ? token0Config?.icon : token1Config?.icon) ? (
                             <TokenImage
-                              src={(zapInputToken === 'USDS' ? token0Config?.icon : token1Config?.icon)!}
+                              src={(state.zapInputToken === 'token0' ? token0Config?.icon : token1Config?.icon)!}
                               alt={zapInputToken || ''}
                               size={16}
                             />
@@ -1265,17 +1274,17 @@ export function ReviewExecuteModal() {
                           </svg>
                           {/* Route label */}
                           <span className="text-xs text-muted-foreground">
-                            {zapPreviewQuery.data.route.type === 'psm' ? 'PSM' : 'Unified Pool'}
+                            {zapPreviewQuery.data.route.type === 'psm' ? 'PSM' : zapPreviewQuery.data.route.type === 'kyberswap' ? 'Kyberswap' : 'Unified Pool'}
                           </span>
                           {/* Chevron */}
                           <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
                             <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
                           </svg>
                           {/* Output token icon */}
-                          {(zapInputToken === 'USDS' ? token1Config?.icon : token0Config?.icon) ? (
+                          {(state.zapInputToken === 'token0' ? token1Config?.icon : token0Config?.icon) ? (
                             <TokenImage
-                              src={(zapInputToken === 'USDS' ? token1Config?.icon : token0Config?.icon)!}
-                              alt={zapInputToken === 'USDS' ? 'USDC' : 'USDS'}
+                              src={(state.zapInputToken === 'token0' ? token1Config?.icon : token0Config?.icon)!}
+                              alt={state.zapInputToken === 'token0' ? pool?.currency1.symbol : pool?.currency0.symbol}
                               size={16}
                             />
                           ) : (
@@ -1285,6 +1294,12 @@ export function ReviewExecuteModal() {
                           )}
                         </div>
                       </div>
+                      {zapPreviewQuery.data.route.priceImpact >= 3 && (
+                        <div className={`flex items-center gap-1.5 text-xs ${zapPreviewQuery.data.route.priceImpact >= 5 ? 'text-red-400' : 'text-yellow-400'}`}>
+                          <AlertCircle className="w-3 h-3 shrink-0" />
+                          {zapPreviewQuery.data.route.priceImpact >= 5 ? 'Very high' : 'High'} price impact ({zapPreviewQuery.data.route.priceImpact.toFixed(2)}%)
+                        </div>
+                      )}
                       <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">Expected shares</span>
                         <span>

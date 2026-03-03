@@ -12,20 +12,10 @@ import { type Address, formatUnits, parseUnits } from 'viem';
 import { usePublicClient } from 'wagmi';
 
 import { findOptimalSwapAmount } from '../calculation';
-import { USDS_USDC_POOL_CONFIG, MAX_PREVIEW_AGE_MS } from '../constants';
+import { USDS_USDC_POOL_CONFIG, MAX_PREVIEW_AGE_MS, getZapPoolConfigByHook } from '../constants';
 import type { ZapToken, ZapPreviewResult, UseZapPreviewParams } from '../types';
 import { ZapError, ZapErrorCode } from '../types';
 import { UNIFIED_YIELD_HOOK_ABI } from '../../unified-yield/abi/unifiedYieldHookABI';
-
-// =============================================================================
-// CONSTANTS
-// =============================================================================
-
-/** USDS decimals */
-const USDS_DECIMALS = 18;
-
-/** USDC decimals */
-const USDC_DECIMALS = 6;
 
 // =============================================================================
 // HOOK
@@ -56,8 +46,17 @@ export function useZapPreview(params: UseZapPreviewParams) {
         throw new ZapError(ZapErrorCode.INVALID_INPUT, 'Invalid input amount');
       }
 
-      // Parse input amount to wei
-      const inputDecimals = inputToken === 'USDS' ? USDS_DECIMALS : USDC_DECIMALS;
+      // Resolve pool config from hook address
+      const poolConfig = getZapPoolConfigByHook(hookAddress) ?? {
+        ...USDS_USDC_POOL_CONFIG,
+        fallbackRoute: 'psm' as const,
+        priceImpactThreshold: 0.01,
+        isPegged: true,
+      };
+
+      // Resolve token decimals from pool config
+      const isInputToken0 = inputToken === poolConfig.token0.symbol;
+      const inputDecimals = isInputToken0 ? poolConfig.token0.decimals : poolConfig.token1.decimals;
       const inputAmountWei = parseUnits(inputAmount, inputDecimals);
 
       // Use binary search to find optimal swap amount
@@ -66,14 +65,14 @@ export function useZapPreview(params: UseZapPreviewParams) {
         inputAmount: inputAmountWei,
         hookAddress,
         publicClient,
+        poolConfig,
       });
 
-      // Calculate leftover amounts
-      // After swap: we have remainingInput of inputToken and swapOutput of outputToken
-      // For deposit: we need requiredOther of outputToken
-      // Leftover = swapOutput - requiredOther (in output token)
-      const outputToken: ZapToken = inputToken === 'USDS' ? 'USDC' : 'USDS';
-      const outputDecimals = outputToken === 'USDS' ? USDS_DECIMALS : USDC_DECIMALS;
+      // Determine output token from pool config
+      const outputToken: ZapToken = isInputToken0
+        ? poolConfig.token1.symbol
+        : poolConfig.token0.symbol;
+      const outputDecimals = isInputToken0 ? poolConfig.token1.decimals : poolConfig.token0.decimals;
 
       // Dust is the difference between swap output and what Hook needs
       const dustInOutputToken =
@@ -81,9 +80,9 @@ export function useZapPreview(params: UseZapPreviewParams) {
           ? optimalResult.swapOutput - optimalResult.requiredOther
           : 0n;
 
-      // Map dust to token0/token1 based on output token
-      const leftover0 = outputToken === 'USDS' ? dustInOutputToken : 0n;
-      const leftover1 = outputToken === 'USDC' ? dustInOutputToken : 0n;
+      // Map dust to token0/token1 based on which is the output
+      const leftover0 = !isInputToken0 ? dustInOutputToken : 0n;
+      const leftover1 = isInputToken0 ? dustInOutputToken : 0n;
 
       // Get on-chain share valuation
       let shareValue: ZapPreviewResult['shareValue'] | undefined;
@@ -97,14 +96,13 @@ export function useZapPreview(params: UseZapPreviewParams) {
           args: [optimalResult.expectedShares],
         }) as [bigint, bigint];
 
-        const formatted0 = formatUnits(shareAmount0, USDS_DECIMALS);
-        const formatted1 = formatUnits(shareAmount1, USDC_DECIMALS);
+        const formatted0 = formatUnits(shareAmount0, poolConfig.token0.decimals);
+        const formatted1 = formatUnits(shareAmount1, poolConfig.token1.decimals);
 
         console.log('[useZapPreview] Share valuation result:', {
           expectedShares: formatUnits(optimalResult.expectedShares, 18),
           shareAmount0: formatted0,
           shareAmount1: formatted1,
-          totalUSD: parseFloat(formatted0) + parseFloat(formatted1),
           inputAmount,
         });
 
@@ -118,6 +116,10 @@ export function useZapPreview(params: UseZapPreviewParams) {
         // Non-critical - continue without share valuation
         console.warn('[useZapPreview] Failed to get share valuation:', e);
       }
+
+      // Resolve token addresses from pool config
+      const inputTokenAddress = isInputToken0 ? poolConfig.token0.address : poolConfig.token1.address;
+      const outputTokenAddress = isInputToken0 ? poolConfig.token1.address : poolConfig.token0.address;
 
       // Build preview result
       const result: ZapPreviewResult = {
@@ -137,24 +139,18 @@ export function useZapPreview(params: UseZapPreviewParams) {
           swapOutputAmount: formatUnits(optimalResult.swapOutput, outputDecimals),
           remainingInputAmount: formatUnits(optimalResult.remainingInput, inputDecimals),
           expectedShares: formatUnits(optimalResult.expectedShares, 18),
-          leftoverToken0: formatUnits(leftover0, USDS_DECIMALS),
-          leftoverToken1: formatUnits(leftover1, USDC_DECIMALS),
+          leftoverToken0: formatUnits(leftover0, poolConfig.token0.decimals),
+          leftoverToken1: formatUnits(leftover1, poolConfig.token1.decimals),
         },
         inputTokenInfo: {
           symbol: inputToken,
           decimals: inputDecimals,
-          address:
-            inputToken === 'USDS'
-              ? USDS_USDC_POOL_CONFIG.token0.address
-              : USDS_USDC_POOL_CONFIG.token1.address,
+          address: inputTokenAddress,
         },
         outputTokenInfo: {
           symbol: outputToken,
           decimals: outputDecimals,
-          address:
-            outputToken === 'USDS'
-              ? USDS_USDC_POOL_CONFIG.token0.address
-              : USDS_USDC_POOL_CONFIG.token1.address,
+          address: outputTokenAddress,
         },
         shareValue,
         timestamp: Date.now(),

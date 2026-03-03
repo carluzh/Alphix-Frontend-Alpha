@@ -20,8 +20,8 @@ import {
     getToken,
     NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
-// State overrides for USDS simulation (Pool Manager has limited USDS balance)
-import { getUsdsQuoteStateOverridesViem, needsUsdsStateOverride } from '../../../lib/swap/quote-state-override';
+// State overrides for rehypothecated pools (Pool Manager has limited on-chain balance)
+import { needsUsdsStateOverride, getSwapSimulationStateOverrides } from '../../../lib/swap/quote-state-override';
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
 import { getUniversalRouterAddress, getStateViewAddress } from '../../../lib/pools-config';
 import { findBestRoute, SwapRoute, routeToString } from '@/lib/swap/routing-engine';
@@ -828,10 +828,10 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         // Action order is now SETTLE → SWAP → TAKE, which ensures tokens are in Pool Manager
         // before the swap executes, allowing hooks to access them during the swap.
         //
-        // For USDS swaps: Pool Manager only has ~375 USDS on-chain (rest is rehypothecated).
-        // We use state overrides to give Pool Manager a virtual 10k USDS balance during simulation
-        // so the eth_call doesn't fail. The actual on-chain swap will work because SETTLE first
-        // brings tokens into Pool Manager before the swap executes.
+        // Rehypothecated pools (Unified Yield): Pool Manager has limited on-chain balance
+        // because liquidity is deposited in yield vaults (Sky for USDS, Aave for ETH).
+        // We use state overrides to give Pool Manager virtual token balances during simulation.
+        // The actual on-chain swap works because the hook brings tokens back during execution.
         //
         // USDS ExactOut: Skip simulation entirely. The rehypothecated liquidity hook has complex
         // interactions with the Sky vault that can't be fully replicated via state overrides.
@@ -840,7 +840,13 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         const isUsdsExactOut = isUsdsInput && swapType === 'ExactOut';
 
         if (!isUsdsExactOut) {
-            const stateOverride = isUsdsInput ? getUsdsQuoteStateOverridesViem() : undefined;
+            // Generate state overrides for rehypothecated pools (USDS balance, native ETH balance)
+            const poolHooks = poolConfig?.pool?.hooks;
+            const stateOverride = getSwapSimulationStateOverrides(
+                INPUT_TOKEN.address,
+                OUTPUT_TOKEN.address,
+                poolHooks
+            );
 
             await publicClient.simulateContract({
                 account: getAddress(userAddress),

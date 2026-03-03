@@ -1,20 +1,18 @@
 /**
  * State Override Utilities for V4 Quoter
  *
- * The USDS/USDC pool uses rehypothecated liquidity where USDS is deposited into
- * a Sky vault. During quotes, the V4 Pool Manager singleton only holds ~375 USDS
- * (the amount not currently rehypothecated), limiting quote sizes.
+ * Rehypothecated pools (Unified Yield) deposit liquidity into yield vaults,
+ * so the Pool Manager singleton only holds a fraction of the actual balance.
+ * During eth_call simulation, swaps that exceed the on-chain balance fail.
  *
- * Background:
- * - The Pool Manager singleton holds actual token balances for all V4 pools
- * - USDS liquidity is mostly rehypothecated to the Sky vault for yield
- * - Pool Manager only has ~375 USDS available
- * - During eth_call simulation, swaps above this limit fail
+ * Affected pools:
+ * - USDS/USDC: USDS rehypothecated to Sky vault (~375 USDS on-chain)
+ * - ETH/USDC: ETH rehypothecated to Aave vault (limited on-chain ETH)
  *
- * Solution: Override Pool Manager's USDS balance during eth_call simulation
+ * Solution: Override Pool Manager's token balances during eth_call simulation
  */
 
-import { keccak256, encodeAbiParameters, parseAbiParameters, toHex, pad, type Hex } from 'viem';
+import { keccak256, encodeAbiParameters, parseAbiParameters, toHex, pad, parseEther, type Hex } from 'viem';
 
 // =============================================================================
 // CONSTANTS
@@ -136,6 +134,47 @@ export function getUsdsQuoteStateOverridesViem(): Array<{
 }
 
 // =============================================================================
+// NATIVE ETH BALANCE OVERRIDE
+// =============================================================================
+
+/** Native token address (zero address) */
+const NATIVE_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/**
+ * Native ETH balance override for Pool Manager simulation (10,000 ETH)
+ * Allows simulation of swaps where ETH output comes from rehypothecated liquidity
+ */
+const NATIVE_ETH_OVERRIDE_BALANCE = parseEther('10000'); // 10,000 ETH
+
+/**
+ * Generate Pool Manager native ETH balance override for viem's simulateContract.
+ * Used when the swap outputs native ETH from a rehypothecated pool.
+ */
+export function getPoolManagerEthBalanceOverrideViem(): Array<{
+  address: `0x${string}`;
+  balance: bigint;
+}> {
+  return [
+    {
+      address: POOL_MANAGER_ADDRESS as `0x${string}`,
+      balance: NATIVE_ETH_OVERRIDE_BALANCE,
+    },
+  ];
+}
+
+/**
+ * Generate Pool Manager native ETH balance override for ethers.js eth_call.
+ * Used by get-quote.ts for V4Quoter.
+ */
+export function getPoolManagerEthBalanceOverrideEthers(): Record<string, { balance: string }> {
+  return {
+    [POOL_MANAGER_ADDRESS.toLowerCase()]: {
+      balance: `0x${NATIVE_ETH_OVERRIDE_BALANCE.toString(16)}`,
+    },
+  };
+}
+
+// =============================================================================
 // QUOTE HELPER FUNCTIONS
 // =============================================================================
 
@@ -150,6 +189,68 @@ export function getUsdsQuoteStateOverridesViem(): Array<{
  */
 export function needsUsdsStateOverride(fromTokenAddress: string): boolean {
   return fromTokenAddress.toLowerCase() === USDS_ADDRESS.toLowerCase();
+}
+
+/**
+ * Check if a token address is native ETH
+ */
+function isNativeTokenAddress(address: string): boolean {
+  return address.toLowerCase() === NATIVE_TOKEN_ADDRESS.toLowerCase();
+}
+
+/**
+ * Check if the swap involves a rehypothecated pool that needs simulation state overrides.
+ * Returns true if either the input or output is from a rehypothecated pool.
+ *
+ * @param inputTokenAddress - Input token address
+ * @param outputTokenAddress - Output token address
+ * @param poolHooks - The pool's hooks address (non-zero = hooked/potentially rehypothecated)
+ */
+export function needsRehypothecatedOverride(
+  inputTokenAddress: string,
+  outputTokenAddress: string,
+  poolHooks?: string
+): boolean {
+  // Only rehypothecated pools have non-zero hooks
+  if (!poolHooks || poolHooks === NATIVE_TOKEN_ADDRESS) return false;
+  // Check if either token is rehypothecated (USDS or native ETH)
+  return needsUsdsStateOverride(inputTokenAddress) ||
+    needsUsdsStateOverride(outputTokenAddress) ||
+    isNativeTokenAddress(inputTokenAddress) ||
+    isNativeTokenAddress(outputTokenAddress);
+}
+
+/**
+ * Generate combined state overrides for a swap simulation.
+ * Handles both USDS ERC20 balance overrides and native ETH balance overrides.
+ *
+ * @param inputTokenAddress - Input token address
+ * @param outputTokenAddress - Output token address
+ * @param poolHooks - The pool's hooks address
+ * @returns State override array for viem simulateContract, or undefined if no overrides needed
+ */
+export function getSwapSimulationStateOverrides(
+  inputTokenAddress: string,
+  outputTokenAddress: string,
+  poolHooks?: string
+): any[] | undefined {
+  if (!needsRehypothecatedOverride(inputTokenAddress, outputTokenAddress, poolHooks)) {
+    return undefined;
+  }
+
+  const overrides: any[] = [];
+
+  // Add USDS ERC20 balance override if USDS is involved
+  if (needsUsdsStateOverride(inputTokenAddress) || needsUsdsStateOverride(outputTokenAddress)) {
+    overrides.push(...getUsdsQuoteStateOverridesViem());
+  }
+
+  // Add native ETH balance override if native ETH is involved
+  if (isNativeTokenAddress(inputTokenAddress) || isNativeTokenAddress(outputTokenAddress)) {
+    overrides.push(...getPoolManagerEthBalanceOverrideViem());
+  }
+
+  return overrides.length > 0 ? overrides : undefined;
 }
 
 // =============================================================================

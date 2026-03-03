@@ -4,6 +4,5 @@
 
 export {
   reportZapDust,
-  calculateDustFromDelta,
   type DustReport,
 } from './reportZapDust';

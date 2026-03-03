@@ -13,8 +13,10 @@ import { useQuery } from '@tanstack/react-query';
 import { type Address, erc20Abi } from 'viem';
 import { usePublicClient } from 'wagmi';
 
-import { PSM_CONFIG, USDS_USDC_POOL_CONFIG, PERMIT2_ADDRESS, USDC_TO_USDS_MULTIPLIER, USDS_TO_USDC_DIVISOR } from '../constants';
+import { PSM_CONFIG, USDS_USDC_POOL_CONFIG, PERMIT2_ADDRESS, getZapPoolConfigByHook } from '../constants';
 import type { ZapToken, ZapSwapRoute, ZapApprovalStatus, RouteDetails } from '../types';
+import { getKyberswapRouterAddress } from '@/lib/aggregators/kyberswap';
+import { isNativeToken } from '@/lib/aggregators/types';
 
 // =============================================================================
 // TYPES
@@ -82,7 +84,7 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
       inputToken,
       swapAmount?.toString(),
       // Serialize route to avoid BigInt in query key (sqrtPriceX96)
-      route ? `${route.type}-${route.priceImpact}-${route.feeBps}` : undefined,
+      route ? `${route.type}-${route.priceImpact}-${'feeBps' in route ? route.feeBps : 'n/a'}` : undefined,
       hookAddress,
       inputAmount?.toString(),
     ],
@@ -91,73 +93,77 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
         throw new Error('Missing required parameters');
       }
 
-      // Determine token addresses
-      const inputTokenAddress =
-        inputToken === 'USDS'
-          ? USDS_USDC_POOL_CONFIG.token0.address
-          : USDS_USDC_POOL_CONFIG.token1.address;
+      // Resolve pool config
+      const poolConfig = getZapPoolConfigByHook(hookAddress) ?? {
+        ...USDS_USDC_POOL_CONFIG,
+        fallbackRoute: 'psm' as const,
+        priceImpactThreshold: 0.01,
+        isPegged: true,
+      };
 
-      const outputToken: ZapToken = inputToken === 'USDS' ? 'USDC' : 'USDS';
-      const outputTokenAddress =
-        outputToken === 'USDS'
-          ? USDS_USDC_POOL_CONFIG.token0.address
-          : USDS_USDC_POOL_CONFIG.token1.address;
+      const isInputToken0 = inputToken === poolConfig.token0.symbol;
+      const inputTokenAddress = isInputToken0 ? poolConfig.token0.address : poolConfig.token1.address;
+      const isInputNative = isNativeToken(inputTokenAddress);
+      const isToken0Native = isNativeToken(poolConfig.token0.address);
+      const isToken1Native = isNativeToken(poolConfig.token1.address);
 
       // Determine swap spender based on route type
-      const swapSpender = route.type === 'psm' ? PSM_CONFIG.address : PERMIT2_ADDRESS;
+      let swapSpender: Address;
+      if (route.type === 'psm') {
+        swapSpender = PSM_CONFIG.address;
+      } else if (route.type === 'kyberswap') {
+        swapSpender = getKyberswapRouterAddress() as Address;
+      } else {
+        swapSpender = PERMIT2_ADDRESS;
+      }
 
-      // Fetch all allowances in parallel
-      const [inputAllowanceForSwap, token0AllowanceForHook, token1AllowanceForHook] =
-        await Promise.all([
-          // Input token allowance for swap
-          publicClient.readContract({
+      // Fetch allowances (skip for native tokens)
+      const inputAllowanceForSwap = isInputNative
+        ? swapAmount // Native tokens don't need approval
+        : await publicClient.readContract({
             address: inputTokenAddress,
             abi: erc20Abi,
             functionName: 'allowance',
             args: [userAddress, swapSpender],
-          }),
-          // USDS allowance for Hook
-          publicClient.readContract({
-            address: USDS_USDC_POOL_CONFIG.token0.address,
+          });
+
+      const token0AllowanceForHook = isToken0Native
+        ? BigInt(Number.MAX_SAFE_INTEGER) // Native token: no approval needed (uses msg.value)
+        : await publicClient.readContract({
+            address: poolConfig.token0.address,
             abi: erc20Abi,
             functionName: 'allowance',
             args: [userAddress, hookAddress],
-          }),
-          // USDC allowance for Hook
-          publicClient.readContract({
-            address: USDS_USDC_POOL_CONFIG.token1.address,
+          });
+
+      const token1AllowanceForHook = isToken1Native
+        ? BigInt(Number.MAX_SAFE_INTEGER)
+        : await publicClient.readContract({
+            address: poolConfig.token1.address,
             abi: erc20Abi,
             functionName: 'allowance',
             args: [userAddress, hookAddress],
-          }),
-        ]);
+          });
 
       // Calculate required amounts
-      // For swap: need to approve the swap amount
       const requiredSwapApproval = swapAmount;
-
-      // For deposit: estimate required amounts after swap
-      // The remaining input + swap output will be deposited
       const remainingInput = inputAmount ? inputAmount - swapAmount : 0n;
 
-      // Calculate estimated output amount with correct decimals
-      const estimatedSwapOutput =
-        inputToken === 'USDC'
-          ? swapAmount * USDC_TO_USDS_MULTIPLIER
-          : swapAmount / USDS_TO_USDC_DIVISOR;
+      // Estimate swap output for deposit requirement calculation
+      const inputDecimals = isInputToken0 ? poolConfig.token0.decimals : poolConfig.token1.decimals;
+      const outputDecimals = isInputToken0 ? poolConfig.token1.decimals : poolConfig.token0.decimals;
+      const decimalDiff = inputDecimals - outputDecimals;
+      const estimatedSwapOutput = decimalDiff > 0
+        ? swapAmount / (10n ** BigInt(decimalDiff))
+        : swapAmount * (10n ** BigInt(-decimalDiff));
 
-      // For deposit amounts:
-      // - token0 (USDS, 18 dec): If input is USDS, use remainingInput. If input is USDC, use swap output (converted to 18 dec).
-      // - token1 (USDC, 6 dec): If input is USDC, use remainingInput. If input is USDS, use swap output (converted to 6 dec).
-      const estimatedToken0ForDeposit =
-        inputToken === 'USDS' ? remainingInput : estimatedSwapOutput;
-      const estimatedToken1ForDeposit =
-        inputToken === 'USDC' ? remainingInput : estimatedSwapOutput;
+      const estimatedToken0ForDeposit = isInputToken0 ? remainingInput : estimatedSwapOutput;
+      const estimatedToken1ForDeposit = isInputToken0 ? estimatedSwapOutput : remainingInput;
 
       // Check if approvals are sufficient
-      const inputTokenApprovedForSwap = inputAllowanceForSwap >= requiredSwapApproval;
-      const token0ApprovedForHook = token0AllowanceForHook >= estimatedToken0ForDeposit;
-      const token1ApprovedForHook = token1AllowanceForHook >= estimatedToken1ForDeposit;
+      const inputTokenApprovedForSwap = isInputNative || inputAllowanceForSwap >= requiredSwapApproval;
+      const token0ApprovedForHook = isToken0Native || token0AllowanceForHook >= estimatedToken0ForDeposit;
+      const token1ApprovedForHook = isToken1Native || token1AllowanceForHook >= estimatedToken1ForDeposit;
 
       return {
         inputTokenApprovedForSwap,
@@ -230,10 +236,10 @@ export function getNeededApprovalDescriptions(
     descriptions.push('Approve token for swap');
   }
   if (!approvals.token0ApprovedForHook) {
-    descriptions.push('Approve USDS for deposit');
+    descriptions.push('Approve token0 for deposit');
   }
   if (!approvals.token1ApprovedForHook) {
-    descriptions.push('Approve USDC for deposit');
+    descriptions.push('Approve token1 for deposit');
   }
 
   return descriptions;

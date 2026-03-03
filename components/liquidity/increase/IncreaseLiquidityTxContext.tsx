@@ -163,9 +163,9 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   // Determine if we're in zap mode
   const isZapMode = isUnifiedYield && isZapEligible && depositMode === 'zap' && zapInputToken !== null;
 
-  // Map zapInputToken to ZapToken type
+  // Map zapInputToken to ZapToken type (dynamic based on position's tokens)
   const zapToken: ZapToken | undefined = isZapMode
-    ? (zapInputToken === 'token0' ? 'USDS' : 'USDC')
+    ? (zapInputToken === 'token0' ? position.token0.symbol as ZapToken : position.token1.symbol as ZapToken)
     : undefined;
 
   // Get the input amount for zap (from the active input field)

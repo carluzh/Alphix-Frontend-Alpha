@@ -1,15 +1,18 @@
 /**
  * Swap Route Selector
  *
- * Determines whether to use PSM (1:1 swap) or pool swap
- * based on price impact threshold.
+ * Determines the optimal swap route based on price impact:
+ * - USDS/USDC: pool swap or PSM (1:1 swap) fallback
+ * - ETH/USDC: pool swap or Kyberswap aggregator fallback
  */
 
 import { type PublicClient, type Address, getAddress, parseAbi } from 'viem';
 import { getPSMQuote, type PSMQuoteResult } from './psmQuoter';
-import { calculatePriceImpact, analyzePriceImpact } from '../calculation';
-import { PSM_CONFIG, USDS_USDC_POOL_CONFIG } from '../constants';
-import type { ZapToken, RouteDetails, PSMRouteDetails, PoolRouteDetails } from '../types';
+import { calculatePriceImpact, calculatePriceImpactFromMidPrice, analyzePriceImpact } from '../calculation';
+import { PSM_CONFIG, USDS_USDC_POOL_CONFIG, type ZapPoolConfig } from '../constants';
+import type { ZapToken, RouteDetails, PSMRouteDetails, PoolRouteDetails, KyberswapRouteDetails } from '../types';
+import { getKyberswapQuote } from '@/lib/aggregators/kyberswap';
+import type { AggregatorQuote } from '@/lib/aggregators/types';
 
 // =============================================================================
 // TYPES
@@ -22,10 +25,16 @@ export interface RouteSelectionParams {
   swapAmount: bigint;
   /** Public client for on-chain queries */
   publicClient: PublicClient;
+  /** Pool configuration (determines fallback route type) */
+  poolConfig?: ZapPoolConfig;
   /** Optional: skip PSM and force pool swap */
   forcePoolSwap?: boolean;
   /** Optional: skip pool and force PSM */
   forcePSM?: boolean;
+  /** User address (required for Kyberswap build) */
+  userAddress?: Address;
+  /** Slippage tolerance in basis points (for Kyberswap) */
+  slippageBps?: number;
 }
 
 export interface RouteSelectionResult {
@@ -35,7 +44,9 @@ export interface RouteSelectionResult {
   outputAmount: bigint;
   /** Price impact as percentage */
   priceImpact: number;
-  /** Whether PSM was selected */
+  /** Whether a fallback route was selected (PSM or Kyberswap) */
+  usedFallback: boolean;
+  /** @deprecated Use usedFallback instead */
   usedPSM: boolean;
   /** Reason for route selection */
   reason: string;
@@ -43,6 +54,8 @@ export interface RouteSelectionResult {
   poolQuote?: PoolQuoteResult;
   /** PSM quote (if fetched) */
   psmQuote?: PSMQuoteResult;
+  /** Kyberswap quote (if fetched) */
+  kyberswapQuote?: AggregatorQuote;
 }
 
 export interface PoolQuoteResult {
@@ -75,29 +88,32 @@ const V4_QUOTER_ABI = parseAbi([
  * @param swapAmount - Amount to swap (in wei)
  * @param publicClient - Viem public client
  * @param quoterAddress - V4 Quoter contract address
+ * @param poolConfig - Optional pool config (defaults to USDS/USDC)
  * @returns Pool quote result
  */
 export async function getPoolQuote(
   inputToken: ZapToken,
   swapAmount: bigint,
   publicClient: PublicClient,
-  quoterAddress: Address
+  quoterAddress: Address,
+  poolConfig?: ZapPoolConfig
 ): Promise<PoolQuoteResult> {
   if (swapAmount <= 0n) {
     return { amountOut: 0n, gasEstimate: 0n };
   }
 
-  // Determine swap direction
-  // USDS is token0, USDC is token1
-  const zeroForOne = inputToken === 'USDS';
+  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+
+  // Determine swap direction: token0 → token1 = zeroForOne
+  const zeroForOne = inputToken === config.token0.symbol;
 
   // Build pool key
   const poolKey = {
-    currency0: getAddress(USDS_USDC_POOL_CONFIG.token0.address),
-    currency1: getAddress(USDS_USDC_POOL_CONFIG.token1.address),
-    fee: USDS_USDC_POOL_CONFIG.fee,
-    tickSpacing: USDS_USDC_POOL_CONFIG.tickSpacing,
-    hooks: getAddress(USDS_USDC_POOL_CONFIG.hookAddress),
+    currency0: getAddress(config.token0.address),
+    currency1: getAddress(config.token1.address),
+    fee: config.fee,
+    tickSpacing: config.tickSpacing,
+    hooks: getAddress(config.hookAddress),
   };
 
   try {
@@ -134,14 +150,17 @@ export async function getPoolQuote(
 // =============================================================================
 
 /**
- * Select the optimal swap route (PSM or Pool).
+ * Select the optimal swap route.
  *
- * Decision logic:
- * 1. If forcePoolSwap is true, use pool
- * 2. If forcePSM is true, use PSM
- * 3. Get pool quote and calculate price impact
- * 4. If price impact > threshold (0.01%), use PSM
- * 5. Otherwise, use pool swap
+ * For pegged pools (USDS/USDC):
+ * 1. Get pool quote and calculate price impact
+ * 2. If price impact > 0.01%, use PSM (1:1 swap)
+ * 3. Otherwise, use pool swap
+ *
+ * For non-pegged pools (ETH/USDC):
+ * 1. Get pool quote and calculate price impact
+ * 2. If price impact > 0.5%, use Kyberswap aggregator
+ * 3. Otherwise, use pool swap
  *
  * @param params - Route selection parameters
  * @returns Route selection result
@@ -149,15 +168,26 @@ export async function getPoolQuote(
 export async function selectSwapRoute(
   params: RouteSelectionParams
 ): Promise<RouteSelectionResult> {
-  const { inputToken, swapAmount, publicClient, forcePoolSwap, forcePSM } = params;
+  const { inputToken, swapAmount, publicClient, poolConfig, forcePoolSwap, forcePSM, userAddress, slippageBps } = params;
+
+  // Determine if this is a pegged pool (USDS/USDC) or non-pegged (ETH/USDC)
+  const isPegged = poolConfig?.isPegged ?? true;
+
+  // For non-pegged pools, delegate to separate handler
+  if (!isPegged && poolConfig) {
+    return selectSwapRouteNonPegged(params, poolConfig);
+  }
+
+  // --- Pegged pool (USDS/USDC) logic below ---
 
   // Early return for zero amount
   if (swapAmount <= 0n) {
     const psmQuote = await getPSMQuote(inputToken, 0n);
     return {
-      route: { type: 'psm', priceImpact: 0, feeBps: 0 }, // PSM3 has zero fees
+      route: { type: 'psm', priceImpact: 0, feeBps: 0 },
       outputAmount: 0n,
       priceImpact: 0,
+      usedFallback: true,
       usedPSM: true,
       reason: 'Zero swap amount',
       psmQuote,
@@ -169,19 +199,16 @@ export async function selectSwapRoute(
 
   // If PSM is not available, must use pool
   if (!psmQuote.isAvailable) {
-    return selectPoolRoute(inputToken, swapAmount, publicClient, 'PSM unavailable');
+    return selectPoolRoute(inputToken, swapAmount, publicClient, 'PSM unavailable', poolConfig);
   }
 
   // If force flags set, use accordingly
   if (forcePSM) {
     return {
-      route: {
-        type: 'psm',
-        priceImpact: 0,
-        feeBps: 0, // PSM3 has zero fees
-      },
+      route: { type: 'psm', priceImpact: 0, feeBps: 0 },
       outputAmount: psmQuote.outputAmount,
       priceImpact: 0,
+      usedFallback: true,
       usedPSM: true,
       reason: 'Force PSM flag set',
       psmQuote,
@@ -189,35 +216,31 @@ export async function selectSwapRoute(
   }
 
   if (forcePoolSwap) {
-    return selectPoolRoute(inputToken, swapAmount, publicClient, 'Force pool flag set');
+    return selectPoolRoute(inputToken, swapAmount, publicClient, 'Force pool flag set', poolConfig);
   }
 
   // Get pool quote
   let poolQuote: PoolQuoteResult;
   try {
-    // Need to get quoter address from config
     const { getQuoterAddress } = await import('@/lib/pools-config');
-    poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress());
+    poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress(), poolConfig);
   } catch (error) {
-    // If pool quote fails, use PSM
     console.warn('[selectSwapRoute] Pool quote failed, using PSM:', error);
     return {
-      route: {
-        type: 'psm',
-        priceImpact: 0,
-        feeBps: 0, // PSM3 has zero fees
-      },
+      route: { type: 'psm', priceImpact: 0, feeBps: 0 },
       outputAmount: psmQuote.outputAmount,
       priceImpact: 0,
+      usedFallback: true,
       usedPSM: true,
       reason: 'Pool quote failed',
       psmQuote,
     };
   }
 
-  // Calculate price impact of pool swap
-  const inputDecimals = inputToken === 'USDS' ? 18 : 6;
-  const outputDecimals = inputToken === 'USDS' ? 6 : 18;
+  // Calculate price impact of pool swap (stablecoin: input ≈ output in USD terms)
+  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+  const inputDecimals = inputToken === config.token0.symbol ? config.token0.decimals : config.token1.decimals;
+  const outputDecimals = inputToken === config.token0.symbol ? config.token1.decimals : config.token0.decimals;
   const poolPriceImpact = calculatePriceImpact(
     swapAmount,
     poolQuote.amountOut,
@@ -226,20 +249,15 @@ export async function selectSwapRoute(
   );
 
   // Analyze price impact
-  const analysis = analyzePriceImpact(poolPriceImpact);
+  const threshold = poolConfig?.priceImpactThreshold;
+  const analysis = analyzePriceImpact(poolPriceImpact, threshold, 'PSM');
 
-  // Select route based on analysis:
-  // - Default to pool swap for low price impact
-  // - Use PSM as fallback when price impact exceeds threshold (0.01%)
-  if (analysis.shouldUsePSM) {
+  if (analysis.shouldUseFallback) {
     return {
-      route: {
-        type: 'psm',
-        priceImpact: 0,
-        feeBps: 0, // PSM3 has zero fees
-      },
+      route: { type: 'psm', priceImpact: 0, feeBps: 0 },
       outputAmount: psmQuote.outputAmount,
       priceImpact: poolPriceImpact,
+      usedFallback: true,
       usedPSM: true,
       reason: analysis.message,
       psmQuote,
@@ -253,14 +271,185 @@ export async function selectSwapRoute(
       type: 'pool',
       priceImpact: poolPriceImpact,
       feeBps: poolQuote.dynamicFeeBps ?? 0,
-      sqrtPriceX96: 0n, // Would need to fetch from state view
+      sqrtPriceX96: 0n,
     },
     outputAmount: poolQuote.amountOut,
     priceImpact: poolPriceImpact,
+    usedFallback: false,
     usedPSM: false,
     reason: 'Low price impact, using pool',
     psmQuote,
     poolQuote,
+  };
+}
+
+/**
+ * Get pool spot price via a small reference quote (outputWei/inputWei ratio).
+ * Used for price impact calculation in non-pegged pairs (ETH/USDC).
+ */
+export async function getPoolMidPrice(
+  inputToken: ZapToken,
+  publicClient: PublicClient,
+  poolConfig: ZapPoolConfig
+): Promise<number> {
+  const isToken0Input = inputToken === poolConfig.token0.symbol;
+  const inputDecimals = isToken0Input ? poolConfig.token0.decimals : poolConfig.token1.decimals;
+
+  // 0.01 units of input token — small enough to approximate spot price
+  const referenceAmount = BigInt(10 ** Math.max(inputDecimals - 2, 0));
+
+  try {
+    const { getQuoterAddress } = await import('@/lib/pools-config');
+    const refQuote = await getPoolQuote(inputToken, referenceAmount, publicClient, getQuoterAddress(), poolConfig);
+    if (refQuote.amountOut <= 0n) return 0;
+    return Number(refQuote.amountOut) / Number(referenceAmount);
+  } catch (error) {
+    console.warn('[getPoolMidPrice] Failed:', error);
+    return 0;
+  }
+}
+
+/**
+ * Select swap route for non-pegged pools (ETH/USDC).
+ * Uses Kyberswap as fallback instead of PSM.
+ */
+async function selectSwapRouteNonPegged(
+  params: RouteSelectionParams,
+  poolConfig: ZapPoolConfig
+): Promise<RouteSelectionResult> {
+  const { inputToken, swapAmount, publicClient, forcePoolSwap, userAddress, slippageBps } = params;
+
+  if (swapAmount <= 0n) {
+    return {
+      route: { type: 'pool', priceImpact: 0, feeBps: 0, sqrtPriceX96: 0n },
+      outputAmount: 0n,
+      priceImpact: 0,
+      usedFallback: false,
+      usedPSM: false,
+      reason: 'Zero swap amount',
+    };
+  }
+
+  if (forcePoolSwap) {
+    return selectPoolRoute(inputToken, swapAmount, publicClient, 'Force pool flag set', poolConfig);
+  }
+
+  // Get pool quote and mid-price
+  let poolQuote: PoolQuoteResult;
+  try {
+    const { getQuoterAddress } = await import('@/lib/pools-config');
+    poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress(), poolConfig);
+  } catch (error) {
+    console.warn('[selectSwapRoute] Pool quote failed for non-pegged pool, trying Kyberswap:', error);
+    return selectKyberswapRoute(inputToken, swapAmount, poolConfig, userAddress, slippageBps, 'Pool quote failed');
+  }
+
+  const midPrice = await getPoolMidPrice(inputToken, publicClient, poolConfig);
+
+  let poolPriceImpact: number;
+  if (midPrice > 0) {
+    poolPriceImpact = calculatePriceImpactFromMidPrice(swapAmount, poolQuote.amountOut, midPrice);
+  } else {
+    console.warn('[selectSwapRouteNonPegged] Mid-price unavailable, defaulting to Kyberswap');
+    return selectKyberswapRoute(inputToken, swapAmount, poolConfig, userAddress, slippageBps, 'Mid-price unavailable', poolQuote, undefined);
+  }
+
+  console.log('[selectSwapRouteNonPegged] Price impact:', {
+    swapAmount: swapAmount.toString(),
+    poolAmountOut: poolQuote.amountOut.toString(),
+    midPrice,
+    poolPriceImpact: poolPriceImpact.toFixed(4) + '%',
+    threshold: poolConfig.priceImpactThreshold + '%',
+  });
+
+  const analysis = analyzePriceImpact(poolPriceImpact, poolConfig.priceImpactThreshold, 'Kyberswap');
+
+  if (analysis.shouldUseFallback) {
+    return selectKyberswapRoute(inputToken, swapAmount, poolConfig, userAddress, slippageBps, analysis.message, poolQuote, poolPriceImpact);
+  }
+
+  // Use pool swap
+  return {
+    route: {
+      type: 'pool',
+      priceImpact: poolPriceImpact,
+      feeBps: poolQuote.dynamicFeeBps ?? 0,
+      sqrtPriceX96: 0n,
+    },
+    outputAmount: poolQuote.amountOut,
+    priceImpact: poolPriceImpact,
+    usedFallback: false,
+    usedPSM: false,
+    reason: 'Low price impact, using pool',
+    poolQuote,
+  };
+}
+
+/**
+ * Get a Kyberswap quote and build a route selection result.
+ */
+async function selectKyberswapRoute(
+  inputToken: ZapToken,
+  swapAmount: bigint,
+  poolConfig: ZapPoolConfig,
+  userAddress?: Address,
+  slippageBps?: number,
+  reason?: string,
+  poolQuote?: PoolQuoteResult,
+  poolPriceImpact?: number,
+): Promise<RouteSelectionResult> {
+  const isToken0Input = inputToken === poolConfig.token0.symbol;
+  const fromToken = isToken0Input ? poolConfig.token0 : poolConfig.token1;
+  const toToken = isToken0Input ? poolConfig.token1 : poolConfig.token0;
+
+  const kyberQuote = await getKyberswapQuote({
+    fromTokenAddress: fromToken.address,
+    toTokenAddress: toToken.address,
+    amount: swapAmount.toString(),
+    fromTokenDecimals: fromToken.decimals,
+    toTokenDecimals: toToken.decimals,
+    isExactIn: true,
+    slippageBps: slippageBps ?? 50,
+    userAddress,
+  });
+
+  if (!kyberQuote) {
+    if (poolQuote) {
+      const actualImpact = poolPriceImpact ?? 0;
+      console.warn(`[selectKyberswapRoute] Kyberswap unavailable, falling back to pool (impact: ${actualImpact.toFixed(4)}%)`);
+      return {
+        route: {
+          type: 'pool',
+          priceImpact: actualImpact,
+          feeBps: poolQuote.dynamicFeeBps ?? 0,
+          sqrtPriceX96: 0n,
+        },
+        outputAmount: poolQuote.amountOut,
+        priceImpact: actualImpact,
+        usedFallback: false,
+        usedPSM: false,
+        reason: `Kyberswap unavailable, using pool (impact: ${actualImpact.toFixed(2)}%)`,
+        poolQuote,
+      };
+    }
+    throw new Error('Both pool quote and Kyberswap quote failed');
+  }
+
+  const kyberRoute: KyberswapRouteDetails = {
+    type: 'kyberswap',
+    priceImpact: kyberQuote.priceImpact ?? 0,
+    outputAmount: kyberQuote.outputAmountWei,
+  };
+
+  return {
+    route: kyberRoute,
+    outputAmount: kyberQuote.outputAmountWei,
+    priceImpact: kyberQuote.priceImpact ?? 0,
+    usedFallback: true,
+    usedPSM: false,
+    reason: reason ?? 'Using Kyberswap aggregator',
+    poolQuote,
+    kyberswapQuote: kyberQuote,
   };
 }
 
@@ -271,19 +460,16 @@ async function selectPoolRoute(
   inputToken: ZapToken,
   swapAmount: bigint,
   publicClient: PublicClient,
-  reason: string
+  reason: string,
+  poolConfig?: ZapPoolConfig,
 ): Promise<RouteSelectionResult> {
   const { getQuoterAddress } = await import('@/lib/pools-config');
-  const poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress());
+  const poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress(), poolConfig);
 
-  const inputDecimals = inputToken === 'USDS' ? 18 : 6;
-  const outputDecimals = inputToken === 'USDS' ? 6 : 18;
-  const priceImpact = calculatePriceImpact(
-    swapAmount,
-    poolQuote.amountOut,
-    inputDecimals,
-    outputDecimals
-  );
+  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+  const inputDecimals = inputToken === config.token0.symbol ? config.token0.decimals : config.token1.decimals;
+  const outputDecimals = inputToken === config.token0.symbol ? config.token1.decimals : config.token0.decimals;
+  const priceImpact = calculatePriceImpact(swapAmount, poolQuote.amountOut, inputDecimals, outputDecimals);
 
   return {
     route: {
@@ -294,6 +480,7 @@ async function selectPoolRoute(
     },
     outputAmount: poolQuote.amountOut,
     priceImpact,
+    usedFallback: false,
     usedPSM: false,
     reason,
     poolQuote,

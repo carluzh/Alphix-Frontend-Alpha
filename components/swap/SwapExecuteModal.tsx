@@ -14,7 +14,7 @@
  * @see components/swap/useSwapStepExecutor.ts
  */
 
-import { createElement, useEffect, useState } from "react"
+import { createElement, useEffect, useRef, useState } from "react"
 import Image from "next/image"
 import { ArrowDown, AlertCircle, RotateCw } from "lucide-react"
 import { IconXmark, IconBadgeCheck2 } from "nucleo-micro-bold-essential"
@@ -121,6 +121,11 @@ export function SwapExecuteModal({
   const [view, setView] = useState<ModalView>("review")
   const [error, setError] = useState<string | null>(null)
 
+  // Stable ref for onClose so it doesn't appear in effect dep arrays.
+  // onClose is an inline arrow in the parent, so its identity changes every render.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
   // Track execution status changes to manage view
   useEffect(() => {
     if (state.status === "error") {
@@ -147,6 +152,7 @@ export function SwapExecuteModal({
     if (state.status === "completed" && state.txInfo?.hash) {
       const desc = `Swapped ${state.txInfo.fromAmount} ${state.txInfo.fromSymbol} to ${state.txInfo.toAmount} ${state.txInfo.toSymbol}`
       toast.success("Swap Successful", {
+        id: `swap-success-${state.txInfo.hash}`,
         icon: createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
         description: desc,
         duration: 4000,
@@ -155,9 +161,9 @@ export function SwapExecuteModal({
           onClick: () => window.open(state.txInfo!.explorerUrl, "_blank"),
         },
       })
-      onClose()
+      onCloseRef.current()
     }
-  }, [state.status, state.txInfo, onClose])
+  }, [state.status, state.txInfo])
 
   // Reset when modal closes
   useEffect(() => {
