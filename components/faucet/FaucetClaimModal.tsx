@@ -230,7 +230,7 @@ export function FaucetClaimModal({ isOpen, onClose, onSuccess }: FaucetClaimModa
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="sm:max-w-[380px] bg-container border-sidebar-border p-0 gap-0 [&>button]:hidden">
+      <DialogContent className="sm:max-w-[380px] bg-container border-sidebar-border p-0 gap-0">
         <div className="flex flex-col">
           {/* Header */}
           <div className="flex items-center justify-between px-4 pt-4 pb-2">

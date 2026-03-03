@@ -90,10 +90,10 @@ function ErrorCallout({
   if (!error) return null;
 
   return (
-    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 overflow-hidden">
       <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-red-400">{error}</p>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <p className="text-sm text-red-400 break-words line-clamp-2">{error}</p>
         <button
           onClick={onRetry}
           className="text-xs text-red-400 hover:text-red-300 underline mt-2"

@@ -2,13 +2,13 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import Image from 'next/image';
 import {
   ChevronRightIcon,
   CoinsIcon,
   FileTextIcon,
   WalletIcon
 } from "lucide-react";
+import { TokenImage } from '@/components/ui/token-image';
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Token, SwapProgressState } from './swap-interface';
@@ -27,8 +27,18 @@ interface SwapReviewViewProps {
   isSwapping: boolean;
 }
 
+type StepKey = 'approval' | 'signature' | 'transaction';
+
+// Determine which steps apply based on swap source
+function getStepsForSource(source: string | undefined): StepKey[] {
+  // Kyberswap: direct ERC20 approval to router, no Permit2 signature needed
+  if (source === "kyberswap") return ['approval', 'transaction'];
+  // Alphix: ERC20 approval to Permit2, then sign permit, then swap
+  return ['approval', 'signature', 'transaction'];
+}
+
 // Helper function to render the step indicator with modern style matching AddLiquidityForm
-const renderStepIndicator = (step: string, currentStep: SwapProgressState, completed: SwapProgressState[]) => {
+const renderStepIndicator = (step: StepKey, currentStep: SwapProgressState, completed: SwapProgressState[], isKyberswap: boolean) => {
   const isActive =
     (step === "approval" && ["needs_approval", "approving", "waiting_approval"].includes(currentStep)) ||
     (step === "signature" && ["needs_signature", "signing_permit"].includes(currentStep)) ||
@@ -45,9 +55,9 @@ const renderStepIndicator = (step: string, currentStep: SwapProgressState, compl
     (step === "transaction" && completed.includes("complete"));
 
   return (
-    <div className="flex items-center justify-between">
+    <div key={step} className="flex items-center justify-between">
       <span className="text-muted-foreground">
-        {step === "approval" && "Token Approval"}
+        {step === "approval" && (isKyberswap ? "Token Approval" : "Token Approval")}
         {step === "signature" && "Sign Token Allowance"}
         {step === "transaction" && "Send Swap Transaction"}
       </span>
@@ -64,11 +74,11 @@ const renderStepIndicator = (step: string, currentStep: SwapProgressState, compl
   );
 };
 
-// Helper function for step icon (can be moved from SwapInterface or passed as prop)
-const getStepIcon = (step: 'approval' | 'signature' | 'transaction', size: 'large' | 'small' = 'large') => {
+// Helper function for step icon
+const getStepIcon = (step: StepKey, size: 'large' | 'small' = 'large') => {
   const iconSize = size === 'large' ? "h-8 w-8" : "h-6 w-6";
   const iconColor = "text-white";
-  
+
   switch(step) {
     case "approval":
       return <CoinsIcon className={`${iconSize} ${iconColor}`} />;
@@ -81,22 +91,24 @@ const getStepIcon = (step: 'approval' | 'signature' | 'transaction', size: 'larg
   }
 };
 
-// Helper function to get current step index
-const getCurrentStepIndex = (swapProgressState: SwapProgressState): number => {
+// Helper function to get current step index within the given steps array
+const getCurrentStepIndex = (swapProgressState: SwapProgressState, steps: StepKey[]): number => {
   if (["needs_approval", "approving", "waiting_approval", "approval_complete"].includes(swapProgressState)) {
-    return 0; // approval
+    return steps.indexOf('approval');
   }
   if (["needs_signature", "signing_permit", "signature_complete"].includes(swapProgressState)) {
-    return 1; // signature
+    const idx = steps.indexOf('signature');
+    // If signature step doesn't exist (Kyberswap), fall through to transaction
+    return idx >= 0 ? idx : steps.indexOf('transaction');
   }
   if (["ready_to_swap", "building_tx", "executing_swap", "waiting_confirmation", "complete"].includes(swapProgressState)) {
-    return 2; // transaction
+    return steps.indexOf('transaction');
   }
-  return 0; // default to approval
+  return 0; // default
 };
 
-// Helper function to get step title (static per step, doesn't change based on processing state)
-const getStepTitle = (step: 'approval' | 'signature' | 'transaction'): string => {
+// Helper function to get step title
+const getStepTitle = (step: StepKey): string => {
   switch(step) {
     case "approval":
       return "Approve Token";
@@ -109,8 +121,8 @@ const getStepTitle = (step: 'approval' | 'signature' | 'transaction'): string =>
   }
 };
 
-// Helper function to get step subtitle (static per step, doesn't change based on processing state)
-const getStepSubtitle = (step: 'approval' | 'signature' | 'transaction', displayFromToken: any, displayToToken: any, fromAmount: string): string => {
+// Helper function to get step subtitle
+const getStepSubtitle = (step: StepKey, displayFromToken: any, displayToToken: any, fromAmount: string): string => {
   switch(step) {
     case "approval":
       return `${displayFromToken.symbol}`;
@@ -124,7 +136,7 @@ const getStepSubtitle = (step: 'approval' | 'signature' | 'transaction', display
 };
 
 // Helper function to check if step is active (spinning)
-const isStepActive = (step: 'approval' | 'signature' | 'transaction', swapProgressState: SwapProgressState): boolean => {
+const isStepActive = (step: StepKey, swapProgressState: SwapProgressState): boolean => {
   switch(step) {
     case "approval":
       return swapProgressState === "approving";
@@ -138,12 +150,12 @@ const isStepActive = (step: 'approval' | 'signature' | 'transaction', swapProgre
 };
 
 // Helper function to check if step is waiting (pulsing)
-const isStepWaiting = (step: 'approval' | 'signature' | 'transaction', swapProgressState: SwapProgressState): boolean => {
+const isStepWaiting = (step: StepKey, swapProgressState: SwapProgressState): boolean => {
   switch(step) {
     case "approval":
       return swapProgressState === "waiting_approval";
     case "signature":
-      return false; // No waiting state for signature
+      return false;
     case "transaction":
       return swapProgressState === "waiting_confirmation";
     default:
@@ -161,16 +173,17 @@ export function SwapReviewView({
   completedSteps,
   isSwapping
 }: SwapReviewViewProps) {
-  // User has already acknowledged all warnings before entering review view
+  const isKyberswap = trade.source === "kyberswap";
+  const steps = getStepsForSource(trade.source);
 
   return (
     <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
-      <div 
-        className="mb-6 flex items-center justify-between rounded-lg border border-primary p-4 hover:bg-muted/30 transition-colors cursor-pointer" 
+      <div
+        className="mb-6 flex items-center justify-between rounded-lg border border-primary p-4 hover:bg-muted/30 transition-colors cursor-pointer"
         onClick={handleChangeButton}
       >
         <div className="flex items-center gap-3">
-          <Image src={displayFromToken.icon} alt={displayFromToken.symbol} width={32} height={32} className="rounded-full"/>
+          <TokenImage src={displayFromToken.icon} alt={displayFromToken.symbol} size={32} />
           <div className="text-left flex flex-col">
             <div className="font-medium flex items-baseline">
               {trade.calculatedValues.fromTokenAmount.startsWith("< ") ? (
@@ -196,26 +209,35 @@ export function SwapReviewView({
             </div>
             <div className="text-xs text-muted-foreground">{trade.calculatedValues.toTokenValue}</div>
           </div>
-          <Image src={displayToToken.icon} alt={displayToToken.symbol} width={32} height={32} className="rounded-full"/>
+          <TokenImage src={displayToToken.icon} alt={displayToToken.symbol} size={32} />
         </div>
       </div>
+
+      {/* Source badge for Kyberswap */}
+      {isKyberswap && (
+        <div className="flex items-center gap-2 mb-4 px-1">
+          <span className="px-2 py-0.5 text-[10px] font-medium rounded bg-purple-500/20 text-purple-400 uppercase">
+            Via Kyberswap
+          </span>
+          <span className="text-xs text-muted-foreground">Aggregator route</span>
+        </div>
+      )}
+
       <div className="p-3 border border-dashed rounded-md bg-muted/10 mb-6">
         <p className="text-sm font-medium mb-3 text-foreground/80">Transaction Steps</p>
         <div className="space-y-1.5 text-xs">
-          {renderStepIndicator("approval", swapProgressState, completedSteps)}
-          {renderStepIndicator("signature", swapProgressState, completedSteps)}
-          {renderStepIndicator("transaction", swapProgressState, completedSteps)}
+          {steps.map(step => renderStepIndicator(step, swapProgressState, completedSteps, isKyberswap))}
         </div>
       </div>
       <div className="my-8 flex flex-col items-center justify-center">
-        {/* Simple 3-Step Display */}
+        {/* Dynamic Step Display */}
         <div className="mb-4 flex items-center justify-center gap-8 w-full h-16">
-          {(['approval', 'signature', 'transaction'] as const).map((step, index) => {
-            const currentStepIndex = getCurrentStepIndex(swapProgressState);
+          {steps.map((step, index) => {
+            const currentStepIndex = getCurrentStepIndex(swapProgressState, steps);
             const isCurrent = index === currentStepIndex;
             const isActive = isStepActive(step, swapProgressState);
             const isWaiting = isStepWaiting(step, swapProgressState);
-            
+
             return (
               <motion.div
                 key={step}
@@ -245,19 +267,19 @@ export function SwapReviewView({
             );
           })}
         </div>
-        
+
         <div className="text-center">
           <h3 className="text-lg font-medium">
             {(() => {
-              const currentStepIndex = getCurrentStepIndex(swapProgressState);
-              const currentStep = ['approval', 'signature', 'transaction'][currentStepIndex] as 'approval' | 'signature' | 'transaction';
+              const currentStepIndex = getCurrentStepIndex(swapProgressState, steps);
+              const currentStep = steps[Math.max(0, currentStepIndex)];
               return getStepTitle(currentStep);
             })()}
           </h3>
           <p className="text-muted-foreground mt-1">
             {(() => {
-              const currentStepIndex = getCurrentStepIndex(swapProgressState);
-              const currentStep = ['approval', 'signature', 'transaction'][currentStepIndex] as 'approval' | 'signature' | 'transaction';
+              const currentStepIndex = getCurrentStepIndex(swapProgressState, steps);
+              const currentStep = steps[Math.max(0, currentStepIndex)];
               return getStepSubtitle(currentStep, displayFromToken, displayToToken, trade.calculatedValues.fromTokenAmount);
             })()}
           </p>
@@ -275,7 +297,6 @@ export function SwapReviewView({
         </Button>
         <Button
           className={cn(
-            // User has already acknowledged all warnings before entering review
             !trade.quoteLoading && (swapProgressState === "needs_approval" ||
             swapProgressState === "needs_signature" ||
             swapProgressState === "ready_to_swap")
@@ -300,4 +321,4 @@ export function SwapReviewView({
       </div>
     </motion.div>
   );
-} 
+}

@@ -107,8 +107,8 @@ export interface SwapStep extends TransactionStepBase {
   outputTokenSymbol: string
   inputTokenIcon?: string
   outputTokenIcon?: string
-  /** Route type: 'psm' for 1:1 PSM swap, 'pool' for AMM swap */
-  routeType: 'psm' | 'pool'
+  /** Route type: 'psm' for 1:1 PSM swap, 'pool' for AMM swap, 'kyberswap' for aggregator */
+  routeType: 'psm' | 'pool' | 'kyberswap'
 }
 
 /**

@@ -1,6 +1,6 @@
 {
   "name": "@alphix/frontend",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "description": "Alphix Frontend - Decentralized AMM built on Uniswap V4 with dynamic fee hooks",
   "author": "Alphix Team",
@@ -45,6 +45,7 @@
     "@vercel/analytics": "^1.5.0",
     "@vercel/speed-insights": "^1.2.0",
     "@visx/responsive": "^3.12.0",
+    "alchemy-sdk": "^3.6.5",
     "apollo-link-rest": "^0.9.0",
     "autoprefixer": "^10.4.21",
     "class-variance-authority": "^0.7.1",

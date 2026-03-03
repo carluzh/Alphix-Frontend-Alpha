@@ -1,8 +1,8 @@
 /**
  * Unified Yield Zap Module
  *
- * Enables single-token deposits into the USDS/USDC Unified Yield pool.
- * Automatically swaps to balance the deposit using PSM (1:1) or pool swap.
+ * Enables single-token deposits into Unified Yield pools (USDS/USDC, ETH/USDC).
+ * Automatically swaps to balance the deposit using PSM, pool swap, or Kyberswap.
  *
  * @example
  * ```typescript
@@ -31,6 +31,7 @@ export type {
   ZapSwapRoute,
   PSMRouteDetails,
   PoolRouteDetails,
+  KyberswapRouteDetails,
   RouteDetails,
   ZapCalculationInput,
   ZapCalculationResult,
@@ -56,7 +57,9 @@ export { ZapError } from './types';
 export {
   PSM_CONFIG,
   USDS_USDC_POOL_CONFIG,
+  ETH_USDC_POOL_CONFIG,
   PSM_PRICE_IMPACT_THRESHOLD,
+  KYBERSWAP_PRICE_IMPACT_THRESHOLD,
   MAX_ACCEPTABLE_PRICE_IMPACT,
   PRICE_IMPACT_WARNING_THRESHOLD,
   SWAP_AMOUNT_HAIRCUT,
@@ -68,6 +71,9 @@ export {
   USDC_TO_USDS_MULTIPLIER,
   USDS_TO_USDC_DIVISOR,
   isZapEligiblePool,
+  getZapPoolConfig,
+  getZapPoolConfigByHook,
+  type ZapPoolConfig,
 } from './constants';
 
 // =============================================================================
@@ -157,6 +163,5 @@ export {
 
 export {
   reportZapDust,
-  calculateDustFromDelta,
   type DustReport,
 } from './utils';

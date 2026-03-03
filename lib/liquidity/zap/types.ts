@@ -2,7 +2,7 @@
  * Unified Yield Zap Types
  *
  * Type definitions for the Zap feature that enables single-token deposits
- * into the USDS/USDC Unified Yield pool.
+ * into Unified Yield pools (USDS/USDC, ETH/USDC).
  */
 
 import type { Address } from 'viem';
@@ -15,7 +15,7 @@ import type { ValidatedTransactionRequest } from '../types';
 /**
  * Supported tokens for zap deposits
  */
-export type ZapToken = 'USDS' | 'USDC';
+export type ZapToken = 'USDS' | 'USDC' | 'ETH';
 
 /**
  * Token position in pool (matches Uniswap convention)
@@ -29,7 +29,7 @@ export type TokenPosition = 'token0' | 'token1';
 /**
  * Available swap routes for zap
  */
-export type ZapSwapRoute = 'psm' | 'pool';
+export type ZapSwapRoute = 'psm' | 'pool' | 'kyberswap';
 
 /**
  * PSM route details (1:1 swap)
@@ -56,9 +56,20 @@ export interface PoolRouteDetails {
 }
 
 /**
+ * Kyberswap route details (aggregator swap)
+ */
+export interface KyberswapRouteDetails {
+  type: 'kyberswap';
+  /** Price impact as percentage */
+  priceImpact: number;
+  /** Expected output amount from Kyberswap quote (in wei) */
+  outputAmount: bigint;
+}
+
+/**
  * Union of route details
  */
-export type RouteDetails = PSMRouteDetails | PoolRouteDetails;
+export type RouteDetails = PSMRouteDetails | PoolRouteDetails | KyberswapRouteDetails;
 
 // =============================================================================
 // CALCULATION TYPES
@@ -223,6 +234,14 @@ export interface ZapPSMSwapStep extends BaseZapStep {
   inputTokenAddress: Address;
   /** Output token address */
   outputTokenAddress: Address;
+  /** Hook address for just-in-time swap recalculation */
+  hookAddress?: Address;
+  /** Total zap input amount (for recalculating optimal swap fresh) */
+  totalInputAmount?: bigint;
+  /** Input token symbol */
+  inputToken?: ZapToken;
+  /** Max swap amount covered by approval (caps recalculation) */
+  approvedSwapAmount?: bigint;
 }
 
 /**
@@ -242,6 +261,8 @@ export interface ZapPoolSwapStep extends BaseZapStep {
   minOutputAmount: bigint;
   /** Transaction deadline */
   deadline: bigint;
+  /** Swap source - pool (Universal Router) or kyberswap (aggregator) */
+  swapSource?: 'pool' | 'kyberswap';
 }
 
 /**

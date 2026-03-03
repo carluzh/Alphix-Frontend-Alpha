@@ -325,7 +325,7 @@ export interface UnifiedYieldWithdrawStep extends OnChainTransactionFields {
 // =============================================================================
 
 /** Zap token types */
-export type ZapTokenSymbol = 'USDS' | 'USDC';
+export type ZapTokenSymbol = 'USDS' | 'USDC' | 'ETH';
 
 /**
  * Zap Swap Approval Step - Approve input token for swap (to PSM or Permit2)
@@ -357,6 +357,14 @@ export interface ZapPSMSwapStep extends OnChainTransactionFields {
   inputTokenAddress: Address;
   /** Output token address */
   outputTokenAddress: Address;
+  /** Hook address for just-in-time swap recalculation */
+  hookAddress?: Address;
+  /** Total zap input amount (for recalculating optimal swap fresh) */
+  totalInputAmount?: bigint;
+  /** Input token symbol */
+  inputToken?: ZapTokenSymbol;
+  /** Max swap amount covered by approval (caps recalculation) */
+  approvedSwapAmount?: bigint;
 }
 
 /**
@@ -376,6 +384,8 @@ export interface ZapPoolSwapStep extends OnChainTransactionFields {
   minOutputAmount: bigint;
   /** Transaction deadline */
   deadline: bigint;
+  /** Swap source - pool (Universal Router) or kyberswap (aggregator) */
+  swapSource?: 'pool' | 'kyberswap';
 }
 
 /**
@@ -406,6 +416,12 @@ export interface ZapDynamicDepositStep {
   fallbackSharesEstimate: bigint;
   /** The input token used for zap (to determine which balance to use for preview) */
   inputToken: ZapTokenSymbol;
+  /** Whether token0 is native ETH (use getBalance instead of balanceOf, send as msg.value) */
+  isToken0Native?: boolean;
+  /** Token0 price in USD (for non-stablecoin dust calculation) */
+  token0Price?: number;
+  /** Token1 price in USD (for non-stablecoin dust calculation) */
+  token1Price?: number;
   /** Initial token0 balance before Zap started (for dust calculation) */
   initialBalance0?: bigint;
   /** Initial token1 balance before Zap started (for dust calculation) */

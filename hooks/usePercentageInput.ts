@@ -80,7 +80,10 @@ export function usePercentageInput(
         calculatedAmount = formatUnits(percentageAmount, token.decimals);
       }
 
-      // Use the raw formatted amount without any truncation or abbreviation
+      // Truncate to 16 characters max (digits + decimal point)
+      if (calculatedAmount.length > 16) {
+        calculatedAmount = calculatedAmount.slice(0, 16).replace(/\.$/, '');
+      }
       setAmount(calculatedAmount);
       return calculatedAmount;
     },

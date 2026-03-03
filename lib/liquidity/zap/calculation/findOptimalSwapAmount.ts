@@ -6,13 +6,15 @@
  * is minimized to < 0.01% of input value.
  */
 
-import { type PublicClient, type Address } from 'viem';
-import { selectSwapRoute } from '../routing/selectSwapRoute';
+import { type PublicClient, type Address, formatUnits, parseUnits } from 'viem';
+import { selectSwapRoute, getPoolQuote, getPoolMidPrice } from '../routing/selectSwapRoute';
+import { calculatePriceImpactFromMidPrice } from './calculatePriceImpact';
 import {
   previewAddFromAmount0,
   previewAddFromAmount1,
 } from '../../unified-yield/buildUnifiedYieldDepositTx';
 import type { ZapToken, RouteDetails } from '../types';
+import type { ZapPoolConfig } from '../constants';
 
 // =============================================================================
 // TYPES
@@ -44,6 +46,12 @@ export interface FindOptimalSwapParams {
   hookAddress: Address;
   /** Viem public client */
   publicClient: PublicClient;
+  /** Pool configuration (for decimals, routing, etc.) */
+  poolConfig?: ZapPoolConfig;
+  /** User address (required for Kyberswap routing) */
+  userAddress?: Address;
+  /** Slippage tolerance in basis points */
+  slippageBps?: number;
   /** Max binary search iterations (default: 20) */
   maxIterations?: number;
 }
@@ -52,32 +60,9 @@ export interface FindOptimalSwapParams {
 // CONSTANTS
 // =============================================================================
 
-/** Minimum convergence threshold as fraction of input (1/10000 = 0.01%) */
 const CONVERGENCE_THRESHOLD_DIVISOR = 10000n;
-
-/**
- * Swap reduction factor to account for price impact on deposit ratio.
- *
- * When swapping token A → token B, the swap itself affects the pool ratio.
- * Buying token B makes it more valuable, so the subsequent deposit needs
- * LESS of token B per unit of token A. This means we'll have excess token B.
- *
- * By reducing the swap amount slightly, we get less token B from the swap,
- * but the post-swap ratio also shifts less, resulting in better alignment.
- *
- * 997/1000 = 0.3% reduction
- */
-const SWAP_REDUCTION_NUMERATOR = 997n;
-const SWAP_REDUCTION_DENOMINATOR = 1000n;
-
-/** USDS decimals */
-const USDS_DECIMALS = 18;
-
-/** USDC decimals */
-const USDC_DECIMALS = 6;
-
-/** Decimal conversion factor (10^12) */
-const DECIMAL_FACTOR = 10n ** 12n;
+const MIN_REDUCTION_BPS = 1n;
+const DEFAULT_DECIMAL_FACTOR = 10n ** 12n;
 
 // =============================================================================
 // MAIN FUNCTION
@@ -86,22 +71,13 @@ const DECIMAL_FACTOR = 10n ** 12n;
 /**
  * Binary search to find optimal swap amount for Zap.
  *
- * Goal: Find swapAmount X such that:
- * - swapOutput(X) ≈ requiredOther for (inputAmount - X)
- * - Leftover < 0.01% of input value
- *
- * Algorithm:
- * 1. Start with low=0, high=inputAmount
- * 2. For mid = (low+high)/2:
- *    a. Get swap quote for mid amount
- *    b. Calculate remaining = inputAmount - mid
- *    c. Ask Hook: how much OTHER token needed for remaining?
- *    d. Compare swapOutput vs required
- * 3. Adjust bounds based on comparison
- * 4. Converge when bounds are within 0.01% of input
- *
- * @param params - Search parameters
- * @returns Optimal swap result
+ * Flow:
+ * 1. Decide route once: quote pool with half the input, check price impact
+ *    - Impact OK → use pool for all iterations
+ *    - Impact too high → use Kyberswap for all iterations
+ * 2. Binary search: for each candidate amount, quote the chosen route
+ *    and compare output to what the Hook needs for the deposit
+ * 3. Converge when bounds are within 0.01% of input
  */
 export async function findOptimalSwapAmount(
   params: FindOptimalSwapParams
@@ -111,10 +87,16 @@ export async function findOptimalSwapAmount(
     inputAmount,
     hookAddress,
     publicClient,
+    poolConfig,
+    userAddress,
+    slippageBps,
     maxIterations = 20,
   } = params;
 
-  // Early return for zero input
+  const isInputToken1 = poolConfig
+    ? inputToken === poolConfig.token1.symbol
+    : inputToken === 'USDC';
+
   if (inputAmount <= 0n) {
     return {
       swapAmount: 0n,
@@ -127,149 +109,206 @@ export async function findOptimalSwapAmount(
     };
   }
 
-  // Convergence threshold: when bounds difference < 0.01% of input
   const convergenceThreshold = inputAmount / CONVERGENCE_THRESHOLD_DIVISOR;
 
+  // ---- DETERMINE ROUTE ONCE ----
+  // For non-pegged pools: quote pool with half input, check price impact, decide pool vs kyberswap
+  // For pegged pools: use selectSwapRoute per iteration (cheap, handles PSM decision)
+
+  let getSwapQuote: (amount: bigint) => Promise<{ amountOut: bigint; route: RouteDetails }>;
+  let midPrice = 0;
+
+  if (poolConfig && !poolConfig.isPegged) {
+    const { getQuoterAddress } = await import('@/lib/pools-config');
+    const quoterAddress = getQuoterAddress();
+
+    midPrice = await getPoolMidPrice(inputToken, publicClient, poolConfig);
+    const halfQuote = await getPoolQuote(inputToken, inputAmount / 2n, publicClient, quoterAddress, poolConfig);
+    const halfImpact = midPrice > 0
+      ? calculatePriceImpactFromMidPrice(inputAmount / 2n, halfQuote.amountOut, midPrice)
+      : Infinity;
+
+    const useKyberswap = Math.abs(halfImpact) > poolConfig.priceImpactThreshold;
+
+    console.log('[findOptimalSwapAmount] Route decision:', {
+      halfImpact: halfImpact.toFixed(4) + '%',
+      threshold: poolConfig.priceImpactThreshold + '%',
+      route: useKyberswap ? 'kyberswap' : 'pool',
+    });
+
+    const isToken0Input = inputToken === poolConfig.token0.symbol;
+    const fromToken = isToken0Input ? poolConfig.token0 : poolConfig.token1;
+    const toToken = isToken0Input ? poolConfig.token1 : poolConfig.token0;
+
+    if (useKyberswap) {
+      // Get ONE Kyberswap quote via our API to compute the rate.
+      // Binary search uses this rate as linear approximation (no API calls per iteration).
+      // A final real quote is fetched after convergence.
+      const kyberRef = await fetchKyberQuoteViaApi(
+        fromToken.address, toToken.address,
+        inputAmount / 2n, fromToken.decimals, toToken.decimals,
+        fromToken.symbol, toToken.symbol, slippageBps, userAddress,
+      );
+      if (!kyberRef) throw new Error('Kyberswap unavailable for this pair');
+
+      const kyberRate = Number(kyberRef) / Number(inputAmount / 2n);
+
+      getSwapQuote = async (amount: bigint) => {
+        const estimatedOutput = BigInt(Math.floor(Number(amount) * kyberRate));
+        return {
+          amountOut: estimatedOutput,
+          route: { type: 'kyberswap' as const, priceImpact: 0, outputAmount: estimatedOutput },
+        };
+      };
+    } else {
+      getSwapQuote = async (amount: bigint) => {
+        const quote = await getPoolQuote(inputToken, amount, publicClient, quoterAddress, poolConfig);
+        const impact = midPrice > 0 ? calculatePriceImpactFromMidPrice(amount, quote.amountOut, midPrice) : 0;
+        return {
+          amountOut: quote.amountOut,
+          route: { type: 'pool' as const, priceImpact: impact, feeBps: quote.dynamicFeeBps ?? 0, sqrtPriceX96: 0n },
+        };
+      };
+    }
+  } else {
+    // Pegged pool (USDS/USDC): selectSwapRoute handles PSM vs pool per iteration
+    getSwapQuote = async (amount: bigint) => {
+      const result = await selectSwapRoute({
+        inputToken,
+        swapAmount: amount,
+        publicClient,
+        poolConfig,
+        userAddress,
+        slippageBps,
+      });
+      return { amountOut: result.outputAmount, route: result.route };
+    };
+  }
+
+  // ---- BINARY SEARCH ----
   let low = 0n;
   let high = inputAmount;
   let bestResult: OptimalSwapResult | null = null;
 
   for (let i = 0; i < maxIterations && high - low > convergenceThreshold; i++) {
     const mid = (low + high) / 2n;
-
-    // Skip if mid is 0 (can't get meaningful quote)
-    if (mid === 0n) {
-      low = 1n;
-      continue;
-    }
+    if (mid === 0n) { low = 1n; continue; }
 
     try {
-      // 1. Get swap quote for this amount
-      const routeResult = await selectSwapRoute({
-        inputToken,
-        swapAmount: mid,
-        publicClient,
-      });
-
-      // 2. Calculate remaining input after swap
+      const { amountOut: swapOutput, route } = await getSwapQuote(mid);
       const remaining = inputAmount - mid;
 
-      // 3. Ask Hook: how much OTHER token needed for `remaining`?
-      let preview: { otherAmount: bigint; shares: bigint } | null;
-
-      if (inputToken === 'USDC') {
-        // Input is USDC (token1), remaining USDC needs USDS from swap
-        // previewAddFromAmount1(USDC amount) → returns required USDS
-        preview = await previewAddFromAmount1(hookAddress, remaining, publicClient);
-      } else {
-        // Input is USDS (token0), remaining USDS needs USDC from swap
-        // previewAddFromAmount0(USDS amount) → returns required USDC
-        preview = await previewAddFromAmount0(hookAddress, remaining, publicClient);
-      }
+      const preview = isInputToken1
+        ? await previewAddFromAmount1(hookAddress, remaining, publicClient)
+        : await previewAddFromAmount0(hookAddress, remaining, publicClient);
 
       if (!preview) {
-        // Skip this iteration if preview fails
         console.warn(`[findOptimalSwapAmount] Preview failed at iteration ${i}`);
         continue;
       }
 
       const required = preview.otherAmount;
-      const swapOutput = routeResult.outputAmount;
 
-      // 4. Calculate dust (difference between what we have and what we need)
-      const dust = swapOutput > required ? swapOutput - required : required - swapOutput;
+      // For pool swaps, adjust required amount for price impact shifting deposit ratio
+      let effectiveRequired = required;
+      if (route.type === 'pool' && route.priceImpact > 0) {
+        const reduction = BigInt(Math.floor(Number(required) * (route.priceImpact / 100)));
+        effectiveRequired = required > reduction ? required - reduction : 0n;
+      }
 
-      // Normalize dust to input decimals for percentage calculation
-      const normalizedDust = normalizeToInputDecimals(dust, inputToken);
-      const normalizedInput = inputAmount;
-      const dustPercent = Number(normalizedDust * 10000n / normalizedInput) / 100;
+      const dust = swapOutput > effectiveRequired
+        ? swapOutput - effectiveRequired
+        : effectiveRequired - swapOutput;
 
-      // Track best result
+      const normalizedDust = normalizeToInputDecimals(dust, inputToken, poolConfig);
+      const dustPercent = Number(normalizedDust * 10000n / inputAmount) / 100;
+
       if (!bestResult || dustPercent < bestResult.estimatedDustPercent) {
         bestResult = {
           swapAmount: mid,
           swapOutput,
-          route: routeResult.route,
+          route,
           remainingInput: remaining,
-          requiredOther: required,
+          requiredOther: effectiveRequired,
           expectedShares: preview.shares,
           estimatedDustPercent: dustPercent,
         };
       }
 
-      // 5. Binary search direction
-      if (swapOutput >= required) {
-        // Too much output from swap, need to swap less
+      if (swapOutput >= effectiveRequired) {
         high = mid;
       } else {
-        // Not enough output from swap, need to swap more
         low = mid;
       }
     } catch (error) {
       console.warn(`[findOptimalSwapAmount] Iteration ${i} error:`, error);
-      // On error, narrow the search space from the high end
       high = (low + high) / 2n;
     }
   }
 
   if (!bestResult) {
-    throw new Error('Binary search failed to converge - could not find optimal swap amount');
+    throw new Error('Binary search failed to converge');
   }
 
-  // Apply swap reduction to account for swap's price impact on deposit ratio
-  // The swap changes the pool state, which affects how much the deposit needs
-  // Ensure BigInt for arithmetic (values may come from JSON as strings)
-  const adjustedSwapAmount = (BigInt(bestResult.swapAmount) * SWAP_REDUCTION_NUMERATOR) / SWAP_REDUCTION_DENOMINATOR;
+  // ---- REDUCTION STEP ----
+  // Apply small reduction to account for pool price shift between simulation and execution
+  const impact = bestResult.route.priceImpact;
+  const reductionBps = BigInt(Math.ceil(Math.max(impact * 200, Number(MIN_REDUCTION_BPS))));
+  const adjustedSwapAmount = bestResult.swapAmount - (bestResult.swapAmount * reductionBps / 10000n);
 
-  // Recalculate with adjusted swap amount for accurate preview
   try {
-    const adjustedRoute = await selectSwapRoute({
-      inputToken,
-      swapAmount: adjustedSwapAmount,
-      publicClient,
-    });
-
+    const { amountOut: adjustedOutput, route: adjustedRoute } = await getSwapQuote(adjustedSwapAmount);
     const adjustedRemaining = inputAmount - adjustedSwapAmount;
 
-    let adjustedPreview: { otherAmount: bigint; shares: bigint } | null;
-    if (inputToken === 'USDC') {
-      adjustedPreview = await previewAddFromAmount1(hookAddress, adjustedRemaining, publicClient);
-    } else {
-      adjustedPreview = await previewAddFromAmount0(hookAddress, adjustedRemaining, publicClient);
-    }
+    const adjustedPreview = isInputToken1
+      ? await previewAddFromAmount1(hookAddress, adjustedRemaining, publicClient)
+      : await previewAddFromAmount0(hookAddress, adjustedRemaining, publicClient);
 
     if (adjustedPreview) {
-      // Ensure BigInt for arithmetic (values may come from different sources)
-      const outputAmt = BigInt(adjustedRoute.outputAmount);
-      const otherAmt = BigInt(adjustedPreview.otherAmount);
-      const adjustedDust = outputAmt > otherAmt
-        ? outputAmt - otherAmt
-        : otherAmt - outputAmt;
-      const normalizedAdjustedDust = normalizeToInputDecimals(adjustedDust, inputToken);
-      const adjustedDustPercent = Number(normalizedAdjustedDust * 10000n / BigInt(inputAmount)) / 100;
+      const adjustedDust = adjustedOutput > adjustedPreview.otherAmount
+        ? adjustedOutput - adjustedPreview.otherAmount
+        : adjustedPreview.otherAmount - adjustedOutput;
+      const normalizedAdjustedDust = normalizeToInputDecimals(adjustedDust, inputToken, poolConfig);
+      const adjustedDustPercent = Number(normalizedAdjustedDust * 10000n / inputAmount) / 100;
 
       bestResult = {
         swapAmount: adjustedSwapAmount,
-        swapOutput: adjustedRoute.outputAmount,
-        route: adjustedRoute.route,
+        swapOutput: adjustedOutput,
+        route: adjustedRoute,
         remainingInput: adjustedRemaining,
         requiredOther: adjustedPreview.otherAmount,
         expectedShares: adjustedPreview.shares,
         estimatedDustPercent: adjustedDustPercent,
       };
     }
-  } catch (adjustError) {
-    // If adjustment fails, use the original result
-    console.warn('[findOptimalSwapAmount] Adjustment failed, using original result:', adjustError);
+  } catch {
+    // Use original result
   }
 
-  console.log(`[findOptimalSwapAmount] Converged:`, {
+  // For Kyberswap route: binary search used a linear approximation,
+  // now get the real quote for the converged amount for accurate preview
+  if (bestResult.route.type === 'kyberswap' && poolConfig) {
+    const isToken0Input = inputToken === poolConfig.token0.symbol;
+    const fromToken = isToken0Input ? poolConfig.token0 : poolConfig.token1;
+    const toToken = isToken0Input ? poolConfig.token1 : poolConfig.token0;
+
+    const realOutput = await fetchKyberQuoteViaApi(
+      fromToken.address, toToken.address,
+      bestResult.swapAmount, fromToken.decimals, toToken.decimals,
+      fromToken.symbol, toToken.symbol, slippageBps, userAddress,
+    );
+    if (realOutput) {
+      bestResult.swapOutput = realOutput;
+      bestResult.route = { type: 'kyberswap', priceImpact: 0, outputAmount: realOutput };
+    }
+  }
+
+  console.log('[findOptimalSwapAmount] Converged:', {
     swapAmount: bestResult.swapAmount.toString(),
     swapOutput: bestResult.swapOutput.toString(),
-    remainingInput: bestResult.remainingInput.toString(),
-    requiredOther: bestResult.requiredOther.toString(),
     dustPercent: bestResult.estimatedDustPercent.toFixed(4),
     route: bestResult.route.type,
+    reductionBps: Number(reductionBps),
   });
 
   return bestResult;
@@ -279,21 +318,69 @@ export async function findOptimalSwapAmount(
 // HELPERS
 // =============================================================================
 
-/**
- * Normalize dust amount to input token decimals for consistent percentage calculation.
- *
- * @param dust - Dust amount in output token decimals
- * @param inputToken - Input token (determines conversion direction)
- * @returns Dust in input token decimals
- */
-function normalizeToInputDecimals(dust: bigint, inputToken: ZapToken): bigint {
+function normalizeToInputDecimals(dust: bigint, inputToken: ZapToken, poolConfig?: ZapPoolConfig): bigint {
+  if (poolConfig) {
+    const isInputToken1 = inputToken === poolConfig.token1.symbol;
+    const inputDecimals = isInputToken1 ? poolConfig.token1.decimals : poolConfig.token0.decimals;
+    const outputDecimals = isInputToken1 ? poolConfig.token0.decimals : poolConfig.token1.decimals;
+    const decimalDiff = outputDecimals - inputDecimals;
+
+    if (decimalDiff > 0) {
+      return dust / (10n ** BigInt(decimalDiff));
+    } else if (decimalDiff < 0) {
+      return dust * (10n ** BigInt(-decimalDiff));
+    }
+    return dust;
+  }
+
+  // Fallback for backward compat (USDS/USDC hardcoded)
   if (inputToken === 'USDC') {
-    // Input is USDC (6 dec), dust is in USDS (18 dec)
-    // Convert USDS to USDC equivalent: divide by 10^12
-    return dust / DECIMAL_FACTOR;
+    return dust / DEFAULT_DECIMAL_FACTOR;
   } else {
-    // Input is USDS (18 dec), dust is in USDC (6 dec)
-    // Convert USDC to USDS equivalent: multiply by 10^12
-    return dust * DECIMAL_FACTOR;
+    return dust * DEFAULT_DECIMAL_FACTOR;
+  }
+}
+
+/**
+ * Fetch a swap quote via our server-side API route (/api/swap/get-quote).
+ * The API fetches both V4 and Kyberswap quotes and returns the best.
+ * This avoids CSP issues since Kyberswap is called server-side.
+ */
+async function fetchKyberQuoteViaApi(
+  fromTokenAddress: string,
+  toTokenAddress: string,
+  amountWei: bigint,
+  fromTokenDecimals: number,
+  toTokenDecimals: number,
+  fromSymbol: string,
+  toSymbol: string,
+  slippageBps?: number,
+  userAddress?: string,
+): Promise<bigint | null> {
+  try {
+    const res = await fetch('/api/swap/get-quote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fromTokenSymbol: fromSymbol,
+        toTokenSymbol: toSymbol,
+        fromTokenAddress,
+        toTokenAddress,
+        amountDecimalsStr: formatUnits(amountWei, fromTokenDecimals),
+        fromTokenDecimals,
+        toTokenDecimals,
+        swapType: 'ExactIn',
+        chainId: 8453,
+        slippageBps: slippageBps ?? 50,
+        userAddress,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.success || !data.toAmount) return null;
+    return parseUnits(data.toAmount, toTokenDecimals);
+  } catch (e) {
+    console.warn('[fetchKyberQuoteViaApi] Failed:', e);
+    return null;
   }
 }

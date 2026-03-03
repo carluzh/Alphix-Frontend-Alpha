@@ -46,6 +46,8 @@ import Image from "next/image";
 // Zap utilities
 import { generateZapSteps, isPreviewFresh } from "@/lib/liquidity/zap";
 import type { ZapToken } from "@/lib/liquidity/zap";
+import { getZapPoolConfig } from "@/lib/liquidity/zap/constants";
+import { isNativeToken } from "@/lib/aggregators/types";
 import { getStoredUserSettings } from "@/hooks/useUserSettings";
 
 // Flow state tracking for permit recovery
@@ -165,10 +167,10 @@ function ErrorCallout({
   if (!error) return null;
 
   return (
-    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 overflow-hidden">
       <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-red-400">{error}</p>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <p className="text-sm text-red-400 break-words line-clamp-2">{error}</p>
         <button
           onClick={onRetry}
           className="text-xs text-red-400 hover:text-red-300 underline mt-2"
@@ -411,12 +413,13 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
 
         // Calculate token amounts after swap
         const inputToken = preview.inputTokenInfo.symbol as ZapToken;
-        const token0Amount = inputToken === 'USDS'
-          ? preview.remainingInputAmount
-          : preview.swapOutputAmount;
-        const token1Amount = inputToken === 'USDC'
-          ? preview.remainingInputAmount
-          : preview.swapOutputAmount;
+        const isInputToken0 = inputToken === position.token0.symbol;
+        const token0Amount = isInputToken0
+          ? preview.remainingInputAmount  // Remaining input (token0)
+          : preview.swapOutputAmount;      // Swapped output (token0)
+        const token1Amount = isInputToken0
+          ? preview.swapOutputAmount       // Swapped output (token1)
+          : preview.remainingInputAmount;  // Remaining input (token1)
 
         // Apply shares haircut (0.1%)
         const sharesWithHaircut = (preview.expectedShares * 999n) / 1000n;
@@ -429,23 +432,29 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
         let initialBalance1: bigint | undefined;
         const token0Addr = tokenDefinitions[position.token0.symbol as TokenSymbol]?.address as Address;
         const token1Addr = tokenDefinitions[position.token1.symbol as TokenSymbol]?.address as Address;
+        const isToken0Native = isNativeToken(token0Addr);
+        const isToken1Native = isNativeToken(token1Addr);
         if (publicClient) {
           try {
             const [balance0, balance1] = await Promise.all([
-              publicClient.readContract({
-                address: token0Addr,
-                abi: ERC20_BALANCE_ABI,
-                functionName: 'balanceOf',
-                args: [address],
-                blockTag: 'latest',
-              }) as Promise<bigint>,
-              publicClient.readContract({
-                address: token1Addr,
-                abi: ERC20_BALANCE_ABI,
-                functionName: 'balanceOf',
-                args: [address],
-                blockTag: 'latest',
-              }) as Promise<bigint>,
+              isToken0Native
+                ? publicClient.getBalance({ address, blockTag: 'latest' })
+                : publicClient.readContract({
+                    address: token0Addr,
+                    abi: ERC20_BALANCE_ABI,
+                    functionName: 'balanceOf',
+                    args: [address],
+                    blockTag: 'latest',
+                  }) as Promise<bigint>,
+              isToken1Native
+                ? publicClient.getBalance({ address, blockTag: 'latest' })
+                : publicClient.readContract({
+                    address: token1Addr,
+                    abi: ERC20_BALANCE_ABI,
+                    functionName: 'balanceOf',
+                    args: [address],
+                    blockTag: 'latest',
+                  }) as Promise<bigint>,
             ]);
             initialBalance0 = balance0;
             initialBalance1 = balance1;
@@ -454,7 +463,8 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
           }
         }
 
-        const inputAmountUSD = Number(preview.formatted.inputAmount);
+        const inputPrice = isInputToken0 ? token0USDPrice : token1USDPrice;
+        const inputAmountUSD = Number(preview.formatted.inputAmount) * inputPrice;
 
         console.log('[IncreaseLiquidityForm] Generating Zap steps:', {
           inputToken,
@@ -485,6 +495,9 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
           initialBalance0,
           initialBalance1,
           inputAmountUSD,
+          poolConfig: getZapPoolConfig(position.poolId) ?? undefined,
+          token0Price: token0USDPrice,
+          token1Price: token1USDPrice,
         });
 
         console.log('[IncreaseLiquidityForm] Generated', zapStepsResult.totalStepCount, 'zap steps');
@@ -763,7 +776,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
                     </svg>
                     {/* Route label */}
                     <span className="text-xs text-muted-foreground">
-                      {zapPreview.route.type === 'psm' ? 'PSM' : 'Unified Pool'}
+                      {zapPreview.route.type === 'psm' ? 'PSM' : zapPreview.route.type === 'kyberswap' ? 'Kyberswap' : 'Unified Pool'}
                     </span>
                     {/* Chevron */}
                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
@@ -771,8 +784,8 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
                     </svg>
                     {/* Output token icon */}
                     <Image
-                      src={getTokenIcon(zapPreview.inputTokenInfo.symbol === 'USDS' ? 'USDC' : 'USDS')}
-                      alt={zapPreview.inputTokenInfo.symbol === 'USDS' ? 'USDC' : 'USDS'}
+                      src={getTokenIcon(zapPreview.outputTokenInfo.symbol)}
+                      alt={zapPreview.outputTokenInfo.symbol}
                       width={16}
                       height={16}
                       className="rounded-full"
@@ -780,6 +793,12 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
                   </div>
                 </div>
 
+                {zapPreview.route.priceImpact >= 3 && (
+                  <div className={`flex items-center gap-1.5 text-xs ${zapPreview.route.priceImpact >= 5 ? 'text-red-400' : 'text-yellow-400'}`}>
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    {zapPreview.route.priceImpact >= 5 ? 'Very high' : 'High'} price impact ({zapPreview.route.priceImpact.toFixed(2)}%)
+                  </div>
+                )}
                 {/* Expected shares row with USD value */}
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Expected shares</span>

@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import Image from "next/image";
+import { TokenImage } from "@/components/ui/token-image";
 import { getTokenIcon, formatCalculatedAmount } from "../liquidity-form-utils";
 
 interface DetailRowProps {
@@ -15,7 +15,7 @@ function DetailRow({ label, value, icon }: DetailRowProps) {
     <div className="flex items-center justify-between py-1.5">
       <span className="text-sm text-muted-foreground">{label}</span>
       <div className="flex items-center gap-2">
-        {icon && <Image src={icon} alt="" width={16} height={16} className="rounded-full" />}
+        {icon && <TokenImage src={icon} alt="" size={16} />}
         <span className="text-sm font-medium">{value}</span>
       </div>
     </div>
@@ -71,8 +71,8 @@ export function LiquidityDetailRowsCompact({ token0Amount, token0Symbol, token1A
   return (
     <div className="flex items-center justify-between text-sm">
       <div className="flex items-center gap-4">
-        {amt0 > 0 && token0Symbol && <div className="flex items-center gap-1.5"><Image src={getTokenIcon(token0Symbol)} alt="" width={16} height={16} className="rounded-full" /><span>{amt0.toFixed(4)} {token0Symbol}</span></div>}
-        {amt1 > 0 && token1Symbol && <div className="flex items-center gap-1.5"><Image src={getTokenIcon(token1Symbol)} alt="" width={16} height={16} className="rounded-full" /><span>{amt1.toFixed(4)} {token1Symbol}</span></div>}
+        {amt0 > 0 && token0Symbol && <div className="flex items-center gap-1.5"><TokenImage src={getTokenIcon(token0Symbol)} alt="" size={16} /><span>{amt0.toFixed(4)} {token0Symbol}</span></div>}
+        {amt1 > 0 && token1Symbol && <div className="flex items-center gap-1.5"><TokenImage src={getTokenIcon(token1Symbol)} alt="" size={16} /><span>{amt1.toFixed(4)} {token1Symbol}</span></div>}
       </div>
       {totalUSD > 0 && <span className="text-muted-foreground">{formatCalculatedAmount(totalUSD)}</span>}
     </div>
