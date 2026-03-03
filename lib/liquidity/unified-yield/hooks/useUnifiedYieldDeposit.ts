@@ -31,6 +31,7 @@ import {
 } from '../buildUnifiedYieldDepositTx';
 import type { UnifiedYieldDepositParams, DepositPreviewResult } from '../types';
 import { NATIVE_TOKEN_ADDRESS } from '@/lib/pools-config';
+import { BUILDER_CODE_SUFFIX } from '@/lib/builder-code';
 
 export interface UseUnifiedYieldDepositParams {
   /** Hook contract address */
@@ -293,7 +294,8 @@ export function useUnifiedYieldDeposit(
           functionName: 'addReHypothecatedLiquidity',
           args: [preview.shares, expectedSqrtPriceX96, maxPriceSlippage],
           value: txData.value,
-        });
+          dataSuffix: BUILDER_CODE_SUFFIX,
+        } as any);
 
         return hash;
       } catch (err) {

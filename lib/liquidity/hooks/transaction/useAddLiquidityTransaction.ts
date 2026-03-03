@@ -19,6 +19,7 @@ import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { useCheckMintApprovals } from '@/lib/liquidity';
 import { isInfiniteApprovalEnabled, getStoredUserSettings } from '@/hooks/useUserSettings';
 import { useTransactionAdder, TransactionType, type LiquidityIncreaseTransactionInfo, type ApproveTransactionInfo } from '@/lib/transactions';
+import { BUILDER_CODE_SUFFIX } from '@/lib/builder-code';
 
 type LiquidityOperation = 'liquidity_mint' | 'liquidity_approve';
 
@@ -343,6 +344,7 @@ export function useAddLiquidityTransaction({
           to: txData.to as `0x${string}`,
           data: txData.data as Hex,
           value: txData.value && txData.value !== '0' ? BigInt(txData.value) : undefined,
+          dataSuffix: BUILDER_CODE_SUFFIX,
         });
 
         // Track transaction in Redux store for cache invalidation

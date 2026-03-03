@@ -14,6 +14,7 @@ import { waitForTransactionReceipt } from 'wagmi/actions';
 import { useConfig } from 'wagmi';
 import type { Hex } from 'viem';
 import * as Sentry from '@sentry/nextjs';
+import { BUILDER_CODE_SUFFIX } from '@/lib/builder-code';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { useTransactionAdder, TransactionType, type LiquidityIncreaseTransactionInfo, type LiquidityDecreaseTransactionInfo, type ApproveTransactionInfo, type Permit2ApproveTransactionInfo } from '@/lib/transactions';
 
@@ -272,6 +273,7 @@ export function useLiquidityStepExecutor(
         data: args.data,
         value: args.value,
         gas: args.gasLimit, // wagmi uses 'gas' not 'gasLimit'
+        dataSuffix: BUILDER_CODE_SUFFIX,
       });
     },
     [sendTransactionAsync],

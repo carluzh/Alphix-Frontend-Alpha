@@ -43,6 +43,7 @@ import type { ExecutionTradeParams } from "./useSwapTrade"
 import type { AggregatorSource } from "@/lib/aggregators/types"
 import type { KyberswapQuoteData } from "./useSwapQuote"
 import { getKyberswapRouterAddress } from "@/lib/aggregators/kyberswap"
+import { BUILDER_CODE_SUFFIX } from "@/lib/builder-code"
 
 // =============================================================================
 // HELPERS (copied from useSwapExecution - shared logic)
@@ -755,6 +756,7 @@ export function useSwapStepExecutor({
         to: getAddress(buildData.to) as Address,
         data: buildData.data as Hex,
         value: BigInt(buildData.value),
+        dataSuffix: BUILDER_CODE_SUFFIX,
       })
     } else {
       txHash = await sendSwapTx({
@@ -763,7 +765,8 @@ export function useSwapStepExecutor({
         functionName: "execute",
         args: [buildData.commands as Hex, buildData.inputs as Hex[], BigInt(buildData.deadline)],
         value: BigInt(buildData.value),
-      })
+        dataSuffix: BUILDER_CODE_SUFFIX,
+      } as any)
     }
 
     if (!txHash) throw new Error("Failed to send swap transaction (no hash received)")

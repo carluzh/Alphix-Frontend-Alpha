@@ -28,6 +28,7 @@ import {
   calculateSharesFromPercentage,
 } from '../buildUnifiedYieldWithdrawTx';
 import type { UnifiedYieldWithdrawParams, UnifiedYieldWithdrawPreview, WithdrawPercentage } from '../types';
+import { BUILDER_CODE_SUFFIX } from '@/lib/builder-code';
 import { calculateWithdrawShares } from '../types';
 
 export interface UseUnifiedYieldWithdrawParams {
@@ -245,7 +246,8 @@ export function useUnifiedYieldWithdraw(
           abi: UNIFIED_YIELD_HOOK_ABI,
           functionName: 'removeReHypothecatedLiquidity',
           args: [shares, expectedSqrtPriceX96, maxPriceSlippage],
-        });
+          dataSuffix: BUILDER_CODE_SUFFIX,
+        } as any);
 
         return hash;
       } catch (err) {

@@ -591,7 +591,12 @@ export function TokenSelector({
   }, [isOpen, tokenPrices, filteredAvailableTokens]);
 
   const handleTokenSelect = (token: TokenSelectorToken) => {
-    onTokenSelect(token);
+    // Enrich token with fresh balance from selector's own fetch
+    const balanceData = tokenBalances[token.address];
+    const enrichedToken = balanceData && !balanceData.isLoading
+      ? { ...token, balance: balanceData.balance, value: `~$${balanceData.usdValue.toFixed(2)}` }
+      : token;
+    onTokenSelect(enrichedToken);
     setIsOpen(false);
     setSearchTerm('');
     setSearchResults([]);
