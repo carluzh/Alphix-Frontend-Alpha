@@ -124,8 +124,8 @@ export interface Token {
 // Initialize default tokens
 const getInitialTokens = (prices?: { BTC: number; USDC: number; ETH: number }) => {
   const availableTokens = getAvailableTokens(prices);
-  const defaultFrom = availableTokens.find(t => t.symbol === 'atUSDC' || t.symbol === 'USDC') || availableTokens[0];
-  const defaultTo = availableTokens.find(t => t.symbol === 'atDAI' || t.symbol === 'USDS') || availableTokens[1];
+  const defaultFrom = availableTokens.find(t => t.symbol === 'ETH') || availableTokens[0];
+  const defaultTo = availableTokens.find(t => t.symbol === 'atUSDC' || t.symbol === 'USDC') || availableTokens[1];
 
   return { defaultFrom, defaultTo, availableTokens };
 };
@@ -187,8 +187,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Internal state keeps non-null defaults for hooks; "selected" booleans control UI presentation
   const [fromToken, setFromToken] = useState<Token>(initialTokenData.defaultFrom);
   const [toToken, setToToken] = useState<Token>(initialTokenData.defaultTo);
-  const [fromTokenSelected, setFromTokenSelected] = useState(false);
-  const [toTokenSelected, setToTokenSelected] = useState(false);
+  const [fromTokenSelected, setFromTokenSelected] = useState(true);
+  const [toTokenSelected, setToTokenSelected] = useState(true);
   const [tokenList, setTokenList] = useState<Token[]>(initialTokenData.availableTokens);
   // Controlled open state for token selectors (allows click zones to open them)
   const [fromSelectorOpen, setFromSelectorOpen] = useState(false);
