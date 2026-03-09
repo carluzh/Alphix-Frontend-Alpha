@@ -7,7 +7,8 @@
  * @see interface/packages/uniswap/src/features/transactions/hooks/usePollingIntervalByChain.ts
  */
 
-import { useNetwork } from '@/lib/network-context'
+import { CHAIN_REGISTRY } from '@/lib/chain-registry'
+import type { NetworkMode } from '@/lib/network-mode'
 
 const ONE_SECOND_MS = 1000
 
@@ -24,22 +25,11 @@ export const AVERAGE_L1_BLOCK_TIME_MS = POLLING_INTERVAL_L1_MS
 export const AVERAGE_L2_BLOCK_TIME_MS = POLLING_INTERVAL_L2_MS
 
 /**
- * Returns the appropriate polling interval based on the current chain.
- * Base (mainnet and Sepolia) are L2 chains, so we use faster polling.
- *
- * @returns Polling interval in milliseconds
- *
- * @example
- * const pollingInterval = usePollingIntervalByChain()
- * // Returns 3000ms for Base (L2)
+ * Returns the appropriate polling interval for a given network mode.
+ * All supported chains (Base, Arbitrum) are L2 — returns L2 interval.
  */
-export function usePollingIntervalByChain(): number {
-  const { networkMode } = useNetwork()
-
-  // Both Base mainnet and Base Sepolia are L2 chains
-  // L2 chains have faster block times (~2-3 seconds)
-  const isL2 = networkMode === 'mainnet' || networkMode === 'testnet'
-
+export function usePollingIntervalByChain(networkMode?: NetworkMode): number {
+  const isL2 = networkMode ? CHAIN_REGISTRY[networkMode].isL2 : true
   return isL2 ? POLLING_INTERVAL_L2_MS : POLLING_INTERVAL_L1_MS
 }
 

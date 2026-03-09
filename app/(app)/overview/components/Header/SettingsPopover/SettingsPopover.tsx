@@ -24,10 +24,6 @@ import { IconGear } from "nucleo-micro-bold-essential";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useUserSettings, type ApprovalMode } from "@/hooks/useUserSettings";
-import { useNetwork, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from "@/lib/network-context";
-import { useAccount } from "wagmi";
-import { switchChain } from "@wagmi/core";
-import { config } from "@/lib/wagmiConfig";
 
 export enum SettingsView {
   MAIN = "main",
@@ -79,12 +75,6 @@ function SettingsPanel({
   isOpen: boolean;
   onClose: () => void;
 }) {
-  // Network settings
-  const { isTestnet, setNetworkMode } = useNetwork();
-  const { isConnected } = useAccount();
-  const [testnetMode, setTestnetMode] = useState(isTestnet);
-  const [isNetworkSwitching, setIsNetworkSwitching] = useState(false);
-
   // User settings
   const {
     settings,
@@ -99,11 +89,6 @@ function SettingsPanel({
   const [customSlippage, setCustomSlippage] = useState("");
   const [transactionDeadline, setTransactionDeadline] = useState("30");
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("exact");
-
-  // Sync testnet mode with context
-  useEffect(() => {
-    setTestnetMode(isTestnet);
-  }, [isTestnet]);
 
   // Sync local state with loaded settings
   useEffect(() => {
@@ -123,31 +108,6 @@ function SettingsPanel({
       setApprovalMode(settings.approvalMode);
     }
   }, [isLoaded, settings]);
-
-  // Handle network toggle - runs in background, doesn't close panel
-  const handleNetworkToggle = useCallback(async () => {
-    if (isNetworkSwitching) return;
-
-    const newTestnetMode = !testnetMode;
-    setTestnetMode(newTestnetMode);
-    setIsNetworkSwitching(true);
-
-    const targetChainId = newTestnetMode ? TESTNET_CHAIN_ID : MAINNET_CHAIN_ID;
-
-    if (isConnected) {
-      try {
-        await switchChain(config, { chainId: targetChainId });
-      } catch (error: unknown) {
-        console.log("[Settings] Chain switch failed:", (error as Error)?.message);
-      }
-    }
-
-    // Update network mode in background
-    setTimeout(() => {
-      setNetworkMode(newTestnetMode ? "testnet" : "mainnet");
-      setIsNetworkSwitching(false);
-    }, 300);
-  }, [testnetMode, isNetworkSwitching, isConnected, setNetworkMode]);
 
   // Slippage highlight refs
   const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -393,7 +353,6 @@ function SettingsPanel({
             </SettingsRow>
           </div>
 
-          {/* Network Section - Removed: testnet no longer available */}
         </div>
       </div>
 

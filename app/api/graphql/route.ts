@@ -5,6 +5,7 @@ import { checkRateLimit } from '@/lib/api/ratelimit'
 // Import resolvers and schema as string (works in serverless)
 import { resolvers } from './resolvers'
 import { typeDefs } from '@/lib/apollo/schema/typeDefs'
+import { parseNetworkMode } from '@/lib/network-mode'
 
 /**
  * GraphQL API Route
@@ -29,8 +30,8 @@ const { handleRequest } = createYoga({
   fetchAPI: { Response },
   // Context function to pass request info to resolvers
   context: async ({ request }) => {
-    // OVERRIDE: Always use mainnet (testnet removed)
-    const networkMode = 'mainnet' as 'mainnet' | 'testnet'
+    const headerMode = request.headers.get('x-network-mode')
+    const networkMode = parseNetworkMode(headerMode)
 
     // Resolve base URL with Vercel fallback for preview deployments
     // Priority: NEXT_PUBLIC_APP_URL > VERCEL_URL (auto-set by Vercel)

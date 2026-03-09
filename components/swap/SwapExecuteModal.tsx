@@ -33,8 +33,6 @@ import type { Token } from "./swap-interface"
 interface SwapExecuteModalProps extends UseSwapStepExecutorArgs {
   isOpen: boolean
   onClose: () => void
-  displayFromToken: Token
-  displayToToken: Token
   routeInfo?: { path: string[]; hops: number; isDirectRoute: boolean; pools: string[] } | null
 }
 
@@ -112,11 +110,10 @@ type ModalView = "review" | "executing"
 export function SwapExecuteModal({
   isOpen,
   onClose,
-  displayFromToken,
-  displayToToken,
   routeInfo,
   ...executorArgs
 }: SwapExecuteModalProps) {
+  const { fromToken, toToken } = executorArgs
   const { execute, state, reset, currentStep } = useSwapStepExecutor(executorArgs)
   const [view, setView] = useState<ModalView>("review")
   const [error, setError] = useState<string | null>(null)
@@ -198,12 +195,12 @@ export function SwapExecuteModal({
   // Map step states to TransactionStep array for ProgressIndicator
   const progressSteps = state.steps.map(s => s.step)
 
-  const displayFromAmount = formatTokenAmountDisplay(executorArgs.fromAmount, displayFromToken)
-  const displayToAmount = formatTokenAmountDisplay(executorArgs.toAmount, displayToToken)
+  const displayFromAmount = formatTokenAmountDisplay(executorArgs.fromAmount, fromToken)
+  const displayToAmount = formatTokenAmountDisplay(executorArgs.toAmount, toToken)
 
   // USD values
-  const fromUsd = parseFloat(executorArgs.fromAmount || "0") * (displayFromToken.usdPrice || 0)
-  const toUsd = parseFloat(executorArgs.toAmount || "0") * (displayToToken.usdPrice || 0)
+  const fromUsd = parseFloat(executorArgs.fromAmount || "0") * (fromToken.usdPrice || 0)
+  const toUsd = parseFloat(executorArgs.toAmount || "0") * (toToken.usdPrice || 0)
   const fmtUsd = (v: number) =>
     v < 0.01 ? "<$0.01" : `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -237,17 +234,17 @@ export function SwapExecuteModal({
             <div className="flex items-center justify-between">
               <div className="flex flex-col gap-0.5">
                 <span className="text-xl font-semibold text-white">
-                  {displayFromAmount} {displayFromToken.symbol}
+                  {displayFromAmount} {fromToken.symbol}
                 </span>
                 {fromUsd > 0 && (
                   <span className="text-sm text-muted-foreground">{fmtUsd(fromUsd)}</span>
                 )}
               </div>
-              {displayFromToken.icon ? (
-                <TokenImage src={displayFromToken.icon} alt={displayFromToken.symbol} size={36} />
+              {fromToken.icon ? (
+                <TokenImage src={fromToken.icon} alt={fromToken.symbol} size={36} />
               ) : (
                 <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white">
-                  {displayFromToken.symbol.charAt(0)}
+                  {fromToken.symbol.charAt(0)}
                 </div>
               )}
             </div>
@@ -261,17 +258,17 @@ export function SwapExecuteModal({
             <div className="flex items-center justify-between">
               <div className="flex flex-col gap-0.5">
                 <span className="text-xl font-semibold text-white">
-                  {displayToAmount} {displayToToken.symbol}
+                  {displayToAmount} {toToken.symbol}
                 </span>
                 {toUsd > 0 && (
                   <span className="text-sm text-muted-foreground">{fmtUsd(toUsd)}</span>
                 )}
               </div>
-              {displayToToken.icon ? (
-                <TokenImage src={displayToToken.icon} alt={displayToToken.symbol} size={36} />
+              {toToken.icon ? (
+                <TokenImage src={toToken.icon} alt={toToken.symbol} size={36} />
               ) : (
                 <div className="w-9 h-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-bold text-white">
-                  {displayToToken.symbol.charAt(0)}
+                  {toToken.symbol.charAt(0)}
                 </div>
               )}
             </div>
@@ -302,8 +299,8 @@ export function SwapExecuteModal({
               </div>
               <SwapRoutePreview
                 source={executorArgs.source || "alphix"}
-                fromToken={displayFromToken}
-                toToken={displayToToken}
+                fromToken={fromToken}
+                toToken={toToken}
                 routeInfo={routeInfo}
                 kyberswapRouteSummary={executorArgs.kyberswapData?.routeSummary}
                 tokenMetadata={executorArgs.kyberswapData?.tokenMetadata}
@@ -324,7 +321,7 @@ export function SwapExecuteModal({
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Price</span>
                     <span className="text-white">
-                      1 {displayFromToken.symbol} = {rateDisplay} {displayToToken.symbol}
+                      1 {fromToken.symbol} = {rateDisplay} {toToken.symbol}
                     </span>
                   </div>
                 )
@@ -346,13 +343,13 @@ export function SwapExecuteModal({
                 const minDisplay = minReceived >= 0.01
                   ? minReceived.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 })
                   : minReceived.toPrecision(4)
-                const minUsd = minReceived * (displayToToken.usdPrice || 0)
+                const minUsd = minReceived * (toToken.usdPrice || 0)
                 return (
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Min. received</span>
                     <span>
                       <span className="text-muted-foreground">
-                        {minDisplay} {displayToToken.symbol}
+                        {minDisplay} {toToken.symbol}
                       </span>
                       {minUsd > 0 && (
                         <span className="text-white ml-1">

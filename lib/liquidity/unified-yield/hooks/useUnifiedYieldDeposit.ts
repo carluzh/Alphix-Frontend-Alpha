@@ -32,6 +32,8 @@ import {
 import type { UnifiedYieldDepositParams, DepositPreviewResult } from '../types';
 import { NATIVE_TOKEN_ADDRESS } from '@/lib/pools-config';
 import { BUILDER_CODE_SUFFIX } from '@/lib/builder-code';
+import { useNetwork } from '@/lib/network-context';
+import { chainIdForMode } from '@/lib/network-mode';
 
 export interface UseUnifiedYieldDepositParams {
   /** Hook contract address */
@@ -59,6 +61,8 @@ export interface UseUnifiedYieldDepositParams {
    * Default: 10000 (1%)
    */
   maxPriceSlippage?: number;
+  /** Override networkMode (use pool's chain instead of global context) */
+  networkModeOverride?: import('@/lib/network-mode').NetworkMode;
 }
 
 export interface UseUnifiedYieldDepositResult {
@@ -135,7 +139,7 @@ export interface UseUnifiedYieldDepositResult {
  *   token0Decimals: 18,
  *   token1Decimals: 6,
  *   poolId: 'eth-usdc',
- *   chainId: 84532,
+ *   chainId: 8453,
  * });
  *
  * // Preview to show user the required amounts
@@ -153,7 +157,9 @@ export function useUnifiedYieldDeposit(
   params?: UseUnifiedYieldDepositParams
 ): UseUnifiedYieldDepositResult {
   const { address: userAddress } = useAccount();
-  const publicClient = usePublicClient();
+  const { ensureChain } = useNetwork();
+  const networkMode = params?.networkModeOverride ?? 'base';
+  const publicClient = usePublicClient({ chainId: chainIdForMode(networkMode) });
   const [error, setError] = useState<Error | null>(null);
   const [lastPreview, setLastPreview] = useState<DepositPreviewResult | null>(null);
 
@@ -258,6 +264,10 @@ export function useUnifiedYieldDeposit(
       }
 
       try {
+        // Ensure wallet is on the correct chain before submitting
+        const ok = await ensureChain(chainIdForMode(networkMode));
+        if (!ok) return undefined;
+
         // Build full deposit params
         const depositParams: UnifiedYieldDepositParams = {
           hookAddress: params.hookAddress,
@@ -268,7 +278,7 @@ export function useUnifiedYieldDeposit(
           sharesToMint: preview.shares,
           userAddress,
           poolId: params.poolId || '',
-          chainId: params.chainId || 84532,
+          chainId: params.chainId || 8453,
         };
 
         // Validate

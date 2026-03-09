@@ -65,6 +65,7 @@ export interface V4ProcessedPosition {
     isUnifiedYield?: boolean;
     hookAddress?: string;
     shareBalance?: string;
+    networkMode: NetworkMode;
 }
 
 export type Position = V4ProcessedPosition;
@@ -150,20 +151,6 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
             const json = await resp.json() as any;
             let raw = json?.data?.hookPositions ?? [] as SubgraphPosition[];
             console.log('[fetchUserPositions] subgraph returned', raw.length, 'hookPositions');
-            // Fallback to legacy positions if hookPositions empty (testnet only)
-            if (networkMode === 'testnet' && (!Array.isArray(raw) || raw.length === 0)) {
-                try {
-                    const legacyController = new AbortController();
-                    const legacyTimeoutId = setTimeout(() => legacyController.abort(), 10000);
-                    const respLegacy = await fetch(subgraphUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: owner.toLowerCase() } }), signal: legacyController.signal });
-                    clearTimeout(legacyTimeoutId);
-                    if (respLegacy.ok) {
-                        const jsonLegacy = await respLegacy.json() as any;
-                        const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
-                        raw = legacy.map(p => ({ id: p.id, owner: p.owner, tickLower: '0', tickUpper: '0', liquidity: '0', creationTimestamp: p.createdAtTimestamp || '0', lastTimestamp: undefined as any, poolId: '' }));
-                    }
-                } catch {}
-            }
             return raw;
         } catch (error: any) {
             clearTimeout(timeoutId);
@@ -440,6 +427,7 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
                         isInRange: state.tick >= details.tickLower && state.tick < details.tickUpper,
                         token0UncollectedFees: feeData?.token0UncollectedFees,
                         token1UncollectedFees: feeData?.token1UncollectedFees,
+                        networkMode,
                     });
                 } catch (e: any) {
                     console.error('[fetchUserPositions] failed to process position id', r?.id, 'error:', e?.message || e);

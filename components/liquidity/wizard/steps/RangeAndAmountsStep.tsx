@@ -25,8 +25,10 @@ import { useAddLiquidityContext } from '../AddLiquidityContext';
 import { useCreatePositionTxContext } from '../CreatePositionTxContext';
 import { Container } from '../shared/Container';
 import { RangePreset } from '../types';
+import Image from 'next/image';
 import { getPoolById, getTokenDefinitions, TokenSymbol } from '@/lib/pools-config';
-import { useNetwork } from '@/lib/network-context';
+import { chainIdForMode } from '@/lib/network-mode';
+import { CHAIN_REGISTRY } from '@/lib/chain-registry';
 import { getDecimalsForDenomination } from '@/lib/denomination-utils';
 import { usePercentageInput } from '@/hooks/usePercentageInput';
 import { useTokenPrices } from '@/hooks/useTokenPrices';
@@ -188,6 +190,7 @@ interface CurrentPriceProps {
   token1Symbol: string;
   inverted: boolean;
   onSelectToken: (token: string) => void;
+  networkMode?: import('@/lib/network-mode').NetworkMode;
 }
 
 function CurrentPriceDisplay({
@@ -196,6 +199,7 @@ function CurrentPriceDisplay({
   token1Symbol,
   inverted,
   onSelectToken,
+  networkMode,
 }: CurrentPriceProps) {
   const baseToken = inverted ? token1Symbol : token0Symbol;
   const quoteToken = inverted ? token0Symbol : token1Symbol;
@@ -211,6 +215,7 @@ function CurrentPriceDisplay({
           token1Symbol={token1Symbol}
           activeBase={selectedToken}
           onToggle={onSelectToken}
+          networkMode={networkMode}
         />
       </div>
       {/* Price value and denomination text */}
@@ -310,10 +315,14 @@ export function RangeAndAmountsStep() {
     poolStateData,
     derivedPositionInfo,
     pool: sdkPool, // V4Pool SDK instance
+    poolNetworkMode,
   } = useAddLiquidityContext();
 
   const { address: accountAddress, isConnected } = useAccount();
-  const { chainId, networkMode } = useNetwork();
+  // Use pool's networkMode for chain-specific lookups — never use global context
+  const networkMode = poolNetworkMode ?? 'base';
+  // Derive chainId from pool's network — ensures balances are read from the correct chain
+  const chainId = chainIdForMode(networkMode);
 
   // Get calculation data from TxContext (real liquidity math)
   const {
@@ -369,7 +378,7 @@ export function RangeAndAmountsStep() {
   }, [sdkPool, state.tickLower, state.tickUpper]);
 
   // Pool and token data - now uses context (Uniswap pattern)
-  const poolConfig = state.poolId ? getPoolById(state.poolId) : null;
+  const poolConfig = state.poolId ? getPoolById(state.poolId, networkMode) : null;
   const isStablePool = poolConfig?.type === 'Stable';
   const isRehypoMode = state.mode === 'rehypo';
 
@@ -381,8 +390,8 @@ export function RangeAndAmountsStep() {
 
   // Fetch lending APR for Unified Yield callout (same data source as Step 1)
   const { data: aaveRatesData } = useQuery({
-    queryKey: ['aaveRates'],
-    queryFn: fetchAaveRates,
+    queryKey: ['aaveRates', networkMode],
+    queryFn: () => fetchAaveRates(networkMode),
     staleTime: 5 * 60_000,
     enabled: !isRehypoMode && !!poolConfig, // Only fetch when showing callout possibility
   });
@@ -481,7 +490,7 @@ export function RangeAndAmountsStep() {
     };
   }, [isRehypoMode, hasValidRehypoTicks, rehypoMinPriceFormatted, rehypoMaxPriceFormatted]);
 
-  const subgraphPoolId = state.poolId ? (getPoolSubgraphId(state.poolId) || state.poolId) : undefined;
+  const subgraphPoolId = state.poolId ? (getPoolSubgraphId(state.poolId, networkMode) || state.poolId) : undefined;
 
   // Fetch pre-transformed data for chart (handles inversion)
   // Pass SDK tokens for proper decimal handling in tick-to-price conversion
@@ -490,6 +499,7 @@ export function RangeAndAmountsStep() {
     priceInverted,
     token0: sdkPool?.token0,
     token1: sdkPool?.token1,
+    networkMode,
   });
 
   const { entries: priceChartEntries, loading: isPriceLoading } = usePoolPriceChartData({
@@ -500,6 +510,7 @@ export function RangeAndAmountsStep() {
       duration: chartDuration,
     },
     priceInverted,
+    networkModeOverride: networkMode,
   });
 
   const chartCurrentPrice = useMemo(() => {
@@ -1128,11 +1139,11 @@ export function RangeAndAmountsStep() {
   }, [isRehypoMode, rehypoTickLower, rehypoTickUpper, setRange]);
 
   // Initialize with appropriate strategy for Custom Range mode based on pool type
-  // Runs when: not rehypo mode, no range set yet, and either liquidity data loaded or loading completed (testnet may have no data)
+  // Runs when: not rehypo mode, no range set yet, and either liquidity data loaded or loading completed
   const rangeInitialized = useRef(false);
   useEffect(() => {
     if (!isRehypoMode && !minPrice && !maxPrice && !rangeInitialized.current && sdkPool) {
-      // Wait for liquidity data if loading, otherwise initialize immediately (testnet fallback)
+      // Wait for liquidity data if loading, otherwise initialize immediately
       if (liquidityData.length > 0 || !isLiquidityLoading) {
         rangeInitialized.current = true;
         handleSelectStrategy(getDefaultRangePreset(isStablePool));
@@ -1244,7 +1255,23 @@ export function RangeAndAmountsStep() {
       {/* Section 1: Range Selection (collapsed for rehypo mode) */}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold text-white">Position Range</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white">Position Range</h2>
+            {networkMode && (
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
+                <Image
+                  src={`/chains/${networkMode}.svg`}
+                  alt={CHAIN_REGISTRY[networkMode]?.displayName ?? ''}
+                  width={14}
+                  height={14}
+                  className="rounded-full"
+                />
+                <span className="text-xs font-medium text-muted-foreground">
+                  {CHAIN_REGISTRY[networkMode]?.displayName}
+                </span>
+              </div>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground">
             Set the price range for your {poolConfig.currency0.symbol}/{poolConfig.currency1.symbol} position
           </p>
@@ -1257,6 +1284,7 @@ export function RangeAndAmountsStep() {
           token1Symbol={poolConfig.currency1.symbol}
           inverted={priceInverted}
           onSelectToken={handleSelectToken}
+          networkMode={networkMode}
         />
 
         {/* Price Deviation Warning - prominent display under current price */}
@@ -1270,7 +1298,7 @@ export function RangeAndAmountsStep() {
         )}
 
         {/* D3 Range Chart (view-only) - show chart OR skeleton (Uniswap pattern) */}
-        {/* Show skeleton only while actively loading; once done, show chart (even without data on testnet) */}
+        {/* Show skeleton only while actively loading; once done, show chart (even without data) */}
         <div className={cn(
           "border border-sidebar-border rounded-lg overflow-hidden",
           isRehypoMode && "opacity-60"
@@ -1451,6 +1479,7 @@ export function RangeAndAmountsStep() {
             <TokenInputCard
               id="wizard-zap-input"
               tokenSymbol={state.zapInputToken === 'token0' ? poolConfig.currency0.symbol : poolConfig.currency1.symbol}
+              networkMode={networkMode}
               value={state.zapInputToken === 'token0' ? amount0 : amount1}
               onChange={state.zapInputToken === 'token0' ? handleAmount0Change : handleAmount1Change}
               label="Add"
@@ -1477,6 +1506,7 @@ export function RangeAndAmountsStep() {
             <TokenInputCard
               id="wizard-amount0"
               tokenSymbol={poolConfig.currency0.symbol}
+              networkMode={networkMode}
               value={amount0}
               onChange={handleAmount0Change}
               label="Add"
@@ -1496,6 +1526,7 @@ export function RangeAndAmountsStep() {
             <TokenInputCard
               id="wizard-amount1"
               tokenSymbol={poolConfig.currency1.symbol}
+              networkMode={networkMode}
               value={amount1}
               onChange={handleAmount1Change}
               label="Add"

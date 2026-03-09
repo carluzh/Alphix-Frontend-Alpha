@@ -18,6 +18,7 @@ import {
   parseSplitRoutes,
   type ParsedSplitRoute,
 } from "./SwapRouteDisplay"
+import type { NetworkMode } from "@/lib/network-mode"
 import type { KyberswapRouteSummary } from "@/lib/aggregators/types"
 import type { AggregatorSource } from "@/lib/aggregators/types"
 import type { Token } from "./swap-interface"
@@ -40,6 +41,7 @@ interface SwapRoutePreviewProps {
   isLoading?: boolean
   /** Compact mode for the swap wizard modal: shorter height, square nodes, no header/legend */
   compact?: boolean
+  networkMode?: NetworkMode
 }
 
 const ALPHIX_FLOW_COLOR = "#9ca3af" // neutral grey for Alphix Unified Pool flows
@@ -202,6 +204,7 @@ export function SwapRoutePreview({
   tokenMetadata,
   isLoading = false,
   compact = false,
+  networkMode,
 }: SwapRoutePreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const svgContainerRef = useRef<HTMLDivElement>(null)
@@ -223,8 +226,8 @@ export function SwapRoutePreview({
   }, [])
 
   const addressMap = useMemo(
-    () => buildAddressSymbolMap(fromToken, toToken, tokenMetadata),
-    [fromToken, toToken, tokenMetadata],
+    () => buildAddressSymbolMap(fromToken, toToken, tokenMetadata, networkMode),
+    [fromToken, toToken, tokenMetadata, networkMode],
   )
 
   const iconMap = useMemo(
@@ -662,7 +665,7 @@ export function SwapRoutePreview({
                   const centerY = (bar.yTop + bar.yBot) / 2
                   const isOverflow = bar.symbol.startsWith("+")
                   const icon = isOverflow ? "" : resolveTokenIcon(bar.symbol, fromToken, toToken, iconMap)
-                  const isPlaceholder = !isOverflow && (!icon || icon === "/placeholder-logo.svg")
+                  const isPlaceholder = !isOverflow && (!icon || icon === "/tokens/placeholder.svg")
                   const showIcon = barH >= cICON_SIZE + 4
                   const tooltipLabel = isOverflow ? `${bar.symbol} more` : bar.symbol
                   return (

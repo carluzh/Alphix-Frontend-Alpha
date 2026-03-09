@@ -17,6 +17,7 @@ import { formatNumber } from "@/lib/format";
 import { getDecimalsForDenomination } from "@/lib/denomination-utils";
 import type { PoolConfig } from "@/lib/pools-config";
 import type { LPType, ChartDuration, PositionInfo, PoolStateData } from "../../hooks";
+import type { NetworkMode } from "@/lib/network-mode";
 import dynamic from "next/dynamic";
 import { usePositionFeeChartData, useUnifiedYieldChartData, type ChartPeriod } from "../../hooks";
 import type { TimePeriod } from "../PriceChartSection";
@@ -77,7 +78,6 @@ import {
   adaptUnifiedYieldToProcessedPosition,
   type UnifiedYieldPosition,
 } from "@/lib/liquidity/unified-yield";
-import { useNetwork } from "@/lib/network-context";
 import { usePriceDeviation, requiresDeviationAcknowledgment } from "@/hooks/usePriceDeviation";
 import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
 import { HighRiskConfirmModal, createPriceDeviationWarning } from "@/components/ui/HighRiskConfirmModal";
@@ -227,7 +227,7 @@ function DualBar({
   token1Symbol?: string;
   hoveredToken: 0 | 1 | null;
   onHover: (token: 0 | 1 | null) => void;
-  networkMode: "mainnet" | "testnet";
+  networkMode: NetworkMode;
 }) {
   const color0 = getTokenColor(token0Symbol, networkMode);
   const color1 = getTokenColor(token1Symbol, networkMode);
@@ -271,7 +271,7 @@ function TokenRow({
   isHovered: boolean;
   isMuted: boolean;
   onHover: (hovered: boolean) => void;
-  networkMode: "mainnet" | "testnet";
+  networkMode: NetworkMode;
 }) {
   const iconUrl = getTokenIcon(symbol, networkMode);
 
@@ -327,7 +327,7 @@ function PositionHeader({
   onAddLiquidity: () => void;
   onRemoveLiquidity: () => void;
   onCollectFees: () => void;
-  networkMode: "mainnet" | "testnet";
+  networkMode: NetworkMode;
   fromPage: "overview" | "pool" | null;
 }) {
   const token0Icon = getTokenIcon(poolConfig.currency0.symbol, networkMode);
@@ -528,7 +528,7 @@ function PositionValueSection({
   totalPositionValue: number | null;
   token0Symbol: string;
   token1Symbol: string;
-  networkMode: "mainnet" | "testnet";
+  networkMode: NetworkMode;
 }) {
   const [hoveredToken, setHoveredToken] = useState<0 | 1 | null>(null);
 
@@ -612,7 +612,7 @@ function EarningsSection({
   totalFeesValue: number | null;
   token0Symbol: string;
   token1Symbol: string;
-  networkMode: "mainnet" | "testnet";
+  networkMode: NetworkMode;
 }) {
   const [hoveredToken, setHoveredToken] = useState<0 | 1 | null>(null);
 
@@ -877,7 +877,8 @@ export const PositionDetail = memo(function PositionDetail({
 }: PositionDetailProps) {
   const isMobile = useIsMobile();
   const router = useRouter();
-  const { networkMode } = useNetwork();
+  // Use pool's chain, not wallet's chain — ensures correct token icons, colors, and API calls
+  const networkMode = poolConfig?.networkMode ?? 'base' as NetworkMode;
 
   // Window width for responsive chart
   const [windowWidth, setWindowWidth] = useState<number>(
@@ -926,6 +927,7 @@ export const PositionDetail = memo(function PositionDetail({
     token0Symbol: poolConfig?.currency0?.symbol,
     token1Symbol: poolConfig?.currency1?.symbol,
     isRehypo: false, // V4 positions only
+    networkModeOverride: networkMode,
   });
 
   // Unified Yield chart data - shows Swap APR + per-token yield source APRs
@@ -943,6 +945,7 @@ export const PositionDetail = memo(function PositionDetail({
     token1Symbol: poolConfig?.currency1?.symbol,
     currentSwapApr: poolApr,
     enabled: chartTab === "yield" && !!poolConfig?.subgraphId && isUnifiedYield,
+    networkModeOverride: networkMode,
   });
 
   // Transform UY chart data to format expected by YieldChartSection
@@ -1033,6 +1036,7 @@ export const PositionDetail = memo(function PositionDetail({
       isInRange,
       token0UncollectedFees: fee0Amount?.toExact() || "0",
       token1UncollectedFees: fee1Amount?.toExact() || "0",
+      networkMode: networkMode,
     };
   }, [position, poolConfig, positionInfo, tokenId, currency0Amount, currency1Amount, isInRange, fee0Amount, fee1Amount, isUnifiedYield, unifiedYieldPosition, networkMode]);
 
@@ -1224,6 +1228,7 @@ export const PositionDetail = memo(function PositionDetail({
                   setPriceInverted(shouldInvert);
                 }
               }}
+              networkMode={networkMode}
             />
           </div>
 

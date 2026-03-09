@@ -88,7 +88,7 @@ export interface LiquidityPositionStep extends TransactionStepBase {
 }
 
 /**
- * Faucet mint step - minting testnet tokens
+ * Faucet mint step (deprecated - testnet removed)
  */
 export interface FaucetMintStep extends TransactionStepBase {
   type: TransactionStepType.FaucetMintTransaction

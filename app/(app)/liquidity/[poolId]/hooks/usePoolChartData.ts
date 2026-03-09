@@ -128,8 +128,8 @@ export function usePoolChartData({
   const fetchChartData = useCallback(async (force?: boolean) => {
     if (!poolId || !subgraphId) return;
 
-    // Guard against redundant fetches - poolKey auto-resets when pool changes
-    const poolKey = `${poolId}-${subgraphId}`;
+    // Guard against redundant fetches - poolKey auto-resets when pool or network changes
+    const poolKey = `${poolId}-${subgraphId}-${networkMode}`;
     if (hasFetchedForPoolRef.current === poolKey && !force) return;
 
     hasFetchedForPoolRef.current = poolKey;
@@ -145,7 +145,7 @@ export function usePoolChartData({
         data?: any[];
         feeEvents?: any[];
       }>(
-        `/api/liquidity/pool-chart-data?poolId=${encodeURIComponent(poolId)}&days=${targetDays}`,
+        `/api/liquidity/pool-chart-data?poolId=${encodeURIComponent(poolId)}&days=${targetDays}&network=${networkMode}`,
         {
           attempts: 2,
           baseDelay: 300,
@@ -231,7 +231,7 @@ export function usePoolChartData({
       setIsLoadingChartData(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poolId, subgraphId]);
+  }, [poolId, subgraphId, networkMode]);
 
   const updateTodayTvl = useCallback((tvl: number) => {
     if (!Number.isFinite(tvl)) return;

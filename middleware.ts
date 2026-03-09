@@ -7,7 +7,6 @@ const ALLOWED_ORIGINS = [
   'https://alphix.io',
   'https://www.alphix.io',
   'https://app.alphix.io',
-  'https://testnet.alphix.io',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
 ];
@@ -34,7 +33,8 @@ const BASE_CSP: Record<string, string[]> = {
     "https://*.publicnode.com",
     "https://*.quiknode.pro",
     "https://mainnet.base.org",
-    "https://sepolia.base.org",
+    "https://arb1.arbitrum.io",
+    "https://arbitrum.drpc.org",
     "https://1rpc.io",
     "https://rpc.ankr.com",
     "https://cloudflare-eth.com",

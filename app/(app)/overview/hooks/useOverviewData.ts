@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useAccount } from "wagmi";
-import { getAllPools } from "@/lib/pools-config";
+import { getAllPools, getMultiChainEnabledPools } from "@/lib/pools-config";
 import { fetchPoolsMetrics } from "@/lib/backend-client";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
+import type { NetworkMode } from "@/lib/network-mode";
+import { ALL_MODES } from "@/lib/chain-registry";
 
 export interface TokenBalance {
   symbol: string;
@@ -45,7 +47,6 @@ const TOKEN_COLORS = [
  * Prices are fetched via useTokenPrices (React Query polling + V4 Quoter + CoinGecko fallback).
  */
 export function useOverviewData(
-  networkMode: "mainnet" | "testnet",
   refreshKey: number = 0,
   userPositionsData?: any[],
   pricesData?: any
@@ -58,9 +59,9 @@ export function useOverviewData(
     const positionsRaw = userPositionsData || [];
     let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
     try {
-      const pools = getAllPools(networkMode);
+      const allChainPools = getMultiChainEnabledPools();
       const allowedIds = new Set(
-        (pools || []).map((p: any) => String(p?.subgraphId || "").toLowerCase())
+        allChainPools.map((p: any) => String(p?.subgraphId || "").toLowerCase())
       );
       positions = positions.filter((pos: any) => {
         const pid = String(pos?.poolId || "").toLowerCase();
@@ -68,7 +69,7 @@ export function useOverviewData(
       });
     } catch {}
     return positions;
-  }, [isConnected, accountAddress, userPositionsData, networkMode]);
+  }, [isConnected, accountAddress, userPositionsData]);
 
   // 2. Extract unique token symbols for price fetching
   const tokenSymbols = useMemo(() => {
@@ -196,7 +197,6 @@ const optimisticallyRemovedIds = new Set<string>();
  * Adapted from Uniswap's usePortfolio pattern
  */
 export function useOverview(
-  networkMode: "mainnet" | "testnet",
   refreshKey: number = 0,
   userPositionsData?: any[],
   pricesData?: any,
@@ -205,7 +205,7 @@ export function useOverview(
   const { address: accountAddress, isConnected } = useAccount();
 
   // Get aggregated overview data
-  const overviewData = useOverviewData(networkMode, refreshKey, userPositionsData, pricesData);
+  const overviewData = useOverviewData(refreshKey, userPositionsData, pricesData);
 
   // Position and APR states
   const [activePositions, setActivePositions] = useState<any[]>([]);
@@ -226,11 +226,11 @@ export function useOverview(
     const positionsRaw = userPositionsData || [];
     let positions = Array.isArray(positionsRaw) ? positionsRaw : [];
 
-    // Filter to configured pools only
+    // Filter to configured pools across all chains
     try {
-      const pools = getAllPools(networkMode);
+      const allChainPools = getMultiChainEnabledPools();
       const allowedIds = new Set(
-        (pools || []).map((p: any) => String(p?.subgraphId || "").toLowerCase())
+        allChainPools.map((p: any) => String(p?.subgraphId || "").toLowerCase())
       );
       positions = positions.filter((pos: any) => {
         const pid = String(pos?.poolId || "").toLowerCase();
@@ -253,28 +253,32 @@ export function useOverview(
     } else {
       setActivePositions(positions);
     }
-  }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions, networkMode]);
+  }, [isConnected, accountAddress, userPositionsData, isLoadingHookPositions]);
 
-  // Fetch APR data from backend
+  // Fetch APR data from backend — both chains
   useEffect(() => {
     const fetchApr = async () => {
-      try {
-        const response = await fetchPoolsMetrics(networkMode);
-        if (!response.success || !Array.isArray(response.pools)) return;
-        const map: Record<string, string> = {};
+      const modes = ALL_MODES;
+      const map: Record<string, string> = {};
+      const results = await Promise.allSettled(
+        modes.map(mode => fetchPoolsMetrics(mode))
+      );
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue;
+        const response = result.value;
+        if (!response.success || !Array.isArray(response.pools)) continue;
         for (const pool of response.pools) {
-          // Calculate APR same as WebSocket: (fees24h / tvl) * 365 * 100
           const aprValue = pool.tvlUsd > 0 ? (pool.fees24hUsd / pool.tvlUsd) * 365 * 100 : 0;
           const apr = isFinite(aprValue) && aprValue > 0
             ? `${aprValue.toFixed(2)}%`
             : "N/A";
           if (pool.poolId) map[String(pool.poolId).toLowerCase()] = apr;
         }
-        setAprByPoolId(map);
-      } catch {}
+      }
+      setAprByPoolId(map);
     };
     fetchApr();
-  }, [networkMode]);
+  }, []);
 
   useEffect(() => {
     setIsLoadingPoolStates(false);

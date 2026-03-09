@@ -1,13 +1,12 @@
 import { getAddress, type Address } from 'viem';
 import { Token } from '@uniswap/sdk-core';
-import testnetPoolsConfig from '../config/testnet_pools.json';
-import mainnetPoolsConfig from '../config/pools.json';
+import basePoolsConfig from '../config/pools.json';
+import arbitrumPoolsConfig from '../config/arbitrum_pools.json';
 import { getStoredNetworkMode, getNetworkModeFromCookies, type NetworkMode } from './network-mode';
+import { ALL_MODES } from './chain-registry';
 
-// Re-export NetworkMode for use by other modules
 export type { NetworkMode };
 
-// Type definitions for pools config structure
 interface PoolsConfigFile {
   meta: { version: string; description: string; chainId: number; chainName: string };
   contracts: { poolManager: string; universalRouter?: string; quoter: string; positionManager: string; stateView: string };
@@ -32,35 +31,37 @@ interface PoolsConfigFile {
   fees: { initialFee: number; initialTargetRatio: string; currentRatio: string };
 }
 
-/**
- * OVERRIDE: Always use mainnet (testnet removed)
- */
-function getDefaultNetworkMode(): NetworkMode {
-  return 'mainnet';
+const CONFIG_MAP: Record<NetworkMode, PoolsConfigFile> = {
+  base: basePoolsConfig as PoolsConfigFile,
+  arbitrum: arbitrumPoolsConfig as PoolsConfigFile,
+};
+
+/** Resolved mode for a given override */
+function resolveMode(networkModeOverride?: NetworkMode): NetworkMode {
+  return networkModeOverride ?? getStoredNetworkMode();
 }
 
-/**
- * Get the pools config for a specific network mode.
- * This is called dynamically rather than at module load time to support
- * runtime network switching via cookies/localStorage.
- *
- * @param networkModeOverride - Optional override for network mode (useful for API routes with cookies)
- */
+/** Get raw config file (tokens, contracts, fees) */
 function getPoolsConfig(networkModeOverride?: NetworkMode): PoolsConfigFile {
-  const networkMode = networkModeOverride ?? getDefaultNetworkMode();
-  return networkMode === 'mainnet'
-    ? (mainnetPoolsConfig as PoolsConfigFile)
-    : (testnetPoolsConfig as PoolsConfigFile);
+  const mode = resolveMode(networkModeOverride);
+  return CONFIG_MAP[mode] ?? CONFIG_MAP.base;
+}
+
+/** Get pools array with networkMode tagged on each pool */
+function getTaggedPools(networkModeOverride?: NetworkMode): PoolConfig[] {
+  const mode = resolveMode(networkModeOverride);
+  const config = CONFIG_MAP[mode] ?? CONFIG_MAP.base;
+  return config.pools.map(pool => ({ ...pool, networkMode: mode }));
 }
 
 /**
- * OVERRIDE: Always use mainnet (testnet removed)
+ * @deprecated Use `resolveNetworkMode(req)` from `lib/network-mode.ts` instead.
+ * That function resolves from body.chainId → body.networkMode → query params → cookie → default.
  */
 export function getNetworkModeFromRequest(cookieHeader: string | undefined | null): NetworkMode {
-  return 'mainnet';
+  return getNetworkModeFromCookies(cookieHeader) ?? 'base';
 }
 
-// Types based on pools.json structure
 export interface TokenConfig {
   symbol: string;
   name: string;
@@ -97,8 +98,9 @@ export interface PoolConfig {
   enabled: boolean;
   featured: boolean;
   type?: string;
-  yieldSources?: YieldSource[]; // Yield sources for Unified Yield pools (aave, spark)
-  rehypoRange?: RehypoRangeConfig; // Visualization-only range for Rehypo mode
+  yieldSources?: YieldSource[];
+  rehypoRange?: RehypoRangeConfig;
+  networkMode: NetworkMode;
 }
 
 export interface ContractsConfig {
@@ -109,16 +111,10 @@ export interface ContractsConfig {
   stateView: string;
 }
 
-// Utility functions - all use dynamic config selection
 export function getAllTokens(networkModeOverride?: NetworkMode): Record<string, TokenConfig> {
   return getPoolsConfig(networkModeOverride).tokens;
 }
 
-/**
- * Get all token symbols for a network.
- * This is the canonical source - derived from pool config files.
- * Use this instead of hardcoding token lists.
- */
 export function getAllTokenSymbols(networkModeOverride?: NetworkMode): string[] {
   return Object.keys(getAllTokens(networkModeOverride));
 }
@@ -128,23 +124,53 @@ export function getToken(symbol: string, networkModeOverride?: NetworkMode): Tok
   return config.tokens[symbol as keyof typeof config.tokens] || null;
 }
 
+/**
+ * Known token icon paths. Icons live in public/tokens/ and are chain-independent.
+ * If a token has an icon file, it works on every chain — no config lookup needed.
+ */
+const TOKEN_ICONS: Record<string, string> = {
+  ETH: '/tokens/ETH.png',
+  WETH: '/tokens/ETH.png',
+  USDC: '/tokens/USDC.png',
+  USDS: '/tokens/USDS.png',
+  USDT: '/tokens/USDT.png',
+  aETH: '/tokens/aETH.png',
+  aUSDC: '/tokens/aUSDC.png',
+  aUSDT: '/tokens/aUSDT.png',
+  aDAI: '/tokens/aDAI.png',
+  aBTC: '/tokens/aBTC.png',
+};
+
+/** Resolve a token icon by symbol. Chain-independent — icons are static assets. */
+export function resolveTokenIcon(symbol: string): string {
+  if (!symbol) return '/tokens/placeholder.svg';
+  return TOKEN_ICONS[symbol] ?? '/tokens/placeholder.svg';
+}
+
 export function getTokenDecimals(symbol: string, networkModeOverride?: NetworkMode): number | null {
   const token = getToken(symbol, networkModeOverride);
   return token?.decimals || null;
 }
 
 export function getAllPools(networkModeOverride?: NetworkMode): PoolConfig[] {
-  return getPoolsConfig(networkModeOverride).pools;
+  return getTaggedPools(networkModeOverride);
 }
 
 export function getEnabledPools(networkModeOverride?: NetworkMode): PoolConfig[] {
-  return getPoolsConfig(networkModeOverride).pools.filter(pool => pool.enabled);
+  return getTaggedPools(networkModeOverride).filter(pool => pool.enabled);
+}
+
+const PRODUCTION_MODES = ALL_MODES;
+
+export function getMultiChainEnabledPools(): PoolConfig[] {
+  return PRODUCTION_MODES.flatMap(mode =>
+    getTaggedPools(mode).filter(pool => pool.enabled)
+  );
 }
 
 export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverride?: NetworkMode): PoolConfig | null {
-  const config = getPoolsConfig(networkModeOverride);
-  // Find all pools that match the unordered pair of symbols
-  const matches = config.pools.filter(pool => {
+  const pools = getTaggedPools(networkModeOverride);
+  const matches = pools.filter(pool => {
     const a = pool.currency0.symbol;
     const b = pool.currency1.symbol;
     return (a === tokenA && b === tokenB) || (a === tokenB && b === tokenA);
@@ -152,16 +178,12 @@ export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverr
 
   if (matches.length === 0) return null;
 
-  // Prefer canonical aliases if multiple pools match
+  // When multiple pools match the same token pair, rank by stablecoin preference
   const priority: Record<string, number> = {
-    // Mainnet
     'USDC': 100,
+    'USDT': 100,
     'USDS': 95,
     'ETH': 80,
-    // Testnet
-    'atUSDC': 100,
-    'atDAI': 90,
-    'atETH': 80,
   };
 
   const rank = (pool: PoolConfig) => (priority[pool.currency0.symbol] || 0) + (priority[pool.currency1.symbol] || 0);
@@ -171,19 +193,23 @@ export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverr
 }
 
 export function getPoolById(poolId: string, networkModeOverride?: NetworkMode): PoolConfig | null {
-  const pools = getPoolsConfig(networkModeOverride).pools;
-  // First try to match by pool.id (e.g., "atdai-atusdc")
-  // Then fallback to subgraphId (bytes32 hash used by Unified Yield positions)
+  const pools = getTaggedPools(networkModeOverride);
   return pools.find(pool => pool.id === poolId)
     || pools.find(pool => pool.subgraphId?.toLowerCase() === poolId.toLowerCase())
     || null;
 }
 
-// Create Token SDK instances
+export function getPoolByIdMultiChain(poolId: string): PoolConfig | null {
+  for (const mode of PRODUCTION_MODES) {
+    const pool = getPoolById(poolId, mode);
+    if (pool) return pool;
+  }
+  return null;
+}
+
 export function createTokenSDK(tokenSymbol: string, chainId: number, networkModeOverride?: NetworkMode): Token | null {
   const tokenConfig = getToken(tokenSymbol, networkModeOverride);
   if (!tokenConfig) {
-    // Don't log - this is expected for tokens not in pool config (e.g., user wallet tokens)
     return null;
   }
 
@@ -204,7 +230,6 @@ export function createTokenSDK(tokenSymbol: string, chainId: number, networkMode
   }
 }
 
-// Get pool configuration for two tokens
 export function getPoolConfigForTokens(fromToken: string, toToken: string, networkModeOverride?: NetworkMode) {
   const pool = getPoolByTokens(fromToken, toToken, networkModeOverride);
   if (!pool) return null;
@@ -221,7 +246,6 @@ export function getPoolConfigForTokens(fromToken: string, toToken: string, netwo
   };
 }
 
-// Helper to create pool key from pool config
 export function createPoolKeyFromConfig(pool: PoolConfig) {
   return {
     currency0: getAddress(pool.currency0.address),
@@ -232,7 +256,6 @@ export function createPoolKeyFromConfig(pool: PoolConfig) {
   };
 }
 
-// Build a canonical PoolKey by ordering currency0/currency1 via Token.sortsBefore
 export function createCanonicalPoolKey(tokenA: Token, tokenB: Token, pool: PoolConfig) {
   const currency0 = getAddress(tokenA.sortsBefore(tokenB) ? tokenA.address : tokenB.address);
   const currency1 = getAddress(tokenA.sortsBefore(tokenB) ? tokenB.address : tokenA.address);
@@ -245,7 +268,6 @@ export function createCanonicalPoolKey(tokenA: Token, tokenB: Token, pool: PoolC
   };
 }
 
-// Get subgraph ID for a pool
 export function getPoolSubgraphId(poolId: string, networkModeOverride?: NetworkMode): string | null {
   const pool = getPoolById(poolId, networkModeOverride);
   return pool?.subgraphId || null;
@@ -279,15 +301,12 @@ export function getHooksAddress(networkModeOverride?: NetworkMode): Address {
   return getAddress(getPoolsConfig(networkModeOverride).hooks.alphixHookId);
 }
 
-// Token definitions type for network-aware components
 export type TokenDefinitions = Record<string, {
   address: string;
   decimals: number;
   symbol: string;
 }>;
 
-// Legacy compatibility - create TOKEN_DEFINITIONS from pools config
-// Now dynamically fetched to support network switching
 export function getTokenDefinitions(networkModeOverride?: NetworkMode): TokenDefinitions {
   const config = getPoolsConfig(networkModeOverride);
   return Object.fromEntries(
@@ -302,13 +321,11 @@ export function getTokenDefinitions(networkModeOverride?: NetworkMode): TokenDef
   );
 }
 
-// For backwards compatibility - static export that uses current network mode
-// WARNING: This is evaluated at runtime, so it will use the network mode at call time
+/** @deprecated Use getTokenDefinitions(mode) for chain-aware usage */
 export const TOKEN_DEFINITIONS = getTokenDefinitions();
 
 export type TokenSymbol = string;
 
-// Utility function to map token addresses to correct symbols from pools config
 export function getTokenSymbolByAddress(address: string, networkModeOverride?: NetworkMode): TokenSymbol | null {
   const tokenDefs = getTokenDefinitions(networkModeOverride);
   const normalizedAddress = address.toLowerCase();
@@ -320,7 +337,6 @@ export function getTokenSymbolByAddress(address: string, networkModeOverride?: N
   return null;
 }
 
-// Export chain info as functions for dynamic network support
 export function getChainId(networkModeOverride?: NetworkMode): number {
   return getPoolsConfig(networkModeOverride).meta.chainId;
 }
@@ -329,7 +345,8 @@ export function getChainName(networkModeOverride?: NetworkMode): string {
   return getPoolsConfig(networkModeOverride).meta.chainName;
 }
 
-// For backwards compatibility - WARNING: these are evaluated once at module load
+/** @deprecated Use getChainId(mode) for chain-aware usage */
 export const CHAIN_ID = getChainId();
+/** @deprecated Use getChainName(mode) for chain-aware usage */
 export const CHAIN_NAME = getChainName();
 export const NATIVE_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000'; 

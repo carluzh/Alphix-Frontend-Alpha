@@ -1,7 +1,7 @@
 import { createElement, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential"
-import { MAINNET_CHAIN_ID } from "@/lib/network-mode"
+import { BASE_CHAIN_ID, ARBITRUM_CHAIN_ID } from "@/lib/network-mode"
 
 import type { AggregatorSource, KyberswapRouteSummary } from "@/lib/aggregators/types"
 
@@ -99,7 +99,7 @@ export function useSwapQuote({
             amountDecimalsStr: amountStr,
             swapType: lastEditedSideRef.current === "to" ? "ExactOut" : "ExactIn",
             chainId: targetChainId,
-            network: targetChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet',
+            network: targetChainId === ARBITRUM_CHAIN_ID ? 'arbitrum' : 'base',
             debug: true,
             binding: mode === "binding",
             // cache-bust only for binding; harmless if backend ignores

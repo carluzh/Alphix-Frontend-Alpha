@@ -9,7 +9,7 @@
 
 import { usePlatformBasedFetchPolicy } from '@/hooks/usePlatformBasedFetchPolicy'
 import { usePollingIntervalByChain } from '@/hooks/usePollingIntervalByChain'
-import { useNetwork } from '@/lib/network-context'
+import { apolloChainForMode } from '@/lib/network-mode'
 import { useGetPoolStateQuery, type Chain } from '../__generated__'
 
 interface PoolStateData {
@@ -41,10 +41,10 @@ interface UsePoolStateResult {
  * const { data: poolState, loading } = usePoolState(poolId)
  * const currentTick = poolState?.tick
  */
-export function usePoolState(poolId: string): UsePoolStateResult {
-  const { networkMode } = useNetwork()
-  const chain: Chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
-  const enabled = !!poolId && poolId.length > 0
+export function usePoolState(poolId: string, networkModeOverride?: import('@/lib/network-mode').NetworkMode): UsePoolStateResult {
+  const networkMode = networkModeOverride
+  const chain = networkMode ? apolloChainForMode(networkMode) as Chain : undefined
+  const enabled = !!poolId && poolId.length > 0 && !!networkMode
 
   // Chain-based polling interval (L2 = 3s base, x15 for pool state = 45s)
   const chainPollingInterval = usePollingIntervalByChain()
@@ -56,7 +56,8 @@ export function usePoolState(poolId: string): UsePoolStateResult {
   })
 
   const { data, loading, error, refetch } = useGetPoolStateQuery({
-    variables: { chain, poolId },
+    variables: { chain: chain!, poolId },
+    context: { networkMode: networkMode! },
     skip: !enabled,
     fetchPolicy,
     pollInterval,

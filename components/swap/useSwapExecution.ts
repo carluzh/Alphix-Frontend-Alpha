@@ -151,8 +151,8 @@ export function useSwapExecution({
   source = "alphix",
   kyberswapData,
 }: UseSwapExecutionArgs) {
-  const publicClient = usePublicClient()
   const { address: accountAddress, isConnected, chainId: currentChainId } = useAccount()
+  const publicClient = usePublicClient({ chainId: currentChainId })
 
   const { signTypedDataAsync } = useSignTypedData()
   const { writeContractAsync: sendSwapTx } = useWriteContract()

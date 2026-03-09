@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { type Address, type Hash, maxUint256 } from 'viem';
 import { toast } from 'sonner';
 import * as Sentry from '@sentry/nextjs';
@@ -59,7 +59,6 @@ export function useUnifiedYieldApproval(
   params?: UseUnifiedYieldApprovalParams
 ): UseUnifiedYieldApprovalResult {
   const { address: userAddress } = useAccount();
-  const publicClient = usePublicClient();
   const [error, setError] = useState<Error | null>(null);
 
   const {

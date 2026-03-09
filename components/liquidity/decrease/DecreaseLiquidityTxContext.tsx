@@ -18,6 +18,7 @@ import { formatUnits, parseUnits, type Address, type Hash } from "viem";
 import * as Sentry from "@sentry/nextjs";
 import { getTokenDefinitions, getPoolById, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
+import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { getTokenSymbolByAddress, debounce } from "@/lib/utils";
 import { useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
@@ -77,10 +78,14 @@ const DecreaseLiquidityTxContext = createContext<DecreaseLiquidityTxContextType 
 
 export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildren) {
   const { address: accountAddress } = useAccount();
-  const { chainId, networkMode } = useNetwork();
-  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+  const { ensureChain } = useNetwork();
   const { decreaseLiquidityState, derivedDecreaseInfo, setDerivedInfo, isUnifiedYield } = useDecreaseLiquidityContext();
   const { position } = decreaseLiquidityState;
+
+  // Derive networkMode from the position's chain — never use global context
+  const networkMode = position.networkMode || 'base';
+  const chainId = chainIdForMode(networkMode);
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { withdrawAmount0, withdrawAmount1 } = derivedDecreaseInfo;
 
   // Unified price hook - replaces useAllPrices + manual symbol matching
@@ -96,7 +101,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   }, [position.poolId, networkMode]);
 
   // Pool state for slippage protection (sqrtPriceX96)
-  const { data: poolStateData } = usePoolState(poolConfig?.subgraphId ?? '');
+  const { data: poolStateData } = usePoolState(poolConfig?.subgraphId ?? '', networkMode);
 
   // Unified Yield withdraw hook - only active for ReHypothecation positions
   const unifiedYieldWithdraw = useUnifiedYieldWithdraw({
@@ -107,6 +112,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     chainId,
     sqrtPriceX96: poolStateData?.sqrtPriceX96,
     maxPriceSlippage: 500, // 0.05%
+    networkModeOverride: networkMode,
   });
 
   const [isLoading, setIsLoading] = useState(false);
@@ -220,6 +226,10 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       return undefined;
     }
 
+    // Ensure wallet is on the correct chain before submitting
+    const ok = await ensureChain(chainIdForMode(networkMode));
+    if (!ok) return undefined;
+
     setIsLoading(true);
     setError(null);
 
@@ -261,6 +271,10 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
    */
   const fetchAndBuildContext = useCallback(async (): Promise<ValidatedLiquidityTxContext | null> => {
     if (!accountAddress || !chainId) return null;
+
+    // Ensure wallet is on the correct chain before submitting
+    const chainOk = await ensureChain(chainIdForMode(networkMode));
+    if (!chainOk) return null;
 
     setIsLoading(true);
     setError(null);

@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useAccount } from "wagmi";
-import { useNetwork } from "@/lib/network-context";
 import { usePoolState } from "@/lib/apollo/hooks";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { useWSPool } from "@/lib/websocket";
 import { fetchPoolsMetrics } from "@/lib/backend-client";
-import { getPoolById, getToken, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
+import { getPoolById, getPoolByIdMultiChain, getToken, getTokenDefinitions, resolveTokenIcon, type TokenSymbol, type NetworkMode } from "@/lib/pools-config";
+import { chainIdForMode } from "@/lib/network-mode";
 import { usePoolChartData, type ChartDataPoint } from "./usePoolChartData";
 import { usePoolPositions } from "./usePoolPositions";
 import type { V4ProcessedPosition } from "@/pages/api/liquidity/get-positions";
@@ -49,6 +49,7 @@ const formatUSD = (value: number) => {
 export interface PoolConfig {
   id: string;
   subgraphId?: string;
+  networkMode: NetworkMode;
   tokens: Array<{
     symbol: string;
     icon: string;
@@ -137,21 +138,25 @@ export interface UsePoolDetailPageDataReturn {
 /**
  * Get pool configuration from pools.json
  */
-function getPoolConfiguration(poolId: string): PoolConfig | null {
-  const poolConfig = getPoolById(poolId);
+function getPoolConfiguration(poolId: string, networkModeOverride?: NetworkMode): PoolConfig | null {
+  const poolConfig = networkModeOverride
+    ? getPoolById(poolId, networkModeOverride)
+    : getPoolByIdMultiChain(poolId) ?? getPoolById(poolId);
   if (!poolConfig) return null;
 
-  const token0 = getToken(poolConfig.currency0.symbol);
-  const token1 = getToken(poolConfig.currency1.symbol);
+  const resolvedMode = poolConfig.networkMode;
+  const token0 = getToken(poolConfig.currency0.symbol, resolvedMode ?? networkModeOverride);
+  const token1 = getToken(poolConfig.currency1.symbol, resolvedMode ?? networkModeOverride);
 
   if (!token0 || !token1) return null;
 
   return {
     id: poolConfig.id,
     subgraphId: poolConfig.subgraphId,
+    networkMode: resolvedMode ?? networkModeOverride ?? 'base',
     tokens: [
-      { symbol: token0.symbol, icon: token0.icon, address: token0.address },
-      { symbol: token1.symbol, icon: token1.icon, address: token1.address },
+      { symbol: token0.symbol, icon: resolveTokenIcon(token0.symbol), address: token0.address },
+      { symbol: token1.symbol, icon: resolveTokenIcon(token1.symbol), address: token1.address },
     ],
     pair: `${token0.symbol} / ${token1.symbol}`,
     tickSpacing: poolConfig.tickSpacing || DEFAULT_TICK_SPACING,
@@ -218,9 +223,15 @@ function convertTickToPriceImpl(
   }
 }
 
-export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataReturn {
-  const { networkMode } = useNetwork();
+export function usePoolDetailPageData(poolId: string, networkModeOverride?: NetworkMode): UsePoolDetailPageDataReturn {
   const { address: accountAddress, isConnected, chainId } = useAccount();
+
+  // Get pool configuration (synchronous) — uses chain param for disambiguation
+  const poolConfig = useMemo(() => getPoolConfiguration(poolId, networkModeOverride), [poolId, networkModeOverride]);
+  const subgraphId = poolConfig?.subgraphId || '';
+
+  // Pool's own networkMode is authoritative — falls back to override, then default
+  const networkMode = poolConfig?.networkMode ?? networkModeOverride ?? 'base' as NetworkMode;
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
   // Window width for responsive chart
@@ -237,13 +248,9 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     }
   }, []);
 
-  // Get pool configuration (synchronous)
-  const poolConfig = useMemo(() => getPoolConfiguration(poolId), [poolId]);
-  const subgraphId = poolConfig?.subgraphId || '';
-
   // Pool state from real-time WebSocket (with Apollo as fallback)
-  const { pool: wsPool, isConnected: wsConnected } = useWSPool(subgraphId || poolId);
-  const { data: poolStateRaw } = usePoolState(subgraphId);
+  const { pool: wsPool, isConnected: wsConnected } = useWSPool(subgraphId || poolId, networkMode);
+  const { data: poolStateRaw } = usePoolState(subgraphId, networkMode);
 
   // Pool state from Apollo (WebSocket only provides metrics, not tick/liquidity state)
   const poolState: PoolStateData = useMemo(() => {
@@ -304,6 +311,7 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
   } = usePoolPositions({
     poolId,
     subgraphId,
+    networkModeOverride: poolConfig?.networkMode,
   });
 
   // Prices hook — unified via useTokenPrices (replaces useAllPrices + hardcoded stablecoin lists)
@@ -311,7 +319,7 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     () => poolConfig?.tokens.map(t => t.symbol) || [],
     [poolConfig]
   );
-  const { prices: priceMap, isLoading: isLoadingPrices } = useTokenPrices(poolTokenSymbols, { pollInterval: 60_000 });
+  const { prices: priceMap, isLoading: isLoadingPrices } = useTokenPrices(poolTokenSymbols, { pollInterval: 60_000, chainId: chainIdForMode(networkMode) });
 
   const calculatePositionUsd = useCallback((position: Position): number => {
     if (!position) return 0;
@@ -440,12 +448,12 @@ export function usePoolDetailPageData(poolId: string): UsePoolDetailPageDataRetu
     fetchPoolStats();
   }, [poolId, subgraphId, networkMode, updateTodayTvl, wsConnected, wsPool]);
 
-  // Fetch chart data on mount
+  // Fetch chart data on mount (fetchChartData has its own deduplication via hasFetchedForPoolRef)
   useEffect(() => {
-    if (poolId && chartData.length === 0) {
+    if (poolId) {
       fetchChartData();
     }
-  }, [poolId, chartData.length, fetchChartData]);
+  }, [poolId, fetchChartData]);
 
   return {
     poolConfig,

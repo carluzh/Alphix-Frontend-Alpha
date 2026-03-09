@@ -9,7 +9,6 @@
 
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNetwork } from '@/lib/network-context';
 import useIsWindowVisible from '@/hooks/useIsWindowVisible';
 
 interface UseTokenPricesOptions {
@@ -17,6 +16,8 @@ interface UseTokenPricesOptions {
   pollInterval?: number;
   /** Whether to enable the query. Default: true */
   enabled?: boolean;
+  /** Override chainId (derive from pool/position, not wallet context) */
+  chainId?: number;
 }
 
 interface UseTokenPricesResult {
@@ -57,8 +58,10 @@ export function useTokenPrices(
   symbols: string[],
   options: UseTokenPricesOptions = {}
 ): UseTokenPricesResult {
-  const { pollInterval = 30_000, enabled = true } = options;
-  const { chainId } = useNetwork();
+  const { pollInterval = 30_000, enabled = true, chainId: chainIdOverride } = options;
+  // USD prices are chain-agnostic (ETH is same price on Base & Arbitrum)
+  // Default to Base chainId for the quoter backend; callers can override for specificity
+  const chainId = chainIdOverride ?? 8453;
   const isWindowVisible = useIsWindowVisible();
 
   // Stable query key: deduplicate + sort to prevent re-fetches on reorder

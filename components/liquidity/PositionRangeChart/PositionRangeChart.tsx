@@ -98,6 +98,8 @@ interface PositionRangeChartProps {
   height?: number
   /** Additional class name */
   className?: string
+  /** Network mode override for cross-chain support */
+  networkModeOverride?: import('@/lib/network-mode').NetworkMode
 }
 
 export function PositionRangeChart({
@@ -111,6 +113,7 @@ export function PositionRangeChart({
   width = '100%',
   height = CHART_HEIGHT,
   className,
+  networkModeOverride,
 }: PositionRangeChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -131,12 +134,13 @@ export function PositionRangeChart({
       duration: HistoryDuration.MONTH,
     },
     priceInverted,
+    networkModeOverride,
   })
 
   const hasError = dataQuality === DataQuality.INVALID
   const hasData = entries.length > 0
 
-  // Debug logging for testnet chart issues
+  // Debug logging for chart issues
   if (process.env.NODE_ENV === 'development') {
     console.log('[PositionRangeChart]', {
       poolId,

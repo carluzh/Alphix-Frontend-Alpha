@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { Pool } from "@/types";
+import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 
 interface MobileLiquidityListProps {
   pools: Pool[];
@@ -33,7 +34,7 @@ export function MobileLiquidityList({ pools }: MobileLiquidityListProps) {
       {pools.map((pool) => (
         <Link
           key={pool.id}
-          href={`/liquidity/${pool.id}`}
+          href={`/liquidity/${pool.id}?chain=${pool.networkMode ? CHAIN_REGISTRY[pool.networkMode].backendNetwork : 'base'}`}
           prefetch
           className="block touch-manipulation select-none"
         >
@@ -66,7 +67,9 @@ export function MobileLiquidityList({ pools }: MobileLiquidityListProps) {
                     />
                   </div>
                 </div>
-                <CardTitle className="text-sm font-semibold">{pool.pair}</CardTitle>
+                <CardTitle className="text-sm font-semibold">
+                  {pool.pair}
+                </CardTitle>
               </div>
               {pool.apr && pool.apr !== "Loading..." ? (
                 <div className="bg-green-500/20 text-green-500 text-[11px] px-2 py-1 rounded-md font-medium">

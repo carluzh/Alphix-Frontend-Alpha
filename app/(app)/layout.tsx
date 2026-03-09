@@ -6,9 +6,7 @@ import { AppLayout as AppShell } from "@/components/app-layout"
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const cookieString = (await headers()).get('cookie') ?? ''
-  const cookieMode = getNetworkModeFromCookies(cookieString)
-  // OVERRIDE: Always use mainnet (testnet removed)
-  const initialNetworkMode = 'mainnet' as const
+  const initialNetworkMode = getNetworkModeFromCookies(cookieString) ?? 'base'
 
   return (
     <AppProviders cookieString={cookieString} initialNetworkMode={initialNetworkMode}>

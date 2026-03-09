@@ -1,15 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 
-/**
- * Portfolio Chart API - Proxy to Uniswap's GetPortfolioChart
- *
- * Server-side proxy to bypass CSP restrictions when calling Uniswap's API.
- * Returns historical portfolio value data for charting.
- */
-
 const UNISWAP_API_URL = 'https://interface.gateway.uniswap.org/v2/data.v1.DataApiService/GetPortfolioChart'
 
-// ChartPeriod enum values (matches Uniswap's protobuf)
 const CHART_PERIOD_MAP: Record<string, number> = {
   'HOUR': 1,
   'DAY': 2,
@@ -18,8 +10,7 @@ const CHART_PERIOD_MAP: Record<string, number> = {
   'YEAR': 5,
 }
 
-// Base chain ID
-const BASE_CHAIN_ID = '8453'
+const SUPPORTED_CHAIN_IDS = ['8453', '42161']
 
 interface PortfolioChartPoint {
   timestamp: number
@@ -71,7 +62,7 @@ export default async function handler(
             { platform: 0, address: address } // 0 = EVM platform
           ]
         },
-        chainIds: [BASE_CHAIN_ID],
+        chainIds: SUPPORTED_CHAIN_IDS,
         chartPeriod: chartPeriod,
       }),
       signal: controller.signal,

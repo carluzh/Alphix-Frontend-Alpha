@@ -16,7 +16,6 @@ import {
     createTokenSDK,
     createPoolKeyFromConfig,
     createCanonicalPoolKey,
-    getNetworkModeFromRequest,
     getToken,
     NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
@@ -25,6 +24,7 @@ import { needsUsdsStateOverride, getSwapSimulationStateOverrides } from '../../.
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
 import { getUniversalRouterAddress, getStateViewAddress } from '../../../lib/pools-config';
 import { findBestRoute, SwapRoute, routeToString } from '@/lib/swap/routing-engine';
+import { resolveNetworkMode, type NetworkMode } from '../../../lib/network-mode';
 import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
 import { ethers } from 'ethers';
 
@@ -277,7 +277,7 @@ async function prepareV4MultiHopExactInSwapData(
     amountInSmallestUnits: bigint,
     minAmountOutSmallestUnits: bigint,
     chainId: number,
-    networkMode: 'mainnet' | 'testnet'
+    networkMode: NetworkMode
 ): Promise<V4PlanBuild> {
     const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId, networkMode);
     const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
@@ -338,7 +338,7 @@ async function prepareV4MultiHopExactOutSwapData(
     maxAmountInSmallestUnits: bigint,
     amountOutSmallestUnits: bigint,
     chainId: number,
-    networkMode: 'mainnet' | 'testnet',
+    networkMode: NetworkMode,
 ): Promise<V4PlanBuild> {
     const inputToken = createTokenSDK(route.path[0] as TokenSymbol, chainId, networkMode);
     const outputToken = createTokenSDK(route.path[route.path.length - 1] as TokenSymbol, chainId, networkMode);
@@ -510,8 +510,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             slippageBps,
         } = req.body;
 
-        // Get network mode from cookies for proper chain-specific addresses
-        const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+        const networkMode = resolveNetworkMode(req);
 
         // ChainId validation - CRITICAL security check
         const chainIdError = validateChainId(chainId, networkMode);
@@ -582,6 +581,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 toTokenDecimals: toDecimals,
                 isExactIn: true,
                 slippageBps: 50,
+                networkMode,
             });
 
             if (!routeResponse?.data?.routeSummary) {
@@ -596,7 +596,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             const buildResponse = await buildKyberswapSwap(
                 routeResponse.data.routeSummary,
                 userAddress,
-                kyberSlippageBps
+                kyberSlippageBps,
+                networkMode
             );
 
             if (!buildResponse?.data?.data) {
@@ -607,7 +608,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             }
 
             // Validate router address matches
-            const kyberRouter = getKyberswapRouterAddress();
+            const kyberRouter = getKyberswapRouterAddress(networkMode);
             const responseRouter = buildResponse.data.routerAddress || routeResponse.data.routerAddress;
             if (getAddress(responseRouter) !== getAddress(kyberRouter)) {
                 return res.status(400).json({

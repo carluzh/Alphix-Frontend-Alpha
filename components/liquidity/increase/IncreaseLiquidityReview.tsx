@@ -21,7 +21,7 @@ import { useAccount } from "wagmi";
 import { Button } from "@/components/ui/button";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
-import { useNetwork } from "@/lib/network-context";
+import { chainIdForMode } from "@/lib/network-mode";
 import { getTokenIcon, formatCalculatedAmount } from "../liquidity-form-utils";
 import { LiquidityDetailRows } from "../shared/LiquidityDetailRows";
 import { LiquidityPositionInfo } from "../shared/LiquidityPositionInfo";
@@ -137,7 +137,7 @@ interface IncreaseLiquidityReviewProps {
 
 export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidityReviewProps) {
   const { address } = useAccount();
-  const { chainId } = useNetwork();
+  // chainId derived from position below — no wallet context for data
 
   const {
     setStep,
@@ -157,6 +157,9 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
 
   const { position } = increaseLiquidityState;
   const { formattedAmounts } = derivedIncreaseLiquidityInfo;
+  // Derive networkMode and chainId from the position's chain data — never fall back to wallet context
+  const networkMode = position.networkMode;
+  const chainId = networkMode ? chainIdForMode(networkMode) : undefined;
 
   // Local state
   const [view, setView] = useState<ModalView>("review");
@@ -182,8 +185,8 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
       executorSteps,
       position.token0.symbol,
       position.token1.symbol,
-      getTokenIcon(position.token0.symbol),
-      getTokenIcon(position.token1.symbol)
+      getTokenIcon(position.token0.symbol, networkMode),
+      getTokenIcon(position.token1.symbol, networkMode)
     );
   }, [executorSteps, position.token0.symbol, position.token1.symbol]);
 
@@ -335,7 +338,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
             {amount0 > 0 && (
               <div className="flex items-center gap-2">
                 <Image
-                  src={getTokenIcon(position.token0.symbol)}
+                  src={getTokenIcon(position.token0.symbol, networkMode)}
                   alt=""
                   width={28}
                   height={28}
@@ -357,7 +360,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
             {amount1 > 0 && (
               <div className="flex items-center gap-2">
                 <Image
-                  src={getTokenIcon(position.token1.symbol)}
+                  src={getTokenIcon(position.token1.symbol, networkMode)}
                   alt=""
                   width={28}
                   height={28}
@@ -398,6 +401,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
         }}
         isMiniVersion
         showFeeTier={false}
+        networkMode={networkMode}
       />
 
       {/* Amount Summary */}
@@ -411,6 +415,7 @@ export function IncreaseLiquidityReview({ onClose, onSuccess }: IncreaseLiquidit
         totalValueUSD={totalUSDValue}
         showNetworkCost={false}
         title="Adding to position"
+        networkMode={networkMode}
       />
 
       {/* Progress Indicator (during execution) */}

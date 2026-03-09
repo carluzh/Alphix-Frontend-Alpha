@@ -11,8 +11,7 @@
 import React from "react";
 import Image from "next/image";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
-import { getToken } from "@/lib/pools-config";
-import type { TokenSymbol } from "@/lib/pools-config";
+import { resolveTokenIcon, type TokenSymbol } from "@/lib/pools-config";
 
 interface TokenAmountRow {
   symbol: string;
@@ -38,11 +37,8 @@ export function PositionAmountsDisplay({
   title = "Position",
   className,
 }: PositionAmountsDisplayProps) {
-  const token0Config = getToken(token0.symbol);
-  const token1Config = getToken(token1.symbol);
-
-  const token0Icon = token0Config?.icon || "/placeholder-logo.svg";
-  const token1Icon = token1Config?.icon || "/placeholder-logo.svg";
+  const token0Icon = resolveTokenIcon(token0.symbol);
+  const token1Icon = resolveTokenIcon(token1.symbol);
 
   // Check if amounts are zero for muted styling
   const token0IsZero = parseFloat(token0.amount) === 0;

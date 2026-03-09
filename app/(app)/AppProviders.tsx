@@ -127,8 +127,8 @@ export default function AppProviders({
   }, [])
 
   return (
-    <NetworkProvider initialNetworkMode={initialNetworkMode}>
-      <AppKitProvider cookies={cookieString}>
+    <AppKitProvider cookies={cookieString}>
+      <NetworkProvider initialNetworkMode={initialNetworkMode}>
         <SSEProvider>
           <WebSocketProvider>
             <ErrorBoundary>
@@ -140,9 +140,9 @@ export default function AppProviders({
             </ErrorBoundary>
           </WebSocketProvider>
         </SSEProvider>
-      </AppKitProvider>
-      <Toaster position="top-right" />
-      <ConditionalAnalytics />
-    </NetworkProvider>
+        <Toaster position="top-right" />
+        <ConditionalAnalytics />
+      </NetworkProvider>
+    </AppKitProvider>
   )
 }

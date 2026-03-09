@@ -7,7 +7,7 @@
 
 import { useState, useCallback, useRef, useMemo } from 'react';
 import { formatUnits, parseUnits } from 'viem';
-import { TokenSymbol, getTokenDefinitions } from '@/lib/pools-config';
+import { TokenSymbol, getTokenDefinitions, type NetworkMode } from '@/lib/pools-config';
 import { formatTokenDisplayAmount } from '@/lib/utils';
 
 // =============================================================================
@@ -41,6 +41,7 @@ export interface UseAddLiquidityCalculationParams {
   token0Symbol: TokenSymbol;
   token1Symbol: TokenSymbol;
   chainId?: number;
+  networkMode?: NetworkMode;
 }
 
 export interface UseAddLiquidityCalculationResult {
@@ -75,7 +76,7 @@ export interface UseAddLiquidityCalculationResult {
 export function useAddLiquidityCalculation(
   params: UseAddLiquidityCalculationParams
 ): UseAddLiquidityCalculationResult {
-  const { token0Symbol, token1Symbol, chainId } = params;
+  const { token0Symbol, token1Symbol, chainId, networkMode } = params;
 
   const [calculatedData, setCalculatedData] = useState<CalculatedLiquidityData | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -84,8 +85,8 @@ export function useAddLiquidityCalculation(
   const [dependentAmountFullPrecision, setDependentAmountFullPrecision] = useState('');
   const [dependentField, setDependentField] = useState<'amount0' | 'amount1' | null>(null);
 
-  // Memoize tokenDefinitions to prevent recreating debounced function on every render
-  const tokenDefinitions = useMemo(() => getTokenDefinitions(), []);
+  // Memoize tokenDefinitions — use networkMode for correct chain's token config
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
   // Use ref to persist debounce timeout across renders
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);

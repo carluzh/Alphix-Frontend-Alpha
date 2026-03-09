@@ -13,6 +13,7 @@ import { formatUnits } from 'viem';
 import { TokenSymbol, getTokenDefinitions } from '@/lib/pools-config';
 import { formatTokenDisplayAmount, getTokenSymbolByAddress } from '@/lib/utils';
 import type { ProcessedPosition } from '@/pages/api/liquidity/get-positions';
+import type { NetworkMode } from '@/lib/network-mode';
 
 // =============================================================================
 // TYPES
@@ -22,7 +23,7 @@ export interface UseDerivedIncreaseInfoParams {
   position: ProcessedPosition;
   chainId?: number;
   currentPoolTick?: number | null;
-  networkMode?: 'mainnet' | 'testnet';
+  networkMode: NetworkMode;
 }
 
 export interface DerivedIncreaseInfo {
@@ -61,7 +62,7 @@ export interface UseDerivedIncreaseInfoResult extends DerivedIncreaseInfo {
 export function useDerivedIncreaseInfo(
   params: UseDerivedIncreaseInfoParams
 ): UseDerivedIncreaseInfoResult {
-  const { position, chainId, currentPoolTick, networkMode = 'testnet' } = params;
+  const { position, chainId, currentPoolTick, networkMode } = params;
 
   const [dependentAmount, setDependentAmount] = useState('');
   const [dependentAmountFullPrecision, setDependentAmountFullPrecision] = useState('');

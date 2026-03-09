@@ -1,7 +1,6 @@
 "use client";
 
 import { memo, useCallback, useMemo } from "react";
-import { useAccount } from "wagmi";
 import { useRouter } from "next/navigation";
 import { parseSubgraphPosition, type SubgraphPosition, type PositionInfo } from "@/lib/uniswap/liquidity";
 import type { V4ProcessedPosition } from "@/pages/api/liquidity/get-positions";
@@ -10,6 +9,8 @@ import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
 /** Position union type - V4 and Unified Yield positions fetched through separate flows */
 type Position = V4ProcessedPosition | UnifiedYieldPosition;
 import type { TokenSymbol } from "@/lib/pools-config";
+import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
+import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 import { useQuery } from "@tanstack/react-query";
 import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 
@@ -81,6 +82,9 @@ import type {
 } from "../../hooks";
 
 export interface PoolDetailProps {
+  // Network
+  networkMode?: NetworkMode;
+
   // Pool data
   poolConfig: PoolConfig | null;
   poolStats: PoolStats;
@@ -125,6 +129,7 @@ export interface PoolDetailProps {
  * Receives all data as props and manages only local UI state.
  */
 export const PoolDetail = memo(function PoolDetail({
+  networkMode,
   poolConfig,
   poolStats,
   poolState,
@@ -142,12 +147,14 @@ export const PoolDetail = memo(function PoolDetail({
   calculatePositionUsd,
 }: PoolDetailProps) {
   const router = useRouter();
-  const { chainId } = useAccount();
 
-  // Fetch Aave rates for Unified Yield display
+  // Use pool's chain ID for position parsing, not wallet's chain
+  const poolChainId = networkMode ? chainIdForMode(networkMode) : undefined;
+
+  // Fetch Aave rates for Unified Yield display (network-aware)
   const { data: aaveRatesData } = useQuery({
-    queryKey: ['aaveRates'],
-    queryFn: fetchAaveRates,
+    queryKey: ['aaveRates', networkMode ?? 'default'],
+    queryFn: () => fetchAaveRates(networkMode),
     staleTime: 5 * 60_000, // 5 minutes
   });
 
@@ -193,12 +200,12 @@ export const PoolDetail = memo(function PoolDetail({
       const token1Decimals = tokenDefinitions?.[position.token1?.symbol as TokenSymbol]?.decimals ?? 18;
 
       return parseSubgraphPosition(subgraphPos, {
-        chainId: chainId ?? 8453,
+        chainId: poolChainId ?? 8453,
         token0Decimals,
         token1Decimals,
       });
     },
-    [chainId, tokenDefinitions]
+    [poolChainId, tokenDefinitions]
   );
 
   // =========================================================================
@@ -244,8 +251,9 @@ export const PoolDetail = memo(function PoolDetail({
   }, [poolConfig?.id, router]);
 
   const handlePositionClick = useCallback((position: Position) => {
-    router.push(`/liquidity/position/${position.positionId}?from=pool`);
-  }, [router]);
+    const chainParam = networkMode ? `&chain=${CHAIN_REGISTRY[networkMode].backendNetwork}` : '';
+    router.push(`/liquidity/position/${position.positionId}?from=pool${chainParam}`);
+  }, [router, networkMode]);
 
   const token0Symbol = poolConfig?.tokens?.[0]?.symbol || "";
   const token1Symbol = poolConfig?.tokens?.[1]?.symbol || "";
@@ -275,6 +283,7 @@ export const PoolDetail = memo(function PoolDetail({
             poolStats={poolStats}
             token0Symbol={token0Symbol}
             token1Symbol={token1Symbol}
+            networkMode={networkMode}
           />
 
           {/* Chart */}

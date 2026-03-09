@@ -13,8 +13,9 @@ import {
   previewAddFromAmount0,
   previewAddFromAmount1,
 } from '../../unified-yield/buildUnifiedYieldDepositTx';
-import type { ZapToken, RouteDetails } from '../types';
+import { type ZapToken, type RouteDetails, ZapError } from '../types';
 import type { ZapPoolConfig } from '../constants';
+import { chainIdForMode } from '@/lib/network-mode';
 
 // =============================================================================
 // TYPES
@@ -54,6 +55,8 @@ export interface FindOptimalSwapParams {
   slippageBps?: number;
   /** Max binary search iterations (default: 20) */
   maxIterations?: number;
+  /** Network mode for chain-specific routing (e.g., Kyberswap chain slug) */
+  networkMode?: import('@/lib/network-mode').NetworkMode;
 }
 
 // =============================================================================
@@ -91,6 +94,7 @@ export async function findOptimalSwapAmount(
     userAddress,
     slippageBps,
     maxIterations = 20,
+    networkMode,
   } = params;
 
   const isInputToken1 = poolConfig
@@ -118,11 +122,14 @@ export async function findOptimalSwapAmount(
   let getSwapQuote: (amount: bigint) => Promise<{ amountOut: bigint; route: RouteDetails }>;
   let midPrice = 0;
 
-  if (poolConfig && !poolConfig.isPegged) {
+  // Route decision: pools using kyberswap fallback (ETH/USDC, USDC/USDT) get a single
+  // Kyberswap quote upfront via server-side API proxy (avoids CSP issues).
+  // PSM-backed pools (USDS/USDC) use selectSwapRoute per iteration (cheap, handles PSM decision).
+  if (poolConfig && poolConfig.fallbackRoute !== 'psm') {
     const { getQuoterAddress } = await import('@/lib/pools-config');
-    const quoterAddress = getQuoterAddress();
+    const quoterAddress = getQuoterAddress(networkMode);
 
-    midPrice = await getPoolMidPrice(inputToken, publicClient, poolConfig);
+    midPrice = await getPoolMidPrice(inputToken, publicClient, poolConfig, networkMode);
     const halfQuote = await getPoolQuote(inputToken, inputAmount / 2n, publicClient, quoterAddress, poolConfig);
     const halfImpact = midPrice > 0
       ? calculatePriceImpactFromMidPrice(inputAmount / 2n, halfQuote.amountOut, midPrice)
@@ -147,7 +154,7 @@ export async function findOptimalSwapAmount(
       const kyberRef = await fetchKyberQuoteViaApi(
         fromToken.address, toToken.address,
         inputAmount / 2n, fromToken.decimals, toToken.decimals,
-        fromToken.symbol, toToken.symbol, slippageBps, userAddress,
+        fromToken.symbol, toToken.symbol, slippageBps, userAddress, networkMode,
       );
       if (!kyberRef) throw new Error('Kyberswap unavailable for this pair');
 
@@ -180,6 +187,7 @@ export async function findOptimalSwapAmount(
         poolConfig,
         userAddress,
         slippageBps,
+        networkMode,
       });
       return { amountOut: result.outputAmount, route: result.route };
     };
@@ -241,6 +249,8 @@ export async function findOptimalSwapAmount(
         low = mid;
       }
     } catch (error) {
+      // Propagate known user-facing errors immediately instead of swallowing them
+      if (error instanceof ZapError) throw error;
       console.warn(`[findOptimalSwapAmount] Iteration ${i} error:`, error);
       high = (low + high) / 2n;
     }
@@ -295,7 +305,7 @@ export async function findOptimalSwapAmount(
     const realOutput = await fetchKyberQuoteViaApi(
       fromToken.address, toToken.address,
       bestResult.swapAmount, fromToken.decimals, toToken.decimals,
-      fromToken.symbol, toToken.symbol, slippageBps, userAddress,
+      fromToken.symbol, toToken.symbol, slippageBps, userAddress, networkMode,
     );
     if (realOutput) {
       bestResult.swapOutput = realOutput;
@@ -356,6 +366,7 @@ async function fetchKyberQuoteViaApi(
   toSymbol: string,
   slippageBps?: number,
   userAddress?: string,
+  networkMode?: import('@/lib/network-mode').NetworkMode,
 ): Promise<bigint | null> {
   try {
     const res = await fetch('/api/swap/get-quote', {
@@ -370,7 +381,7 @@ async function fetchKyberQuoteViaApi(
         fromTokenDecimals,
         toTokenDecimals,
         swapType: 'ExactIn',
-        chainId: 8453,
+        chainId: networkMode ? chainIdForMode(networkMode) : 8453,
         slippageBps: slippageBps ?? 50,
         userAddress,
       }),

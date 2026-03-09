@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress, type Address } from 'viem';
-import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
+import { type NetworkMode } from '../../../lib/pools-config';
 import { RetryUtility } from '../../../lib/retry-utility';
 import { safeParseUnits } from '../../../lib/liquidity/utils/parsing/amountParsing';
 import { getKyberswapQuote } from '../../../lib/aggregators/kyberswap';
@@ -53,7 +53,8 @@ const shouldRetryRpc = (_attempt: number, error: any): boolean => {
   return msg.includes('timeout') || msg.includes('network') ||
          msg.includes('econnrefused') || msg.includes('etimedout');
 };
-import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '../../../lib/network-mode';
+import { chainIdForMode, backendNetworkForMode, resolveNetworkMode } from '../../../lib/network-mode';
+import { CHAIN_REGISTRY } from '../../../lib/chain-registry';
 import { Token, CurrencyAmount } from '@uniswap/sdk-core';
 import { tickToPrice } from '@uniswap/v3-sdk';
 import {
@@ -79,9 +80,10 @@ import { findBestRoute, SwapRoute, routeToString } from '@/lib/swap/routing-engi
  * StaticJsonRpcProvider trusts the network you pass and never calls eth_chainId.
  */
 function createProvider(networkMode?: NetworkMode): ethers.providers.StaticJsonRpcProvider {
-  const rpcUrl = getRpcUrlForNetwork(networkMode || 'testnet');
-  const chainId = networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
-  const networkName = networkMode === 'mainnet' ? 'base' : 'base-sepolia';
+  const mode = networkMode || 'base';
+  const rpcUrl = getRpcUrlForNetwork(mode);
+  const chainId = chainIdForMode(mode);
+  const networkName = CHAIN_REGISTRY[mode].backendNetwork;
 
   return new ethers.providers.StaticJsonRpcProvider(
     { url: rpcUrl, timeout: 10000 },
@@ -97,7 +99,7 @@ interface GetQuoteRequest extends NextApiRequest {
     swapType?: 'ExactIn' | 'ExactOut';
     chainId: number;
     debug?: boolean;
-    network?: 'mainnet' | 'testnet';
+    network?: NetworkMode;
     // Aggregator integration fields
     userAddress?: string;             // Required for building executable Kyberswap calldata
     slippageBps?: number;             // Slippage tolerance in basis points (e.g., 50 = 0.5%)
@@ -582,8 +584,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
   try {
     const { fromTokenSymbol, toTokenSymbol, amountDecimalsStr, swapType = 'ExactIn', network: networkParam } = req.body;
 
-    // OVERRIDE: Always use mainnet (testnet removed)
-    const networkMode: NetworkMode = 'mainnet';
+    const networkMode = resolveNetworkMode(req);
 
     // Validate required fields
     if (!fromTokenSymbol || !toTokenSymbol || !amountDecimalsStr) {
@@ -655,7 +656,6 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         return res.status(400).json({ message: 'Invalid amount format' });
       }
 
-      // Only Kyberswap quote for these tokens
       const kyberRequest: QuoteRequest = {
         fromTokenAddress,
         toTokenAddress,
@@ -665,6 +665,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         slippageBps,
         userAddress,
         isExactIn: swapType === 'ExactIn',
+        networkMode,
       };
 
       try {
@@ -775,8 +776,9 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         toTokenDecimals: toToken.decimals,
         amount: amountInSmallestUnits.toString(),
         slippageBps,
-        userAddress, // Optional - if provided, we get executable calldata
+        userAddress,
         isExactIn: true,
+        networkMode,
       };
       kyberswapPromise = getKyberswapQuote(kyberRequest).catch((err) => {
         console.warn('[Kyberswap] Quote failed, using Alphix only:', err?.message || err);

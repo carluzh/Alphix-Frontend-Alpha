@@ -12,7 +12,7 @@ import { Token, Currency } from '@uniswap/sdk-core';
 import { Pool as V4Pool } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
 
-import { getPoolById, getToken, getChainId, type PoolConfig } from '../../../pools-config';
+import { getPoolById, getToken, getChainId, type PoolConfig, type NetworkMode } from '../../../pools-config';
 import { PositionField, type CreatePositionInfo, type PositionState, type FeeData } from '../../types';
 
 // =============================================================================
@@ -62,11 +62,12 @@ interface PoolStateData {
 function buildV4Pool(
   poolConfig: PoolConfig,
   poolState: PoolStateData,
-  chainId: number
+  chainId: number,
+  networkMode?: NetworkMode
 ): V4Pool | undefined {
   try {
-    const token0Config = getToken(poolConfig.currency0.symbol);
-    const token1Config = getToken(poolConfig.currency1.symbol);
+    const token0Config = getToken(poolConfig.currency0.symbol, networkMode);
+    const token1Config = getToken(poolConfig.currency1.symbol, networkMode);
 
     if (!token0Config || !token1Config) {
       console.warn('[buildV4Pool] Token config not found');
@@ -116,6 +117,8 @@ export interface UseDerivedPositionInfoParams {
   poolState?: PoolStateData;
   /** Chain ID (optional, defaults to config) */
   chainId?: number;
+  /** Network mode for chain-specific config lookups */
+  networkMode?: NetworkMode;
 }
 
 /**
@@ -129,14 +132,14 @@ export interface UseDerivedPositionInfoParams {
 export function useDerivedPositionInfo(
   params: UseDerivedPositionInfoParams
 ): CreatePositionInfo {
-  const { poolId, poolState, chainId: chainIdOverride } = params;
-  const chainId = chainIdOverride ?? getChainId();
+  const { poolId, poolState, chainId: chainIdOverride, networkMode } = params;
+  const chainId = chainIdOverride ?? getChainId(networkMode);
 
   // Get pool configuration
   const poolConfig = useMemo(() => {
     if (!poolId) return undefined;
-    return getPoolById(poolId);
-  }, [poolId]);
+    return getPoolById(poolId, networkMode);
+  }, [poolId, networkMode]);
 
   // Build Token instances
   const currencies = useMemo(() => {
@@ -147,8 +150,8 @@ export function useDerivedPositionInfo(
       };
     }
 
-    const token0Config = getToken(poolConfig.currency0.symbol);
-    const token1Config = getToken(poolConfig.currency1.symbol);
+    const token0Config = getToken(poolConfig.currency0.symbol, networkMode);
+    const token1Config = getToken(poolConfig.currency1.symbol, networkMode);
 
     if (!token0Config || !token1Config) {
       return {
@@ -179,7 +182,7 @@ export function useDerivedPositionInfo(
       display: sorted,
       sdk: sorted,
     };
-  }, [poolConfig, chainId]);
+  }, [poolConfig, chainId, networkMode]);
 
   // Build V4Pool instance
   const pool = useMemo(() => {
@@ -187,8 +190,8 @@ export function useDerivedPositionInfo(
       return undefined;
     }
 
-    return buildV4Pool(poolConfig, poolState, chainId);
-  }, [poolConfig, poolState, chainId]);
+    return buildV4Pool(poolConfig, poolState, chainId, networkMode);
+  }, [poolConfig, poolState, chainId, networkMode]);
 
   // Refetch function (no-op for now, pool state comes from parent)
   const refetchPoolData = useCallback(() => {
@@ -226,10 +229,11 @@ export function useDerivedPositionInfo(
 export function useDerivedPositionInfoFromState(
   currencyInputs: { tokenA: Currency | undefined; tokenB: Currency | undefined },
   state: PositionState & { poolState?: PoolStateData },
-  poolId?: string
+  poolId?: string,
+  networkMode?: NetworkMode
 ): CreatePositionInfo {
   const { tokenA, tokenB } = currencyInputs;
-  const chainId = getChainId();
+  const chainId = getChainId(networkMode);
 
   // Sort currencies
   const sortedCurrencies = useMemo(() => {
@@ -239,8 +243,8 @@ export function useDerivedPositionInfoFromState(
   // Get pool configuration
   const poolConfig = useMemo(() => {
     if (!poolId) return undefined;
-    return getPoolById(poolId);
-  }, [poolId]);
+    return getPoolById(poolId, networkMode);
+  }, [poolId, networkMode]);
 
   // Build V4Pool instance
   const pool = useMemo(() => {
@@ -248,8 +252,8 @@ export function useDerivedPositionInfoFromState(
       return undefined;
     }
 
-    return buildV4Pool(poolConfig, state.poolState, chainId);
-  }, [poolConfig, state.poolState, chainId]);
+    return buildV4Pool(poolConfig, state.poolState, chainId, networkMode);
+  }, [poolConfig, state.poolState, chainId, networkMode]);
 
   // Refetch function
   const refetchPoolData = useCallback(() => {

@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { getPoolSubgraphId, getStateViewAddress, getPoolById, getNetworkModeFromRequest } from '../../../lib/pools-config';
-import { isMainnetSubgraphMode, getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper';
+import { getPoolSubgraphId, getStateViewAddress, getPoolById } from '../../../lib/pools-config';
+import { resolveNetworkMode } from '../../../lib/network-mode';
+import { isBaseSubgraphMode, getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/cache/redis-keys';
 import { createNetworkClient } from '../../../lib/viemClient';
@@ -34,20 +35,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Get network mode from cookies
-  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
-
   const { poolId, days = 7 } = req.body;
+  const networkMode = resolveNetworkMode(req);
 
   if (!poolId) {
     return res.status(400).json({ error: 'poolId required' });
   }
 
   const apiId = getPoolSubgraphId(poolId, networkMode) || poolId;
-  const isMainnet = isMainnetSubgraphMode(networkMode);
+  const isBase = isBaseSubgraphMode(networkMode);
   const daysNum = Number(days) || 7;
 
-  console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days: daysNum, isMainnet, networkMode });
+  console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days: daysNum, isBase, networkMode });
 
   // Construct base URL from request headers (fail-fast, no localhost fallback)
   const protocol = req.headers['x-forwarded-proto'] || 'http';
@@ -58,7 +57,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
   const baseUrl = `${protocol}://${host}`;
 
-  // Unified query: Works for both mainnet and testnet (new unified subgraph)
+  // Unified query: Works for both base and arbitrum
   const poolQuery = `
     query PoolMetrics($poolId: ID!, $days: Int!) {
       pool(id: $poolId) {
@@ -174,18 +173,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           return { ...EMPTY_METRICS, pool: pool || null };
         }
 
-        // Testnet stablecoin fallback: The testnet subgraph has no ETH price oracle,
-        // so tvlUSD/volumeUSD are always 0. For testnet stablecoins (atDAI/atUSDC),
-        // we assume $1 per token and sum the token amounts as the USD value.
-        const needsTestnetFallback = !isMainnet;
-        const poolTvlFallback = needsTestnetFallback && pool
-          ? parseFloat(pool.totalValueLockedToken0 || '0') + parseFloat(pool.totalValueLockedToken1 || '0')
-          : 0;
+        const poolTvlFallback = 0;
 
         const dayDatas = data.poolDayDatas.map((day: any) => {
           let tvlUSD = day.tvlUSD || '0';
-          // Use pool's current TVL as fallback for testnet (stablecoins ≈ $1)
-          if (needsTestnetFallback && parseFloat(tvlUSD) === 0 && poolTvlFallback > 0) {
+          if (parseFloat(tvlUSD) === 0 && poolTvlFallback > 0) {
             tvlUSD = poolTvlFallback.toString();
           }
           return {

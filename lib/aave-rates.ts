@@ -2,7 +2,13 @@
  * Unified Yield Rates Client
  * Fetches lending rates from Aave/Spark via AlphixBackend.
  * Pool-level yield factors configured in POOL_YIELD_FACTORS.
+ *
+ * Network-aware: pass networkMode to fetch rates from the correct chain's
+ * Aave deployment (Base vs Arbitrum). Spark is Base-only.
  */
+
+import type { NetworkMode } from './network-mode';
+import { getNetworkParam } from './backend-client';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
@@ -54,17 +60,15 @@ interface TokenMapping {
  * Spark: DAI, USDS (via /spark/rates)
  */
 const TOKEN_TO_PROTOCOL: Record<string, TokenMapping> = {
-  // Aave tokens
+  // Aave tokens (Base + Arbitrum)
   'USDC': { key: 'USDC', protocol: 'aave' },
+  'USDT': { key: 'USDT', protocol: 'aave' },
   'WETH': { key: 'WETH', protocol: 'aave' },
   'ETH': { key: 'WETH', protocol: 'aave' },
   'GHO': { key: 'GHO', protocol: 'aave' },
-  // Spark tokens
+  // Spark tokens (Base only — Spark has no Arbitrum deployment)
   'DAI': { key: 'DAI', protocol: 'spark' },
   'USDS': { key: 'USDS', protocol: 'spark' },
-  // Testnet tokens (Base Sepolia) - simulates mainnet USDS/USDC pool
-  'ATDAI': { key: 'USDS', protocol: 'spark' },  // atDAI represents USDS (Spark)
-  'ATUSDC': { key: 'USDC', protocol: 'aave' },  // atUSDC represents USDC (Aave)
 };
 
 /**
@@ -156,33 +160,57 @@ export function getYieldSourcesForTokens(
   return result.length > 0 ? result : ['aave']; // Default to aave if no tokens matched
 }
 
-// In-memory cache for current rates (5 minute TTL)
-let ratesCache: { data: AaveRatesResponse; timestamp: number } | null = null;
+// Per-network in-memory cache for current rates (5 minute TTL)
+const ratesCacheMap = new Map<string, { data: AaveRatesResponse; timestamp: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+function getCacheKey(networkMode?: NetworkMode): string {
+  return networkMode ?? 'default';
+}
+
 /**
- * Fetch current rates from both Aave and Spark protocols
- * Combines rates into a unified response
- * Uses in-memory cache to avoid excessive API calls
+ * Fetch current rates from Aave (and Spark on Base)
+ * Combines rates into a unified response.
+ * Uses per-network in-memory cache to avoid excessive API calls.
+ *
+ * @param networkMode - Optional network. 'arbitrum' fetches Arbitrum Aave rates,
+ *                      'base'/undefined fetches Base Aave + Spark rates.
  */
-export async function fetchAaveRates(): Promise<AaveRatesResponse> {
+export async function fetchAaveRates(networkMode?: NetworkMode): Promise<AaveRatesResponse> {
+  const cacheKey = getCacheKey(networkMode);
+  const cached = ratesCacheMap.get(cacheKey);
+
   // Check cache first
-  if (ratesCache && Date.now() - ratesCache.timestamp < CACHE_TTL_MS) {
-    return ratesCache.data;
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
   }
 
   try {
-    // Fetch from both protocols in parallel
-    const [aaveResponse, sparkResponse] = await Promise.all([
-      fetch(`${BACKEND_URL}/aave/rates`, {
+    // Build Aave URL with network param when specified
+    const aaveUrl = networkMode
+      ? `${BACKEND_URL}/aave/rates?network=${getNetworkParam(networkMode)}`
+      : `${BACKEND_URL}/aave/rates`;
+
+    // Spark is Base-only — skip for Arbitrum
+    const fetchSpark = networkMode !== 'arbitrum';
+
+    const fetches: Promise<Response | null>[] = [
+      fetch(aaveUrl, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       }).catch(() => null),
-      fetch(`${BACKEND_URL}/spark/rates`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      }).catch(() => null),
-    ]);
+    ];
+
+    if (fetchSpark) {
+      fetches.push(
+        fetch(`${BACKEND_URL}/spark/rates`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+        }).catch(() => null)
+      );
+    }
+
+    const [aaveResponse, sparkResponse] = await Promise.all(fetches);
 
     const combinedData: Record<string, AaveTokenRate> = {};
 
@@ -218,15 +246,15 @@ export async function fetchAaveRates(): Promise<AaveRatesResponse> {
       data: combinedData,
     };
 
-    // Update cache
-    ratesCache = { data, timestamp: Date.now() };
+    // Update per-network cache
+    ratesCacheMap.set(cacheKey, { data, timestamp: Date.now() });
 
     return data;
   } catch (error) {
     // Return cached data if available, even if stale
-    if (ratesCache) {
+    if (cached) {
       console.warn('[fetchAaveRates] API failed, using stale cache:', error);
-      return ratesCache.data;
+      return cached.data;
     }
 
     return {
@@ -241,11 +269,11 @@ export async function fetchAaveRates(): Promise<AaveRatesResponse> {
  * Get current Aave APY for a specific token
  * Returns null if token not supported or fetch fails
  */
-export async function getAaveApy(tokenSymbol: string): Promise<number | null> {
+export async function getAaveApy(tokenSymbol: string, networkMode?: NetworkMode): Promise<number | null> {
   const aaveKey = getAaveKey(tokenSymbol);
   if (!aaveKey) return null;
 
-  const rates = await fetchAaveRates();
+  const rates = await fetchAaveRates(networkMode);
   if (!rates.success || !rates.data[aaveKey]) return null;
 
   return rates.data[aaveKey].apy;
@@ -257,9 +285,10 @@ export async function getAaveApy(tokenSymbol: string): Promise<number | null> {
  */
 export async function getPositionAaveApy(
   token0Symbol: string,
-  token1Symbol: string
+  token1Symbol: string,
+  networkMode?: NetworkMode
 ): Promise<number | null> {
-  const rates = await fetchAaveRates();
+  const rates = await fetchAaveRates(networkMode);
   if (!rates.success) return null;
 
   const key0 = getAaveKey(token0Symbol);
@@ -282,10 +311,15 @@ export async function getPositionAaveApy(
 
 /**
  * Fetch historical Aave rates for a token
+ *
+ * @param tokenSymbol - Token symbol
+ * @param period - Time period
+ * @param networkMode - Optional network for chain-specific Aave rates
  */
 export async function fetchAaveHistory(
   tokenSymbol: string,
-  period: '1W' | '1M' | '1Y' | 'ALL' = '1W'
+  period: '1W' | '1M' | '1Y' | 'ALL' = '1W',
+  networkMode?: NetworkMode
 ): Promise<AaveHistoryResponse> {
   const aaveKey = getAaveKey(tokenSymbol);
   if (!aaveKey) {
@@ -310,13 +344,15 @@ export async function fetchAaveHistory(
   const backendPeriod = periodMap[period] || 'WEEK';
 
   try {
-    const response = await fetch(
-      `${BACKEND_URL}/aave/rates/history?token=${encodeURIComponent(aaveKey)}&period=${backendPeriod}`,
-      {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
+    let historyUrl = `${BACKEND_URL}/aave/rates/history?token=${encodeURIComponent(aaveKey)}&period=${backendPeriod}`;
+    if (networkMode) {
+      historyUrl += `&network=${getNetworkParam(networkMode)}`;
+    }
+
+    const response = await fetch(historyUrl, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -345,7 +381,8 @@ export async function fetchAaveHistory(
 export async function fetchPositionAaveHistory(
   token0Symbol: string,
   token1Symbol: string,
-  period: '1W' | '1M' | '1Y' | 'ALL' = '1W'
+  period: '1W' | '1M' | '1Y' | 'ALL' = '1W',
+  networkMode?: NetworkMode
 ): Promise<{
   success: boolean;
   points: Array<{ timestamp: number; apy: number }>;
@@ -356,8 +393,8 @@ export async function fetchPositionAaveHistory(
 
   // Fetch both in parallel
   const [history0, history1] = await Promise.all([
-    key0 ? fetchAaveHistory(token0Symbol, period) : Promise.resolve(null),
-    key1 ? fetchAaveHistory(token1Symbol, period) : Promise.resolve(null),
+    key0 ? fetchAaveHistory(token0Symbol, period, networkMode) : Promise.resolve(null),
+    key1 ? fetchAaveHistory(token1Symbol, period, networkMode) : Promise.resolve(null),
   ]);
 
   // If neither token is supported, return empty
@@ -447,6 +484,7 @@ export function getLendingAprForPair(
  * Hook-friendly wrapper that includes loading/error state
  * For use with React Query or SWR
  */
-export const aaveRatesQueryKey = ['aave', 'rates'] as const;
-export const aaveHistoryQueryKey = (token: string, period: string) =>
-  ['aave', 'history', token, period] as const;
+export const aaveRatesQueryKey = (networkMode?: NetworkMode) =>
+  ['aave', 'rates', networkMode ?? 'default'] as const;
+export const aaveHistoryQueryKey = (token: string, period: string, networkMode?: NetworkMode) =>
+  ['aave', 'history', token, period, networkMode ?? 'default'] as const;

@@ -3,11 +3,11 @@
 import React, { useState, useMemo } from 'react';
 import Image from "next/image";
 import { TokenStack } from "./TokenStack";
-import { getPoolById } from '@/lib/pools-config';
+import { getPoolById, type NetworkMode } from '@/lib/pools-config';
 import { isFullRangePosition } from '@/lib/liquidity/hooks/range';
 import { usePriceOrdering, useGetRangeDisplay, type PositionInfo } from '@/lib/uniswap/liquidity';
 import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
-import { useNetwork } from '@/lib/network-context';
+import { chainIdForMode } from '@/lib/network-mode';
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
 import { getOptimalBaseToken } from '@/lib/denomination-utils';
@@ -64,6 +64,10 @@ interface PositionCardCompactProps {
     /** Position timestamps for APR calculation */
     blockTimestamp?: number;
     lastTimestamp?: number;
+    /** Chain badge for multi-chain display */
+    chainBadge?: { icon: string; borderColor: string };
+    /** Which chain this position lives on (for cross-chain display) */
+    positionNetworkMode?: NetworkMode;
 }
 
 export function PositionCardCompact({
@@ -81,10 +85,13 @@ export function PositionCardCompact({
     isOptimisticallyUpdating,
     blockTimestamp,
     lastTimestamp,
+    chainBadge,
+    positionNetworkMode,
 }: PositionCardCompactProps) {
     const [isHovered, setIsHovered] = useState(false);
     const [pricesInverted, setPricesInverted] = useState(false);
-    const { networkMode, chainId } = useNetwork();
+    const networkMode = positionNetworkMode;
+    const chainId = positionNetworkMode ? chainIdForMode(positionNetworkMode) : 8453;
 
     // Extract token info from SDK CurrencyAmount objects
     const token0 = position.currency0Amount.currency;
@@ -284,7 +291,15 @@ export function PositionCardCompact({
             onClick={disableHover ? undefined : onClick}
             onMouseEnter={() => !disableHover && setIsHovered(true)}
             onMouseLeave={() => !disableHover && setIsHovered(false)}
+
         >
+            {chainBadge && (
+                <img
+                    src={chainBadge.icon}
+                    alt=""
+                    className="absolute top-2 left-2 w-4 h-4 rounded-full z-10"
+                />
+            )}
             {isOptimisticallyUpdating && (
                 <div className="absolute inset-0 bg-muted/20 backdrop-blur-sm rounded-lg flex items-center justify-center z-10">
                     <Image src="/logos/alphix-icon-white.svg" alt="Updating..." width={24} height={24} className="animate-pulse opacity-75" />
@@ -324,6 +339,7 @@ export function PositionCardCompact({
                         priceLower={minPriceNumeric}
                         priceUpper={maxPriceNumeric}
                         className="w-full h-full"
+                        networkModeOverride={networkMode}
                     />
                 </div>
                 <div className="hidden xl:flex flex-1 max-w-[280px] h-12 ml-auto cursor-pointer">
@@ -336,6 +352,7 @@ export function PositionCardCompact({
                         priceLower={minPriceNumeric}
                         priceUpper={maxPriceNumeric}
                         className="w-full h-full"
+                        networkModeOverride={networkMode}
                     />
                 </div>
 

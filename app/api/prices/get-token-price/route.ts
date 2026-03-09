@@ -2,7 +2,7 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { getQuotePrice } from '@/lib/swap/quote-prices';
-import { MAINNET_CHAIN_ID, type NetworkMode } from '@/lib/network-mode';
+import { modeForChainId, type NetworkMode } from '@/lib/network-mode';
 import { checkRateLimit } from '@/lib/api/ratelimit';
 
 /**
@@ -22,7 +22,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'symbol parameter required' }, { status: 400 });
   }
 
-  const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+  const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
   const price = await getQuotePrice(symbol, chainId, networkMode);
 
   return NextResponse.json(

@@ -7,6 +7,7 @@ import { Token, Ether, CurrencyAmount, Percent } from '@uniswap/sdk-core';
 import { V4_POSITION_MANAGER_ADDRESS, V4_POSITION_MANAGER_ABI, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
 import { getToken, TokenSymbol, getTokenSymbolByAddress } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
+import { chainIdForMode } from '@/lib/network-mode';
 import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, getPoolState, preparePermit2BatchForPosition } from '@/lib/liquidity/liquidity-utils';
@@ -32,6 +33,8 @@ export function providePreSignedIncreaseBatchPermit(tokenId: string | number | b
 
 interface UseIncreaseLiquidityProps {
   onLiquidityIncreased: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; increaseAmounts?: { amount0: string; amount1: string } | null }) => void;
+  /** Override networkMode (use position's chain instead of global context) */
+  networkModeOverride?: import('@/lib/network-mode').NetworkMode;
 }
 
 type IncreaseOptions = { 
@@ -44,11 +47,13 @@ type IncreaseOptions = {
   };
 };
 
-export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquidityProps) {
-  const { address: accountAddress, chainId } = useAccount();
-  const { networkMode } = useNetwork();
+export function useIncreaseLiquidity({ onLiquidityIncreased, networkModeOverride }: UseIncreaseLiquidityProps) {
+  const { address: accountAddress, chainId: walletChainId } = useAccount();
+  const { ensureChain } = useNetwork();
+  const networkMode = networkModeOverride ?? 'base';
+  const targetChainId = chainIdForMode(networkMode);
 
-  const publicClient = usePublicClient();
+  const publicClient = usePublicClient({ chainId: targetChainId });
 
   const { data: hash, writeContract, isPending: isIncreaseSendPending, error: increaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isIncreaseConfirming, isSuccess: isIncreaseConfirmed, error: increaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
@@ -59,8 +64,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
 
   // Log minimal useAccount details for debugging
   useEffect(() => {
-    console.log("useAccount:", { accountAddress, chainId });
-  }, [accountAddress, chainId]);
+    console.log("useAccount:", { accountAddress, walletChainId });
+  }, [accountAddress, walletChainId]);
 
   const [isIncreasing, setIsIncreasing] = useState(false);
   // Ensure we only invoke onLiquidityIncreased once per tx hash
@@ -96,7 +101,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
   }, []);
 
   const increaseLiquidity = useCallback(async (positionData: IncreasePositionData, opts?: IncreaseOptions) => {
-    if (!accountAddress || !chainId) {
+    if (!accountAddress || !walletChainId) {
       toast.error("Wallet Not Connected", { icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), description: "Please connect your wallet and try again.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
       return;
     }
@@ -104,7 +109,11 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       toast.error("Configuration Error", { icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), description: "Position Manager address not set.", action: { label: "Open Ticket", onClick: () => window.open('https://discord.com/invite/NTXRarFbTr', '_blank') } });
       return;
     }
-    
+
+    // Ensure wallet is on the correct chain before submitting
+    const ok = await ensureChain(targetChainId);
+    if (!ok) return;
+
     // Store position data for optimistic updates
     currentPositionIdRef.current = positionData.tokenId.toString();
     currentPositionDataRef.current = positionData;
@@ -126,8 +135,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
     handledIncreaseHashRef.current = null;
 
     try {
-      const token0Def = getToken(positionData.token0Symbol);
-      const token1Def = getToken(positionData.token1Symbol);
+      const token0Def = getToken(positionData.token0Symbol, networkMode);
+      const token1Def = getToken(positionData.token1Symbol, networkMode);
 
       if (!token0Def || !token1Def) {
         throw new Error("Token definitions not found for one or both tokens in the position.");
@@ -142,7 +151,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       const nftTokenId = await getTokenIdFromPosition(positionData);
 
       // Fetch on-chain position details and pool state
-      const details = await getPositionDetails(nftTokenId, chainId);
+      const details = await getPositionDetails(nftTokenId, targetChainId);
       // Build currencies strictly in poolKey order to avoid side mixups
       const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
       const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
@@ -150,8 +159,8 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       const defC0 = getToken(symC0, networkMode)!;
       const defC1 = getToken(symC1, networkMode)!;
       const isNativeC0 = getAddress(details.poolKey.currency0) === '0x0000000000000000000000000000000000000000';
-      const currency0 = isNativeC0 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC0.address), defC0.decimals, defC0.symbol);
-      const currency1 = new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
+      const currency0 = isNativeC0 ? Ether.onChain(targetChainId) : new Token(targetChainId, getAddress(defC0.address), defC0.decimals, defC0.symbol);
+      const currency1 = new Token(targetChainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
 
       const keyTuple = [{
         currency0: getAddress(details.poolKey.currency0),
@@ -170,7 +179,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         ]}
       ], keyTuple as any);
       const poolId = keccak256(encoded) as Hex;
-      const state = await getPoolState(poolId, chainId);
+      const state = await getPoolState(poolId, targetChainId);
 
       const pool = new V4Pool(
         currency0 as any,
@@ -311,7 +320,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
             if (!(amt >= amountC1Raw && Number(exp) > now)) needPermit = true;
           }
           if (needPermit) {
-            const prepared = await preparePermit2BatchForPosition(nftTokenId, accountAddress as `0x${string}`, chainId, deadline, amountC0Raw, amountC1Raw);
+            const prepared = await preparePermit2BatchForPosition(nftTokenId, accountAddress as `0x${string}`, targetChainId, deadline, amountC0Raw, amountC1Raw);
             if (prepared?.message?.details && prepared.message.details.length > 0) {
               // Inform user about batch signature request
               toast("Sign in Wallet", {
@@ -374,7 +383,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         hookData: '0x',
         tokenId: nftTokenId.toString(),
         ...addOptionsBatch,
-        ...(isNativeC0 ? { useNative: Ether.onChain(chainId) } : {}),
+        ...(isNativeC0 ? { useNative: Ether.onChain(targetChainId) } : {}),
       };
 
       const { calldata, value } = V4PositionManager.addCallParameters(position, addOptions) as { calldata: Hex; value: string | number | bigint };
@@ -387,7 +396,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
         functionName: 'multicall',
         args: [[calldata] as Hex[]],
         value: BigInt(value || 0),
-        chainId,
+        chainId: targetChainId,
       } as any);
 
     } catch (error: any) {
@@ -417,7 +426,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
       }
       setIsIncreasing(false);
     }
-  }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]);
+  }, [accountAddress, targetChainId, writeContract, resetWriteContract, getTokenIdFromPosition]);
 
   useEffect(() => {
     if (increaseSendError) {
@@ -498,7 +507,7 @@ export function useIncreaseLiquidity({ onLiquidityIncreased }: UseIncreaseLiquid
           const { getPoolSubgraphId } = await import('@/lib/pools-config');
           await invalidateAfterTx(null, {
             owner: accountAddress,
-            chainId: chainId!,
+            chainId: targetChainId,
             poolId: getPoolSubgraphId(`${posData.token0Symbol}/${posData.token1Symbol}`) || undefined,
             positionIds: currentPositionIdRef.current ? [currentPositionIdRef.current] : undefined,
             optimisticUpdates: tvlDelta > 0 ? {

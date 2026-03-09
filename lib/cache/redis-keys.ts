@@ -9,6 +9,7 @@
  * Pool-related cache keys
  */
 import type { NetworkMode } from '@/lib/network-mode'
+import { ALL_MODES } from '@/lib/chain-registry'
 
 function networkSuffix(networkMode?: NetworkMode): string {
   return networkMode ? `:${networkMode}` : ''
@@ -89,7 +90,7 @@ export function getPoolCacheKeys(poolId?: string): string[] {
 }
 
 export function getPoolCacheKeysByNetwork(poolId?: string, networkMode?: NetworkMode): string[] {
-  const modes: NetworkMode[] = networkMode ? [networkMode] : ['mainnet', 'testnet']
+  const modes: NetworkMode[] = networkMode ? [networkMode] : ALL_MODES
   const keys: string[] = []
 
   for (const mode of modes) {
@@ -114,7 +115,7 @@ export function getPoolTicksCacheKey(poolId: string): string {
 }
 
 export function getPoolTicksCacheKeyByNetwork(poolId: string, networkMode?: NetworkMode): string[] {
-  const modes: NetworkMode[] = networkMode ? [networkMode] : ['mainnet', 'testnet']
+  const modes: NetworkMode[] = networkMode ? [networkMode] : ALL_MODES
   return modes.map(mode => poolKeys.ticks(poolId, mode))
 }
 

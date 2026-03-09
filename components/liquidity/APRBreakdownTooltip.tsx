@@ -12,7 +12,7 @@
 import React, { useMemo } from "react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
-import { getToken } from "@/lib/pools-config";
+import { resolveTokenIcon } from "@/lib/pools-config";
 import { getYieldSourcesForTokens } from "@/lib/aave-rates";
 import { formatAprPercent } from "@/lib/format";
 import { PointsIcon } from "@/components/PointsIcons/PointsIcon";
@@ -60,11 +60,8 @@ interface TokenPairLogoProps {
  * Displays overlapping token logos for the pair.
  */
 function TokenPairLogo({ token0Symbol, token1Symbol }: TokenPairLogoProps) {
-  const token0Config = token0Symbol ? getToken(token0Symbol) : null;
-  const token1Config = token1Symbol ? getToken(token1Symbol) : null;
-
-  const icon0 = (token0Config as any)?.icon;
-  const icon1 = (token1Config as any)?.icon;
+  const icon0 = token0Symbol ? resolveTokenIcon(token0Symbol) : null;
+  const icon1 = token1Symbol ? resolveTokenIcon(token1Symbol) : null;
 
   return (
     <div className="flex items-center -space-x-1">
@@ -111,7 +108,7 @@ export function LendingSourceIcons({ sources }: { sources: Array<'aave' | 'spark
           alt="Spark"
           width={14}
           height={14}
-          className="absolute left-0 rounded-full ring-1 ring-popover"
+          className="absolute left-0 rounded-full"
           style={{ zIndex: 1 }}
           loading="eager"
         />
@@ -120,7 +117,7 @@ export function LendingSourceIcons({ sources }: { sources: Array<'aave' | 'spark
           alt="Aave"
           width={14}
           height={14}
-          className="absolute left-2 rounded-full ring-1 ring-popover"
+          className="absolute left-2 rounded-full"
           style={{ zIndex: 2 }}
           loading="eager"
         />

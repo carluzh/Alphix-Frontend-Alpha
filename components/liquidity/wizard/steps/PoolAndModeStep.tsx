@@ -10,9 +10,11 @@ import { Button } from '@/components/ui/button';
 import { useAddLiquidityContext } from '../AddLiquidityContext';
 import { Container } from '../shared/Container';
 import { LPMode } from '../types';
-import { getEnabledPools, getPoolById, getPoolSubgraphId, type PoolConfig } from '@/lib/pools-config';
-import { useNetwork } from '@/lib/network-context';
+import { getMultiChainEnabledPools, getPoolById, getPoolByIdMultiChain, getPoolSubgraphId, type PoolConfig } from '@/lib/pools-config';
+
 import { fetchPoolsMetrics } from '@/lib/backend-client';
+import { CHAIN_REGISTRY, ALL_MODES } from '@/lib/chain-registry';
+import type { NetworkMode } from '@/lib/network-mode';
 import { TokenStack } from '@/components/liquidity/TokenStack';
 import { APRBadge } from '@/components/liquidity/APRBadge';
 import { useAccount } from 'wagmi';
@@ -297,31 +299,49 @@ function LPModeSection({ mode, onSelectMode, extraAaveApr, yieldSources }: { mod
 
 export function PoolAndModeStep() {
   const { state, setPoolId, setTokens, setMode, goNext, canGoForward, poolLoading } = useAddLiquidityContext();
-  const { networkMode } = useNetwork();
   const { isConnected } = useAccount();
   const [poolAprs, setPoolAprs] = useState<Record<string, number>>({});
   const [aprsLoading, setAprsLoading] = useState(true);
 
-  const pools = useMemo(() => getEnabledPools(), []);
-  const selectedPool = state.poolId ? getPoolById(state.poolId) : null;
+  // Get pools from ALL chains for display
+  const pools = useMemo(() => getMultiChainEnabledPools(), []);
+  const selectedPool = state.poolId ? getPoolByIdMultiChain(state.poolId) : null;
+
+  // Group pools by chain for display
+  const poolsByChain = useMemo(() => {
+    const grouped = new Map<NetworkMode, PoolConfig[]>();
+    for (const mode of ALL_MODES) {
+      grouped.set(mode, []);
+    }
+    for (const pool of pools) {
+      const mode = pool.networkMode || 'base';
+      grouped.get(mode)?.push(pool);
+    }
+    return grouped;
+  }, [pools]);
 
   useEffect(() => {
     const fetchAprs = async () => {
       setAprsLoading(true);
       try {
-        const response = await fetchPoolsMetrics(networkMode);
-        if (!response.success) throw new Error(`API error: ${response.error}`);
+        // Fetch metrics from all chains
+        const results = await Promise.allSettled(
+          ALL_MODES.map(mode => fetchPoolsMetrics(mode))
+        );
 
         const aprs: Record<string, number> = {};
-        pools.forEach(pool => {
-          const apiPoolId = getPoolSubgraphId(pool.id) || pool.id;
-          const poolData = response.pools.find((p) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
-          if (poolData) {
-            // Calculate APR same as WebSocket: (fees24h / tvl) * 365 * 100
-            const apr = poolData.tvlUsd > 0 ? (poolData.fees24hUsd / poolData.tvlUsd) * 365 * 100 : 0;
-            aprs[pool.id] = apr;
+        for (const result of results) {
+          if (result.status !== 'fulfilled' || !result.value.success) continue;
+          for (const pool of pools) {
+            // Use pool's networkMode to find the correct subgraphId
+            const apiPoolId = getPoolSubgraphId(pool.id, pool.networkMode) || pool.id;
+            const poolData = result.value.pools.find((p) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
+            if (poolData) {
+              const apr = poolData.tvlUsd > 0 ? (poolData.fees24hUsd / poolData.tvlUsd) * 365 * 100 : 0;
+              aprs[pool.id] = apr;
+            }
           }
-        });
+        }
         setPoolAprs(aprs);
       } catch (error) {
         console.error('Failed to fetch APRs:', error);
@@ -330,29 +350,42 @@ export function PoolAndModeStep() {
       }
     };
     fetchAprs();
-  }, [pools, networkMode]);
+  }, [pools]);
 
   const handleSelectPool = useCallback((pool: PoolConfig) => {
     setPoolId(pool.id);
     setTokens(pool.currency0.symbol, pool.currency1.symbol);
   }, [setPoolId, setTokens]);
 
-  // Fetch Aave rates for Unified Yield display
-  const { data: aaveRatesData } = useQuery({
-    queryKey: ['aaveRates'],
-    queryFn: fetchAaveRates,
+  // Fetch Aave rates for ALL chains so each pool gets its chain's rates
+  const { data: aaveRatesByChain } = useQuery({
+    queryKey: ['aaveRates', 'allChains'],
+    queryFn: async () => {
+      const results = await Promise.allSettled(
+        ALL_MODES.map(mode => fetchAaveRates(mode).then(data => ({ mode, data })))
+      );
+      const ratesMap: Record<string, Awaited<ReturnType<typeof fetchAaveRates>>> = {};
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          ratesMap[result.value.mode] = result.value.data;
+        }
+      }
+      return ratesMap;
+    },
     staleTime: 5 * 60_000, // 5 minutes
   });
 
-  // Calculate lending APR for all pools using shared utility
+  // Calculate lending APR for all pools using their chain's rates
   const poolAaveAprs = useMemo(() => {
+    if (!aaveRatesByChain) return {};
     const aprs: Record<string, number> = {};
     pools.forEach(pool => {
-      const apr = getLendingAprForPair(aaveRatesData, pool.currency0.symbol, pool.currency1.symbol);
+      const chainRates = aaveRatesByChain[pool.networkMode || 'base'];
+      const apr = getLendingAprForPair(chainRates, pool.currency0.symbol, pool.currency1.symbol);
       if (apr !== null) aprs[pool.id] = apr;
     });
     return aprs;
-  }, [pools, aaveRatesData]);
+  }, [pools, aaveRatesByChain]);
 
   // Get Aave APR for the selected pool (for the strategy section)
   const extraAaveApr = selectedPool ? poolAaveAprs[selectedPool.id] : undefined;
@@ -369,18 +402,38 @@ export function PoolAndModeStep() {
           <h2 className="text-lg font-semibold text-white">Select Pool</h2>
           <p className="text-sm text-muted-foreground">Choose which pool to provide liquidity for</p>
         </div>
-        <div className="flex flex-col gap-2">
-          {pools.map(pool => (
-            <PoolCard
-              key={pool.id}
-              pool={pool}
-              selected={state.poolId === pool.id}
-              onSelect={() => handleSelectPool(pool)}
-              apr={poolAprs[pool.id]}
-              lendingApr={poolAaveAprs[pool.id]}
-              aprLoading={aprsLoading}
-            />
-          ))}
+        <div className="flex flex-col gap-4">
+          {Array.from(poolsByChain.entries()).map(([mode, chainPools]) => {
+            if (chainPools.length === 0) return null;
+            const chainConfig = CHAIN_REGISTRY[mode];
+            return (
+              <div key={mode} className="flex flex-col gap-2">
+                <div className="flex items-center gap-2 px-1">
+                  <Image
+                    src={`/chains/${mode}.svg`}
+                    alt={chainConfig.displayName}
+                    width={16}
+                    height={16}
+                    className="rounded-full"
+                  />
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    {chainConfig.displayName}
+                  </span>
+                </div>
+                {chainPools.map(pool => (
+                  <PoolCard
+                    key={pool.id}
+                    pool={pool}
+                    selected={state.poolId === pool.id}
+                    onSelect={() => handleSelectPool(pool)}
+                    apr={poolAprs[pool.id]}
+                    lendingApr={poolAaveAprs[pool.id]}
+                    aprLoading={aprsLoading}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </div>
         {pools.length === 0 && (
           <div className="flex flex-col items-center justify-center py-8 text-center">

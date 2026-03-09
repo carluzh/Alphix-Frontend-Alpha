@@ -1,10 +1,3 @@
-/**
- * Kyberswap Aggregator API Client
- *
- * Fetches quotes and builds swap transactions via Kyberswap's aggregator API.
- * Docs: https://docs.kyberswap.com/kyberswap-solutions/kyberswap-aggregator/aggregator-api-specification/evm-swaps
- */
-
 import { formatUnits } from 'viem';
 import {
   type AggregatorQuote,
@@ -15,25 +8,24 @@ import {
   isNativeToken,
 } from './types';
 import { getTokenSymbol } from './token-registry';
+import { type NetworkMode } from '../network-mode';
 
-// Kyberswap API configuration
 const KYBER_BASE_URL = 'https://aggregator-api.kyberswap.com';
-const KYBER_CHAIN_PATH = 'base'; // Base mainnet
 const DEFAULT_CLIENT_ID = 'alphix';
 const REQUEST_TIMEOUT_MS = 5000;
 
-/**
- * Get the client ID for Kyberswap requests
- * Using a client ID helps avoid rate limiting
- */
+/** Kyberswap chain path slug per network */
+export function getKyberChainPath(mode?: NetworkMode): string {
+  switch (mode) {
+    case 'arbitrum': return 'arbitrum';
+    default: return 'base';
+  }
+}
+
 function getClientId(): string {
   return process.env.KYBERSWAP_CLIENT_ID || DEFAULT_CLIENT_ID;
 }
 
-/**
- * Convert token address for Kyberswap API
- * Kyberswap uses a special address for native ETH
- */
 function toKyberTokenAddress(address: string): string {
   if (isNativeToken(address)) {
     return NATIVE_TOKEN_ADDRESS_KYBER;
@@ -80,7 +72,7 @@ function extractRoutePath(routeSummary: KyberswapRouteResponse['data']['routeSum
 export async function getKyberswapRoute(
   request: QuoteRequest
 ): Promise<KyberswapRouteResponse | null> {
-  const url = new URL(`${KYBER_BASE_URL}/${KYBER_CHAIN_PATH}/api/v1/routes`);
+  const url = new URL(`${KYBER_BASE_URL}/${getKyberChainPath(request.networkMode)}/api/v1/routes`);
 
   // Required parameters
   url.searchParams.set('tokenIn', toKyberTokenAddress(request.fromTokenAddress));
@@ -134,9 +126,10 @@ export async function getKyberswapRoute(
 export async function buildKyberswapSwap(
   routeSummary: KyberswapRouteResponse['data']['routeSummary'],
   userAddress: string,
-  slippageBps: number
+  slippageBps: number,
+  networkMode?: NetworkMode
 ): Promise<KyberswapBuildResponse | null> {
-  const url = `${KYBER_BASE_URL}/${KYBER_CHAIN_PATH}/api/v1/route/build`;
+  const url = `${KYBER_BASE_URL}/${getKyberChainPath(networkMode)}/api/v1/route/build`;
 
   try {
     const controller = new AbortController();
@@ -223,11 +216,11 @@ export async function getKyberswapQuote(
     };
   }
 
-  // Step 2: Build the swap calldata
   const buildResponse = await buildKyberswapSwap(
     routeSummary,
     request.userAddress,
-    request.slippageBps
+    request.slippageBps,
+    request.networkMode
   );
 
   if (!buildResponse) {
@@ -265,11 +258,10 @@ export async function getKyberswapQuote(
   };
 }
 
-/**
- * Get Kyberswap router address for Base
- * This is the contract users need to approve tokens to
- */
-export function getKyberswapRouterAddress(): string {
-  // MetaAggregationRouterV2 on Base
-  return '0x6131B5fae19EA4f9D964eAc0408E4408b66337b5';
+/** Kyberswap MetaAggregationRouterV2 address per chain */
+export function getKyberswapRouterAddress(networkMode?: NetworkMode): string {
+  switch (networkMode) {
+    case 'arbitrum': return '0x6131B5fae19EA4f9D964eAc0408E4408b66337b5';
+    default: return '0x6131B5fae19EA4f9D964eAc0408E4408b66337b5';
+  }
 }

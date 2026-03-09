@@ -2,7 +2,8 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import { cacheService } from '@/lib/cache/CacheService'
 import { HistoryDuration, TimestampedPoolPrice } from '@/lib/chart/types'
 import { fetchPoolPricesHistory } from '@/lib/backend-client'
-import type { NetworkMode } from '@/lib/network-mode'
+import { resolveNetworkMode, type NetworkMode } from '@/lib/network-mode'
+import { CHAIN_REGISTRY } from '@/lib/chain-registry'
 
 /**
  * Pool Price History API
@@ -61,10 +62,12 @@ interface ApiResponse {
  */
 async function fetchUniswapPriceHistory(
   poolId: string,
-  duration: HistoryDuration
+  duration: HistoryDuration,
+  networkMode: NetworkMode = 'base'
 ): Promise<TimestampedPoolPrice[] | null> {
+  const chain = CHAIN_REGISTRY[networkMode]?.apolloChain ?? 'BASE'
   const query = `query GetPoolPriceHistory($poolId: String!, $duration: HistoryDuration!) {
-    v4Pool(chain: BASE, poolId: $poolId) {
+    v4Pool(chain: ${chain}, poolId: $poolId) {
       id
       priceHistory(duration: $duration) {
         timestamp
@@ -248,7 +251,7 @@ function mapDurationToBackendPeriod(duration: HistoryDuration): 'DAY' | 'WEEK' |
 
 /**
  * Fetch price history from Alphix Backend
- * Works for both mainnet and testnet
+ * Works for all supported networks
  */
 async function fetchBackendPriceHistory(
   poolId: string,
@@ -296,9 +299,9 @@ async function fetchPriceHistory(
   _token0: string,
   _token1: string,
   duration: HistoryDuration,
-  _networkMode: NetworkMode
+  networkMode: NetworkMode
 ): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'backend' | 'coingecko' }> {
-  const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
+  const uniswapData = await fetchUniswapPriceHistory(poolId, duration, networkMode)
   if (uniswapData && uniswapData.length >= 3) {
     return { data: uniswapData, source: 'uniswap' }
   }
@@ -319,15 +322,22 @@ async function fetchPriceHistoryWithOptionalFallback(
   _token0: string | null,
   _token1: string | null,
   duration: HistoryDuration,
-  _networkMode: NetworkMode
+  networkMode: NetworkMode
 ): Promise<{ data: TimestampedPoolPrice[]; source: 'uniswap' | 'backend' | 'coingecko' }> {
-  // TEMPORARY: Always use Uniswap Gateway API only (no backend/CoinGecko fallback)
-  const uniswapData = await fetchUniswapPriceHistory(poolId, duration)
+  // Try Uniswap Gateway first
+  const uniswapData = await fetchUniswapPriceHistory(poolId, duration, networkMode)
   if (uniswapData && uniswapData.length >= 3) {
     return { data: uniswapData, source: 'uniswap' }
   }
 
-  console.warn(`[pool-price-history] Uniswap Gateway returned no data for pool ${poolId}`)
+  // Fallback to backend (supports all chains)
+  console.warn(`[pool-price-history] Uniswap Gateway returned no data for pool ${poolId}, trying backend`)
+  const backendData = await fetchBackendPriceHistory(poolId, duration, networkMode)
+  if (backendData && backendData.length >= 3) {
+    return { data: backendData, source: 'backend' }
+  }
+
+  console.warn(`[pool-price-history] No price history available for pool ${poolId} (networkMode=${networkMode})`)
   return { data: [], source: 'uniswap' }
 }
 
@@ -337,14 +347,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` })
   }
 
-  const { poolId, token0, token1, duration = 'WEEK', network = 'mainnet' } = req.query
+  const { poolId, token0, token1, duration = 'WEEK', network = 'base' } = req.query
 
   if (!poolId || typeof poolId !== 'string') {
     return res.status(400).json({ message: 'poolId is required' })
   }
 
-  // OVERRIDE: Always use mainnet (testnet removed)
-  const networkMode: NetworkMode = 'mainnet'
+  const networkMode = resolveNetworkMode(req)
 
   // token0/token1 are optional - only needed for CoinGecko fallback
   // If not provided, skip CoinGecko fallback entirely

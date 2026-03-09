@@ -4,6 +4,7 @@ import React from "react";
 import Image from "next/image";
 import { getTokenIcon } from "../liquidity-form-utils";
 import { cn } from "@/lib/utils";
+import type { NetworkMode } from "@/lib/network-mode";
 
 export interface PositionInfoData {
   token0Symbol: string;
@@ -21,6 +22,8 @@ export interface LiquidityPositionInfoProps {
   isMiniVersion?: boolean;
   linkToPool?: boolean;
   showFeeTier?: boolean;
+  /** Network mode for cross-chain token icon resolution */
+  networkMode?: NetworkMode;
 }
 
 export function LiquidityPositionInfoLoader({ hideStatus = false }: { hideStatus?: boolean }) {
@@ -42,7 +45,7 @@ function FeeTierBadge({ feeTier }: { feeTier: number }) {
   return <span className="px-1.5 py-0.5 rounded bg-muted/40 text-[10px] font-medium text-muted-foreground">{(feeTier / 10000).toFixed(2)}%</span>;
 }
 
-export function LiquidityPositionInfo({ position, currencyLogoSize = 40, hideStatusIndicator = false, isMiniVersion = false, linkToPool = false, showFeeTier = true }: LiquidityPositionInfoProps) {
+export function LiquidityPositionInfo({ position, currencyLogoSize = 40, hideStatusIndicator = false, isMiniVersion = false, linkToPool = false, showFeeTier = true, networkMode }: LiquidityPositionInfoProps) {
   const { token0Symbol, token1Symbol, feeTier, isInRange, isFullRange, poolId } = position;
   const smallLogoSize = Math.round(currencyLogoSize * 0.55);
   const pairName = `${token0Symbol} / ${token1Symbol}`;
@@ -51,8 +54,8 @@ export function LiquidityPositionInfo({ position, currencyLogoSize = 40, hideSta
   return (
     <div className={cn("flex items-center gap-4", isMiniVersion && "gap-3")}>
       <div className="relative" style={{ width: currencyLogoSize, height: currencyLogoSize }}>
-        <Image src={getTokenIcon(token0Symbol)} alt={token0Symbol} width={currencyLogoSize} height={currencyLogoSize} className="rounded-full" />
-        <Image src={getTokenIcon(token1Symbol)} alt={token1Symbol} width={smallLogoSize} height={smallLogoSize} className="absolute -right-1 -bottom-1 rounded-full border-2 border-background" />
+        <Image src={getTokenIcon(token0Symbol, networkMode)} alt={token0Symbol} width={currencyLogoSize} height={currencyLogoSize} className="rounded-full" />
+        <Image src={getTokenIcon(token1Symbol, networkMode)} alt={token1Symbol} width={smallLogoSize} height={smallLogoSize} className="absolute -right-1 -bottom-1 rounded-full border-2 border-background" />
       </div>
       <div className={cn("flex flex-col", isMiniVersion ? "gap-0" : "gap-0.5")}>
         <div className="flex items-center gap-2">{linkToPool && poolId ? <a href={`/liquidity/${poolId}`} className="no-underline">{PairNameContent}</a> : PairNameContent}{showFeeTier && feeTier && !isMiniVersion && <FeeTierBadge feeTier={feeTier} />}</div>

@@ -17,7 +17,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { Token } from './swap-interface';
 import { TokenSelector, TokenSelectorToken } from './TokenSelector';
-import { getToken } from '@/lib/pools-config';
+import { resolveTokenIcon } from '@/lib/pools-config';
 import { searchTokens } from '@/lib/aggregators';
 import { SlippageControl } from './SlippageControl';
 import { useTokenPrices } from '@/hooks/useTokenPrices';
@@ -29,8 +29,8 @@ import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
 import { appKit } from "@/components/AppKitProvider";
 
 interface SwapInputViewProps {
-  displayFromToken: Token | null;
-  displayToToken: Token | null;
+  fromToken: Token;
+  toToken: Token;
   fromAmount: string;
   toAmount: string;
   handleFromAmountChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -75,8 +75,8 @@ interface SwapInputViewProps {
 }
 
 export function SwapInputView({
-  displayFromToken,
-  displayToToken,
+  fromToken,
+  toToken,
   fromAmount,
   toAmount,
   handleFromAmountChange,
@@ -120,6 +120,13 @@ export function SwapInputView({
   onToSelectorOpenChange,
 }: SwapInputViewProps) {
   const isMobile = useIsMobile();
+
+  // Buy token selector: only show tokens from the same chain as the Sell token
+  const buyAvailableTokens = React.useMemo(() => {
+    const sellChain = (fromToken as any).networkMode || 'base';
+    return availableTokens.filter(t => ((t as any).networkMode || 'base') === sellChain);
+  }, [availableTokens, fromToken]);
+
   const [hoveredPoolIndex, setHoveredPoolIndex] = React.useState<number | null>(null);
   const [balanceWiggleCount, setBalanceWiggleCount] = React.useState(0);
   const [isSellInputFocused, setIsSellInputFocused] = React.useState(false);
@@ -150,12 +157,12 @@ export function SwapInputView({
   });
 
   const swapInputPriceSymbols = React.useMemo(
-    () => [displayFromToken?.symbol, displayToToken?.symbol].filter(Boolean) as string[],
-    [displayFromToken?.symbol, displayToToken?.symbol]
+    () => [fromToken.symbol, toToken.symbol].filter(Boolean) as string[],
+    [fromToken.symbol, toToken.symbol]
   );
   const { prices: swapInputPrices } = useTokenPrices(swapInputPriceSymbols);
-  const fromTokenPrice = { price: displayFromToken ? (swapInputPrices[displayFromToken.symbol] || null) : null };
-  const toTokenPrice = { price: displayToToken ? (swapInputPrices[displayToToken.symbol] || null) : null };
+  const fromTokenPrice = { price: fromToken ? (swapInputPrices[fromToken.symbol] || null) : null };
+  const toTokenPrice = { price: toToken ? (swapInputPrices[toToken.symbol] || null) : null };
   const { showWarning: showSlippageWarning, warningMessage: slippageWarningMessage, isCritical: isSlippageCritical } = useSlippageValidation(slippage);
 
   const formatPercentFromBps = React.useCallback((bps: number) => {
@@ -176,11 +183,11 @@ export function SwapInputView({
   }, [balanceWiggleCount, wiggleControls]);
 
   const handleFromAmountChangeWithWiggle = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (displayFromToken) {
+    if (fromToken) {
       try {
         const nextRaw = e.target.value;
         const nextVal = parseFloat(nextRaw || "");
-        const bal = parseFloat(displayFromToken.balance || "0");
+        const bal = parseFloat(fromToken.balance || "0");
         const prevVal = parseFloat(fromAmount || "");
         const wasOver = Number.isFinite(prevVal) && Number.isFinite(bal) ? prevVal > bal : false;
         const isOver = Number.isFinite(nextVal) && Number.isFinite(bal) ? nextVal > bal : false;
@@ -192,11 +199,11 @@ export function SwapInputView({
     handleFromAmountChange(e);
   };
 
-  const swapDisabledDueToBalance = displayFromToken
+  const swapDisabledDueToBalance = fromToken
     ? parseFloat(fromAmount || "0") > 0 &&
       (
-        isNaN(parseFloat(displayFromToken.balance || "0")) ||
-        parseFloat(fromTokenRawBalance || displayFromToken.balance || "0") < parseFloat(fromAmount || "0") * 0.999999
+        isNaN(parseFloat(fromToken.balance || "0")) ||
+        parseFloat(fromTokenRawBalance || fromToken.balance || "0") < parseFloat(fromAmount || "0") * 0.999999
       )
     : false;
 
@@ -277,9 +284,7 @@ export function SwapInputView({
             opacity: 0;
           }
         `}} />
-        {displayFromToken ? (
-          <div className="input-gradient-hover">
-          {/* Token selected: normal layout */}
+        <div className="input-gradient-hover">
           <motion.div
             ref={sellCardRef}
             className={cn(
@@ -318,7 +323,7 @@ export function SwapInputView({
                     onClick={(e) => { e.stopPropagation(); handleUsePercentage(100, true); }}
                     disabled={!isConnected}
                   >
-                    {isConnected ? (isLoadingCurrentFromTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : displayFromToken.balance) : "~"} {displayFromToken.symbol}
+                    {isConnected ? (isLoadingCurrentFromTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : fromToken.balance) : "~"} {fromToken.symbol}
                   </Button>
                 )}
               </>
@@ -332,19 +337,28 @@ export function SwapInputView({
                   { "opacity-50": isAttemptingSwitch }
                 )}
               >
-                <TokenImage
-                  src={displayFromToken.icon || '/placeholder-logo.svg'}
-                  alt={displayFromToken.symbol}
-                  size={28}
-                />
-                <span className="text-base font-medium">{displayFromToken.symbol}</span>
+                <div className="relative">
+                  <TokenImage
+                    src={fromToken.icon || '/tokens/placeholder.svg'}
+                    alt={fromToken.symbol}
+                    size={28}
+                  />
+                  {fromToken.chainIcon && (
+                    <img
+                      src={fromToken.chainIcon}
+                      alt={fromToken.chainLabel || ''}
+                      className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full"
+                    />
+                  )}
+                </div>
+                <span className="text-base font-medium">{fromToken.symbol}</span>
               </div>
               {/* Hidden TokenSelector for the modal */}
               <TokenSelector
-                selectedToken={displayFromToken as TokenSelectorToken}
+                selectedToken={fromToken as TokenSelectorToken}
                 availableTokens={availableTokens as TokenSelectorToken[]}
                 onTokenSelect={onFromTokenSelect}
-                excludeToken={displayToToken as TokenSelectorToken || undefined}
+                excludeToken={toToken as TokenSelectorToken || undefined}
                 disabled={isAttemptingSwitch}
                 swapContainerRect={swapContainerRect}
                 isOpen={fromSelectorOpen}
@@ -372,11 +386,11 @@ export function SwapInputView({
                 <div className="relative text-right text-xs min-h-5">
                   <div className={cn("text-muted-foreground transition-opacity duration-100", {
                     "opacity-50": trade.quoteLoading && activelyEditedSide === 'to',
-                    "swap-usd-fade": isConnected && parseFloat(displayFromToken.balance || "0") > 0
+                    "swap-usd-fade": isConnected && parseFloat(fromToken.balance || "0") > 0
                   })}>
-                    {trade.formatCurrency((parseFloat(fromAmount || "0") * (fromTokenPrice.price || displayFromToken.usdPrice || 0)).toString())}
+                    {trade.formatCurrency((parseFloat(fromAmount || "0") * (fromTokenPrice.price || fromToken.usdPrice || 0)).toString())}
                   </div>
-                  {isConnected && parseFloat(displayFromToken.balance || "0") > 0 && (
+                  {isConnected && parseFloat(fromToken.balance || "0") > 0 && (
                     <div className="absolute right-0 top-[3px] flex gap-1 swap-pct-container transition-all duration-100">
                       {[25, 50, 75, 100].map((percentage, index) => (
                         <motion.div
@@ -408,50 +422,6 @@ export function SwapInputView({
             </div>
           </motion.div>
           </div>
-        ) : (
-          /* No token selected: plain border hover, no gradient */
-          <motion.div
-            className="rounded-lg bg-surface p-4 border border-sidebar-border/60 hover:border-muted-foreground/40 transition-colors cursor-pointer"
-            onClick={() => onFromSelectorOpenChange(true)}
-            animate={wiggleControls}
-          >
-            {/* Header row — matches token-selected layout */}
-            <div className="flex items-center justify-between mb-2">
-              <Label className="text-sm font-medium pointer-events-none">Select Token</Label>
-              <span className="h-3 w-20 bg-muted/40 rounded inline-block" />
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Left: skeleton token icon + name */}
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-muted/50 shrink-0" />
-                <div className="w-14 h-5 rounded bg-muted/50" />
-              </div>
-              {/* Right: skeleton amount + USD sub-row */}
-              <div className="flex-1">
-                <div className="flex justify-end">
-                  <span className="h-6 w-16 bg-muted/40 rounded inline-block" />
-                </div>
-                <div className="flex justify-end mt-1.5">
-                  <span className="h-3 w-10 bg-muted/30 rounded inline-block" />
-                </div>
-              </div>
-            </div>
-
-            {/* Hidden TokenSelector for the modal */}
-            <TokenSelector
-              selectedToken={null}
-              availableTokens={availableTokens as TokenSelectorToken[]}
-              onTokenSelect={onFromTokenSelect}
-              excludeToken={displayToToken as TokenSelectorToken || undefined}
-              disabled={isAttemptingSwitch}
-              swapContainerRect={swapContainerRect}
-              isOpen={fromSelectorOpen}
-              onOpenChange={onFromSelectorOpenChange}
-              className="hidden"
-            />
-          </motion.div>
-        )}
       </div>
 
       {/* Arrow button — overlaps both Sell and Buy cards (Uniswap-style) */}
@@ -585,9 +555,7 @@ export function SwapInputView({
 
       {/* Buy Section — arrow overlaps into both cards */}
       <div style={{ marginTop: 8 }}>
-        {displayToToken ? (
-          <div className="input-gradient-hover">
-            {/* Token selected: normal layout */}
+        <div className="input-gradient-hover">
             <div
               className={cn(
                 "relative z-[1] group swap-card rounded-lg bg-surface p-4 border transition-colors overflow-hidden",
@@ -623,7 +591,7 @@ export function SwapInputView({
                   onClick={(e) => { e.stopPropagation(); handleUsePercentage(100, false); }}
                   disabled={!isConnected}
                 >
-                  {isConnected ? (isLoadingCurrentToTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : displayToToken.balance) : "~"} {displayToToken.symbol}
+                  {isConnected ? (isLoadingCurrentToTokenBalance ? <span className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse" /> : toToken.balance) : "~"} {toToken.symbol}
                 </Button>
               </div>
 
@@ -635,19 +603,28 @@ export function SwapInputView({
                     { "opacity-50": isAttemptingSwitch }
                   )}
                 >
-                  <TokenImage
-                    src={displayToToken.icon || '/placeholder-logo.svg'}
-                    alt={displayToToken.symbol}
-                    size={28}
-                  />
-                  <span className="text-base font-medium">{displayToToken.symbol}</span>
+                  <div className="relative">
+                    <TokenImage
+                      src={toToken.icon || '/tokens/placeholder.svg'}
+                      alt={toToken.symbol}
+                      size={28}
+                    />
+                    {toToken.chainIcon && (
+                      <img
+                        src={toToken.chainIcon}
+                        alt={toToken.chainLabel || ''}
+                        className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full"
+                      />
+                    )}
+                  </div>
+                  <span className="text-base font-medium">{toToken.symbol}</span>
                 </div>
                 {/* Hidden TokenSelector for the modal */}
                 <TokenSelector
-                  selectedToken={displayToToken as TokenSelectorToken}
-                  availableTokens={availableTokens as TokenSelectorToken[]}
+                  selectedToken={toToken as TokenSelectorToken}
+                  availableTokens={buyAvailableTokens as TokenSelectorToken[]}
                   onTokenSelect={onToTokenSelect}
-                  excludeToken={displayFromToken as TokenSelectorToken || undefined}
+                  excludeToken={fromToken as TokenSelectorToken || undefined}
                   disabled={isAttemptingSwitch}
                   swapContainerRect={swapContainerRect}
                   isOpen={toSelectorOpen}
@@ -674,15 +651,15 @@ export function SwapInputView({
                   <div className="relative text-right text-xs min-h-5">
                     <div className={cn("text-muted-foreground transition-opacity duration-100", {
                       "opacity-50": trade.quoteLoading && activelyEditedSide === 'from',
-                      "swap-usd-fade": isConnected && parseFloat(displayToToken.balance || "0") > 0
+                      "swap-usd-fade": isConnected && parseFloat(toToken.balance || "0") > 0
                     })}>
                       {(() => {
                         const amount = parseFloat(toAmount || "");
                         if (!toAmount || isNaN(amount)) return "$0.00";
-                        return trade.formatCurrency((amount * (toTokenPrice.price || displayToToken.usdPrice || 0)).toString());
+                        return trade.formatCurrency((amount * (toTokenPrice.price || toToken.usdPrice || 0)).toString());
                       })()}
                     </div>
-                    {isConnected && parseFloat(displayToToken.balance || "0") > 0 && (
+                    {isConnected && parseFloat(toToken.balance || "0") > 0 && (
                       <div className="absolute right-0 top-[3px] flex gap-1 swap-pct-container transition-all duration-100">
                         {[25, 50, 75, 100].map((percentage, index) => (
                           <motion.div
@@ -714,53 +691,11 @@ export function SwapInputView({
               </div>
             </div>
           </div>
-        ) : (
-          /* No token selected: plain border hover, no gradient */
-          <div
-            className="rounded-lg bg-surface p-4 border border-sidebar-border/60 hover:border-muted-foreground/40 transition-colors cursor-pointer"
-            onClick={() => onToSelectorOpenChange(true)}
-          >
-            {/* Header row — matches token-selected layout */}
-            <div className="flex items-center justify-between mb-2">
-              <Label className="text-sm font-medium pointer-events-none">Select Token</Label>
-              <span className="h-3 w-20 bg-muted/40 rounded inline-block" />
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Left: skeleton token icon + name */}
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-muted/50 shrink-0" />
-                <div className="w-14 h-5 rounded bg-muted/50" />
-              </div>
-              {/* Right: skeleton amount + USD sub-row */}
-              <div className="flex-1">
-                <div className="flex justify-end">
-                  <span className="h-6 w-16 bg-muted/40 rounded inline-block" />
-                </div>
-                <div className="flex justify-end mt-1.5">
-                  <span className="h-3 w-10 bg-muted/30 rounded inline-block" />
-                </div>
-              </div>
-            </div>
-
-            <TokenSelector
-              selectedToken={null}
-              availableTokens={availableTokens as TokenSelectorToken[]}
-              onTokenSelect={onToTokenSelect}
-              excludeToken={displayFromToken as TokenSelectorToken || undefined}
-              disabled={isAttemptingSwitch}
-              swapContainerRect={swapContainerRect}
-              isOpen={toSelectorOpen}
-              onOpenChange={onToSelectorOpenChange}
-              className="hidden"
-            />
-          </div>
-        )}
       </div>
 
       {/* Route, Fee, and Slippage Information */}
       <div className="mt-4 space-y-1.5">
-        {showRoute && !!trade.routeInfo && !!displayFromToken && !!displayToToken && (
+        {showRoute && !!trade.routeInfo && (
           <>
             {/* Kyberswap trades: simple route indicator (no interactive pool picker) */}
             {trade.source === "kyberswap" ? (
@@ -769,9 +704,9 @@ export function SwapInputView({
                   <span>Route</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <TokenImage src={displayFromToken!.icon} alt={displayFromToken!.symbol} size={18} className="bg-background" />
+                  <TokenImage src={fromToken.icon} alt={fromToken.symbol} size={18} className="bg-background" />
                   <ChevronsRight className="h-3 w-3 text-muted-foreground/50" />
-                  <TokenImage src={displayToToken!.icon} alt={displayToToken!.symbol} size={18} className="bg-background" />
+                  <TokenImage src={toToken.icon} alt={toToken.symbol} size={18} className="bg-background" />
                 </div>
               </div>
             ) : (
@@ -790,7 +725,7 @@ export function SwapInputView({
                 {/* Token picker */}
                 <div className="relative flex items-center h-7">
                   {(() => {
-                    const path = trade.routeInfo?.path || [displayFromToken!.symbol, displayToToken!.symbol];
+                    const path = trade.routeInfo?.path || [fromToken.symbol, toToken.symbol];
                     const iconSize = 20;
                     const step = iconSize * 0.7;
                     const pairGap = 10;
@@ -861,11 +796,13 @@ export function SwapInputView({
                           </motion.div>
                         )}
                         {path.map((sym, i) => {
-                          const icon = i === 0 ? displayFromToken!.icon
-                            : i === path.length - 1 ? displayToToken!.icon
-                            : getToken(sym)?.icon || (() => {
+                          const icon = i === 0 ? fromToken.icon
+                            : i === path.length - 1 ? toToken.icon
+                            : (() => {
+                                const knownIcon = resolveTokenIcon(sym);
+                                if (knownIcon !== '/tokens/placeholder.svg') return knownIcon;
                                 const m = searchTokens(sym, 1).find(t => t.symbol.toLowerCase() === sym.toLowerCase());
-                                return m?.logoURI || "/placeholder-logo.svg";
+                                return m?.logoURI || "/tokens/placeholder.svg";
                               })();
 
                           return (
@@ -920,7 +857,7 @@ export function SwapInputView({
                         if (trade.dynamicFeeBps === null) {
                           return <span className="text-muted-foreground">N/A</span>;
                         }
-                        const inputAmountUSD = parseFloat(fromAmount || "0") * (fromTokenPrice.price || displayFromToken?.usdPrice || 0);
+                        const inputAmountUSD = parseFloat(fromAmount || "0") * (fromTokenPrice.price || fromToken.usdPrice || 0);
                         const feeInUSD = inputAmountUSD * (trade.dynamicFeeBps / 10000);
                         const percentDisplay = formatPercentFromBps(trade.dynamicFeeBps);
                         const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : trade.formatCurrency(feeInUSD.toString());
@@ -948,7 +885,7 @@ export function SwapInputView({
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>Minimum Received</span>
                   <span className="text-muted-foreground">
-                    {trade.calculatedValues.minimumReceived} {displayToToken?.symbol}
+                    {trade.calculatedValues.minimumReceived} {toToken.symbol}
                   </span>
                 </div>
               </div>
@@ -1024,8 +961,8 @@ export function SwapInputView({
         <div className="mt-3">
           <PriceDeviationCallout
             deviation={priceDeviation}
-            token0Symbol={displayFromToken?.symbol ?? ""}
-            token1Symbol={displayToToken?.symbol ?? ""}
+            token0Symbol={fromToken.symbol ?? ""}
+            token1Symbol={toToken.symbol ?? ""}
             variant="card"
             isQuoteLoading={trade.quoteLoading}
           />

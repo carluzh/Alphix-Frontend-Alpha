@@ -12,6 +12,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { type Address, erc20Abi } from 'viem';
 import { usePublicClient } from 'wagmi';
+import { chainIdForMode, type NetworkMode } from '@/lib/network-mode';
 
 import { PSM_CONFIG, USDS_USDC_POOL_CONFIG, PERMIT2_ADDRESS, getZapPoolConfigByHook } from '../constants';
 import type { ZapToken, ZapSwapRoute, ZapApprovalStatus, RouteDetails } from '../types';
@@ -37,6 +38,8 @@ export interface UseZapApprovalsParams {
   inputAmount: bigint | undefined;
   /** Whether the query is enabled */
   enabled?: boolean;
+  /** Network mode for chain-specific public client */
+  networkMode?: NetworkMode;
 }
 
 export interface UseZapApprovalsReturn {
@@ -73,9 +76,11 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
     hookAddress,
     inputAmount,
     enabled = true,
+    networkMode,
   } = params;
 
-  const publicClient = usePublicClient();
+  const targetChainId = networkMode ? chainIdForMode(networkMode) : undefined;
+  const publicClient = usePublicClient({ chainId: targetChainId });
 
   const query = useQuery({
     queryKey: [
@@ -112,7 +117,7 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
       if (route.type === 'psm') {
         swapSpender = PSM_CONFIG.address;
       } else if (route.type === 'kyberswap') {
-        swapSpender = getKyberswapRouterAddress() as Address;
+        swapSpender = getKyberswapRouterAddress(networkMode) as Address;
       } else {
         swapSpender = PERMIT2_ADDRESS;
       }

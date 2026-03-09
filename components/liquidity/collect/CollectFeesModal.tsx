@@ -19,12 +19,14 @@ import { Button } from "@/components/ui/button";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import { formatUSD } from "@/lib/format";
 import { getTokenIcon } from "../liquidity-form-utils";
+import { resolveTokenIcon } from "@/lib/pools-config";
 import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 import { Token } from "@uniswap/sdk-core";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
 import { getToken, getPoolById } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
+import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import type { Address } from "viem";
 import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
 
@@ -117,7 +119,11 @@ interface CollectFeesModalProps {
 
 export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: CollectFeesModalProps) {
   const { address } = useAccount();
-  const { chainId, networkMode } = useNetwork();
+  const { ensureChain } = useNetwork();
+
+  // Derive networkMode and chainId from the position's chain data — never fall back to wallet context
+  const networkMode = position.networkMode;
+  const chainId = networkMode ? chainIdForMode(networkMode) : undefined;
 
   // Modal state
   const [view, setView] = useState<ModalView>("review");
@@ -130,6 +136,8 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
   // Get token configs
   const token0Config = getToken(position.token0.symbol as TokenSymbol, networkMode);
   const token1Config = getToken(position.token1.symbol as TokenSymbol, networkMode);
+  const token0Icon = resolveTokenIcon(position.token0.symbol);
+  const token1Icon = resolveTokenIcon(position.token1.symbol);
 
   // Create Token objects for USD price hooks
   const token0 = useMemo(() => {
@@ -156,7 +164,7 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
   const hasFees = fee0 > 0 || fee1 > 0;
 
   // Check if this is a Unified Yield position
-  const poolConfig = position.poolId ? getPoolById(position.poolId) : null;
+  const poolConfig = position.poolId ? getPoolById(position.poolId, networkMode) : null;
   const isUnifiedYield = poolConfig?.rehypoRange !== undefined;
 
   // Map executor steps to UI steps for ProgressIndicator
@@ -165,10 +173,10 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
       executorSteps,
       position.token0.symbol,
       position.token1.symbol,
-      token0Config?.icon,
-      token1Config?.icon
+      token0Icon,
+      token1Icon
     );
-  }, [executorSteps, position.token0.symbol, position.token1.symbol, token0Config?.icon, token1Config?.icon]);
+  }, [executorSteps, position.token0.symbol, position.token1.symbol, token0Icon, token1Icon]);
 
   // Compute currentStep for ProgressIndicator
   const currentStep = useMemo((): CurrentStepState | undefined => {
@@ -274,7 +282,11 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
 
   // Handle confirm - use Uniswap step executor
   const handleConfirm = useCallback(async () => {
-    if (!address || !hasFees) return;
+    if (!address || !hasFees || !networkMode) return;
+
+    // Ensure wallet is on the correct chain before submitting
+    const ok = await ensureChain(chainIdForMode(networkMode));
+    if (!ok) return;
 
     setView("executing");
     setIsExecuting(true);
@@ -318,7 +330,7 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
       setView("review");
       setError(err?.message || "Transaction failed");
     }
-  }, [address, hasFees, fetchAndBuildContext, executor, position, chainId]);
+  }, [address, hasFees, networkMode, fetchAndBuildContext, executor, position, chainId]);
 
   // Clear error and retry
   const handleRetry = useCallback(() => {
@@ -433,14 +445,14 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                 {/* Double token logo */}
                 <div className="flex items-center -space-x-2">
                   <Image
-                    src={getTokenIcon(position.token0.symbol)}
+                    src={getTokenIcon(position.token0.symbol, networkMode)}
                     alt=""
                     width={36}
                     height={36}
                     className="rounded-full "
                   />
                   <Image
-                    src={getTokenIcon(position.token1.symbol)}
+                    src={getTokenIcon(position.token1.symbol, networkMode)}
                     alt=""
                     width={36}
                     height={36}
@@ -463,7 +475,7 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                       <span className="text-sm text-muted-foreground">{formatUSD(usdFee0)}</span>
                     </div>
                     <Image
-                      src={getTokenIcon(position.token0.symbol)}
+                      src={getTokenIcon(position.token0.symbol, networkMode)}
                       alt={position.token0.symbol}
                       width={36}
                       height={36}
@@ -480,7 +492,7 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                       <span className="text-sm text-muted-foreground">{formatUSD(usdFee1)}</span>
                     </div>
                     <Image
-                      src={getTokenIcon(position.token1.symbol)}
+                      src={getTokenIcon(position.token1.symbol, networkMode)}
                       alt={position.token1.symbol}
                       width={36}
                       height={36}

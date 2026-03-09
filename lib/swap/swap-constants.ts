@@ -1,6 +1,6 @@
 import { getAddress, parseAbi, type Address, type Chain, type Abi } from 'viem';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
-import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from '@/lib/network-mode';
+
 import {
   getChainId,
   getChainName,

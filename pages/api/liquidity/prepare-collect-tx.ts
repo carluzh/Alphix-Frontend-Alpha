@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isAddress, getAddress } from 'viem';
 
-import { getPositionManagerAddress, getNetworkModeFromRequest } from '@/lib/pools-config';
+import { getPositionManagerAddress } from '@/lib/pools-config';
+import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
 import { buildCollectFeesTx, type BuildDecreaseTxContext } from '@/lib/liquidity/transaction/builders/buildDecreaseTx';
 
@@ -35,8 +36,7 @@ export default async function handler(
   try {
     const { userAddress, tokenId, chainId } = req.body;
 
-    // Get network mode from cookies for proper chain-specific addresses
-    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+    const networkMode = resolveNetworkMode(req);
 
     // Check rate limit using client IP
     const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()

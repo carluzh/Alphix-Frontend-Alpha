@@ -11,6 +11,7 @@ import { getPSMQuote, type PSMQuoteResult } from './psmQuoter';
 import { calculatePriceImpact, calculatePriceImpactFromMidPrice, analyzePriceImpact } from '../calculation';
 import { PSM_CONFIG, USDS_USDC_POOL_CONFIG, type ZapPoolConfig } from '../constants';
 import type { ZapToken, RouteDetails, PSMRouteDetails, PoolRouteDetails, KyberswapRouteDetails } from '../types';
+import { ZapError, ZapErrorCode } from '../types';
 import { getKyberswapQuote } from '@/lib/aggregators/kyberswap';
 import type { AggregatorQuote } from '@/lib/aggregators/types';
 
@@ -35,6 +36,8 @@ export interface RouteSelectionParams {
   userAddress?: Address;
   /** Slippage tolerance in basis points (for Kyberswap) */
   slippageBps?: number;
+  /** Network mode for chain-specific routing (Kyberswap chain slug) */
+  networkMode?: import('@/lib/network-mode').NetworkMode;
 }
 
 export interface RouteSelectionResult {
@@ -140,6 +143,19 @@ export async function getPoolQuote(
       gasEstimate,
     };
   } catch (error) {
+    // Map known quoter revert signatures to user-friendly errors
+    const errorStr = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    if (
+      errorStr.includes('0x6190b2b0') ||
+      errorStr.includes('0x486aa307') ||
+      errorStr.includes('call_exception') ||
+      errorStr.includes('call revert exception')
+    ) {
+      throw new ZapError(
+        ZapErrorCode.POOL_LIQUIDITY_LOW,
+        'Not enough liquidity in the pool for this amount. Try a smaller amount.',
+      );
+    }
     console.error('[getPoolQuote] Error:', error);
     throw error;
   }
@@ -168,17 +184,17 @@ export async function getPoolQuote(
 export async function selectSwapRoute(
   params: RouteSelectionParams
 ): Promise<RouteSelectionResult> {
-  const { inputToken, swapAmount, publicClient, poolConfig, forcePoolSwap, forcePSM, userAddress, slippageBps } = params;
+  const { inputToken, swapAmount, publicClient, poolConfig, forcePoolSwap, forcePSM, userAddress, slippageBps, networkMode } = params;
 
-  // Determine if this is a pegged pool (USDS/USDC) or non-pegged (ETH/USDC)
-  const isPegged = poolConfig?.isPegged ?? true;
+  // PSM path is ONLY for pools that explicitly use PSM as fallback (USDS/USDC on Base).
+  // All other pools (pegged or not) use the kyberswap-fallback path.
+  const usesPSM = poolConfig?.fallbackRoute === 'psm';
 
-  // For non-pegged pools, delegate to separate handler
-  if (!isPegged && poolConfig) {
+  if (!usesPSM && poolConfig) {
     return selectSwapRouteNonPegged(params, poolConfig);
   }
 
-  // --- Pegged pool (USDS/USDC) logic below ---
+  // --- PSM-backed pegged pool (USDS/USDC) logic below ---
 
   // Early return for zero amount
   if (swapAmount <= 0n) {
@@ -199,7 +215,7 @@ export async function selectSwapRoute(
 
   // If PSM is not available, must use pool
   if (!psmQuote.isAvailable) {
-    return selectPoolRoute(inputToken, swapAmount, publicClient, 'PSM unavailable', poolConfig);
+    return selectPoolRoute(inputToken, swapAmount, publicClient, 'PSM unavailable', poolConfig, networkMode);
   }
 
   // If force flags set, use accordingly
@@ -216,14 +232,14 @@ export async function selectSwapRoute(
   }
 
   if (forcePoolSwap) {
-    return selectPoolRoute(inputToken, swapAmount, publicClient, 'Force pool flag set', poolConfig);
+    return selectPoolRoute(inputToken, swapAmount, publicClient, 'Force pool flag set', poolConfig, networkMode);
   }
 
   // Get pool quote
   let poolQuote: PoolQuoteResult;
   try {
     const { getQuoterAddress } = await import('@/lib/pools-config');
-    poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress(), poolConfig);
+    poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress(networkMode), poolConfig);
   } catch (error) {
     console.warn('[selectSwapRoute] Pool quote failed, using PSM:', error);
     return {
@@ -290,7 +306,8 @@ export async function selectSwapRoute(
 export async function getPoolMidPrice(
   inputToken: ZapToken,
   publicClient: PublicClient,
-  poolConfig: ZapPoolConfig
+  poolConfig: ZapPoolConfig,
+  networkMode?: import('@/lib/network-mode').NetworkMode
 ): Promise<number> {
   const isToken0Input = inputToken === poolConfig.token0.symbol;
   const inputDecimals = isToken0Input ? poolConfig.token0.decimals : poolConfig.token1.decimals;
@@ -300,7 +317,7 @@ export async function getPoolMidPrice(
 
   try {
     const { getQuoterAddress } = await import('@/lib/pools-config');
-    const refQuote = await getPoolQuote(inputToken, referenceAmount, publicClient, getQuoterAddress(), poolConfig);
+    const refQuote = await getPoolQuote(inputToken, referenceAmount, publicClient, getQuoterAddress(networkMode), poolConfig);
     if (refQuote.amountOut <= 0n) return 0;
     return Number(refQuote.amountOut) / Number(referenceAmount);
   } catch (error) {
@@ -317,7 +334,7 @@ async function selectSwapRouteNonPegged(
   params: RouteSelectionParams,
   poolConfig: ZapPoolConfig
 ): Promise<RouteSelectionResult> {
-  const { inputToken, swapAmount, publicClient, forcePoolSwap, userAddress, slippageBps } = params;
+  const { inputToken, swapAmount, publicClient, forcePoolSwap, userAddress, slippageBps, networkMode } = params;
 
   if (swapAmount <= 0n) {
     return {
@@ -331,27 +348,27 @@ async function selectSwapRouteNonPegged(
   }
 
   if (forcePoolSwap) {
-    return selectPoolRoute(inputToken, swapAmount, publicClient, 'Force pool flag set', poolConfig);
+    return selectPoolRoute(inputToken, swapAmount, publicClient, 'Force pool flag set', poolConfig, networkMode);
   }
 
   // Get pool quote and mid-price
   let poolQuote: PoolQuoteResult;
   try {
     const { getQuoterAddress } = await import('@/lib/pools-config');
-    poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress(), poolConfig);
+    poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress(networkMode), poolConfig);
   } catch (error) {
     console.warn('[selectSwapRoute] Pool quote failed for non-pegged pool, trying Kyberswap:', error);
-    return selectKyberswapRoute(inputToken, swapAmount, poolConfig, userAddress, slippageBps, 'Pool quote failed');
+    return selectKyberswapRoute(inputToken, swapAmount, poolConfig, userAddress, slippageBps, 'Pool quote failed', undefined, undefined, networkMode);
   }
 
-  const midPrice = await getPoolMidPrice(inputToken, publicClient, poolConfig);
+  const midPrice = await getPoolMidPrice(inputToken, publicClient, poolConfig, networkMode);
 
   let poolPriceImpact: number;
   if (midPrice > 0) {
     poolPriceImpact = calculatePriceImpactFromMidPrice(swapAmount, poolQuote.amountOut, midPrice);
   } else {
     console.warn('[selectSwapRouteNonPegged] Mid-price unavailable, defaulting to Kyberswap');
-    return selectKyberswapRoute(inputToken, swapAmount, poolConfig, userAddress, slippageBps, 'Mid-price unavailable', poolQuote, undefined);
+    return selectKyberswapRoute(inputToken, swapAmount, poolConfig, userAddress, slippageBps, 'Mid-price unavailable', poolQuote, undefined, networkMode);
   }
 
   console.log('[selectSwapRouteNonPegged] Price impact:', {
@@ -365,7 +382,7 @@ async function selectSwapRouteNonPegged(
   const analysis = analyzePriceImpact(poolPriceImpact, poolConfig.priceImpactThreshold, 'Kyberswap');
 
   if (analysis.shouldUseFallback) {
-    return selectKyberswapRoute(inputToken, swapAmount, poolConfig, userAddress, slippageBps, analysis.message, poolQuote, poolPriceImpact);
+    return selectKyberswapRoute(inputToken, swapAmount, poolConfig, userAddress, slippageBps, analysis.message, poolQuote, poolPriceImpact, networkMode);
   }
 
   // Use pool swap
@@ -397,6 +414,7 @@ async function selectKyberswapRoute(
   reason?: string,
   poolQuote?: PoolQuoteResult,
   poolPriceImpact?: number,
+  networkMode?: import('@/lib/network-mode').NetworkMode,
 ): Promise<RouteSelectionResult> {
   const isToken0Input = inputToken === poolConfig.token0.symbol;
   const fromToken = isToken0Input ? poolConfig.token0 : poolConfig.token1;
@@ -411,6 +429,7 @@ async function selectKyberswapRoute(
     isExactIn: true,
     slippageBps: slippageBps ?? 50,
     userAddress,
+    networkMode,
   });
 
   if (!kyberQuote) {
@@ -462,9 +481,10 @@ async function selectPoolRoute(
   publicClient: PublicClient,
   reason: string,
   poolConfig?: ZapPoolConfig,
+  networkMode?: import('@/lib/network-mode').NetworkMode,
 ): Promise<RouteSelectionResult> {
   const { getQuoterAddress } = await import('@/lib/pools-config');
-  const poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress(), poolConfig);
+  const poolQuote = await getPoolQuote(inputToken, swapAmount, publicClient, getQuoterAddress(networkMode), poolConfig);
 
   const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
   const inputDecimals = inputToken === config.token0.symbol ? config.token0.decimals : config.token1.decimals;

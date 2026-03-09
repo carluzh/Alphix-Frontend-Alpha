@@ -26,8 +26,9 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWebSocketOptional } from '../WebSocketProvider';
-import { useNetwork } from '../../network-context';
 import { fetchPoolsMetrics, type PoolMetrics } from '../../backend-client';
+import { parseNetworkMode, type NetworkMode } from '../../network-mode';
+import { ALL_MODES } from '../../chain-registry';
 
 // =============================================================================
 // TYPES
@@ -39,7 +40,10 @@ import { fetchPoolsMetrics, type PoolMetrics } from '../../backend-client';
 export interface PoolData {
   poolId: string;
   name: string;
+  /** Raw backend network string (e.g. 'base', 'arbitrum') */
   network: string;
+  /** Resolved NetworkMode for frontend use */
+  networkMode: NetworkMode;
   tvlUsd: number;
   volume24hUsd: number;
   fees24hUsd: number;
@@ -86,6 +90,7 @@ function toPoolData(metrics: PoolMetrics): PoolData {
     poolId: metrics.poolId,
     name: metrics.name,
     network: metrics.network,
+    networkMode: parseNetworkMode(metrics.network),
     tvlUsd: metrics.tvlUsd,
     volume24hUsd: metrics.volume24hUsd,
     fees24hUsd: metrics.fees24hUsd,
@@ -101,8 +106,8 @@ function toPoolData(metrics: PoolMetrics): PoolData {
 // HOOK
 // =============================================================================
 
-export function useWSPool(poolId: string): UseWSPoolReturn {
-  const { networkMode } = useNetwork();
+export function useWSPool(poolId: string, networkModeOverride?: NetworkMode): UseWSPoolReturn {
+  const effectiveNetworkMode = networkModeOverride ?? 'base' as NetworkMode;
   const ws = useWebSocketOptional();
 
   // Local state for REST fallback
@@ -123,19 +128,26 @@ export function useWSPool(poolId: string): UseWSPoolReturn {
 
     try {
       setError(null);
-      // Fetch all pools and filter (backend only has /pools/metrics, not /pools/{id}/metrics)
-      const response = await fetchPoolsMetrics(networkMode);
+      // Fetch from the specified chain first, then try all chains as fallback
+      const modesToTry = [effectiveNetworkMode, ...ALL_MODES.filter(m => m !== effectiveNetworkMode)];
 
-      if (!response.success || !response.pools) {
-        throw new Error(response.error || 'Failed to fetch pool data');
+      let foundPool: PoolMetrics | null = null;
+      for (const mode of modesToTry) {
+        const response = await fetchPoolsMetrics(mode);
+        if (response.success && response.pools) {
+          const match = response.pools.find(p => p.poolId.toLowerCase() === poolId.toLowerCase());
+          if (match) {
+            foundPool = match;
+            break;
+          }
+        }
       }
 
-      const pool = response.pools.find(p => p.poolId.toLowerCase() === poolId.toLowerCase());
-      if (!pool) {
+      if (!foundPool) {
         throw new Error('Pool not found');
       }
 
-      setRestPool(toPoolData(pool));
+      setRestPool(toPoolData(foundPool));
       setLastUpdated(Date.now());
     } catch (err) {
       console.error('[useWSPool] Failed to fetch pool:', err);
@@ -143,7 +155,7 @@ export function useWSPool(poolId: string): UseWSPoolReturn {
     } finally {
       setIsLoading(false);
     }
-  }, [poolId, networkMode]);
+  }, [poolId, effectiveNetworkMode]);
 
   // Initial fetch (REST fallback)
   useEffect(() => {
@@ -178,6 +190,7 @@ export function useWSPool(poolId: string): UseWSPoolReturn {
         poolId: wsPool.poolId,
         name: wsPool.name,
         network: wsPool.network,
+        networkMode: parseNetworkMode(wsPool.network),
         tvlUsd: wsPool.tvlUsd,
         volume24hUsd: wsPool.volume24hUsd,
         fees24hUsd: wsPool.fees24hUsd,

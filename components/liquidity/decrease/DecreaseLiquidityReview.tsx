@@ -123,6 +123,7 @@ export function DecreaseLiquidityReview({ onClose, onSuccess }: DecreaseLiquidit
 
   const { position } = decreaseLiquidityState;
   const { withdrawAmount0, withdrawAmount1 } = derivedDecreaseInfo;
+  const networkMode = position.networkMode;
 
   // Local state
   const [view, setView] = useState<ModalView>("review");
@@ -147,8 +148,8 @@ export function DecreaseLiquidityReview({ onClose, onSuccess }: DecreaseLiquidit
       executorSteps,
       position.token0.symbol,
       position.token1.symbol,
-      getTokenIcon(position.token0.symbol),
-      getTokenIcon(position.token1.symbol)
+      getTokenIcon(position.token0.symbol, networkMode),
+      getTokenIcon(position.token1.symbol, networkMode)
     );
   }, [executorSteps, position.token0.symbol, position.token1.symbol]);
 
@@ -279,7 +280,7 @@ export function DecreaseLiquidityReview({ onClose, onSuccess }: DecreaseLiquidit
             {amount0 > 0 && (
               <div className="flex items-center gap-2">
                 <Image
-                  src={getTokenIcon(position.token0.symbol)}
+                  src={getTokenIcon(position.token0.symbol, networkMode)}
                   alt=""
                   width={28}
                   height={28}
@@ -301,7 +302,7 @@ export function DecreaseLiquidityReview({ onClose, onSuccess }: DecreaseLiquidit
             {amount1 > 0 && (
               <div className="flex items-center gap-2">
                 <Image
-                  src={getTokenIcon(position.token1.symbol)}
+                  src={getTokenIcon(position.token1.symbol, networkMode)}
                   alt=""
                   width={28}
                   height={28}
@@ -342,6 +343,7 @@ export function DecreaseLiquidityReview({ onClose, onSuccess }: DecreaseLiquidit
         }}
         isMiniVersion
         showFeeTier={false}
+        networkMode={networkMode}
       />
 
       {/* Amount Summary */}
@@ -355,6 +357,7 @@ export function DecreaseLiquidityReview({ onClose, onSuccess }: DecreaseLiquidit
         totalValueUSD={totalUSDValue}
         showNetworkCost={false}
         title="Withdrawing from position"
+        networkMode={networkMode}
       />
 
       {/* Progress Indicator (during execution) */}

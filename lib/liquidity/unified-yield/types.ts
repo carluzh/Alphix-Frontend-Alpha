@@ -28,6 +28,7 @@
  */
 
 import type { Address } from 'viem';
+import type { NetworkMode } from '@/lib/network-mode';
 
 /**
  * Unified Yield position representation
@@ -110,6 +111,9 @@ export interface UnifiedYieldPosition {
 
   /** USD value of the position (optional, calculated client-side) */
   valueUSD?: number;
+
+  /** Chain this position lives on */
+  networkMode?: NetworkMode;
 }
 
 /**

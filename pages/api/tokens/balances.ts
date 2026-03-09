@@ -36,6 +36,8 @@ export interface TokenBalance {
   logo: string | null;
   // Additional fields from Uniswap API
   balanceUSD?: number | null;
+  /** Chain ID the token belongs to (e.g. 8453 for Base, 42161 for Arbitrum) */
+  chainId?: number;
 }
 
 interface SuccessResponse {
@@ -86,7 +88,7 @@ async function fetchUniswapPortfolio(address: string): Promise<UniswapPortfolioR
         { platform: 'EVM', address: address },
       ],
     },
-    chainIds: [8453], // Base mainnet
+    chainIds: [8453, 42161],
     modifier: {
       includeSmallBalances: true,
       includeSpamTokens: false,
@@ -181,6 +183,7 @@ export default async function handler(
           rawBalance,
           logo: token.metadata?.logoUrl || null,
           balanceUSD: bal.valueUsd || null,
+          chainId: token.chainId,
         };
       });
 

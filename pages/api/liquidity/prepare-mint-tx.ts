@@ -6,8 +6,9 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getNetworkModeFromRequest } from "../../../lib/pools-config";
+import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress } from "../../../lib/pools-config";
 import { validateChainId, checkTxRateLimit } from "../../../lib/tx-validation";
+import { resolveNetworkMode } from "../../../lib/network-mode";
 import { iallowance_transfer_abi } from "../../../lib/abis/IAllowanceTransfer_abi"; // For Permit2 allowance method
 
 import { createNetworkClient } from "../../../lib/viemClient"; 
@@ -182,8 +183,7 @@ export default async function handler(
         return res.status(429).json({ message: 'Too many requests. Please try again later.' });
     }
 
-    // Get network mode from cookies for proper chain-specific addresses
-    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+    const networkMode = resolveNetworkMode(req);
 
     // Create network-specific public client
     const publicClient = createNetworkClient(networkMode);

@@ -1,8 +1,4 @@
-/**
- * Aggregator Integration Types
- *
- * Shared types for DEX aggregator integrations (Kyberswap, etc.)
- */
+import { type NetworkMode } from '../network-mode';
 
 export type AggregatorSource = 'alphix' | 'kyberswap';
 
@@ -38,6 +34,7 @@ export interface QuoteRequest {
   slippageBps: number;            // Slippage tolerance in basis points
   userAddress?: string;           // Required for building executable calldata
   isExactIn: boolean;             // true = ExactIn, false = ExactOut
+  networkMode?: NetworkMode;      // Chain to route on (default: Base)
 }
 
 /**

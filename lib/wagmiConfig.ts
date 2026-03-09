@@ -1,51 +1,37 @@
-// Adapted from example/frontend/config/index.tsx
 import { http, createStorage, cookieStorage, fallback } from 'wagmi'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
-import { mainnet } from 'wagmi/chains' // Ethereum mainnet for ENS resolution
+import { mainnet } from 'wagmi/chains'
 import { createClient } from 'viem'
-import { getStoredNetworkMode, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from './network-mode'
-// Import chain definitions from chains.ts (shared with viemClient.ts)
-import { baseSepolia, baseMainnet, getOrderedRpcUrls } from './chains'
+import { getStoredNetworkMode, type NetworkMode } from './network-mode'
+import { CHAIN_REGISTRY } from './chain-registry'
+import { baseMainnet, arbitrumOne, getOrderedRpcUrls, getChainForMode } from './chains'
 
-// Re-export chain definitions for backwards compatibility
-export { baseSepolia, baseMainnet }
+export { baseMainnet, arbitrumOne }
 
-// Get Project ID from environment variable
 export const projectId = process.env.NEXT_PUBLIC_PROJECT_ID
 
 if (!projectId) {
-  console.error('Error: NEXT_PUBLIC_PROJECT_ID environment variable is not set.')
+  console.error('NEXT_PUBLIC_PROJECT_ID is not set.')
 }
 
-// OVERRIDE: Always use mainnet (testnet removed)
-const networkMode = 'mainnet' as const;
-const isMainnet = true;
-const chainId = MAINNET_CHAIN_ID;
+export function getActiveChain(mode?: NetworkMode) {
+  return getChainForMode(mode ?? getStoredNetworkMode());
+}
 
-export const activeChain = isMainnet ? baseMainnet : baseSepolia;
+// All chains available for wallet switching (Ethereum mainnet included for ENS)
+export const networks = [baseMainnet, arbitrumOne, mainnet];
 
-// Export all networks available for wallet switching
-// Include Ethereum mainnet for ENS resolution (required for .eth name lookups)
-// Note: Base Sepolia removed - mainnet only
-export const networks = [baseMainnet, mainnet];
-
-// Create the Wagmi adapter instance.
-// The adapter internally creates a wagmi config.
-// We pass a custom client() function to enable multicall batching (like Uniswap).
-// @see interface/apps/web/src/components/Web3Provider/wagmiConfig.ts
 export const wagmiAdapter = new WagmiAdapter({
-  networks, // Both networks available
+  networks,
   projectId: projectId || '',
   storage: createStorage({ storage: cookieStorage }),
   ssr: true,
-  // Custom client configuration with multicall batching enabled
-  // This batches multiple RPC calls into single multicall requests
   client({ chain }) {
     const urls = getOrderedRpcUrls(chain);
     return createClient({
       chain,
       batch: { multicall: true },
-      pollingInterval: 12_000, // 12 seconds (same as Uniswap)
+      pollingInterval: 12_000,
       transport: fallback(
         urls.map((url) => http(url, { timeout: 10_000 }))
       ),
@@ -55,33 +41,23 @@ export const wagmiAdapter = new WagmiAdapter({
 
 export const config = wagmiAdapter.wagmiConfig
 
-if (!projectId) {
-  // Log error but don't throw here if already checked above
-  console.error('[AppKit Init] NEXT_PUBLIC_PROJECT_ID is not set.')
+/** @deprecated Use chainIdForMode(mode) or getActiveChain(mode) instead */
+export const activeChain = getActiveChain();
+/** @deprecated Use chainIdForMode(mode) instead */
+export const activeChainId = activeChain.id;
+/** @deprecated Derive from data's networkMode instead */
+export const isBase = getStoredNetworkMode() === 'base';
+
+export function getExplorerUrl(mode?: NetworkMode): string {
+  if (mode) return CHAIN_REGISTRY[mode].explorerUrl;
+  const chain = getActiveChain();
+  return chain.blockExplorers?.default?.url || 'https://basescan.org';
 }
 
-// Export helpers for network-aware code
-export { isMainnet, networkMode, chainId as activeChainId }
-
-/**
- * Get the block explorer URL for the active chain
- */
-export function getExplorerUrl(): string {
-  return activeChain.blockExplorers?.default?.url || 'https://basescan.org';
+export function getExplorerTxUrl(txHash: string, mode?: NetworkMode): string {
+  return `${getExplorerUrl(mode)}/tx/${txHash}`;
 }
 
-/**
- * Get the block explorer URL for a transaction
- */
-export function getExplorerTxUrl(txHash: string): string {
-  const baseUrl = getExplorerUrl();
-  return `${baseUrl}/tx/${txHash}`;
-}
-
-/**
- * Get the block explorer URL for an address
- */
-export function getExplorerAddressUrl(address: string): string {
-  const baseUrl = getExplorerUrl();
-  return `${baseUrl}/address/${address}`;
+export function getExplorerAddressUrl(address: string, mode?: NetworkMode): string {
+  return `${getExplorerUrl(mode)}/address/${address}`;
 } 

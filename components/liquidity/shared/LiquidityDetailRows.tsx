@@ -3,6 +3,7 @@
 import React from "react";
 import { TokenImage } from "@/components/ui/token-image";
 import { getTokenIcon, formatCalculatedAmount } from "../liquidity-form-utils";
+import type { NetworkMode } from "@/lib/network-mode";
 
 interface DetailRowProps {
   label: string;
@@ -33,12 +34,14 @@ export interface LiquidityDetailRowsProps {
   totalValueUSD?: number;
   showNetworkCost?: boolean;
   title?: string;
+  /** Network mode for cross-chain token icon resolution */
+  networkMode?: NetworkMode;
 }
 
 export function LiquidityDetailRows({
   token0Amount, token0Symbol, token1Amount, token1Symbol,
   token0USDValue, token1USDValue, networkCostUSD, totalValueUSD,
-  showNetworkCost = true, title,
+  showNetworkCost = true, title, networkMode,
 }: LiquidityDetailRowsProps) {
   const hasToken0 = token0Amount && parseFloat(token0Amount) > 0;
   const hasToken1 = token1Amount && parseFloat(token1Amount) > 0;
@@ -48,10 +51,10 @@ export function LiquidityDetailRows({
     <div className="rounded-lg border border-sidebar-border/60 bg-muted/10 p-4 space-y-1">
       {title && <div className="text-xs font-medium text-muted-foreground mb-2">{title}</div>}
       {hasToken0 && token0Symbol && (
-        <DetailRow label={token0Symbol} value={<span>{parseFloat(token0Amount).toFixed(6)}{token0USDValue !== undefined && <span className="text-muted-foreground ml-2">({formatCalculatedAmount(token0USDValue)})</span>}</span>} icon={getTokenIcon(token0Symbol)} />
+        <DetailRow label={token0Symbol} value={<span>{parseFloat(token0Amount).toFixed(6)}{token0USDValue !== undefined && <span className="text-muted-foreground ml-2">({formatCalculatedAmount(token0USDValue)})</span>}</span>} icon={getTokenIcon(token0Symbol, networkMode)} />
       )}
       {hasToken1 && token1Symbol && (
-        <DetailRow label={token1Symbol} value={<span>{parseFloat(token1Amount).toFixed(6)}{token1USDValue !== undefined && <span className="text-muted-foreground ml-2">({formatCalculatedAmount(token1USDValue)})</span>}</span>} icon={getTokenIcon(token1Symbol)} />
+        <DetailRow label={token1Symbol} value={<span>{parseFloat(token1Amount).toFixed(6)}{token1USDValue !== undefined && <span className="text-muted-foreground ml-2">({formatCalculatedAmount(token1USDValue)})</span>}</span>} icon={getTokenIcon(token1Symbol, networkMode)} />
       )}
       {showNetworkCost && networkCostUSD && <DetailRow label="Network Cost" value={`~$${networkCostUSD}`} />}
       {totalValueUSD !== undefined && totalValueUSD > 0 && (
@@ -61,8 +64,8 @@ export function LiquidityDetailRows({
   );
 }
 
-export function LiquidityDetailRowsCompact({ token0Amount, token0Symbol, token1Amount, token1Symbol, token0USDPrice = 0, token1USDPrice = 0 }: {
-  token0Amount?: string; token0Symbol?: string; token1Amount?: string; token1Symbol?: string; token0USDPrice?: number; token1USDPrice?: number;
+export function LiquidityDetailRowsCompact({ token0Amount, token0Symbol, token1Amount, token1Symbol, token0USDPrice = 0, token1USDPrice = 0, networkMode }: {
+  token0Amount?: string; token0Symbol?: string; token1Amount?: string; token1Symbol?: string; token0USDPrice?: number; token1USDPrice?: number; networkMode?: NetworkMode;
 }) {
   const amt0 = parseFloat(token0Amount || "0");
   const amt1 = parseFloat(token1Amount || "0");
@@ -71,8 +74,8 @@ export function LiquidityDetailRowsCompact({ token0Amount, token0Symbol, token1A
   return (
     <div className="flex items-center justify-between text-sm">
       <div className="flex items-center gap-4">
-        {amt0 > 0 && token0Symbol && <div className="flex items-center gap-1.5"><TokenImage src={getTokenIcon(token0Symbol)} alt="" size={16} /><span>{amt0.toFixed(4)} {token0Symbol}</span></div>}
-        {amt1 > 0 && token1Symbol && <div className="flex items-center gap-1.5"><TokenImage src={getTokenIcon(token1Symbol)} alt="" size={16} /><span>{amt1.toFixed(4)} {token1Symbol}</span></div>}
+        {amt0 > 0 && token0Symbol && <div className="flex items-center gap-1.5"><TokenImage src={getTokenIcon(token0Symbol, networkMode)} alt="" size={16} /><span>{amt0.toFixed(4)} {token0Symbol}</span></div>}
+        {amt1 > 0 && token1Symbol && <div className="flex items-center gap-1.5"><TokenImage src={getTokenIcon(token1Symbol, networkMode)} alt="" size={16} /><span>{amt1.toFixed(4)} {token1Symbol}</span></div>}
       </div>
       {totalUSD > 0 && <span className="text-muted-foreground">{formatCalculatedAmount(totalUSD)}</span>}
     </div>

@@ -217,7 +217,7 @@ export function useLiquidityStepExecutor(
   // Check if using Phantom wallet - needs delay between txs due to Blowfish simulation cache
   const isPhantom = connector?.name?.toLowerCase().includes('phantom') ?? false;
   const config = useConfig();
-  const publicClient = usePublicClient();
+  const publicClient = usePublicClient({ chainId });
   const { sendTransactionAsync } = useSendTransaction();
   const { signTypedDataAsync } = useSignTypedData();
 
@@ -407,9 +407,11 @@ export function useLiquidityStepExecutor(
           // =============================================================================
           else if (isRegisteredStepType(step.type)) {
             // Build execution context
+            // Use txContext.chainId (pool's chain) over closure chainId (wallet's chain, may be stale)
+            const effectiveChainId = (txContext as any).chainId || chainId;
             const context: StepExecutionContext = {
               address,
-              chainId,
+              chainId: effectiveChainId,
               action: txContext.action,
               signature,
               setCurrentStep: setCurrentStep(i),

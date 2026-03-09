@@ -14,7 +14,7 @@ import type { Address } from 'viem';
 import type { LPMode } from '@/components/liquidity/wizard/types';
 import type { TokenSymbol } from '@/lib/pools-config';
 import { getPoolById } from '@/lib/pools-config';
-import { useNetwork } from '@/lib/network-context';
+import { modeForChainId } from '@/lib/network-mode';
 import { LiquidityTransactionType } from '../../types';
 
 // V4 Standard approval hook
@@ -127,7 +127,8 @@ export function useModeAwareApprovals(
   params?: UseModeAwareApprovalsParams,
   options?: UseModeAwareApprovalsOptions
 ): UseModeAwareApprovalsResult {
-  const { networkMode } = useNetwork();
+  // Derive networkMode from chainId in params (entity's chain) — never use global context
+  const networkMode = params?.chainId ? modeForChainId(params.chainId) ?? undefined : undefined;
 
   const mode = params?.mode ?? 'rehypo';
   const isUnifiedYield = mode === 'rehypo';

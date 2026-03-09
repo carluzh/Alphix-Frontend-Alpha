@@ -20,7 +20,8 @@ import * as Sentry from "@sentry/nextjs"
 import { invalidateAfterTx } from "@/lib/invalidation"
 import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings"
 import { PERMIT2_ADDRESS, UniversalRouterAbi, Erc20AbiDefinition } from "@/lib/swap/swap-constants"
-import { getExplorerTxUrl, activeChainId } from "@/lib/wagmiConfig"
+import { getExplorerTxUrl } from "@/lib/wagmiConfig"
+import { modeForChainId } from "@/lib/network-mode"
 import {
   useTransactionAdder,
   TransactionType,
@@ -225,8 +226,8 @@ export function useSwapStepExecutor({
   source = "alphix",
   kyberswapData,
 }: UseSwapStepExecutorArgs): UseSwapStepExecutorReturn {
-  const publicClient = usePublicClient()
   const { address: accountAddress, chainId: currentChainId } = useAccount()
+  const publicClient = usePublicClient({ chainId: currentChainId })
 
   const { signTypedDataAsync } = useSignTypedData()
   const { writeContractAsync: sendApprovalTx } = useWriteContract()
@@ -484,7 +485,7 @@ export function useSwapStepExecutor({
       amountDecimalsStr: amountStr,
       swapType: lastEditedSideRef.current === "to" ? "ExactOut" : "ExactIn",
       chainId: currentChainId,
-      network: "mainnet",
+      network: currentChainId ? modeForChainId(currentChainId) ?? 'base' : 'base',
       binding: true,
       userAddress: accountAddress,
       slippageBps: Math.round(currentSlippage * 100),
@@ -556,7 +557,7 @@ export function useSwapStepExecutor({
           amountDecimalsStr: amountStr,
           swapType,
           chainId: currentChainId,
-          network: "mainnet",
+          network: currentChainId ? modeForChainId(currentChainId) ?? 'base' : 'base',
           binding: true,
           userAddress: accountAddress,
           slippageBps: Math.round(currentSlippage * 100),

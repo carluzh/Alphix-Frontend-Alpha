@@ -11,7 +11,7 @@ import { useMemo } from 'react'
 import type { UTCTimestamp } from 'lightweight-charts'
 import useIsWindowVisible from '@/hooks/useIsWindowVisible'
 import { usePollingIntervalByChain } from '@/hooks/usePollingIntervalByChain'
-import { useNetwork } from '@/lib/network-context'
+import { apolloChainForMode } from '@/lib/network-mode'
 import {
   useGetPoolPriceHistoryQuery,
   type Chain,
@@ -61,14 +61,16 @@ interface PoolPriceChartVars {
 export function usePoolPriceChartData({
   variables,
   priceInverted = false,
+  networkModeOverride,
 }: {
   variables?: PoolPriceChartVars
   priceInverted: boolean
+  networkModeOverride?: import('@/lib/network-mode').NetworkMode
 }): ChartQueryResult<PriceChartData, ChartType.PRICE> {
-  const { networkMode } = useNetwork()
-  const chain: Chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
+  const networkMode = networkModeOverride
+  const chain = networkMode ? apolloChainForMode(networkMode) as Chain : undefined
   const { poolId, duration = HistoryDuration.WEEK } = variables ?? {}
-  const enabled = !!poolId && poolId.length > 0
+  const enabled = !!poolId && poolId.length > 0 && !!networkMode
 
   // skip chart data requests if the window is not focused
   const isWindowVisible = useIsWindowVisible()
@@ -78,10 +80,11 @@ export function usePoolPriceChartData({
 
   const { data, loading } = useGetPoolPriceHistoryQuery({
     variables: {
-      chain,
+      chain: chain!,
       poolId: poolId ?? '',
       duration: duration as GqlHistoryDuration,
     },
+    context: { networkMode: networkMode! },
     skip: !enabled || !isWindowVisible,
     fetchPolicy: 'cache-and-network',
     pollInterval: chainPollingInterval * 100, // ~5 minutes - chart data doesn't need frequent updates

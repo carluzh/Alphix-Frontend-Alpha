@@ -13,7 +13,7 @@ import { getTokenDefinitions, getPositionManagerAddress, NATIVE_TOKEN_ADDRESS } 
 import { PERMIT2_ADDRESS } from '@/lib/swap/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { iallowance_transfer_abi } from '@/lib/abis/IAllowanceTransfer_abi';
-import { useNetwork } from '@/lib/network-context';
+import { modeForChainId } from '@/lib/network-mode';
 import { LiquidityTransactionType } from '../../types';
 
 // =============================================================================
@@ -67,7 +67,8 @@ export function useLiquidityApprovals(
   params: UseApprovalsParams | undefined,
   options?: UseApprovalsOptions
 ): UseApprovalsResult {
-  const { networkMode } = useNetwork();
+  // Derive networkMode from chainId in params (entity's chain) — never use global context
+  const networkMode = params?.chainId ? modeForChainId(params.chainId) ?? undefined : undefined;
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
   const token0Config = params ? tokenDefinitions[params.token0Symbol] : undefined;

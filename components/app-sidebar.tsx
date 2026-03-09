@@ -7,7 +7,7 @@ import Link from "next/link"
 import {
   HelpCircleIcon,
 } from "lucide-react"
-import { IconHouse6Fill, IconStorage, IconArrowsBoldOppositeDirection, IconSavedItems, IconCoins } from "nucleo-micro-bold-essential"
+import { IconHouse6Fill, IconStorage, IconArrowsBoldOppositeDirection, IconSavedItems } from "nucleo-micro-bold-essential"
 import { NavMain, type NavMainItem } from "./nav-main"
 import { AccountStatus } from "./AccountStatus"
 import { ConnectWalletButton } from "./ConnectWalletButton"
@@ -29,10 +29,9 @@ import {
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
-import { useRouter } from "next/navigation"; // Import useRouter
+import { useRouter } from "next/navigation";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { getLatestVersion } from "@/lib/version-log"
-import { useNetwork } from "@/lib/network-context"
 
 // Base navigation items (always shown)
 const baseNavItems: NavMainItem[] = [
@@ -58,15 +57,6 @@ const baseNavItems: NavMainItem[] = [
   },
 ];
 
-// Testnet-only navigation items
-const testnetNavItems: NavMainItem[] = [
-  {
-    title: "Faucet",
-    icon: IconCoins,
-    isFaucet: true,
-  },
-];
-
 const data = {
   user: {
     name: "Wallet 1",
@@ -89,18 +79,11 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
 
 export function AppSidebar({ variant = "floating", ...props }: AppSidebarProps) {
   const isMobile = useIsMobile()
-  const router = useRouter(); // Initialize useRouter
-  const { isTestnet } = useNetwork();
+  const router = useRouter();
   const [lockedItem, setLockedItem] = useState<string | null>(null)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Build navigation items based on network mode
-  const navMain = useMemo(() => {
-    if (isTestnet) {
-      return [...baseNavItems, ...testnetNavItems];
-    }
-    return [...baseNavItems];
-  }, [isTestnet]);
+  const navMain = useMemo(() => [...baseNavItems], []);
 
   const handleLockedClick = (itemName: string) => {
     if (timeoutRef.current) {
@@ -137,7 +120,6 @@ export function AppSidebar({ variant = "floating", ...props }: AppSidebarProps) 
                   <Image src="/logos/alphix-type-white.svg" alt="Alphix Logo" width={112} height={24} priority />
                 </Link>
                 <div>
-                  {/* Live badge */}
                   <Badge
                     variant="outline"
                     className="bg-green-500/20 text-green-500 border-transparent rounded-md font-semibold inline-block"

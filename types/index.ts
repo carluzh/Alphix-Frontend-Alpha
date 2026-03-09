@@ -1,3 +1,5 @@
+import type { NetworkMode } from '@/lib/network-mode';
+
 export interface Pool {
   id: string;
   tokens: {
@@ -17,6 +19,7 @@ export interface Pool {
   positionsCount?: number;
   dynamicFeeBps?: number;
   type?: string;
+  networkMode?: NetworkMode;
 }
 
 /**

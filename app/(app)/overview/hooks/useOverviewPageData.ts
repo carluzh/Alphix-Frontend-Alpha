@@ -2,37 +2,72 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useAccount } from "wagmi";
-import { useUserPositions } from "@/lib/apollo/hooks";
-import { useNetwork } from "@/lib/network-context";
+import { useGetUserPositionsQuery } from "@/lib/apollo/__generated__";
+import { usePlatformBasedFetchPolicy } from "@/hooks/usePlatformBasedFetchPolicy";
+import { usePollingIntervalByChain } from "@/hooks/usePollingIntervalByChain";
 import { useOverview } from "./useOverviewData";
+import { ALL_MODES } from "@/lib/chain-registry";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { fetchUserPoints, DEFAULT_USER_POINTS, type CachedUserPoints } from "@/lib/upstash-points";
 import { fetchUnifiedYieldPositions } from "@/lib/liquidity/unified-yield/fetchUnifiedYieldPositions";
 import { createNetworkClient } from "@/lib/viemClient";
+import { chainIdForMode } from "@/lib/network-mode";
+import type { NetworkMode } from "@/lib/network-mode";
 import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
 
 /**
  * useOverviewPageData - Aggregates all data needed for overview pages
  *
  * This hook combines:
- * - User positions (V4 + Unified Yield)
+ * - User positions from ALL production chains (V4 + Unified Yield)
  * - Prices
  * - Points data
  * - Loading states
  */
 export function useOverviewPageData() {
-  const { networkMode } = useNetwork();
   const [positionsRefresh] = useState(0);
   const { address: accountAddress, isConnected } = useAccount();
+  const ownerLc = (accountAddress || '').toLowerCase();
+  const enabled = !!ownerLc && ownerLc.length > 0;
 
-  // User positions data
-  const {
-    data: userPositionsData,
-    loading: isLoadingUserPositions,
-  } = useUserPositions(accountAddress || "");
+  const chainPollingInterval = usePollingIntervalByChain();
+  const { fetchPolicy, pollInterval } = usePlatformBasedFetchPolicy({
+    fetchPolicy: 'cache-and-network',
+    pollInterval: chainPollingInterval * 10,
+  });
+
+  // Query positions from Base
+  const { data: baseData, loading: baseLoading } = useGetUserPositionsQuery({
+    variables: { chain: 'BASE', owner: ownerLc },
+    skip: !enabled,
+    fetchPolicy,
+    pollInterval,
+  });
+
+  // Query positions from Arbitrum
+  const { data: arbData, loading: arbLoading } = useGetUserPositionsQuery({
+    variables: { chain: 'ARBITRUM', owner: ownerLc },
+    skip: !enabled,
+    fetchPolicy,
+    pollInterval,
+  });
+
+  // Merge positions from both chains, tagging each with networkMode
+  const userPositionsData = useMemo(() => {
+    const basePositions = (baseData?.userPositions || []).map((pos: any) => ({
+      ...pos,
+      networkMode: 'base' as NetworkMode,
+    }));
+    const arbPositions = (arbData?.userPositions || []).map((pos: any) => ({
+      ...pos,
+      networkMode: 'arbitrum' as NetworkMode,
+    }));
+    return [...basePositions, ...arbPositions];
+  }, [baseData, arbData]);
+
+  const isLoadingUserPositions = (baseLoading && !baseData?.userPositions) || (arbLoading && !arbData?.userPositions);
 
   // Overview data (aggregates positions + prices)
-  // Prices are fetched internally via batchQuotePrices() — no need for useAllPrices
   const {
     overviewData,
     activePositions,
@@ -40,14 +75,13 @@ export function useOverviewPageData() {
     readiness,
     isLoadingPositions,
   } = useOverview(
-    networkMode,
     positionsRefresh,
     userPositionsData,
     undefined,
     isLoadingUserPositions
   );
 
-  // Unified Yield positions (fetched directly from Hook contracts)
+  // Unified Yield positions — fetch from ALL production chains
   const [unifiedYieldPositions, setUnifiedYieldPositions] = useState<UnifiedYieldPosition[]>([]);
   const [isLoadingUYPositions, setIsLoadingUYPositions] = useState(false);
 
@@ -60,37 +94,45 @@ export function useOverviewPageData() {
     let cancelled = false;
     setIsLoadingUYPositions(true);
 
-    const fetchUYPositions = async () => {
-      try {
-        const client = createNetworkClient(networkMode);
-        const chainId = networkMode === 'mainnet' ? 8453 : 84532;
-        const positions = await fetchUnifiedYieldPositions({
-          userAddress: accountAddress as `0x${string}`,
-          chainId,
-          networkMode,
-          client,
-        });
-        if (!cancelled) {
-          setUnifiedYieldPositions(positions);
+    const fetchAllUYPositions = async () => {
+      const modes = ALL_MODES;
+      const results = await Promise.allSettled(
+        modes.map(async (mode) => {
+          const client = createNetworkClient(mode);
+          const chainId = chainIdForMode(mode);
+          const positions = await fetchUnifiedYieldPositions({
+            userAddress: accountAddress as `0x${string}`,
+            chainId,
+            networkMode: mode,
+            client,
+          });
+          // Tag each position with its networkMode
+          return positions.map(p => ({ ...p, networkMode: mode }));
+        })
+      );
+
+      if (!cancelled) {
+        const allPositions: UnifiedYieldPosition[] = [];
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            allPositions.push(...result.value);
+          }
         }
-      } catch (error) {
-        console.warn('[useOverviewPageData] Failed to fetch Unified Yield positions:', error);
-        if (!cancelled) {
-          setUnifiedYieldPositions([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingUYPositions(false);
-        }
+        setUnifiedYieldPositions(allPositions);
       }
     };
 
-    fetchUYPositions();
+    fetchAllUYPositions().catch((error) => {
+      console.warn('[useOverviewPageData] Failed to fetch Unified Yield positions:', error);
+      if (!cancelled) setUnifiedYieldPositions([]);
+    }).finally(() => {
+      if (!cancelled) setIsLoadingUYPositions(false);
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [isConnected, accountAddress, networkMode, positionsRefresh]);
+  }, [isConnected, accountAddress, positionsRefresh]);
 
   // Points data (fetched from Upstash)
   const [pointsData, setPointsData] = useState<CachedUserPoints>(DEFAULT_USER_POINTS);
@@ -129,8 +171,6 @@ export function useOverviewPageData() {
   }, [isConnected, accountAddress]);
 
   // Unified priceMap: extract token symbols from ALL position types (V4 + Unified Yield)
-  // V4 positions may be empty (subgraph returns []) while UY positions have data,
-  // so we must include UY symbols to ensure ETH/etc get priced.
   const allTokenSymbols = useMemo(() => {
     const symbols = new Set<string>();
     // V4 positions

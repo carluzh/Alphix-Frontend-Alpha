@@ -6,7 +6,6 @@ import { IconPlus } from "nucleo-micro-bold-essential"
 import { CustomLockIcon } from "./CustomLockIcon"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { FaucetClaimModal } from "@/components/faucet"
 import { useNavigationProgress } from "@/lib/navigation-progress"
 
 import {
@@ -21,7 +20,6 @@ export interface NavMainItem {
   url?: string
   icon?: LucideIcon | React.ComponentType<any>
   disabled?: boolean
-  isFaucet?: boolean
 }
 
 export function NavMain({
@@ -63,9 +61,6 @@ export function NavMain({
     })
   }, [router, startTransition, isMobile, setOpenMobile, startNavigation])
 
-  // Faucet modal state
-  const [isFaucetModalOpen, setIsFaucetModalOpen] = useState(false)
-
   const handleLockedClick = (itemName: string) => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
@@ -75,14 +70,6 @@ export function NavMain({
       setLockedItem(null)
     }, 1000)
   }
-
-  const handleFaucetClick = useCallback(() => {
-    // Close mobile sidebar before opening modal
-    if (isMobile) {
-      setOpenMobile(false)
-    }
-    setIsFaucetModalOpen(true)
-  }, [isMobile, setOpenMobile])
 
   return (
     <>
@@ -113,20 +100,6 @@ export function NavMain({
                     <span className="text-[10px] text-muted-foreground">Soon</span>
                   </span>
                 )}
-              </SidebarMenuButton>
-            ) : item.isFaucet ? (
-              <SidebarMenuButton
-                onClick={handleFaucetClick}
-                className={cn(
-                  "w-full flex items-center rounded-lg px-2 py-2 transition-colors hover:bg-[#1f1f1f] hover:text-white",
-                  "text-muted-foreground"
-                )}
-                tooltip={item.title}
-              >
-                {item.icon && <item.icon className="h-4 w-4 flex-shrink-0" />}
-                <span className="flex-1 truncate ml-2.5 text-sm font-medium">
-                  {item.title}
-                </span>
               </SidebarMenuButton>
             ) : item.title === "Portfolio" ? (
               <SidebarMenuButton
@@ -198,11 +171,6 @@ export function NavMain({
       })}
     </SidebarMenu>
 
-    {/* Faucet Claim Modal */}
-    <FaucetClaimModal
-      isOpen={isFaucetModalOpen}
-      onClose={() => setIsFaucetModalOpen(false)}
-    />
     </>
   )
 }

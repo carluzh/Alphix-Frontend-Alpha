@@ -15,6 +15,7 @@ import { PERMIT2_ADDRESS } from '@/lib/swap/swap-constants';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { type Hex, maxUint256, formatUnits, parseUnits as viemParseUnits, decodeEventLog } from 'viem';
 import { addPositionIdToCache } from '@/lib/client-cache';
+import { modeForChainId } from '@/lib/network-mode';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import { useCheckMintApprovals } from '@/lib/liquidity';
 import { isInfiniteApprovalEnabled, getStoredUserSettings } from '@/hooks/useUserSettings';
@@ -62,11 +63,13 @@ export function useAddLiquidityTransaction({
   deadlineSeconds = 1800, // Default 30 minutes
 }: UseAddLiquidityTransactionProps) {
   const { address: accountAddress, chainId } = useAccount();
-  const publicClient = usePublicClient();
+  const publicClient = usePublicClient({ chainId });
+  // Derive networkMode from wallet chainId — ensureChain() is called before tx
+  const networkMode = chainId ? modeForChainId(chainId) ?? undefined : undefined;
 
   // Use balance hooks for refetching after swap (same pattern as swap-interface.tsx)
-  const token0Config = getToken(token0Symbol);
-  const token1Config = getToken(token1Symbol);
+  const token0Config = getToken(token0Symbol, networkMode);
+  const token1Config = getToken(token1Symbol, networkMode);
   const isToken0Native = token0Config?.address === NATIVE_TOKEN_ADDRESS;
   const isToken1Native = token1Config?.address === NATIVE_TOKEN_ADDRESS;
 
@@ -95,8 +98,8 @@ export function useAddLiquidityTransaction({
           userAddress: accountAddress,
           token0Symbol,
           token1Symbol,
-          amount0: formatUnits(BigInt(calculatedData.amount0 || '0'), getToken(token0Symbol)?.decimals || 18),
-          amount1: formatUnits(BigInt(calculatedData.amount1 || '0'), getToken(token1Symbol)?.decimals || 18),
+          amount0: formatUnits(BigInt(calculatedData.amount0 || '0'), getToken(token0Symbol, networkMode)?.decimals || 18),
+          amount1: formatUnits(BigInt(calculatedData.amount1 || '0'), getToken(token1Symbol, networkMode)?.decimals || 18),
           chainId,
           tickLower: calculatedData.finalTickLower ?? parseInt(tickLower),
           tickUpper: calculatedData.finalTickUpper ?? parseInt(tickUpper),
@@ -149,7 +152,7 @@ export function useAddLiquidityTransaction({
   const handleApprove = useCallback(
     async (tokenSymbol: TokenSymbol, exactAmount?: string) => {
       if (!publicClient) throw new Error('Public client not available');
-      const tokenConfig = getToken(tokenSymbol);
+      const tokenConfig = getToken(tokenSymbol, networkMode);
       if (!tokenConfig) throw new Error(`Token ${tokenSymbol} not found`);
 
       toast('Confirm in Wallet', {
@@ -203,7 +206,7 @@ export function useAddLiquidityTransaction({
 
       // Don't refetch here - the form component handles refetch after a delay
     },
-    [approveAsync, chainId, accountAddress, addTransaction]
+    [approveAsync, chainId, accountAddress, addTransaction, networkMode]
   );
 
   // Handle deposit transaction
@@ -397,7 +400,7 @@ export function useAddLiquidityTransaction({
         setIsWorking(false);
       }
     },
-    [accountAddress, chainId, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, sendTransactionAsync, signTypedDataAsync, activeInputSide, addTransaction, token0Config, token1Config]
+    [accountAddress, chainId, networkMode, token0Symbol, token1Symbol, amount0, amount1, tickLower, tickUpper, calculatedData, sendTransactionAsync, signTypedDataAsync, activeInputSide, addTransaction, token0Config, token1Config]
   );
 
   // Handle deposit transaction failure
@@ -463,7 +466,7 @@ export function useAddLiquidityTransaction({
                   args.to?.toLowerCase() === accountAddress?.toLowerCase()) {
                 newTokenId = args.id?.toString();
                 if (accountAddress && newTokenId) {
-                  addPositionIdToCache(accountAddress, newTokenId);
+                  addPositionIdToCache(accountAddress, newTokenId, modeForChainId(chainId!) ?? 'base');
                 }
                 break;
               }
@@ -474,9 +477,9 @@ export function useAddLiquidityTransaction({
         if (calculatedData?.amount0 && calculatedData?.amount1) {
           const { getTokenPrice } = await import('@/lib/swap/quote-prices');
           const { formatUnits } = await import('viem');
-          const { getToken } = await import('@/lib/pools-config');
-          const token0Config = getToken(token0Symbol);
-          const token1Config = getToken(token1Symbol);
+          const { getToken: getTokenConfig } = await import('@/lib/pools-config');
+          const token0Config = getTokenConfig(token0Symbol, networkMode);
+          const token1Config = getTokenConfig(token1Symbol, networkMode);
           const amt0 = parseFloat(formatUnits(BigInt(calculatedData.amount0), token0Config?.decimals || 18));
           const amt1 = parseFloat(formatUnits(BigInt(calculatedData.amount1), token1Config?.decimals || 18));
           const [p0, p1] = await Promise.all([getTokenPrice(token0Symbol), getTokenPrice(token1Symbol)]);

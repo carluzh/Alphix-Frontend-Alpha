@@ -30,7 +30,8 @@ const ERC20_BALANCE_ABI = [{
 import { Button } from "@/components/ui/button";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
-import { useNetwork } from "@/lib/network-context";
+import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
+import { useChainMismatch } from "@/hooks/useChainMismatch";
 import { toast } from "sonner";
 import { formatCalculatedAmount, getTokenIcon } from "../liquidity-form-utils";
 import { DepositInputForm, type PositionField } from "../shared/DepositInputForm";
@@ -191,8 +192,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
   const wiggleControls0 = useAnimation();
   const wiggleControls1 = useAnimation();
   const { address } = useAccount();
-  const publicClient = usePublicClient();
-  const { chainId } = useNetwork();
+  const { ensureChain } = useChainMismatch();
 
   const {
     increaseLiquidityState,
@@ -231,14 +231,19 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
     zapApprovals,
     isZapPreviewLoading,
     isZapPreviewFetching,
+    isZapPreviewError,
+    zapPreviewError,
     zapDataUpdatedAt,
     refetchZapPreview,
   } = useIncreaseLiquidityTxContext();
 
-  const { networkMode } = useNetwork();
-  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
-
   const { position } = increaseLiquidityState;
+
+  // Derive networkMode and chainId from the position's chain data — never fall back to wallet context
+  const networkMode = position.networkMode;
+  const chainId = networkMode ? chainIdForMode(networkMode) : undefined;
+  const publicClient = usePublicClient({ chainId });
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { formattedAmounts } = derivedIncreaseLiquidityInfo;
 
   // Local state
@@ -306,10 +311,10 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
       executorSteps,
       position.token0.symbol,
       position.token1.symbol,
-      getTokenIcon(position.token0.symbol),
-      getTokenIcon(position.token1.symbol)
+      getTokenIcon(position.token0.symbol, networkMode),
+      getTokenIcon(position.token1.symbol, networkMode)
     );
-  }, [executorSteps, position.token0.symbol, position.token1.symbol]);
+  }, [executorSteps, position.token0.symbol, position.token1.symbol, networkMode]);
 
   // Current step for ProgressIndicator
   const currentStep = useMemo((): CurrentStepState | undefined => {
@@ -383,6 +388,12 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
   const handleReview = useCallback(async () => {
     if (!address || !hasValidAmounts) return;
 
+    // Ensure wallet is on the correct chain before any transaction
+    if (chainId) {
+      const chainOk = await ensureChain(chainId);
+      if (!chainOk) return;
+    }
+
     setView("executing");
     setIsExecuting(true);
     setLocalError(null);
@@ -406,7 +417,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
         }
 
         // Get pool config for hook address
-        const poolConfig = getPoolById(position.poolId);
+        const poolConfig = getPoolById(position.poolId, networkMode);
         if (!poolConfig?.hooks) {
           throw new Error('Pool hook address not found');
         }
@@ -498,6 +509,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
           poolConfig: getZapPoolConfig(position.poolId) ?? undefined,
           token0Price: token0USDPrice,
           token1Price: token1USDPrice,
+          targetChainId: chainId,
         });
 
         console.log('[IncreaseLiquidityForm] Generated', zapStepsResult.totalStepCount, 'zap steps');
@@ -648,7 +660,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
             </div>
             {/* Pool type badge */}
             {position.poolId && (() => {
-              const poolConfig = getPoolById(position.poolId);
+              const poolConfig = getPoolById(position.poolId, networkMode);
               const isUnifiedYield = poolConfig?.rehypoRange !== undefined;
               return isUnifiedYield ? (
                 <span
@@ -668,14 +680,14 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
         {/* Double token logo */}
         <div className="flex items-center -space-x-2">
           <Image
-            src={getTokenIcon(position.token0.symbol)}
+            src={getTokenIcon(position.token0.symbol, networkMode)}
             alt=""
             width={36}
             height={36}
             className="rounded-full "
           />
           <Image
-            src={getTokenIcon(position.token1.symbol)}
+            src={getTokenIcon(position.token1.symbol, networkMode)}
             alt=""
             width={36}
             height={36}
@@ -708,6 +720,27 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
             onTokenClick={() => setZapInputToken(zapInputToken === 'token0' ? 'token1' : 'token0')}
             tokenClickIcon={<RefreshCw className="w-3.5 h-3.5 text-muted-foreground group-hover/token:text-white transition-colors" />}
           />
+
+          {/* Zap error callout */}
+          {isZapPreviewError && !isZapPreviewFetching && (
+            <div
+              className="flex flex-row items-center gap-3 rounded-lg border p-3 transition-colors"
+              style={{
+                backgroundColor: 'rgba(255, 89, 60, 0.08)',
+                borderColor: 'rgba(255, 89, 60, 0.2)',
+              }}
+            >
+              <div
+                className="flex items-center justify-center p-2 rounded-md shrink-0"
+                style={{ backgroundColor: 'rgba(255, 89, 60, 0.12)' }}
+              >
+                <AlertCircle className="w-4 h-4" style={{ color: '#FF593C' }} />
+              </div>
+              <span className="text-sm font-medium" style={{ color: '#FF593C' }}>
+                {zapPreviewError?.message || 'Failed to calculate zap preview'}
+              </span>
+            </div>
+          )}
 
           {/* Zap Quote Section - only show when there's input */}
           {(zapPreview || isZapPreviewLoading || isZapPreviewFetching) && (
@@ -764,7 +797,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
                   <div className="flex items-center gap-1">
                     {/* Input token icon */}
                     <Image
-                      src={getTokenIcon(zapPreview.inputTokenInfo.symbol)}
+                      src={getTokenIcon(zapPreview.inputTokenInfo.symbol, networkMode)}
                       alt={zapPreview.inputTokenInfo.symbol}
                       width={16}
                       height={16}
@@ -784,7 +817,7 @@ export function IncreaseLiquidityForm({ onClose, onSuccess }: IncreaseLiquidityF
                     </svg>
                     {/* Output token icon */}
                     <Image
-                      src={getTokenIcon(zapPreview.outputTokenInfo.symbol)}
+                      src={getTokenIcon(zapPreview.outputTokenInfo.symbol, networkMode)}
                       alt={zapPreview.outputTokenInfo.symbol}
                       width={16}
                       height={16}

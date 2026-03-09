@@ -44,7 +44,7 @@ async function fetchInternal(
 
 // Map Chain enum to network mode
 function chainToNetworkMode(chain: string): NetworkMode {
-  return chain === 'BASE_SEPOLIA' ? 'testnet' : 'mainnet'
+  return chain === 'ARBITRUM' ? 'arbitrum' : 'base'
 }
 
 export const resolvers = {
@@ -122,8 +122,10 @@ export const resolvers = {
       args: { chain: string; poolId: string },
       ctx: Context
     ) => {
+      // Use chain from args to ensure correct network for the pool
+      const resolvedCtx = { ...ctx, networkMode: chainToNetworkMode(args.chain) }
       const data = await fetchInternal(
-        ctx,
+        resolvedCtx,
         `/api/liquidity/get-pool-state?poolId=${encodeURIComponent(args.poolId)}`
       )
 
@@ -145,8 +147,9 @@ export const resolvers = {
       args: { chain: string; poolId: string },
       ctx: Context
     ) => {
+      const resolvedCtx = { ...ctx, networkMode: chainToNetworkMode(args.chain) }
       const data = await fetchInternal(
-        ctx,
+        resolvedCtx,
         `/api/liquidity/pool-metrics?poolId=${encodeURIComponent(args.poolId)}`
       )
 

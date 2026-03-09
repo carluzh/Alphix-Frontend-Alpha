@@ -325,7 +325,7 @@ export interface UnifiedYieldWithdrawStep extends OnChainTransactionFields {
 // =============================================================================
 
 /** Zap token types */
-export type ZapTokenSymbol = 'USDS' | 'USDC' | 'ETH';
+export type ZapTokenSymbol = 'USDS' | 'USDC' | 'ETH' | 'USDT';
 
 /**
  * Zap Swap Approval Step - Approve input token for swap (to PSM or Permit2)
@@ -386,6 +386,8 @@ export interface ZapPoolSwapStep extends OnChainTransactionFields {
   deadline: bigint;
   /** Swap source - pool (Universal Router) or kyberswap (aggregator) */
   swapSource?: 'pool' | 'kyberswap';
+  /** Target chain ID for the swap (pool's chain, not wallet's chain) */
+  targetChainId?: number;
 }
 
 /**

@@ -19,13 +19,20 @@ import { Separator } from "../shared/Separator";
 import { TableSectionHeader } from "../shared/TableSectionHeader";
 import { ViewAllButton } from "../shared/ViewAllButton";
 import { parseSubgraphPosition, type SubgraphPosition, type PositionInfo } from "@/lib/uniswap/liquidity";
-import { useNetwork } from "@/lib/network-context";
 import { getTokenDefinitions } from "@/lib/pools-config";
+import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
+import { CHAIN_REGISTRY } from "@/lib/chain-registry";
+
+const CHAIN_BADGE_MAP: Record<string, { icon: string; borderColor: string }> = {
+  base: { icon: '/chains/base.svg', borderColor: '#0052FF' },
+  arbitrum: { icon: '/chains/arbitrum.svg', borderColor: '#9DCCED' },
+};
 
 interface Position {
   positionId: string;
   poolId: string;
   owner?: string;
+  networkMode?: NetworkMode;
   token0: { symbol: string; amount: string; address?: string };
   token1: { symbol: string; amount: string; address?: string };
   liquidity?: string;
@@ -76,13 +83,13 @@ export const Overview = memo(function Overview({
   leaderboardPosition,
 }: OverviewProps) {
   const router = useRouter();
-  const { networkMode, chainId } = useNetwork();
-  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const isPortfolioZero = totalValue === 0 && activePositions.length === 0 && unifiedYieldPositions.length === 0;
 
-  // Navigate to position detail page
-  const handlePositionClick = useCallback((tokenId: string) => {
-    router.push(`/liquidity/position/${tokenId}?from=overview`);
+  // Navigate to position detail page (include chain so detail page can fetch from correct network)
+  // Use backendNetwork name (base/arbitrum) from CHAIN_REGISTRY
+  const handlePositionClick = useCallback((tokenId: string, posNetworkMode?: NetworkMode) => {
+    const chainParam = posNetworkMode ? `&chain=${CHAIN_REGISTRY[posNetworkMode].backendNetwork}` : '';
+    router.push(`/liquidity/position/${tokenId}?from=overview${chainParam}`);
   }, [router]);
 
   // Stablecoins always priced at $1
@@ -117,6 +124,10 @@ export const Overview = memo(function Overview({
   const v4PositionsWithValue = useMemo(() => {
     return activePositions
       .map((pos) => {
+        const posMode: NetworkMode = pos.networkMode || 'base';
+        const posChainId = chainIdForMode(posMode);
+        const posDefs = getTokenDefinitions(posMode);
+
         const subgraphPos: SubgraphPosition = {
           positionId: pos.positionId,
           owner: pos.owner || "",
@@ -141,9 +152,9 @@ export const Overview = memo(function Overview({
           lastTimestamp: pos.lastTimestamp,
         };
 
-        const token0Decimals = tokenDefinitions?.[pos.token0.symbol]?.decimals ?? 18;
-        const token1Decimals = tokenDefinitions?.[pos.token1.symbol]?.decimals ?? 18;
-        const positionInfo = parseSubgraphPosition(subgraphPos, { chainId, token0Decimals, token1Decimals });
+        const token0Decimals = posDefs?.[pos.token0.symbol]?.decimals ?? 18;
+        const token1Decimals = posDefs?.[pos.token1.symbol]?.decimals ?? 18;
+        const positionInfo = parseSubgraphPosition(subgraphPos, { chainId: posChainId, token0Decimals, token1Decimals });
 
         if (!positionInfo) return null;
 
@@ -152,18 +163,18 @@ export const Overview = memo(function Overview({
         const price0 = getUsdPriceForSymbol(positionInfo.currency0Amount.currency.symbol);
         const price1 = getUsdPriceForSymbol(positionInfo.currency1Amount.currency.symbol);
 
-        return { position: positionInfo, usdValue: amt0 * price0 + amt1 * price1 };
+        return { position: positionInfo, usdValue: amt0 * price0 + amt1 * price1, networkMode: posMode };
       })
-      .filter((p): p is { position: PositionInfo; usdValue: number } => p !== null);
-  }, [activePositions, chainId, tokenDefinitions, getUsdPriceForSymbol]);
+      .filter((p): p is { position: PositionInfo; usdValue: number; networkMode: NetworkMode } => p !== null);
+  }, [activePositions, getUsdPriceForSymbol]);
 
   // Total position count for display
   const totalPositionCount = v4PositionsWithValue.length + unifiedYieldPositions.length;
 
   // Unified type for display positions
   type DisplayPosition =
-    | { type: 'v4'; position: PositionInfo; usdValue: number }
-    | { type: 'uy'; position: UnifiedYieldPosition; usdValue: number };
+    | { type: 'v4'; position: PositionInfo; usdValue: number; networkMode?: NetworkMode }
+    | { type: 'uy'; position: UnifiedYieldPosition; usdValue: number; networkMode?: NetworkMode };
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(0);
@@ -171,11 +182,12 @@ export const Overview = memo(function Overview({
   // Combine all positions, sort by USD value descending
   const { allSortedPositions, hasMorePositions, totalPositionsValue, totalPages } = useMemo(() => {
     const allPositions: DisplayPosition[] = [
-      ...v4PositionsWithValue.map(p => ({ type: 'v4' as const, ...p })),
+      ...v4PositionsWithValue.map(p => ({ type: 'v4' as const, position: p.position, usdValue: p.usdValue, networkMode: p.networkMode })),
       ...unifiedYieldPositions.map(pos => ({
         type: 'uy' as const,
         position: pos,
         usdValue: getUYPositionValueUSD(pos),
+        networkMode: pos.networkMode,
       })),
     ];
 
@@ -328,16 +340,20 @@ export const Overview = memo(function Overview({
                         <PositionCardCompact
                           position={item.position}
                           valueUSD={item.usdValue}
-                          onClick={() => item.position.tokenId && handlePositionClick(item.position.tokenId)}
+                          onClick={() => item.position.tokenId && handlePositionClick(item.position.tokenId, item.networkMode)}
                           poolContext={getPoolContext(item.position.poolId || '')}
                           showMenuButton={false}
+                          chainBadge={item.networkMode ? CHAIN_BADGE_MAP[item.networkMode] : undefined}
+                          positionNetworkMode={item.networkMode}
                         />
                       ) : (
                         <UnifiedYieldPositionCard
                           position={item.position}
                           valueUSD={item.usdValue}
-                          onClick={() => handlePositionClick(item.position.positionId)}
+                          onClick={() => handlePositionClick(item.position.positionId, item.networkMode)}
                           poolContext={getPoolContext(item.position.poolId)}
+                          chainBadge={item.networkMode ? CHAIN_BADGE_MAP[item.networkMode] : undefined}
+                          positionNetworkMode={item.networkMode}
                         />
                       )}
                     </motion.div>

@@ -58,7 +58,7 @@ export function TVLDisplay({ className }: { className?: string }) {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const response = await fetchPoolsMetrics('mainnet')
+        const response = await fetchPoolsMetrics('base')
         if (response.success && Array.isArray(response.pools)) {
           const totalTvl = response.pools.reduce((sum, pool) => sum + (pool.tvlUsd || 0), 0)
           setTvl(totalTvl)

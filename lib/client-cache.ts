@@ -8,12 +8,8 @@
 
 import { SafeStorage } from './safe-storage';
 import { RetryUtility } from './retry-utility';
-import { getStoredNetworkMode } from './network-mode';
-
-// OVERRIDE: Always use mainnet prefix (testnet removed)
-function getNetworkPrefix(): string {
-  return 'mainnet';
-}
+import type { NetworkMode } from './network-mode';
+import { ALL_MODES } from './chain-registry';
 
 // Request deduplication: track ongoing requests to prevent duplicates
 const ongoingRequests = new Map<string, Promise<any>>();
@@ -39,34 +35,36 @@ export function setOngoingRequest<T>(key: string, promise: Promise<T>): Promise<
 }
 
 /**
- * Cache key for user position IDs in localStorage
- * Includes network prefix to prevent data contamination between networks
+ * Cache key for user position IDs in localStorage.
+ * Includes network mode to prevent data contamination between chains.
  */
-function getUserPositionIdsCacheKey(address: string): string {
-  const prefix = getNetworkPrefix();
-  return `${prefix}:userPositionIds_${address.toLowerCase()}`;
+function getUserPositionIdsCacheKey(address: string, networkMode: NetworkMode): string {
+  return `${networkMode}:userPositionIds_${address.toLowerCase()}`;
 }
 
-/** Invalidate user position IDs cache in localStorage */
-export function invalidateUserPositionIdsCache(ownerAddress: string): void {
-  try { SafeStorage.remove(getUserPositionIdsCacheKey(ownerAddress)); } catch {}
+/** Invalidate user position IDs cache for a specific chain */
+export function invalidateUserPositionIdsCache(ownerAddress: string, networkMode: NetworkMode): void {
+  try { SafeStorage.remove(getUserPositionIdsCacheKey(ownerAddress, networkMode)); } catch {}
+}
+
+/** Invalidate user position IDs cache across ALL chains */
+export function invalidateAllChainsPositionIdsCache(ownerAddress: string): void {
+  for (const mode of ALL_MODES) {
+    invalidateUserPositionIdsCache(ownerAddress, mode);
+  }
 }
 
 /** Time window (ms) to preserve optimistic entries that aren't in subgraph yet */
 const OPTIMISTIC_ENTRY_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
- * Add a position ID directly to the cache (from transaction receipt)
- * This bypasses subgraph and ensures the position is immediately visible
- *
- * @param ownerAddress - User wallet address
- * @param tokenId - Position NFT token ID from Transfer event
- * @param createdAt - Optional timestamp (defaults to now)
+ * Add a position ID directly to the cache (from transaction receipt).
+ * This bypasses subgraph and ensures the position is immediately visible.
  */
-export function addPositionIdToCache(ownerAddress: string, tokenId: string, createdAt?: number): void {
+export function addPositionIdToCache(ownerAddress: string, tokenId: string, networkMode: NetworkMode, createdAt?: number): void {
   if (!ownerAddress || !tokenId) return;
 
-  const key = getUserPositionIdsCacheKey(ownerAddress);
+  const key = getUserPositionIdsCacheKey(ownerAddress, networkMode);
   const now = Date.now();
   const timestamp = createdAt || Math.floor(now / 1000);
 
@@ -93,10 +91,10 @@ export function addPositionIdToCache(ownerAddress: string, tokenId: string, crea
 }
 
 /** Remove a position ID from the cache (after full burn) */
-export function removePositionIdFromCache(ownerAddress: string, tokenId: string): void {
+export function removePositionIdFromCache(ownerAddress: string, tokenId: string, networkMode: NetworkMode): void {
   if (!ownerAddress || !tokenId) return;
 
-  const key = getUserPositionIdsCacheKey(ownerAddress);
+  const key = getUserPositionIdsCacheKey(ownerAddress, networkMode);
 
   try {
     const raw = SafeStorage.get(key);
@@ -113,11 +111,11 @@ export function removePositionIdFromCache(ownerAddress: string, tokenId: string)
 }
 
 /** Get cached timestamps map for position APY calculation */
-export function getCachedPositionTimestamps(ownerAddress: string): Map<string, { createdAt: number; lastTimestamp: number }> {
+export function getCachedPositionTimestamps(ownerAddress: string, networkMode: NetworkMode): Map<string, { createdAt: number; lastTimestamp: number }> {
   const map = new Map<string, { createdAt: number; lastTimestamp: number }>();
   if (!ownerAddress) return map;
   try {
-    const raw = SafeStorage.get(getUserPositionIdsCacheKey(ownerAddress));
+    const raw = SafeStorage.get(getUserPositionIdsCacheKey(ownerAddress, networkMode));
     if (raw) {
       const { items } = JSON.parse(raw) as { items?: Array<{ id: string; createdAt?: number; lastTimestamp?: number }> };
       items?.forEach(it => it.id && map.set(it.id, { createdAt: it.createdAt || 0, lastTimestamp: it.lastTimestamp || 0 }));
@@ -137,22 +135,17 @@ export interface LoadPositionIdsOptions {
 }
 
 /**
- * Load user position IDs with stale-while-revalidate pattern
- *
+ * Load user position IDs with stale-while-revalidate pattern.
  * Returns cached data immediately (if available) and always refreshes in background.
- * When fresh data arrives, the cache is updated and onRefreshed callback is called.
- *
- * @param ownerAddress - User wallet address
- * @param options - Optional configuration
- * @returns Array of position token IDs (from cache if available, otherwise waits for fetch)
  */
 export async function loadUserPositionIds(
   ownerAddress: string,
+  networkMode: NetworkMode,
   options?: LoadPositionIdsOptions
 ): Promise<string[]> {
   if (!ownerAddress) return [];
 
-  const key = getUserPositionIdsCacheKey(ownerAddress);
+  const key = getUserPositionIdsCacheKey(ownerAddress, networkMode);
 
   // Check localStorage cache
   let cachedIds: string[] = [];
@@ -169,13 +162,13 @@ export async function loadUserPositionIds(
   // SWR: If we have cached data, return it and refresh in background
   if (cachedIds.length > 0) {
     if (options?.onRefreshed) {
-      refreshPositionIdsInBackground(ownerAddress, key, cachedIds, options.onRefreshed);
+      refreshPositionIdsInBackground(ownerAddress, key, cachedIds, networkMode, options.onRefreshed);
     }
     return cachedIds;
   }
 
   // No cached data - must wait for fetch
-  const freshIds = await fetchAndCachePositionIds(ownerAddress, key);
+  const freshIds = await fetchAndCachePositionIds(ownerAddress, key, networkMode);
   return freshIds || [];
 }
 
@@ -186,12 +179,11 @@ function refreshPositionIdsInBackground(
   ownerAddress: string,
   cacheKey: string,
   currentIds: string[],
+  networkMode: NetworkMode,
   onRefreshed?: (ids: string[]) => void
 ): void {
-  // Check for ongoing request to prevent duplicate fetches
   const ongoing = getOngoingRequest<string[]>(cacheKey);
   if (ongoing) {
-    // Attach to existing request
     ongoing.then((ids) => {
       if (onRefreshed && !arraysEqual(ids, currentIds)) {
         onRefreshed(ids);
@@ -200,8 +192,7 @@ function refreshPositionIdsInBackground(
     return;
   }
 
-  // Start background fetch
-  const promise = fetchAndCachePositionIds(ownerAddress, cacheKey).then((freshIds) => {
+  const promise = fetchAndCachePositionIds(ownerAddress, cacheKey, networkMode).then((freshIds) => {
     if (freshIds && onRefreshed && !arraysEqual(freshIds, currentIds)) {
       console.log('[Cache] Background refresh found new position data');
       onRefreshed(freshIds);
@@ -217,12 +208,13 @@ function refreshPositionIdsInBackground(
  */
 async function fetchAndCachePositionIds(
   ownerAddress: string,
-  cacheKey: string
+  cacheKey: string,
+  networkMode: NetworkMode
 ): Promise<string[] | null> {
   const result = await RetryUtility.execute(
     async () => {
       const res = await fetch(
-        `/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1`,
+        `/api/liquidity/get-positions?ownerAddress=${ownerAddress}&idsOnly=1&withCreatedAt=1&networkMode=${networkMode}`,
         { cache: 'no-store' }
       );
 
@@ -306,9 +298,6 @@ async function fetchAndCachePositionIds(
   return ids;
 }
 
-/**
- * Helper to compare two string arrays
- */
 function arraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   const sortedA = [...a].sort();

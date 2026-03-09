@@ -142,6 +142,8 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
   } = useDecreaseLiquidityTxContext();
 
   const { position } = decreaseLiquidityState;
+  // Derive networkMode from the position's chain data — never fall back to wallet context
+  const networkMode = position.networkMode;
   const { withdrawAmount0, withdrawAmount1, isCalculating } = derivedDecreaseInfo;
 
   // Local state
@@ -207,8 +209,8 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
       executorSteps,
       position.token0.symbol,
       position.token1.symbol,
-      getTokenIcon(position.token0.symbol),
-      getTokenIcon(position.token1.symbol),
+      getTokenIcon(position.token0.symbol, networkMode),
+      getTokenIcon(position.token1.symbol, networkMode),
       amount0.toString(),
       amount1.toString(),
     );
@@ -359,7 +361,7 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
             </div>
             {/* Pool type badge */}
             {position.poolId && (() => {
-              const poolConfig = getPoolById(position.poolId);
+              const poolConfig = getPoolById(position.poolId, networkMode);
               const isUnifiedYield = poolConfig?.rehypoRange !== undefined;
               return isUnifiedYield ? (
                 <span
@@ -379,14 +381,14 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
         {/* Double token logo */}
         <div className="flex items-center -space-x-2">
           <Image
-            src={getTokenIcon(position.token0.symbol)}
+            src={getTokenIcon(position.token0.symbol, networkMode)}
             alt=""
             width={36}
             height={36}
             className="rounded-full "
           />
           <Image
-            src={getTokenIcon(position.token1.symbol)}
+            src={getTokenIcon(position.token1.symbol, networkMode)}
             alt=""
             width={36}
             height={36}
@@ -514,7 +516,7 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Image
-                        src={getTokenIcon(position.token0.symbol)}
+                        src={getTokenIcon(position.token0.symbol, networkMode)}
                         alt={position.token0.symbol}
                         width={20}
                         height={20}
@@ -533,7 +535,7 @@ export function DecreaseLiquidityForm({ onClose, onSuccess }: DecreaseLiquidityF
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Image
-                        src={getTokenIcon(position.token1.symbol)}
+                        src={getTokenIcon(position.token1.symbol, networkMode)}
                         alt={position.token1.symbol}
                         width={20}
                         height={20}

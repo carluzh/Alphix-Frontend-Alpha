@@ -2,7 +2,7 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { batchQuotePrices } from '@/lib/swap/quote-prices';
-import { MAINNET_CHAIN_ID, type NetworkMode } from '@/lib/network-mode';
+import { modeForChainId, type NetworkMode } from '@/lib/network-mode';
 import { checkRateLimit } from '@/lib/api/ratelimit';
 
 /**
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     }
 
     const capped = symbols.slice(0, 50);
-    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
     const prices = await batchQuotePrices(capped, chainId, networkMode);
 
     return NextResponse.json(

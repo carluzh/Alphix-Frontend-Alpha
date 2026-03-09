@@ -27,13 +27,14 @@ import { parseUnits, type Address } from 'viem';
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useCreatePositionTxContext } from './CreatePositionTxContext';
 import dynamic from 'next/dynamic';
-import { getPoolById, getAllTokens, getToken, type TokenSymbol } from '@/lib/pools-config';
+import { getPoolById, getAllTokens, getToken, resolveTokenIcon, type TokenSymbol } from '@/lib/pools-config';
 import { cn } from '@/lib/utils';
 import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
 
 const PositionRangeChart = dynamic(() => import('@/components/liquidity/PositionRangeChart/PositionRangeChart').then(mod => mod.PositionRangeChart), { ssr: false });
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
-import { useNetwork } from '@/lib/network-context';
+import { chainIdForMode } from '@/lib/network-mode';
+import { useChainMismatch } from '@/hooks/useChainMismatch';
 import { getStoredUserSettings } from '@/hooks/useUserSettings';
 
 // Uniswap step-based executor
@@ -354,9 +355,12 @@ const ERC20_BALANCE_ABI = [
 export function ReviewExecuteModal() {
   const router = useRouter();
   const { address } = useAccount();
-  const publicClient = usePublicClient();
-  const { chainId, networkMode } = useNetwork();
-  const { state, closeReviewModal, reset, poolStateData } = useAddLiquidityContext();
+  const { state, closeReviewModal, reset, poolStateData, poolNetworkMode } = useAddLiquidityContext();
+  const { ensureChain } = useChainMismatch();
+  // Derive chain from pool — never use global context
+  const networkMode = poolNetworkMode ?? 'base';
+  const chainId = chainIdForMode(networkMode);
+  const publicClient = usePublicClient({ chainId });
 
   // Get transaction data from TxContext
   const {
@@ -385,11 +389,13 @@ export function ReviewExecuteModal() {
   // C4: Flow tracking for recovery
   const [flowId, setFlowId] = useState<string | undefined>(undefined);
 
-  // Get pool and token info
-  const pool = state.poolId ? getPoolById(state.poolId) : null;
-  const tokens = getAllTokens();
+  // Get pool and token info — use pool's networkMode so cross-chain lookups work
+  const pool = state.poolId ? getPoolById(state.poolId, networkMode) : null;
+  const tokens = getAllTokens(networkMode);
   const token0Config = pool ? tokens[pool.currency0.symbol] : null;
   const token1Config = pool ? tokens[pool.currency1.symbol] : null;
+  const token0Icon = pool ? resolveTokenIcon(pool.currency0.symbol) : '/tokens/placeholder.svg';
+  const token1Icon = pool ? resolveTokenIcon(pool.currency1.symbol) : '/tokens/placeholder.svg';
 
   // Determine if using zap mode (for Unified Yield pools)
   const isZapMode = isUnifiedYield && isZapEligiblePool(state.poolId) && state.depositMode === 'zap' && state.zapInputToken !== null;
@@ -407,6 +413,7 @@ export function ReviewExecuteModal() {
     hookAddress: (pool?.hooks ?? '0x0000000000000000000000000000000000000000') as Address,
     enabled: isZapMode && !!zapInputToken && !!zapInputAmount && !!pool?.hooks,
     refetchEnabled: !isExecuting, // Disable refetch during transaction execution
+    networkMode,
   });
 
   // Live countdown for zap refetch timer
@@ -437,12 +444,13 @@ export function ReviewExecuteModal() {
       ? zapPreviewQuery.data.swapAmount + zapPreviewQuery.data.remainingInputAmount
       : undefined,
     enabled: isZapMode && !!zapPreviewQuery.data && !!address && !!pool?.hooks,
+    networkMode,
   });
 
   // Map executor steps to UI steps for ProgressIndicator
   const uiSteps = useMemo(() => {
-    return mapExecutorStepsToUI(executorSteps, pool, token0Config?.icon, token1Config?.icon);
-  }, [executorSteps, pool, token0Config?.icon, token1Config?.icon]);
+    return mapExecutorStepsToUI(executorSteps, pool, token0Icon, token1Icon);
+  }, [executorSteps, pool, token0Icon, token1Icon]);
 
   // Compute currentStep for ProgressIndicator
   const currentStep = useMemo((): CurrentStepState | undefined => {
@@ -843,6 +851,10 @@ export function ReviewExecuteModal() {
   const handleConfirm = useCallback(async () => {
     if (!pool || !address) return;
 
+    // Ensure wallet is on the correct chain before any transaction
+    const chainOk = await ensureChain(chainId);
+    if (!chainOk) return;
+
     setView('executing');
     setIsExecuting(true);
     setError(null);
@@ -953,6 +965,7 @@ export function ReviewExecuteModal() {
           initialBalance1,
           inputAmountUSD,
           poolConfig: getZapPoolConfig(state.poolId!) ?? undefined,
+          targetChainId: chainId,
         });
 
         // Cast zap steps to TransactionStep[] for UI display
@@ -1055,7 +1068,7 @@ export function ReviewExecuteModal() {
       setView('review');
       setError(err?.message || 'Transaction failed');
     }
-  }, [pool, address, fetchAndBuildContext, executor, calculatedData, txInfo, state, chainId, isUnifiedYield, isZapMode, zapPreviewQuery.data, zapApprovalsQuery.approvals]);
+  }, [pool, address, fetchAndBuildContext, executor, calculatedData, txInfo, state, chainId, isUnifiedYield, isZapMode, zapPreviewQuery.data, zapApprovalsQuery.approvals, ensureChain]);
 
   // Clear error and retry
   const handleRetry = useCallback(() => {
@@ -1137,8 +1150,8 @@ export function ReviewExecuteModal() {
                 </div>
                 {/* Double token logo */}
                 <DoubleCurrencyLogo
-                  icon0={token0Config?.icon}
-                  icon1={token1Config?.icon}
+                  icon0={token0Icon}
+                  icon1={token1Icon}
                   symbol0={pool.currency0.symbol}
                   symbol1={pool.currency1.symbol}
                 />
@@ -1157,6 +1170,7 @@ export function ReviewExecuteModal() {
                     priceUpper={chartPrices.priceUpper}
                     height={80}
                     className="w-full"
+                    networkModeOverride={networkMode}
                   />
                 </div>
               )}
@@ -1207,7 +1221,7 @@ export function ReviewExecuteModal() {
                     {/* Input token - show actual values (already known) */}
                     <TokenInfoRow
                       symbol={state.zapInputToken === 'token0' ? pool.currency0.symbol : pool.currency1.symbol}
-                      icon={state.zapInputToken === 'token0' ? token0Config?.icon : token1Config?.icon}
+                      icon={state.zapInputToken === 'token0' ? token0Icon : token1Icon}
                       amount={zapInputAmount || '0'}
                       usdValue={usdValues?.[state.zapInputToken === 'token0' ? 'TOKEN0' : 'TOKEN1'] || '0.00'}
                     />
@@ -1230,9 +1244,22 @@ export function ReviewExecuteModal() {
                 )}
                 {/* Zap mode error state */}
                 {isZapMode && zapPreviewQuery.isError && !zapPreviewQuery.isFetching && (
-                  <div className="flex flex-col gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 overflow-hidden">
-                    <span className="text-sm text-red-400">Failed to calculate zap preview</span>
-                    <span className="text-xs text-muted-foreground break-words line-clamp-2">{zapPreviewQuery.error?.message}</span>
+                  <div
+                    className="flex flex-row items-center gap-3 rounded-lg border p-3 transition-colors overflow-hidden"
+                    style={{
+                      backgroundColor: 'rgba(255, 89, 60, 0.08)',
+                      borderColor: 'rgba(255, 89, 60, 0.2)',
+                    }}
+                  >
+                    <div
+                      className="flex items-center justify-center p-2 rounded-md shrink-0"
+                      style={{ backgroundColor: 'rgba(255, 89, 60, 0.12)' }}
+                    >
+                      <AlertCircle className="w-4 h-4" style={{ color: '#FF593C' }} />
+                    </div>
+                    <span className="text-sm font-medium min-w-0 break-words" style={{ color: '#FF593C' }}>
+                      {zapPreviewQuery.error?.message || 'Failed to calculate zap preview'}
+                    </span>
                   </div>
                 )}
                 {/* Zap mode: Show single input token with swap info */}
@@ -1241,7 +1268,7 @@ export function ReviewExecuteModal() {
                     {/* Input token */}
                     <TokenInfoRow
                       symbol={state.zapInputToken === 'token0' ? pool.currency0.symbol : pool.currency1.symbol}
-                      icon={state.zapInputToken === 'token0' ? token0Config?.icon : token1Config?.icon}
+                      icon={state.zapInputToken === 'token0' ? token0Icon : token1Icon}
                       amount={zapInputAmount || '0'}
                       usdValue={usdValues?.[state.zapInputToken === 'token0' ? 'TOKEN0' : 'TOKEN1'] || '0.00'}
                     />
@@ -1257,9 +1284,9 @@ export function ReviewExecuteModal() {
                         <span className="text-muted-foreground">Route</span>
                         <div className="flex items-center gap-1">
                           {/* Input token icon */}
-                          {(state.zapInputToken === 'token0' ? token0Config?.icon : token1Config?.icon) ? (
+                          {(state.zapInputToken === 'token0' ? token0Icon : token1Icon) ? (
                             <TokenImage
-                              src={(state.zapInputToken === 'token0' ? token0Config?.icon : token1Config?.icon)!}
+                              src={(state.zapInputToken === 'token0' ? token0Icon : token1Icon)!}
                               alt={zapInputToken || ''}
                               size={16}
                             />
@@ -1281,9 +1308,9 @@ export function ReviewExecuteModal() {
                             <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
                           </svg>
                           {/* Output token icon */}
-                          {(state.zapInputToken === 'token0' ? token1Config?.icon : token0Config?.icon) ? (
+                          {(state.zapInputToken === 'token0' ? token1Icon : token0Icon) ? (
                             <TokenImage
-                              src={(state.zapInputToken === 'token0' ? token1Config?.icon : token0Config?.icon)!}
+                              src={(state.zapInputToken === 'token0' ? token1Icon : token0Icon)!}
                               alt={state.zapInputToken === 'token0' ? pool?.currency1.symbol : pool?.currency0.symbol}
                               size={16}
                             />
@@ -1321,7 +1348,7 @@ export function ReviewExecuteModal() {
                     {parseFloat(depositPreview.amount0Formatted) > 0 && (
                       <TokenInfoRow
                         symbol={pool.currency0.symbol}
-                        icon={token0Config?.icon}
+                        icon={token0Icon}
                         amount={depositPreview.amount0Formatted}
                         usdValue={usdValues?.TOKEN0 || '0.00'}
                       />
@@ -1329,7 +1356,7 @@ export function ReviewExecuteModal() {
                     {parseFloat(depositPreview.amount1Formatted) > 0 && (
                       <TokenInfoRow
                         symbol={pool.currency1.symbol}
-                        icon={token1Config?.icon}
+                        icon={token1Icon}
                         amount={depositPreview.amount1Formatted}
                         usdValue={usdValues?.TOKEN1 || '0.00'}
                       />
@@ -1341,7 +1368,7 @@ export function ReviewExecuteModal() {
                     {state.amount0 && parseFloat(state.amount0) > 0 && (
                       <TokenInfoRow
                         symbol={pool.currency0.symbol}
-                        icon={token0Config?.icon}
+                        icon={token0Icon}
                         amount={state.amount0}
                         usdValue={usdValues?.TOKEN0 || '0.00'}
                       />
@@ -1349,7 +1376,7 @@ export function ReviewExecuteModal() {
                     {state.amount1 && parseFloat(state.amount1) > 0 && (
                       <TokenInfoRow
                         symbol={pool.currency1.symbol}
-                        icon={token1Config?.icon}
+                        icon={token1Icon}
                         amount={state.amount1}
                         usdValue={usdValues?.TOKEN1 || '0.00'}
                       />
@@ -1375,14 +1402,14 @@ export function ReviewExecuteModal() {
                   {refundedAmounts.token0 && parseFloat(refundedAmounts.token0) > 0 && (
                     <TokenInfoRow
                       symbol={pool.currency0.symbol}
-                      icon={token0Config?.icon}
+                      icon={token0Icon}
                       amount={refundedAmounts.token0}
                     />
                   )}
                   {refundedAmounts.token1 && parseFloat(refundedAmounts.token1) > 0 && (
                     <TokenInfoRow
                       symbol={pool.currency1.symbol}
-                      icon={token1Config?.icon}
+                      icon={token1Icon}
                       amount={refundedAmounts.token1}
                     />
                   )}

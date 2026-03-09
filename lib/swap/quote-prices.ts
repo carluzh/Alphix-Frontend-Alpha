@@ -4,7 +4,8 @@
 // Redis caching to reduce RPC calls and prevent rate limiting
 
 import type { NetworkMode } from '@/lib/pools-config'
-import { MAINNET_CHAIN_ID } from '@/lib/network-mode'
+import { modeForChainId } from '@/lib/network-mode'
+import { CHAIN_REGISTRY } from '@/lib/chain-registry'
 import { cacheService } from '@/lib/cache/CacheService'
 import { priceKeys } from '@/lib/cache/redis-keys'
 
@@ -12,21 +13,12 @@ import { priceKeys } from '@/lib/cache/redis-keys'
 const PRICE_TTL = { fresh: 60, stale: 300 }
 
 // Stablecoins that are always priced at $1.00
-const STABLECOINS_USD = new Set([
-  'USDC', 'USDS',           // Mainnet
-  'aUSDC', 'DAI',           // Mainnet (Aave-wrapped / base)
-  'atUSDC', 'atDAI',        // Testnet
-])
+const STABLECOINS_USD = new Set(['USDC', 'USDS', 'USDT'])
 
 // CoinGecko token ID mapping for fallback pricing
 const COINGECKO_IDS: Record<string, string> = {
   'ETH': 'ethereum',
-  'atETH': 'ethereum',
-  'aETH': 'ethereum',
   'WETH': 'weth',
-  'BTC': 'bitcoin',
-  'aBTC': 'bitcoin',
-  'WBTC': 'wrapped-bitcoin',
 }
 
 function isStablecoinUSD(symbol: string | null | undefined): boolean {
@@ -50,7 +42,7 @@ async function fetchPriceFromQuoter(
   chainId: number,
   networkMode: NetworkMode
 ): Promise<number> {
-  const quoteToken = networkMode === 'mainnet' ? 'USDC' : 'atUSDC'
+  const quoteToken = CHAIN_REGISTRY[networkMode].quoteToken
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 5000)
 
@@ -135,7 +127,7 @@ export async function getQuotePrice(
   }
 
   // Server-side: use Redis cache with stale-while-revalidate
-  const resolvedNetworkMode: NetworkMode = networkMode ?? (chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet')
+  const resolvedNetworkMode: NetworkMode = networkMode ?? (modeForChainId(chainId) ?? 'base')
   const cacheKey = priceKeys.token(symbol, resolvedNetworkMode)
 
   try {

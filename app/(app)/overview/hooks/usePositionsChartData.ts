@@ -13,9 +13,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useMemo } from "react";
 import { fetchPositionsChart } from "@/lib/backend-client";
 import { useSSEContext } from "@/lib/realtime";
-import { useNetwork } from "@/lib/network-context";
+import type { NetworkMode } from "@/lib/network-mode";
+import { ALL_MODES } from "@/lib/chain-registry";
 
 export type ChartPeriod = "DAY" | "WEEK" | "MONTH";
+
+const CHART_MODES = ALL_MODES;
 
 export interface PositionsChartPoint {
   timestamp: number;
@@ -46,7 +49,10 @@ interface UsePositionsChartDataResult {
 
 /**
  * Hook to fetch historical position values from AlphixBackend
- * with real-time updates via SSE
+ * with real-time updates via SSE.
+ *
+ * Fetches from ALL production chains and merges values at each timestamp
+ * so the chart reflects the total portfolio across Base + Arbitrum.
  */
 export function usePositionsChartData({
   address,
@@ -56,9 +62,8 @@ export function usePositionsChartData({
 }: UsePositionsChartDataParams): UsePositionsChartDataResult {
   const queryClient = useQueryClient();
   const { subscribeToSnapshots, isConnected } = useSSEContext();
-  const { networkMode } = useNetwork();
 
-  const queryKey = ["positions-chart", address, period, networkMode];
+  const queryKey = ["positions-chart", address, period, "all-chains"];
   // Use ref to avoid stale closure in subscription callback
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
@@ -74,23 +79,40 @@ export function usePositionsChartData({
         return [];
       }
 
-      const response = await fetchPositionsChart(address, period, networkMode);
+      // Fetch chart data from all chains in parallel
+      const results = await Promise.allSettled(
+        CHART_MODES.map(mode => fetchPositionsChart(address, period, mode))
+      );
 
-      if (!response.success) {
+      // Merge points by timestamp — sum values across chains
+      const valueByTimestamp = new Map<number, number>();
+      let minFrom = Infinity;
+      let maxTo = 0;
+
+      for (const result of results) {
+        if (result.status !== 'fulfilled' || !result.value.success) continue;
+        const response = result.value;
+        if (response.fromTimestamp < minFrom) minFrom = response.fromTimestamp;
+        if (response.toTimestamp > maxTo) maxTo = response.toTimestamp;
+        for (const point of response.points) {
+          const existing = valueByTimestamp.get(point.timestamp) || 0;
+          valueByTimestamp.set(point.timestamp, existing + point.positionsValue);
+        }
+      }
+
+      if (valueByTimestamp.size === 0) {
         timeRangeRef.current = null;
         return [];
       }
 
-      // Store the time range from backend
       timeRangeRef.current = {
-        from: response.fromTimestamp,
-        to: response.toTimestamp,
+        from: minFrom === Infinity ? 0 : minFrom,
+        to: maxTo,
       };
 
-      return response.points.map((point) => ({
-        timestamp: point.timestamp,
-        value: point.positionsValue,
-      }));
+      return Array.from(valueByTimestamp.entries())
+        .map(([timestamp, value]) => ({ timestamp, value }))
+        .sort((a, b) => a.timestamp - b.timestamp);
     },
     enabled: enabled && !!address,
     staleTime: 0, // Always refetch when period changes

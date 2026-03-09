@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { parseAbi, type Hex } from 'viem';
-import { getPoolSubgraphId, getAllPools, getStateViewAddress, getToken, getNetworkModeFromRequest } from '@/lib/pools-config';
+import { getPoolSubgraphId, getAllPools, getStateViewAddress, getToken } from '@/lib/pools-config';
+import { resolveNetworkMode } from '@/lib/network-mode';
 import { createNetworkClient } from '@/lib/viemClient';
 import { PoolStateSchema, validateApiResponse, GetPoolStateInputSchema, validateApiInput } from '@/lib/validation';
 
@@ -36,8 +37,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  // Get network mode from cookies
-  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+  const networkMode = resolveNetworkMode(req);
 
   // Input validation (Uniswap safeParse pattern)
   const inputValidation = validateApiInput(GetPoolStateInputSchema, req.query, 'get-pool-state');

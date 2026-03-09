@@ -15,7 +15,7 @@ import type { ValidatedTransactionRequest } from '../types';
 /**
  * Supported tokens for zap deposits
  */
-export type ZapToken = 'USDS' | 'USDC' | 'ETH';
+export type ZapToken = 'USDS' | 'USDC' | 'ETH' | 'USDT';
 
 /**
  * Token position in pool (matches Uniswap convention)
@@ -263,6 +263,8 @@ export interface ZapPoolSwapStep extends BaseZapStep {
   deadline: bigint;
   /** Swap source - pool (Universal Router) or kyberswap (aggregator) */
   swapSource?: 'pool' | 'kyberswap';
+  /** Target chain ID for the swap (pool's chain, not wallet's chain) */
+  targetChainId?: number;
 }
 
 /**
@@ -322,6 +324,8 @@ export interface UseZapPreviewParams {
   enabled?: boolean;
   /** Whether to enable auto-refetch (disable during execution) */
   refetchEnabled?: boolean;
+  /** Network mode for chain-specific routing */
+  networkMode?: import('@/lib/network-mode').NetworkMode;
 }
 
 // =============================================================================

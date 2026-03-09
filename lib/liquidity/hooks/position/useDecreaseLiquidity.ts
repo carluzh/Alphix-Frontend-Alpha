@@ -10,7 +10,8 @@ import { Token, Percent } from '@uniswap/sdk-core';
 import { V4_POSITION_MANAGER_ADDRESS, EMPTY_BYTES, V4_POSITION_MANAGER_ABI } from '@/lib/swap/swap-constants';
 import { getToken, TokenSymbol, getTokenSymbolByAddress, getTokenDefinitions } from '@/lib/pools-config';
 import { useNetwork } from '@/lib/network-context';
-import { baseSepolia, getExplorerTxUrl } from '@/lib/wagmiConfig';
+import { chainIdForMode } from '@/lib/network-mode';
+import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 import { getAddress, type Hex, BaseError, encodeAbiParameters, keccak256, formatUnits } from 'viem';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity/liquidity-utils';
 import { prefetchService } from '@/lib/prefetch-service';
@@ -41,16 +42,20 @@ const captureError = (
 interface UseDecreaseLiquidityProps {
   onLiquidityDecreased?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint; isFullBurn?: boolean }) => void;
   onFeesCollected?: (info?: { txHash?: `0x${string}`; blockNumber?: bigint }) => void;
+  /** Override networkMode (use position's chain instead of global context) */
+  networkModeOverride?: import('@/lib/network-mode').NetworkMode;
 }
 
 type DecreaseOptions = { slippageBps?: number; deadlineSeconds?: number };
 
-export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: UseDecreaseLiquidityProps) {
-  const { address: accountAddress, chainId } = useAccount();
-  const { networkMode } = useNetwork();
+export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected, networkModeOverride }: UseDecreaseLiquidityProps) {
+  const { address: accountAddress, chainId: walletChainId } = useAccount();
+  const { ensureChain } = useNetwork();
+  const networkMode = networkModeOverride ?? 'base';
+  const targetChainId = chainIdForMode(networkMode);
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
-  const publicClient = usePublicClient();
+  const publicClient = usePublicClient({ chainId: targetChainId });
   const { data: hash, writeContract, isPending: isDecreaseSendPending, error: decreaseSendError, reset: resetWriteContract } = useWriteContract();
   const { isLoading: isDecreaseConfirming, isSuccess: isDecreaseConfirmed, error: decreaseConfirmError, status: waitForTxStatus } = useWaitForTransactionReceipt({ hash });
 
@@ -96,9 +101,9 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
   }, []);
 
   const decreaseLiquidity = useCallback(async (positionData: DecreasePositionData, decreasePercentage: number, opts?: DecreaseOptions) => {
-    if (!accountAddress || !chainId) {
-      toast.error("Wallet Not Connected", { 
-        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), 
+    if (!accountAddress || !walletChainId) {
+      toast.error("Wallet Not Connected", {
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
         description: "Please connect your wallet and try again.",
         action: {
           label: "Open Ticket",
@@ -108,8 +113,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       return;
     }
     if (!V4_POSITION_MANAGER_ADDRESS) {
-      toast.error("Configuration Error", { 
-        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), 
+      toast.error("Configuration Error", {
+        icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
         description: "Position Manager address not set.",
         action: {
           label: "Open Ticket",
@@ -118,7 +123,11 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       });
       return;
     }
-    
+
+    // Ensure wallet is on the correct chain before submitting
+    const ok = await ensureChain(targetChainId);
+    if (!ok) return;
+
     // Store position data for fee refresh after transaction
     currentDecreasePositionRef.current = positionData;
 
@@ -172,8 +181,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       );
       const isPercentage = (decreasePercentage > 0 && decreasePercentage <= 100) && !userSpecifiedAmounts;
       
-      const token0Def = getToken(adjustedPositionData.token0Symbol);
-      const token1Def = getToken(adjustedPositionData.token1Symbol);
+      const token0Def = getToken(adjustedPositionData.token0Symbol, networkMode);
+      const token1Def = getToken(adjustedPositionData.token1Symbol, networkMode);
 
       if (!token0Def || !token1Def) {
         throw new Error("Token definitions not found for one or both tokens in the position.");
@@ -182,9 +191,9 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         throw new Error("Token addresses are missing in definitions.");
       }
 
-      // Revert to original chainId usage, rely on wagmi's type for Token constructor
-      const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol); 
-      const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol); 
+      // Use position's chain for Token constructor
+      const sdkToken0 = new Token(targetChainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol);
+      const sdkToken1 = new Token(targetChainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol); 
       const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
         ? [sdkToken0, sdkToken1]
         : [sdkToken1, sdkToken0];
@@ -206,15 +215,15 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       if (isPercentage && !userSpecifiedAmounts) {
         try {
           // 1) Load on-chain position details and resolve poolKey token metadata by ADDRESS (not UI order)
-          const details = await getPositionDetails(nftTokenId, chainId);
+          const details = await getPositionDetails(nftTokenId, targetChainId);
           const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
           const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
           if (!symC0 || !symC1) throw new Error('Token definitions not found for pool currencies');
           const defC0 = getToken(symC0, networkMode);
           const defC1 = getToken(symC1, networkMode);
           if (!defC0 || !defC1) throw new Error('Token configs missing for pool currencies');
-          const t0 = new Token(chainId, getAddress(details.poolKey.currency0), defC0.decimals, defC0.symbol);
-          const t1 = new Token(chainId, getAddress(details.poolKey.currency1), defC1.decimals, defC1.symbol);
+          const t0 = new Token(targetChainId, getAddress(details.poolKey.currency0), defC0.decimals, defC0.symbol);
+          const t1 = new Token(targetChainId, getAddress(details.poolKey.currency1), defC1.decimals, defC1.symbol);
 
           // 2) Build PoolKey and compute poolId to fetch state
           const keyTuple = [{
@@ -234,7 +243,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             ]}
           ], keyTuple as any);
           const poolId = keccak256(encoded) as Hex;
-          const state = await getPoolState(poolId, chainId);
+          const state = await getPoolState(poolId, targetChainId);
 
           // 3) Build Pool and Position
           // Build Pool and Position strictly per guide semantics
@@ -338,7 +347,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             functionName: 'multicall',
             args: [[calldata] as Hex[]],
             value: BigInt(value || 0),
-            chainId,
+            chainId: targetChainId,
           } as any, {
             onError: (error: any) => {
               // Extract user-friendly error message
@@ -384,7 +393,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         } else {
           // In-range: compute required liquidity from desired token amounts using current pool state; OOR: server calc
           try {
-            const details = await getPositionDetails(nftTokenId, chainId);
+            const details = await getPositionDetails(nftTokenId, targetChainId);
             const keyTuple = [{
               currency0: getAddress(details.poolKey.currency0),
               currency1: getAddress(details.poolKey.currency1),
@@ -402,7 +411,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
               ]}
             ], keyTuple as any);
             const poolId = keccak256(encoded) as Hex;
-            const state = await getPoolState(poolId, chainId);
+            const state = await getPoolState(poolId, targetChainId);
 
             const inRange = state.tick >= details.tickLower && state.tick <= details.tickUpper;
 
@@ -486,7 +495,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
                 inputTokenSymbol: inputSide.symbol,
                 userTickLower: adjustedPositionData.tickLower,
                 userTickUpper: adjustedPositionData.tickUpper,
-                chainId,
+                chainId: targetChainId,
               });
               liquidityJSBI = JSBI.BigInt(result.liquidity);
             }
@@ -506,7 +515,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         let outOfRangeAbove = false;
         let inRange = false;
         try {
-          const details = await getPositionDetails(nftTokenId, chainId);
+          const details = await getPositionDetails(nftTokenId, targetChainId);
           const keyTuple = [{
             currency0: getAddress(details.poolKey.currency0),
             currency1: getAddress(details.poolKey.currency1),
@@ -524,7 +533,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
             ]}
           ], keyTuple as any);
           const poolId = keccak256(encoded) as Hex;
-          const state = await getPoolState(poolId, chainId);
+          const state = await getPoolState(poolId, targetChainId);
           outOfRangeBelow = state.tick < details.tickLower;
           outOfRangeAbove = state.tick > details.tickUpper;
           inRange = !outOfRangeBelow && !outOfRangeAbove;
@@ -533,7 +542,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         // Map user-entered desired amounts to poolKey token sides
         const userDesired0Raw = safeParseUnits(adjustedPositionData.decreaseAmount0 || '0', token0Def.decimals);
         const userDesired1Raw = safeParseUnits(adjustedPositionData.decreaseAmount1 || '0', token1Def.decimals);
-        const { poolKey } = await getPositionDetails(nftTokenId, chainId);
+        const { poolKey } = await getPositionDetails(nftTokenId, targetChainId);
         const poolC0 = getAddress(poolKey.currency0);
         const poolC1 = getAddress(poolKey.currency1);
         const uiT0Addr = getAddress(token0Def.address);
@@ -626,7 +635,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         abi: V4_POSITION_MANAGER_ABI,
         functionName: 'modifyLiquidities',
         args: [unlockData as Hex, deadline],
-        chainId: chainId,
+        chainId: targetChainId,
       }, {
         onError: (error: any) => {
           // Extract user-friendly error message
@@ -679,7 +688,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
       });
       setIsDecreasing(false);
     }
-  }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]);
+  }, [accountAddress, targetChainId, writeContract, resetWriteContract, getTokenIdFromPosition]);
 
   useEffect(() => {
     if (decreaseSendError) {
@@ -709,7 +718,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
   // Track transaction when hash is received
   useEffect(() => {
-    if (!hash || !chainId || !accountAddress) return;
+    if (!hash || !targetChainId || !accountAddress) return;
     const hashString = hash.toString();
     if (trackedHashes.current.has(hashString)) return;
     trackedHashes.current.add(hashString);
@@ -721,17 +730,17 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
 
     const typeInfo = {
       type: isCollect ? TransactionType.CollectFees : TransactionType.LiquidityDecrease,
-      currency0Id: posData ? `${chainId}-${getToken(posData.token0Symbol)?.address ?? ''}` : '',
-      currency1Id: posData ? `${chainId}-${getToken(posData.token1Symbol)?.address ?? ''}` : '',
+      currency0Id: posData ? `${targetChainId}-${getToken(posData.token0Symbol, networkMode)?.address ?? ''}` : '',
+      currency1Id: posData ? `${targetChainId}-${getToken(posData.token1Symbol, networkMode)?.address ?? ''}` : '',
       currency0AmountRaw: posData?.decreaseAmount0 ?? '0',
       currency1AmountRaw: posData?.decreaseAmount1 ?? '0',
     } as LiquidityDecreaseTransactionInfo;
 
     addTransaction(
-      { hash, chainId, from: accountAddress, to: V4_POSITION_MANAGER_ADDRESS } as any,
+      { hash, chainId: targetChainId, from: accountAddress, to: V4_POSITION_MANAGER_ADDRESS } as any,
       typeInfo
     );
-  }, [hash, chainId, accountAddress, addTransaction]);
+  }, [hash, targetChainId, accountAddress, addTransaction]);
 
   useEffect(() => {
     if (!hash) return;
@@ -795,13 +804,13 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         }
 
         try {
-          if (accountAddress && chainId) {
+          if (accountAddress && targetChainId) {
             const isCollect = lastWasCollectOnly.current;
             const positionId = isCollect ? lastCollectPositionId.current : lastDecreaseData.current?.tokenId;
             const poolId = lastDecreaseData.current?.poolId;
             invalidateAfterTx(null, {
               owner: accountAddress,
-              chainId,
+              chainId: targetChainId,
               poolId: poolId,
               positionIds: positionId ? [String(positionId)] : undefined,
               optimisticUpdates: isCollect && positionId ? { clearFees: { positionId: String(positionId) } } : undefined,
@@ -834,9 +843,9 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
     decreaseLiquidity,
     // Claim fees only: decrease 0 liquidity, take pair, optional sweep
     claimFees: useCallback(async (tokenIdLike: string | number) => {
-      if (!accountAddress || !chainId) {
-        toast.error("Wallet Not Connected", { 
-          icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), 
+      if (!accountAddress || !walletChainId) {
+        toast.error("Wallet Not Connected", {
+          icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
           description: "Please connect your wallet and try again.",
           action: {
             label: "Open Ticket",
@@ -846,8 +855,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         return;
       }
       if (!V4_POSITION_MANAGER_ADDRESS) {
-        toast.error("Configuration Error", { 
-          icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }), 
+        toast.error("Configuration Error", {
+          icon: React.createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
           description: "Position Manager address not set.",
           action: {
             label: "Open Ticket",
@@ -856,6 +865,10 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         });
         return;
       }
+
+      // Ensure wallet is on the correct chain before submitting
+      const ok = await ensureChain(chainIdForMode(networkMode));
+      if (!ok) return;
 
       setIsDecreasing(true);
       lastWasCollectOnly.current = true;
@@ -875,7 +888,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         });
         lastCollectPositionId.current = nftTokenId.toString();
 
-        const details = await getPositionDetails(nftTokenId, chainId);
+        const details = await getPositionDetails(nftTokenId, targetChainId);
         const token0Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
         const token1Sym = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
         if (!token0Sym || !token1Sym) throw new Error('Token symbols not found');
@@ -883,8 +896,8 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         const token1Def = getToken(token1Sym, networkMode);
         if (!token0Def || !token1Def) throw new Error('Token definitions missing');
 
-        const sdkToken0 = new Token(chainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol);
-        const sdkToken1 = new Token(chainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol);
+        const sdkToken0 = new Token(targetChainId, getAddress(token0Def.address), token0Def.decimals, token0Def.symbol);
+        const sdkToken1 = new Token(targetChainId, getAddress(token1Def.address), token1Def.decimals, token1Def.symbol);
         const [sortedSdkToken0, sortedSdkToken1] = sdkToken0.sortsBefore(sdkToken1)
           ? [sdkToken0, sdkToken1]
           : [sdkToken1, sdkToken0];
@@ -913,7 +926,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
           abi: V4_POSITION_MANAGER_ABI,
           functionName: 'modifyLiquidities',
           args: [unlockData as Hex, deadline],
-          chainId: chainId,
+          chainId: targetChainId,
         }, {
           onError: (error: any) => {
             // Extract user-friendly error message
@@ -947,7 +960,7 @@ export function useDecreaseLiquidity({ onLiquidityDecreased, onFeesCollected }: 
         });
         setIsDecreasing(false);
       }
-    }, [accountAddress, chainId, writeContract, resetWriteContract, getTokenIdFromPosition]),
+    }, [accountAddress, targetChainId, writeContract, resetWriteContract, getTokenIdFromPosition]),
     isLoading: isDecreasing || isDecreaseSendPending || isDecreaseConfirming,
     isSuccess: isDecreaseConfirmed,
     error: decreaseSendError || decreaseConfirmError,

@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { getAddress } from "viem";
-import { getToken, getTokenDefinitions, type TokenSymbol, type NetworkMode } from "./pools-config";
+import { getToken, resolveTokenIcon, getTokenDefinitions, type TokenSymbol, type NetworkMode } from "./pools-config";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -28,7 +28,7 @@ export function shortenAddress(address: string, chars = 4): string {
 }
 
 // Token display utilities - Format to actual token decimals (up to 6 max)
-export const formatTokenDisplayAmount = (amount: string, tokenSymbol?: TokenSymbol, networkMode: NetworkMode = 'mainnet') => {
+export const formatTokenDisplayAmount = (amount: string, tokenSymbol?: TokenSymbol, networkMode: NetworkMode = 'base') => {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
   if (num === 0) return "0";
@@ -50,28 +50,16 @@ export const formatTokenDisplayAmount = (amount: string, tokenSymbol?: TokenSymb
   return formatted.replace(/\.?0+$/, '') || "0";
 };
 
-export const getTokenIcon = (symbol?: string, networkMode: NetworkMode = 'mainnet') => {
-  if (!symbol) return "/placeholder-logo.svg";
-
-  const tokenConfig = getToken(symbol as TokenSymbol, networkMode);
-  if (tokenConfig?.icon) {
-    return tokenConfig.icon;
-  }
-
-  return "/placeholder-logo.svg";
+export const getTokenIcon = (symbol?: string, _networkMode?: NetworkMode) => {
+  return resolveTokenIcon(symbol ?? '');
 };
 
 const DEFAULT_TOKEN_COLOR = "#6B7280";
 
-export const getTokenColor = (symbol?: string, networkMode: NetworkMode = 'mainnet'): string => {
+export const getTokenColor = (symbol?: string, networkMode?: NetworkMode): string => {
   if (!symbol) return DEFAULT_TOKEN_COLOR;
-
-  const tokenConfig = getToken(symbol as TokenSymbol, networkMode);
-  if (tokenConfig?.color) {
-    return tokenConfig.color;
-  }
-
-  return DEFAULT_TOKEN_COLOR;
+  const config = getToken(symbol as TokenSymbol, networkMode);
+  return config?.color || DEFAULT_TOKEN_COLOR;
 };
 
 export const sanitizeDecimalInput = (input: string) => {
@@ -97,7 +85,7 @@ export const debounce = <T extends (...args: any[]) => any>(func: T, waitFor: nu
 };
 
 // Token symbol mapping utility
-export const getTokenSymbolByAddress = (address: string, networkMode: NetworkMode = 'mainnet'): TokenSymbol | null => {
+export const getTokenSymbolByAddress = (address: string, networkMode: NetworkMode = 'base'): TokenSymbol | null => {
   const normalizedAddress = address.toLowerCase();
   const tokenDefinitions = getTokenDefinitions(networkMode);
   for (const [symbol, tokenConfig] of Object.entries(tokenDefinitions)) {

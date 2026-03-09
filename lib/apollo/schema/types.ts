@@ -8,7 +8,7 @@
 /**
  * Supported blockchain networks
  */
-export type Chain = 'BASE' | 'BASE_SEPOLIA'
+export type Chain = 'BASE' | 'ARBITRUM'
 
 /**
  * Token type - represents a cryptocurrency token

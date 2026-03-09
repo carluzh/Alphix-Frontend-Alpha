@@ -11,7 +11,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useAccount } from 'wagmi';
 import { toast } from 'sonner';
 import { getToken, TokenSymbol } from '@/lib/pools-config';
-import { useNetwork } from '@/lib/network-context';
+import { modeForChainId } from '@/lib/network-mode';
 import { type Address } from 'viem';
 
 import {
@@ -93,7 +93,8 @@ export interface CollectFeesParams {
 export function useStepBasedIncreaseLiquidity(props: UseStepBasedIncreaseProps = {}) {
   const { onSuccess, onError, onStepChange } = props;
   const { address, chainId } = useAccount();
-  const { networkMode } = useNetwork();
+  // Derive networkMode from wallet chainId — ensureChain() is called before tx
+  const networkMode = chainId ? modeForChainId(chainId) ?? undefined : undefined;
 
   const [isLoading, setIsLoading] = useState(false);
   const [apiResponse, setApiResponse] = useState<MintTxApiResponse | null>(null);
@@ -236,7 +237,7 @@ export function useStepBasedIncreaseLiquidity(props: UseStepBasedIncreaseProps =
 export function useStepBasedDecreaseLiquidity(props: UseStepBasedDecreaseProps = {}) {
   const { onSuccess, onError, onStepChange } = props;
   const { address, chainId } = useAccount();
-  const { networkMode } = useNetwork();
+  const networkMode = chainId ? modeForChainId(chainId) ?? undefined : undefined;
 
   const [isLoading, setIsLoading] = useState(false);
   const [steps, setSteps] = useState<TransactionStep[]>([]);
@@ -364,7 +365,7 @@ export function useStepBasedDecreaseLiquidity(props: UseStepBasedDecreaseProps =
 export function useStepBasedCollectFees(props: UseStepBasedCollectProps = {}) {
   const { onSuccess, onError } = props;
   const { address, chainId } = useAccount();
-  const { networkMode } = useNetwork();
+  const networkMode = chainId ? modeForChainId(chainId) ?? undefined : undefined;
 
   const [isLoading, setIsLoading] = useState(false);
 

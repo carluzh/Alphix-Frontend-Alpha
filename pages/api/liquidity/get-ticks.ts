@@ -1,8 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-import { getPoolSubgraphId, getNetworkModeFromRequest } from '../../../lib/pools-config'
+import { getPoolSubgraphId } from '../../../lib/pools-config'
+import { resolveNetworkMode, type NetworkMode } from '../../../lib/network-mode'
 import { getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper'
 import { cacheService } from '@/lib/cache/CacheService'
 import { poolKeys } from '@/lib/cache/redis-keys'
+import { CHAIN_REGISTRY } from '@/lib/chain-registry'
 
 // Cache TTL configuration (in seconds)
 const CACHE_TTL = { fresh: 300, stale: 3600 } // 5min fresh, 1hr stale
@@ -22,12 +24,13 @@ type TickRow = {
 }
 
 /**
- * Fetch tick data from the Uniswap Gateway API (mainnet only).
+ * Fetch tick data from the Uniswap Gateway API.
  * Uses the v4Pool query with spoofed Origin header.
  */
-async function fetchUniswapGatewayTicks(poolId: string): Promise<TickRow[] | null> {
+async function fetchUniswapGatewayTicks(poolId: string, networkMode: NetworkMode): Promise<TickRow[] | null> {
+  const chain = CHAIN_REGISTRY[networkMode]?.apolloChain ?? 'BASE'
   const query = `query GetPoolTicks($poolId: String!) {
-    v4Pool(chain: BASE, poolId: $poolId) {
+    v4Pool(chain: ${chain}, poolId: $poolId) {
       ticks {
         tickIdx
         liquidityGross
@@ -75,9 +78,9 @@ async function fetchUniswapGatewayTicks(poolId: string): Promise<TickRow[] | nul
 }
 
 /**
- * Fetch tick data from subgraph (testnet fallback).
+ * Fetch tick data from subgraph.
  */
-async function fetchSubgraphTicks(poolId: string, limit: number, networkMode: 'testnet'): Promise<TickRow[] | null> {
+async function fetchSubgraphTicks(poolId: string, limit: number, networkMode: NetworkMode): Promise<TickRow[] | null> {
   const subgraphUrl = getUniswapV4SubgraphUrl(networkMode)
   const query = `
     query GetTicks($pool: Bytes!, $first: Int!) {
@@ -134,11 +137,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method Not Allowed' })
   }
 
-  // Get network mode from cookies
-  const networkMode = getNetworkModeFromRequest(req.headers.cookie)
-
   try {
     const { poolId, first = 500 } = req.body ?? {}
+
+    const networkMode = resolveNetworkMode(req)
 
     if (!poolId || typeof poolId !== 'string') {
       return res.status(400).json({ error: 'Missing poolId in body' })
@@ -152,22 +154,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       poolKeys.ticks(apiId, networkMode),
       CACHE_TTL,
       async () => {
-        if (networkMode === 'mainnet') {
-          // Mainnet: Use Uniswap Gateway API
-          const ticks = await fetchUniswapGatewayTicks(apiId)
-          if (ticks !== null) {
-            return ticks
-          }
-          // If Gateway fails, throw to surface the error
-          throw new Error('Uniswap Gateway failed to return tick data')
-        } else {
-          // Testnet: Use subgraph
-          const ticks = await fetchSubgraphTicks(apiId, limit, networkMode)
-          if (ticks !== null) {
-            return ticks
-          }
-          throw new Error('Subgraph failed to return tick data')
+        // Try Uniswap Gateway API first (supports all production chains)
+        const gatewayTicks = await fetchUniswapGatewayTicks(apiId, networkMode)
+        if (gatewayTicks !== null) {
+          return gatewayTicks
         }
+
+        // Fallback to subgraph
+        const subgraphTicks = await fetchSubgraphTicks(apiId, limit, networkMode)
+        if (subgraphTicks !== null) {
+          return subgraphTicks
+        }
+
+        throw new Error(`No tick data available for pool ${apiId} on ${networkMode}`)
       },
       // Only cache if we have actual data
       { shouldCache: (data: any) => Array.isArray(data) && data.length > 0 }

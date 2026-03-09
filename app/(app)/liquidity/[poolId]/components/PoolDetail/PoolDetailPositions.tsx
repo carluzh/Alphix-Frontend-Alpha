@@ -165,6 +165,7 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
                   poolAPR: poolAPR > 0 ? poolAPR : null,
                 }}
                 onClick={() => onPositionClick(position)}
+                positionNetworkMode={poolConfig?.networkMode}
               />
             );
           } else if (isV4Position(position)) {
@@ -183,6 +184,7 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
                 blockTimestamp={position.blockTimestamp}
                 lastTimestamp={position.lastTimestamp}
                 isOptimisticallyUpdating={position.isOptimisticallyUpdating}
+                positionNetworkMode={poolConfig?.networkMode}
               />
             );
           } else {

@@ -6,7 +6,7 @@ import { parseUnits, getAddress, parseAbi, type Hex } from "viem";
 import { createNetworkClient } from "@/lib/viemClient";
 import { STATE_VIEW_ABI } from "@/lib/abis/state_view_abi";
 import { getToken, TokenSymbol, getStateViewAddress, getPoolByTokens } from "@/lib/pools-config";
-import { MAINNET_CHAIN_ID, type NetworkMode } from "@/lib/network-mode";
+import { modeForChainId, type NetworkMode } from "@/lib/network-mode";
 
 interface CalculateLiquidityParams {
   token0Symbol: TokenSymbol;
@@ -101,7 +101,7 @@ export async function calculateLiquidityParameters(
   } = params;
 
   // Derive network mode from chainId
-  const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+  const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
   const publicClient = createNetworkClient(networkMode);
 
   const token0Config = getToken(token0Symbol, networkMode);

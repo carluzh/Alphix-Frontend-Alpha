@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next'
-import mainnetPools from '../config/pools.json'
+import basePools from '../config/pools.json'
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://alphix.fi'
@@ -13,7 +13,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { route: '/swap', priority: 0.7 },
   ]
 
-  const poolRoutes = mainnetPools.pools
+  const poolRoutes = basePools.pools
     .filter(pool => pool.enabled)
     .map(pool => ({
       route: `/liquidity/${pool.id}`,
