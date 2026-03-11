@@ -64,6 +64,7 @@ type Args = {
 
   // Aggregator integration
   userAddress?: string // For Kyberswap executable calldata
+  networkMode?: import("@/lib/network-mode").NetworkMode
 }
 
 export const formatCurrency = (valueString: string): string => {
@@ -134,6 +135,7 @@ export function useSwapTrade({
   isAutoSlippage,
   updateAutoSlippage,
   userAddress,
+  networkMode,
 }: Args) {
   const {
     routeInfo,
@@ -146,6 +148,7 @@ export function useSwapTrade({
     currentRoute,
     setCurrentRoute,
     setSelectedPoolIndexForChart,
+    networkMode,
   })
 
   // Convert slippage percentage to basis points (e.g., 0.5% -> 50 bps)
@@ -293,8 +296,6 @@ export function useSwapTrade({
   const calculatedValues: CalculatedValues = useMemo(() => {
     const fromValueNum = parseFloat(fromAmount || "0")
     const fromTokenUsdPrice = fromToken.usdPrice || 0
-    const canQuoteOnTargetChain = currentChainId === targetChainId || !isConnected
-
     if (quoteError) {
       return {
         fromTokenAmount: formatTokenAmountDisplay(fromAmount),
@@ -311,29 +312,25 @@ export function useSwapTrade({
 
     const updatedFeesArray: FeeDetail[] = []
 
-    if (canQuoteOnTargetChain) {
-      if (quoteLoading) {
-        updatedFeesArray.push({ name: "Fee", value: "...", type: "percentage" })
-      } else if (routeError) {
-        updatedFeesArray.push({
-          name: "Fee",
-          value: routeError.includes("No route") ? "No Route Available" : "Fee N/A",
-          type: "percentage",
-        })
-      } else if (dynamicFeeBps !== null) {
-        updatedFeesArray.push({
-          name: "Fee",
-          value: `${(dynamicFeeBps / 100).toFixed(2)}%`,
-          type: "percentage",
-        })
-      } else {
-        updatedFeesArray.push({ name: "Fee", value: "N/A", type: "percentage" })
-      }
+    if (quoteLoading) {
+      updatedFeesArray.push({ name: "Fee", value: "...", type: "percentage" })
+    } else if (routeError) {
+      updatedFeesArray.push({
+        name: "Fee",
+        value: routeError.includes("No route") ? "No Route Available" : "Fee N/A",
+        type: "percentage",
+      })
+    } else if (dynamicFeeBps !== null) {
+      updatedFeesArray.push({
+        name: "Fee",
+        value: `${(dynamicFeeBps / 100).toFixed(2)}%`,
+        type: "percentage",
+      })
     } else {
       updatedFeesArray.push({ name: "Fee", value: "N/A", type: "percentage" })
     }
 
-    if (fromValueNum > 0 && canQuoteOnTargetChain && dynamicFeeBps !== null) {
+    if (fromValueNum > 0 && dynamicFeeBps !== null) {
       const feeRate = dynamicFeeBps / 100
       const totalFeeInUsd = fromValueNum * fromTokenUsdPrice * (feeRate / 100)
       const feeValueDisplay =
@@ -363,16 +360,13 @@ export function useSwapTrade({
       minimumReceived: formatTokenAmountDisplay(minReceivedAmount.toString()),
     }
   }, [
-    currentChainId,
     currentSlippage,
     dynamicFeeBps,
     routeError,
     quoteLoading,
     fromAmount,
     fromToken.usdPrice,
-    isConnected,
     quoteError,
-    targetChainId,
     toAmount,
     toToken.usdPrice,
   ])

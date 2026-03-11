@@ -50,6 +50,8 @@ interface IncreaseLiquidityContextType {
   setDepositMode: (mode: UnifiedYieldDepositMode) => void;
   /** Set zap input token */
   setZapInputToken: (token: 'token0' | 'token1' | null) => void;
+  /** Reset form state (amounts, deposit mode) back to initial values */
+  resetForm: () => void;
 }
 
 const IncreaseLiquidityContext = createContext<IncreaseLiquidityContextType | null>(null);
@@ -122,6 +124,25 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
     }));
   }, []);
 
+  const resetForm = useCallback(() => {
+    setStep(IncreaseLiquidityStep.Input);
+    setIncreaseLiquidityState({
+      position,
+      exactField: "TOKEN0",
+      exactAmount: initialAmount0,
+      depositMode: initialDepositMode,
+      zapInputToken: initialZapInputToken,
+    });
+    // Preserve currencyBalances — clearing them causes false "Insufficient Balance"
+    // because the balance-populating effect in TxContext won't re-run (deps unchanged)
+    setDerivedInfo((prev) => ({
+      formattedAmounts: { TOKEN0: initialAmount0, TOKEN1: initialAmount1 },
+      currencyAmounts: {},
+      currencyAmountsUSDValue: {},
+      currencyBalances: prev.currencyBalances,
+    }));
+  }, [position, initialAmount0, initialAmount1, initialDepositMode, initialZapInputToken]);
+
   const hasValidAmounts = useMemo(() => {
     const amt0 = parseFloat(derivedInfo.formattedAmounts?.TOKEN0 || "0");
     const amt1 = parseFloat(derivedInfo.formattedAmounts?.TOKEN1 || "0");
@@ -160,7 +181,8 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
     zapInputToken: increaseLiquidityState.zapInputToken,
     setDepositMode,
     setZapInputToken,
-  }), [step, increaseLiquidityState, derivedInfo, hasValidAmounts, isOverBalance0, isOverBalance1, isUnifiedYield, isZapEligible, setDepositMode, setZapInputToken]);
+    resetForm,
+  }), [step, increaseLiquidityState, derivedInfo, hasValidAmounts, isOverBalance0, isOverBalance1, isUnifiedYield, isZapEligible, setDepositMode, setZapInputToken, resetForm]);
 
   return <IncreaseLiquidityContext.Provider value={value}>{children}</IncreaseLiquidityContext.Provider>;
 }

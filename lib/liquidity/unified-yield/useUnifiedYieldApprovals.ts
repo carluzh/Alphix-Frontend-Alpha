@@ -107,6 +107,7 @@ export function useUnifiedYieldApprovals(
     abi: ERC20_ABI,
     functionName: 'allowance',
     args: [userAddress as `0x${string}`, hookAddress as `0x${string}`],
+    blockTag: 'latest',
     query: {
       enabled:
         enabled &&
@@ -127,6 +128,7 @@ export function useUnifiedYieldApprovals(
     abi: ERC20_ABI,
     functionName: 'allowance',
     args: [userAddress as `0x${string}`, hookAddress as `0x${string}`],
+    blockTag: 'latest',
     query: {
       enabled:
         enabled &&

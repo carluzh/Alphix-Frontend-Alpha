@@ -479,7 +479,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
               setIsHovering(false);
             }}
           >
-            {showLoadingSkeleton || !isContentStable ? (
+            {isActuallyLoading ? (
               <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
                 <div className="animate-pulse">
                   <Image 

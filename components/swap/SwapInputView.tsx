@@ -201,10 +201,10 @@ export function SwapInputView({
 
   const swapDisabledDueToBalance = fromToken
     ? parseFloat(fromAmount || "0") > 0 &&
-      (
-        isNaN(parseFloat(fromToken.balance || "0")) ||
-        parseFloat(fromTokenRawBalance || fromToken.balance || "0") < parseFloat(fromAmount || "0") * 0.999999
-      )
+      (() => {
+        const bal = parseFloat(fromTokenRawBalance || fromToken.balance || "0");
+        return isNaN(bal) || bal < parseFloat(fromAmount || "0") * 0.999999;
+      })()
     : false;
 
   const isSwapBaseDisabled = actionButtonDisabled || trade.quoteLoading;
@@ -215,8 +215,8 @@ export function SwapInputView({
       key="input"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      exit={{ opacity: 0, y: -20 }}
-      transition={{ duration: 0.2 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
       data-swap-container="true"
     >
       {/* Sell Section */}
@@ -284,14 +284,13 @@ export function SwapInputView({
             opacity: 0;
           }
         `}} />
-        <div className="input-gradient-hover">
-          <motion.div
+        <motion.div className="input-gradient-hover" animate={wiggleControls}>
+          <div
             ref={sellCardRef}
             className={cn(
               "relative z-[1] group swap-card rounded-lg bg-surface p-4 border transition-colors overflow-hidden",
               isSellInputFocused ? "border-sidebar-primary" : "border-sidebar-border/60"
             )}
-            animate={wiggleControls}
             style={{ cursor: 'default' }}
             onClick={(e) => {
               // Open token selector when clicking on the left side of the card (outside the input)
@@ -420,8 +419,8 @@ export function SwapInputView({
                 </div>
               </div>
             </div>
-          </motion.div>
           </div>
+          </motion.div>
       </div>
 
       {/* Arrow button — overlaps both Sell and Buy cards (Uniswap-style) */}
@@ -971,30 +970,21 @@ export function SwapInputView({
 
       <div className="mt-4 h-10">
         {!isMounted ? null : isConnected ? (
-          currentChainId !== TARGET_CHAIN_ID && onNetworkSwitch ? (
-            <Button
-              className="w-full text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary"
-              onClick={onNetworkSwitch}
-            >
-              {actionButtonText}
-            </Button>
-          ) : (
-            <Button
-              className={cn(
-                "w-full",
-                isSwapBaseDisabled
-                  ? "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 text-white/75"
-                  : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary",
-                isSwapBaseDisabled ? (trade.quoteLoading ? "cursor-wait" : "cursor-default") : null
-              )}
-              onClick={handleSwap}
-              disabled={isSwapDisabled}
-              aria-busy={trade.quoteLoading}
-              style={isSwapBaseDisabled ? { backgroundImage: 'url(/patterns/button-wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
-            >
-              {actionButtonText}
-            </Button>
-          )
+          <Button
+            className={cn(
+              "w-full",
+              isSwapBaseDisabled
+                ? "relative border border-primary bg-button px-3 text-sm font-medium transition-all duration-200 overflow-hidden hover:brightness-110 hover:border-white/30 !opacity-100 text-white/75"
+                : "text-sidebar-primary border border-sidebar-primary bg-button-primary hover-button-primary",
+              isSwapBaseDisabled ? (trade.quoteLoading ? "cursor-wait" : "cursor-default") : null
+            )}
+            onClick={handleSwap}
+            disabled={isSwapDisabled}
+            aria-busy={trade.quoteLoading}
+            style={isSwapBaseDisabled ? { backgroundImage: 'url(/patterns/button-wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+          >
+            {actionButtonText}
+          </Button>
         ) : (
           <button
             type="button"

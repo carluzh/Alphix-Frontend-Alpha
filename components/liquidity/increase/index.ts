@@ -25,6 +25,4 @@ export {
 } from './IncreaseLiquidityTxContext';
 
 // Components
-export { IncreaseLiquidityForm } from './IncreaseLiquidityForm';
-export { IncreaseLiquidityReview } from './IncreaseLiquidityReview';
 export { IncreaseLiquidityModal, default } from './IncreaseLiquidityModal';

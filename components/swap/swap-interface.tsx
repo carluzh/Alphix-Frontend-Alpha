@@ -4,16 +4,11 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
-  CheckIcon,
-  FileTextIcon,
-  ActivityIcon,
-  WalletIcon,
 } from "lucide-react"
-import { IconMinus, IconBadgeCheck2, IconCoins, IconRefreshClockwise } from "nucleo-micro-bold-essential"
 import { useAccount, useBalance } from "wagmi"
 import { motion, AnimatePresence } from "framer-motion"
 import React from "react"
-import { chainIdForMode, getChainDisplayName, type NetworkMode } from "@/lib/network-mode";
+import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import { ALL_MODES } from "@/lib/chain-registry";
 import { toast } from "sonner";
 import type { Address } from "viem"
@@ -41,7 +36,6 @@ import {
 } from "@/lib/pools-config"
 import { useNetwork } from "@/lib/network-context"
 import { useChainMismatch } from "@/hooks/useChainMismatch"
-import { useSwapExecution, type SwapProgressState } from "./useSwapExecution"
 import { useSwapTrade } from "./useSwapTrade"
 import { useFeeHistory, type FeeHistoryPoint } from "./useFeeHistory"
 import { swapStore, useSwapStore } from "./swapStore"
@@ -55,13 +49,10 @@ const DynamicFeeChartPreview = dynamic(() => import("../dynamic-fee-chart-previe
 // Deprecated cache functions removed - dynamic fee fetching happens directly via API
 import { SwapRoute } from "@/lib/swap/routing-engine";
 
-// Import the new view components
 import { SwapInputView } from './SwapInputView';
-// DEPRECATED: Old stepwise flow - kept for reference
-// import { SwapReviewView } from './SwapReviewView';
-// import { SwapSuccessView } from './SwapSuccessView';
 import { SwapExecuteModal } from './SwapExecuteModal';
 import { SwapRoutePreview } from './SwapRoutePreview';
+import { SwapTokenSelectorPanel } from './SwapTokenSelectorPanel';
 import type { TokenSelectorToken } from './TokenSelector';
 
 const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DAI' => {
@@ -77,8 +68,6 @@ const getTokenPriceMapping = (tokenSymbol: string): 'BTC' | 'USDC' | 'ETH' | 'DA
       return 'USDC';
   }
 };
-
-export type { SwapProgressState } from "./useSwapExecution";
 
 // Enhanced Token interface — includes chain metadata for cross-chain token selector
 export interface Token {
@@ -159,8 +148,6 @@ const getInitialTokens = (prices?: { BTC: number; USDC: number; ETH: number }) =
   return { defaultFrom, defaultTo, availableTokens };
 };
 
-// Swap progress state machine lives in `useSwapExecution` (re-exported above).
-
 // Transaction information for success state
 export interface SwapTxInfo {
   hash: string;
@@ -212,10 +199,29 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const swapNetworkMode: NetworkMode = (fromToken as any)?.networkMode || 'base';
   const tokenDefinitions = useMemo(() => getTokenDefinitions(swapNetworkMode), [swapNetworkMode]);
   const TARGET_CHAIN_ID = useMemo(() => chainIdForMode(swapNetworkMode), [swapNetworkMode]);
-  const [tokenList, setTokenList] = useState<Token[]>(initialTokenData.availableTokens);
+  const [tokenList] = useState<Token[]>(initialTokenData.availableTokens);
   // Controlled open state for token selectors (allows click zones to open them)
   const [fromSelectorOpen, setFromSelectorOpen] = useState(false);
   const [toSelectorOpen, setToSelectorOpen] = useState(false);
+  const selectorOpen = fromSelectorOpen || toSelectorOpen;
+  const selectorHeightRef = useRef(0);
+
+  // Wrap selector openers to capture container height before switching
+  // Use max of all captured heights so the selector never shrinks between opens
+  const openFromSelector = useCallback(() => {
+    if (containerRef.current) {
+      const h = containerRef.current.offsetHeight;
+      if (h > selectorHeightRef.current) selectorHeightRef.current = h;
+    }
+    setFromSelectorOpen(true);
+  }, []);
+  const openToSelector = useCallback(() => {
+    if (containerRef.current) {
+      const h = containerRef.current.offsetHeight;
+      if (h > selectorHeightRef.current) selectorHeightRef.current = h;
+    }
+    setToSelectorOpen(true);
+  }, []);
   const fromAmount = useSwapStore((s) => s.fromAmount)
   const toAmount = useSwapStore((s) => s.toAmount)
   const independentField = useSwapStore((s) => s.independentField)
@@ -240,8 +246,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   //   }
   // }, [currentRoute]);
 
-  // Swap execution state machine is extracted into `useSwapExecution`.
-
   // Trade model (Uniswap-style single source of truth for quote+route+fees+derived amounts)
 
   // Use the new slippage hook with persistence and auto-slippage
@@ -260,7 +264,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // First, create a completely new function for the Change button
   const handleChangeButton = () => {
     // Execution reset only (keep quote + amounts stable when returning from review)
-    swapActions.resetForChange();
     lastEditedSideRef.current = "from";
   };
 
@@ -332,19 +335,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       const displayValue = `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`;
 
       if (
-        fromTokenBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID &&
+        fromTokenBalanceData && isConnected &&
         (prevToken.balance !== displayBalance || prevToken.value !== displayValue)
       ) {
         return { ...prevToken, balance: displayBalance, value: displayValue };
       }
 
-      if (fromTokenBalanceError && isConnected && currentChainId === TARGET_CHAIN_ID && prevToken.balance !== "Error") {
+      if (fromTokenBalanceError && isConnected && prevToken.balance !== "Error") {
         console.error("Error fetching fromToken balance:", fromTokenBalanceError);
         return { ...prevToken, balance: "Error", value: "$0.00" };
-      }
-
-      if (isConnected && currentChainId !== TARGET_CHAIN_ID && prevToken.balance !== "~") {
-        return { ...prevToken, balance: "~", value: "$0.00" };
       }
 
       if (!isConnected && prevToken.balance !== "~") {
@@ -363,19 +362,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
       const displayValue = `~$${(numericBalance * prevToken.usdPrice).toFixed(2)}`;
 
       if (
-        toTokenBalanceData && isConnected && currentChainId === TARGET_CHAIN_ID &&
+        toTokenBalanceData && isConnected &&
         (prevToken.balance !== displayBalance || prevToken.value !== displayValue)
       ) {
         return { ...prevToken, balance: displayBalance, value: displayValue };
       }
 
-      if (toTokenBalanceError && isConnected && currentChainId === TARGET_CHAIN_ID && prevToken.balance !== "Error") {
+      if (toTokenBalanceError && isConnected && prevToken.balance !== "Error") {
         console.error("Error fetching toToken balance:", toTokenBalanceError);
         return { ...prevToken, balance: "Error", value: "$0.00" };
-      }
-
-      if (isConnected && currentChainId !== TARGET_CHAIN_ID && prevToken.balance !== "~") {
-        return { ...prevToken, balance: "~", value: "$0.00" };
       }
 
       if (!isConnected && prevToken.balance !== "~") {
@@ -415,35 +410,8 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     updateAutoSlippage,
     // Aggregator integration
     userAddress: accountAddress,
+    networkMode: swapNetworkMode,
   });
-
-  const {
-    swapState,
-    swapProgressState,
-    isSwapping,
-    completedSteps,
-    swapTxInfo,
-    actions: swapActions,
-  } = useSwapExecution({
-    queryClient: null,
-    fromToken,
-    toToken,
-    fromAmount,
-    toAmount,
-    lastEditedSideRef,
-    trade: trade.execution,
-    tradeState: trade.tradeState,
-    currentSlippage,
-    fromTokenUsdPrice: fromToken.usdPrice,
-    refetchFromTokenBalance,
-    refetchToTokenBalance,
-    // Aggregator integration
-    source: trade.source,
-    kyberswapData: trade.kyberswapData,
-  });
-
-  // DEPRECATED: Success notification now handled by SwapExecuteModal
-  // calculatedValues + auto-slippage moved into `useSwapTrade`
 
   const handleFromAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -505,6 +473,16 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const handleFromTokenSelect = (token: TokenSelectorToken) => {
     if (token.address !== fromToken.address || (token as any).networkMode !== fromToken.networkMode) {
       const fullToken = tokenSelectorToToken(token);
+
+      // If selecting the same token that's on the Buy side, flip them
+      if (fullToken.address.toLowerCase() === toToken.address.toLowerCase() && (fullToken.networkMode || 'base') === (toToken.networkMode || 'base')) {
+        setFromToken(fullToken);
+        setToToken(fromToken);
+        syncChainFromToken(fullToken);
+        swapStore.actions.setAmounts("", "");
+        return;
+      }
+
       setFromToken(fullToken);
       syncChainFromToken(fullToken);
 
@@ -521,13 +499,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         if (defaultTo) setToToken(defaultTo);
       }
 
-      // Add to tokenList if not already present (for dynamic token selection)
-      setTokenList(prev => {
-        const exists = prev.some(t => t.address.toLowerCase() === token.address.toLowerCase() && (t as any).networkMode === (token as any).networkMode);
-        if (!exists) return [...prev, fullToken];
-        return prev;
-      });
-
       swapStore.actions.setAmounts("", "");
     }
   };
@@ -535,15 +506,33 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const handleToTokenSelect = (token: TokenSelectorToken) => {
     if (token.address !== toToken.address || (token as any).networkMode !== toToken.networkMode) {
       const fullToken = tokenSelectorToToken(token);
-      setToToken(fullToken);
-      // No syncChainFromToken here — Buy tokens are already filtered to match Sell chain
 
-      // Add to tokenList if not already present (for dynamic token selection)
-      setTokenList(prev => {
-        const exists = prev.some(t => t.address.toLowerCase() === token.address.toLowerCase() && (t as any).networkMode === (token as any).networkMode);
-        if (!exists) return [...prev, fullToken];
-        return prev;
-      });
+      // If selecting the same token that's on the Sell side, flip them
+      if (fullToken.address.toLowerCase() === fromToken.address.toLowerCase() && (fullToken.networkMode || 'base') === (fromToken.networkMode || 'base')) {
+        setToToken(fullToken);
+        setFromToken(toToken);
+        syncChainFromToken(toToken);
+        swapStore.actions.setAmounts("", "");
+        return;
+      }
+
+      setToToken(fullToken);
+
+      // If the Sell token is on a different chain, reset it to a same-chain default
+      const newChain = fullToken.networkMode || 'base';
+      const currentFromChain = fromToken.networkMode || 'base';
+      if (newChain !== currentFromChain) {
+        const sameChainTokens = tokenList.filter(
+          t => (t.networkMode || 'base') === newChain && t.address.toLowerCase() !== fullToken.address.toLowerCase()
+        );
+        const defaultFrom = sameChainTokens.find(t => t.symbol === 'ETH')
+          || sameChainTokens.find(t => t.symbol === 'USDC' || t.symbol === 'atUSDC')
+          || sameChainTokens[0];
+        if (defaultFrom) {
+          setFromToken(defaultFrom);
+          syncChainFromToken(defaultFrom);
+        }
+      }
 
       swapStore.actions.setAmounts("", "");
     }
@@ -627,10 +616,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const handleFeePercentageClick = () => {};
 
 
-  // DEPRECATED: Old stepwise flow used this - now handled by SwapExecuteModal
-  // const handleConfirmSwap = () => swapActions.handleConfirmSwap();
-
-
   // --- RENDER LOGIC ---
 
   // isLoading for balances - now using dynamic loading states
@@ -638,83 +623,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const isLoadingCurrentToTokenBalance = isLoadingToTokenBalance;
 
   const userIsOnTargetChain = isConnected && currentChainId === TARGET_CHAIN_ID;
-
-  // Add a new helper function to render the step indicator
-  const renderStepIndicator = (step: string, currentStep: SwapProgressState, completed: SwapProgressState[]) => {
-    const isActive = 
-      (step === "approval" && ["needs_approval", "approving", "waiting_approval"].includes(currentStep)) ||
-      (step === "signature" && ["needs_signature", "signing_permit"].includes(currentStep)) ||
-      (step === "transaction" && ["building_tx", "executing_swap", "waiting_confirmation"].includes(currentStep));
-    
-    // Be very specific about what counts as completed
-    const isCompleted = 
-      (step === "approval" && completed.includes("approval_complete")) ||
-      (step === "signature" && completed.includes("signature_complete")) ||
-      (step === "transaction" && completed.includes("complete"));
-
-    return (
-      <div className="flex items-center justify-between">
-        <span className={isActive ? "font-medium" : isCompleted ? "text-foreground" : "text-muted-foreground"}>
-          {step === "approval" && "Token Approval"}
-          {step === "signature" && "Sign Token Allowance"}
-          {step === "transaction" && "Send Swap Transaction"}
-        </span>
-        <span>
-          {isCompleted ? (
-            <CheckIcon className="h-4 w-4 text-foreground" />
-          ) : isActive ? (
-            <ActivityIcon className="h-4 w-4 animate-pulse" />
-          ) : (
-            <IconMinus className="h-4 w-4 text-muted-foreground" />
-          )}
-        </span>
-      </div>
-    );
-  };
-
-  // Now, let's update the handleSwapAgain function to use the same reset logic
-  const getStepIcon = () => {
-    if (isSwapping) {
-      return <IconRefreshClockwise className="h-8 w-8 text-slate-50 dark:text-black animate-spin" />;
-    }
-    
-    // Explicitly check each state
-    switch(swapProgressState) {
-      case "needs_approval":
-      case "approving":
-      case "waiting_approval":
-        return <IconCoins className="h-8 w-8 text-slate-50 dark:text-black" />;
-        
-      case "needs_signature":
-      case "signing_permit":
-      case "signature_complete":
-        return <FileTextIcon className="h-8 w-8 text-slate-50 dark:text-black" />;
-        
-      case "building_tx":
-      case "executing_swap":
-      case "waiting_confirmation":
-        return <WalletIcon className="h-8 w-8 text-slate-50 dark:text-black" />;
-        
-      default:
-        // Default to file text icon if we can't determine
-        return <FileTextIcon className="h-8 w-8 text-slate-50 dark:text-black" />;
-    }
-  };
-
-  // Add back handleEditTokens, handleSwapAgain, and handleCyclePercentage functions that were accidentally removed
-  const handleEditTokens = () => {
-    // Use our working reset function
-    handleChangeButton();
-  };
-
-  const handleSwapAgain = () => {
-    // Full reset for a brand new swap
-    window.swapBuildData = undefined;
-    trade.clearQuote();
-    swapActions.resetForSwapAgain();
-    swapStore.actions.setAmounts("", "")
-    trade.setRouteInfo(null);
-  };
 
   // Calculate actual percentage based on fromAmount and balance
   const fromTokenBalance = parseFloat(fromToken.balance || "0"); // Use current fromToken state
@@ -790,6 +698,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     isConnected,
     currentRoute,
     selectedPoolIndexForChart: feeChartPoolIndexEarly,
+    networkMode: swapNetworkMode,
   });
 
   // Helper functions for action button text and disabled state
@@ -797,15 +706,15 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     if (!isMounted) {
       return "Connect Wallet";
     } else if (isConnected) {
-      if (currentChainId !== TARGET_CHAIN_ID) {
-        return `Switch to ${getChainDisplayName(swapNetworkMode)}`;
-      } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
+      if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
         return "Swap";
       } else {
-        // Check for insufficient balance (relative tolerance to avoid float precision issues)
+        // Check for insufficient balance using raw blockchain balance (full precision)
+        // fromToken.balance is display-formatted (max 6 decimals) which can round down
+        // and cause false "Insufficient Balance" when amount equals actual balance
         const fromAmountNum = parseFloat(fromAmount || "0");
-        const fromBalanceNum = parseFloat(fromToken.balance || "0");
-        if (fromAmountNum > 0 && fromBalanceNum < fromAmountNum * 0.999999) {
+        const fromBalanceNum = parseFloat(fromTokenBalanceData?.formatted || fromToken.balance || "0");
+        if (fromAmountNum > 0 && (isNaN(fromBalanceNum) || fromBalanceNum < fromAmountNum * 0.999999)) {
           return "Insufficient Balance";
         }
         return "Swap";
@@ -819,13 +728,16 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     if (!isMounted) {
       return true;
     } else if (isConnected) {
-      if (currentChainId !== TARGET_CHAIN_ID) {
-        return isAttemptingSwitch;
-      } else if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
+      if (isLoadingCurrentFromTokenBalance || isLoadingCurrentToTokenBalance) {
         return true;
       } else {
         const fromAmountNum = parseFloat(fromAmount || "0");
         if (fromAmountNum <= 0) return true;
+        // Also check balance here for consistency with button text
+        const fromBalanceNum = parseFloat(fromTokenBalanceData?.formatted || fromToken.balance || "0");
+        if (fromAmountNum > 0 && (isNaN(fromBalanceNum) || fromBalanceNum < fromAmountNum * 0.999999)) {
+          return true;
+        }
         return trade.tradeState !== "ready";
       }
     } else {
@@ -1020,201 +932,230 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     <div className="flex flex-col">
       <div ref={containerRef} className="w-full max-w-lg mx-auto">
       {/* Active chain indicator — derived from selected token */}
-      <Card className="w-full card-gradient z-10 rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]">
-        <CardContent className="p-6 pt-6">
-          <AnimatePresence mode="wait">
-            {swapState === "input" && (
-              <SwapInputView
-                fromToken={fromToken}
-                toToken={toToken}
-                fromAmount={fromAmount}
-                toAmount={toAmount}
-                handleFromAmountChange={handleFromAmountChange}
-                onToAmountChange={handleToAmountChange}
-                activelyEditedSide={lastEditedSideRef.current}
-                handleSwapTokens={handleSwapTokens}
-                handleUsePercentage={handleUsePercentage}
-                availableTokens={tokenList}
-                onFromTokenSelect={handleFromTokenSelect}
-                onToTokenSelect={handleToTokenSelect}
-                trade={trade}
-                selectedPoolIndexForChart={selectedPoolIndexForChart}
-                onSelectPoolForChart={handleSelectPoolForChart}
-                onRouteHoverChange={undefined}
-                isConnected={isConnected}
-                isAttemptingSwitch={isAttemptingSwitch}
-                isLoadingCurrentFromTokenBalance={isLoadingCurrentFromTokenBalance}
-                isLoadingCurrentToTokenBalance={isLoadingCurrentToTokenBalance}
-                actionButtonText={getActionButtonText()}
-                actionButtonDisabled={getActionButtonDisabled()}
-                handleSwap={handleSwap}
-                isMounted={isMounted}
-                currentChainId={currentChainId}
-                TARGET_CHAIN_ID={TARGET_CHAIN_ID}
-                strokeWidth={2}
-                swapContainerRect={combinedRect}
-                slippage={currentSlippage}
-                isAutoSlippage={isAutoSlippage}
-                autoSlippageValue={autoSlippageValue}
-                onSlippageChange={handleSlippageChange}
-                onAutoSlippageToggle={handleAutoSlippageToggle}
-                onCustomSlippageToggle={handleCustomSlippageToggle}
-                onNetworkSwitch={handleNetworkSwitch}
-                onClearFromAmount={() => {
-                  swapStore.actions.setAmounts("", "")
-                }}
-                priceDeviation={priceDeviation}
-                fromTokenRawBalance={fromTokenBalanceData?.formatted}
-                fromSelectorOpen={fromSelectorOpen}
-                toSelectorOpen={toSelectorOpen}
-                onFromSelectorOpenChange={setFromSelectorOpen}
-                onToSelectorOpenChange={setToSelectorOpen}
-              />
-            )}
-
-            {/* DEPRECATED: Old stepwise review/success flow - kept for reference, replaced by SwapExecuteModal */}
-            {/* swapState === "review" && <SwapReviewView ... /> */}
-            {/* swapState === "success" && <SwapSuccessView ... /> */}
-          </AnimatePresence>
-        </CardContent>
-      </Card>
-
-      {/* Swap Wizard Modal */}
-        <SwapExecuteModal
-          isOpen={showSwapModal}
-          onClose={() => setShowSwapModal(false)}
-          fromToken={fromToken}
-          toToken={toToken}
-          queryClient={null}
-          fromAmount={fromAmount}
-          toAmount={toAmount}
-          lastEditedSideRef={lastEditedSideRef}
-          trade={trade.execution}
-          tradeState={trade.tradeState}
-          currentSlippage={currentSlippage}
-          fromTokenUsdPrice={fromToken.usdPrice}
-          refetchFromTokenBalance={refetchFromTokenBalance}
-          refetchToTokenBalance={refetchToTokenBalance}
-          source={trade.source}
-          kyberswapData={trade.kyberswapData}
-          routeInfo={trade.routeInfo}
-        />
-
-      {/* Preview Chart / Route Preview Row with external nav arrows */}
-      <div className="w-full relative">
-        <div className="w-full relative group overflow-x-hidden overflow-y-visible sm:overflow-visible">
-          {/* Hover buffer extends horizontally so arrows remain clickable while visible */}
-          <div className="absolute inset-y-0 left-0 right-0 sm:left-[-2.75rem] sm:right-[-2.75rem]"></div>
-          <div className="relative touch-pan-y" onTouchStart={handlePreviewTouchStart} onTouchEnd={handlePreviewTouchEnd}>
-          <AnimatePresence mode="wait">
-            {/* Alphix routes: Dynamic Fee Chart */}
-            {showChartPreview && (
-              <motion.div
-                key={`dynamic-fee-preview-${feeChartPoolIndex}`}
-                className="w-full"
-                initial={{ opacity: 0, height: 'auto', marginTop: '16px' }}
-                animate={{ opacity: 1, height: 'auto', marginTop: '16px' }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15, ease: "easeInOut" }}
-                onAnimationComplete={() => {
-                  setCombinedRect(getContainerRect());
-                }}
-              >
-                <DynamicFeeChartPreview
-                  data={isFeeHistoryLoading ? [] : feeHistoryData}
-                  poolInfo={poolInfo || fallbackPoolInfo}
-                  isLoading={isFeeHistoryLoading}
-                  alwaysShowSkeleton={false}
-                  totalPools={currentRoute?.pools?.length}
-                  activePoolIndex={isAlphixWithRoute ? feeChartPoolIndex : selectedPoolIndexForChart}
+      <AnimatePresence mode="popLayout">
+        {selectorOpen ? (
+          /* ── Token Selector: replaces Card + Route edge-to-edge ──────── */
+          <motion.div
+            key={fromSelectorOpen ? "from-selector" : "to-selector"}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
+          >
+            <Card
+              className="w-full card-gradient z-10 rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)] flex flex-col"
+              style={{ height: selectorHeightRef.current || undefined }}
+            >
+              <CardContent className="p-6 pt-6 flex-1 flex flex-col overflow-hidden min-h-0">
+                {fromSelectorOpen ? (
+                  <SwapTokenSelectorPanel
+                    side="from"
+                    selectedToken={fromToken as TokenSelectorToken}
+                    availableTokens={tokenList as TokenSelectorToken[]}
+                    onTokenSelect={handleFromTokenSelect}
+                    onClose={() => setFromSelectorOpen(false)}
+                  />
+                ) : (
+                  <SwapTokenSelectorPanel
+                    side="to"
+                    selectedToken={toToken as TokenSelectorToken}
+                    availableTokens={tokenList as TokenSelectorToken[]}
+                    onTokenSelect={handleToTokenSelect}
+                    onClose={() => setToSelectorOpen(false)}
+                  />
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        ) : (
+          /* ── Normal swap UI: Card + Route preview ────────────────────── */
+          <motion.div
+            key="swap-content"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.25, 0.1, 0.25, 1] }}
+          >
+            <Card className="w-full card-gradient z-10 rounded-lg bg-[var(--swap-background)] border-[var(--swap-border)]">
+              <CardContent className="p-6 pt-6">
+                <SwapInputView
+                  fromToken={fromToken}
+                  toToken={toToken}
+                  fromAmount={fromAmount}
+                  toAmount={toAmount}
+                  handleFromAmountChange={handleFromAmountChange}
+                  onToAmountChange={handleToAmountChange}
+                  activelyEditedSide={lastEditedSideRef.current}
+                  handleSwapTokens={handleSwapTokens}
+                  handleUsePercentage={handleUsePercentage}
+                  availableTokens={tokenList}
+                  onFromTokenSelect={handleFromTokenSelect}
+                  onToTokenSelect={handleToTokenSelect}
+                  trade={trade}
+                  selectedPoolIndexForChart={selectedPoolIndexForChart}
+                  onSelectPoolForChart={handleSelectPoolForChart}
+                  onRouteHoverChange={undefined}
+                  isConnected={isConnected}
+                  isAttemptingSwitch={isAttemptingSwitch}
+                  isLoadingCurrentFromTokenBalance={isLoadingCurrentFromTokenBalance}
+                  isLoadingCurrentToTokenBalance={isLoadingCurrentToTokenBalance}
+                  actionButtonText={getActionButtonText()}
+                  actionButtonDisabled={getActionButtonDisabled()}
+                  handleSwap={handleSwap}
+                  isMounted={isMounted}
+                  currentChainId={currentChainId}
+                  TARGET_CHAIN_ID={TARGET_CHAIN_ID}
+                  strokeWidth={2}
+                  swapContainerRect={combinedRect}
+                  slippage={currentSlippage}
+                  isAutoSlippage={isAutoSlippage}
+                  autoSlippageValue={autoSlippageValue}
+                  onSlippageChange={handleSlippageChange}
+                  onAutoSlippageToggle={handleAutoSlippageToggle}
+                  onCustomSlippageToggle={handleCustomSlippageToggle}
+                  onNetworkSwitch={handleNetworkSwitch}
+                  onClearFromAmount={() => {
+                    swapStore.actions.setAmounts("", "")
+                  }}
+                  priceDeviation={priceDeviation}
+                  fromTokenRawBalance={fromTokenBalanceData?.formatted}
+                  fromSelectorOpen={fromSelectorOpen}
+                  toSelectorOpen={toSelectorOpen}
+                  onFromSelectorOpenChange={(open) => open ? openFromSelector() : setFromSelectorOpen(false)}
+                  onToSelectorOpenChange={(open) => open ? openToSelector() : setToSelectorOpen(false)}
                 />
-              </motion.div>
-            )}
-            {/* Sankey Route Preview — Kyberswap routes OR multi-hop Alphix segment 0 */}
-            {showRoutePreview && (
-              <motion.div
-                key="route-preview"
-                className="w-full"
-                initial={{ opacity: 0, height: 'auto', marginTop: '16px' }}
-                animate={{ opacity: 1, height: 'auto', marginTop: '16px' }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15, ease: "easeInOut" }}
-                onAnimationComplete={() => {
-                  setCombinedRect(getContainerRect());
-                }}
-              >
-                <SwapRoutePreview
-                  source={trade.source}
-                  fromToken={fromToken ?? fromToken}
-                  toToken={toToken ?? toToken}
-                  routeInfo={trade.routeInfo}
-                  kyberswapRouteSummary={trade.kyberswapData?.routeSummary}
-                  tokenMetadata={trade.kyberswapData?.tokenMetadata}
-                  isLoading={trade.quoteLoading}
-                  networkMode={swapNetworkMode}
-                />
-              </motion.div>
-            )}
-            {/* Default skeleton: no route selected yet */}
-            {!showChartPreview && !showRoutePreview && (
-              <motion.div
-                key="skeleton-preview"
-                className="w-full"
-                initial={{ y: -10, opacity: 0, height: '0px', marginTop: '0px' }}
-                animate={{ y: 0, opacity: 1, height: 'auto', marginTop: '16px' }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15, ease: "easeInOut" }}
-                onAnimationComplete={() => {
-                  setCombinedRect(getContainerRect());
-                }}
-              >
-                <DynamicFeeChartPreview
-                  data={[]}
-                  alwaysShowSkeleton={true}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+              </CardContent>
+            </Card>
 
-          {/* External nav arrows — for multi-segment previews (multi-pool charts OR multi-hop route+charts) */}
-          {(showChartPreview || showRoutePreview) && totalPreviewSegments > 1 && (
-            <>
-              {selectedPoolIndexForChart > 0 && (
-                <button
-                  type="button"
-                  aria-label="Previous segment"
-                  onClick={handlePreviousPool}
-                  className="absolute left-0 sm:left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
-                >
-                  <ChevronLeftIcon className="h-4 w-4" />
-                </button>
-              )}
-              {selectedPoolIndexForChart < totalPreviewSegments - 1 && (
-                <button
-                  type="button"
-                  aria-label="Next segment"
-                  onClick={handleNextPool}
-                  className="absolute right-0 sm:right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
-                >
-                  <ChevronRightIcon className="h-4 w-4" />
-                </button>
-              )}
-            </>
-          )}
-          {/* Dots below container — for multi-segment previews */}
-          {(showChartPreview || showRoutePreview) && totalPreviewSegments > 1 && (
-            <div className="w-full flex justify-center gap-1.5 mt-2">
-              {Array.from({ length: totalPreviewSegments }, (_, i) => (
-                <span
-                  key={i}
-                  className={`h-[5px] w-[5px] rounded-full ${i === selectedPoolIndexForChart ? 'bg-muted-foreground/60' : 'bg-[var(--sidebar-border)]'}`}
-                />
-              ))}
+            {/* Route / Chart preview */}
+            <div className="w-full relative">
+              <div className="w-full relative group overflow-x-hidden overflow-y-visible sm:overflow-visible">
+                <div className="absolute inset-y-0 left-0 right-0 sm:left-[-2.75rem] sm:right-[-2.75rem]"></div>
+                <div className="relative touch-pan-y" onTouchStart={handlePreviewTouchStart} onTouchEnd={handlePreviewTouchEnd}>
+                  <AnimatePresence mode="wait">
+                    {showChartPreview && (
+                      <motion.div
+                        key={`dynamic-fee-preview-${feeChartPoolIndex}`}
+                        className="w-full"
+                        initial={{ opacity: 0, height: 'auto', marginTop: '16px' }}
+                        animate={{ opacity: 1, height: 'auto', marginTop: '16px' }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15, ease: "easeInOut" }}
+                        onAnimationComplete={() => { setCombinedRect(getContainerRect()); }}
+                      >
+                        <DynamicFeeChartPreview
+                          data={isFeeHistoryLoading ? [] : feeHistoryData}
+                          poolInfo={poolInfo || fallbackPoolInfo}
+                          isLoading={isFeeHistoryLoading}
+                          alwaysShowSkeleton={false}
+                          totalPools={currentRoute?.pools?.length}
+                          activePoolIndex={isAlphixWithRoute ? feeChartPoolIndex : selectedPoolIndexForChart}
+                        />
+                      </motion.div>
+                    )}
+                    {showRoutePreview && (
+                      <motion.div
+                        key="route-preview"
+                        className="w-full"
+                        initial={{ opacity: 0, height: 'auto', marginTop: '16px' }}
+                        animate={{ opacity: 1, height: 'auto', marginTop: '16px' }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15, ease: "easeInOut" }}
+                        onAnimationComplete={() => { setCombinedRect(getContainerRect()); }}
+                      >
+                        <SwapRoutePreview
+                          source={trade.source}
+                          fromToken={fromToken ?? fromToken}
+                          toToken={toToken ?? toToken}
+                          routeInfo={trade.routeInfo}
+                          kyberswapRouteSummary={trade.kyberswapData?.routeSummary}
+                          tokenMetadata={trade.kyberswapData?.tokenMetadata}
+                          isLoading={trade.quoteLoading}
+                          networkMode={swapNetworkMode}
+                        />
+                      </motion.div>
+                    )}
+                    {!showChartPreview && !showRoutePreview && (
+                      <motion.div
+                        key="skeleton-preview"
+                        className="w-full"
+                        initial={{ y: -10, opacity: 0, height: '0px', marginTop: '0px' }}
+                        animate={{ y: 0, opacity: 1, height: 'auto', marginTop: '16px' }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15, ease: "easeInOut" }}
+                        onAnimationComplete={() => { setCombinedRect(getContainerRect()); }}
+                      >
+                        <DynamicFeeChartPreview
+                          data={[]}
+                          alwaysShowSkeleton={true}
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {(showChartPreview || showRoutePreview) && totalPreviewSegments > 1 && (
+                    <>
+                      {selectedPoolIndexForChart > 0 && (
+                        <button
+                          type="button"
+                          aria-label="Previous segment"
+                          onClick={handlePreviousPool}
+                          className="absolute left-0 sm:left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
+                        >
+                          <ChevronLeftIcon className="h-4 w-4" />
+                        </button>
+                      )}
+                      {selectedPoolIndexForChart < totalPreviewSegments - 1 && (
+                        <button
+                          type="button"
+                          aria-label="Next segment"
+                          onClick={handleNextPool}
+                          className="absolute right-0 sm:right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
+                        >
+                          <ChevronRightIcon className="h-4 w-4" />
+                        </button>
+                      )}
+                    </>
+                  )}
+                  {(showChartPreview || showRoutePreview) && totalPreviewSegments > 1 && (
+                    <div className="w-full flex justify-center gap-1.5 mt-2">
+                      {Array.from({ length: totalPreviewSegments }, (_, i) => (
+                        <span
+                          key={i}
+                          className={`h-[5px] w-[5px] rounded-full ${i === selectedPoolIndexForChart ? 'bg-muted-foreground/60' : 'bg-[var(--sidebar-border)]'}`}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          )}
-        </div>
-        </div>
-      </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Swap Wizard Modal — always mounted outside AnimatePresence */}
+      <SwapExecuteModal
+        isOpen={showSwapModal}
+        onClose={() => setShowSwapModal(false)}
+        fromToken={fromToken}
+        toToken={toToken}
+        queryClient={null}
+        fromAmount={fromAmount}
+        toAmount={toAmount}
+        lastEditedSideRef={lastEditedSideRef}
+        trade={trade.execution}
+        tradeState={trade.tradeState}
+        currentSlippage={currentSlippage}
+        fromTokenUsdPrice={fromToken.usdPrice}
+        refetchFromTokenBalance={refetchFromTokenBalance}
+        refetchToTokenBalance={refetchToTokenBalance}
+        source={trade.source}
+        kyberswapData={trade.kyberswapData}
+        routeInfo={trade.routeInfo}
+        targetChainId={TARGET_CHAIN_ID}
+        ensureChain={ensureChain}
+      />
       </div>
 
       {/* High Risk Confirmation Modal (handles all warning types with pagination) */}

@@ -130,6 +130,7 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
             abi: erc20Abi,
             functionName: 'allowance',
             args: [userAddress, swapSpender],
+            blockTag: 'latest',
           });
 
       const token0AllowanceForHook = isToken0Native
@@ -139,6 +140,7 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
             abi: erc20Abi,
             functionName: 'allowance',
             args: [userAddress, hookAddress],
+            blockTag: 'latest',
           });
 
       const token1AllowanceForHook = isToken1Native
@@ -148,6 +150,7 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
             abi: erc20Abi,
             functionName: 'allowance',
             args: [userAddress, hookAddress],
+            blockTag: 'latest',
           });
 
       // Calculate required amounts

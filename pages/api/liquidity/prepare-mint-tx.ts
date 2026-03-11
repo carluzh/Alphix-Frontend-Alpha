@@ -478,6 +478,7 @@ export default async function handler(
                     args: [getAddress(userAddress), PERMIT2_ADDRESS]
                 })),
                 allowFailure: false,
+                blockTag: 'latest',
             });
 
             // Check results and note ALL tokens that need approval (don't return early)
@@ -542,6 +543,7 @@ export default async function handler(
                         args: [getAddress(userAddress), getAddress(t.sdkToken.address), POSITION_MANAGER_ADDRESS] as const
                     })),
                     allowFailure: false,
+                    blockTag: 'latest',
                 });
 
                 // Process results to build permitsNeeded array

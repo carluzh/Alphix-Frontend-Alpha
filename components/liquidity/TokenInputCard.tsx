@@ -204,10 +204,9 @@ export function TokenInputCard({
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: INPUT_GRADIENT_STYLES }} />
-      <div className={cn("input-gradient-hover", className)}>
-        <motion.div
+      <motion.div className={cn("input-gradient-hover", className)} animate={wiggleControls}>
+        <div
           className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
-          animate={wiggleControls}
         >
           {/* Label + Balance Row */}
           <div className="flex items-center justify-between">
@@ -310,8 +309,8 @@ export function TokenInputCard({
               </div>
             </div>
           </div>
-        </motion.div>
-      </div>
+        </div>
+      </motion.div>
     </>
   );
 }

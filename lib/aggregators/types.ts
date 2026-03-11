@@ -56,6 +56,23 @@ export type QuoteSelectionReason =
   | 'aggregator_only';            // Alphix route unavailable
 
 /**
+ * Structured error from Kyberswap API calls.
+ * Replaces the old `null` return — callers can now make informed retry/display decisions.
+ */
+export interface KyberswapError {
+  code: number;                     // Kyberswap error code (4222, 4227, 429, etc.) or HTTP status
+  message: string;                  // Human-readable error description
+  retryable: boolean;               // Whether the caller should retry
+  kind: 'rate_limit' | 'stale_route' | 'gas_estimation' | 'token_not_found' | 'bad_request' | 'timeout' | 'server_error';
+  suggestedSlippage?: number;       // Bps — only present on 4227 "return amount is not enough"
+}
+
+/** Type guard: is this a KyberswapError, not a successful response? */
+export function isKyberswapError(v: unknown): v is KyberswapError {
+  return typeof v === 'object' && v !== null && 'code' in v && 'kind' in v && 'retryable' in v;
+}
+
+/**
  * Kyberswap-specific types
  */
 export interface KyberswapRouteSummary {

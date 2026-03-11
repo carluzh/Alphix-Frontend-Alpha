@@ -1,20 +1,20 @@
 /**
  * Liquidity Transaction Executor - Barrel Export
  *
- * COPIED FROM UNISWAP - DO NOT MODIFY WITHOUT UPDATING FROM SOURCE
- * Source: interface/apps/web/src/state/sagas/liquidity/liquiditySaga.ts
- * Source: interface/apps/web/src/state/sagas/transactions/utils.ts
- *
- * The executor orchestrates transaction step execution for liquidity flows.
+ * Step handlers and execution store for liquidity flows.
+ * The orchestration is now handled by useStepExecutor (lib/transactions/useStepExecutor.ts).
  */
 
-// Main executor hook
+// Execution store — authoritative source of truth for step execution state
 export {
-  useLiquidityStepExecutor,
-  type UseLiquidityStepExecutorOptions,
-  type UseLiquidityStepExecutorReturn,
-  type LiquidityExecutorState,
-} from './useLiquidityStepExecutor';
+  useExecutionStore,
+  selectIsLocked,
+  selectCurrentStepState,
+  selectSteps,
+  selectExecutionStatus,
+  type ExecutionState,
+  type ExecutionStore,
+} from './executionStore';
 
-// Step handlers
+// Step handlers (used by useLiquidityExecutors bridge)
 export * from './handlers';

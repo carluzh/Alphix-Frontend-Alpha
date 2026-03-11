@@ -298,23 +298,6 @@ export function useSwapQuote({
     return () => clearTimeout(handler)
   }, [toAmount, fetchQuote])
 
-  // Quote polling - refresh every 10s
-  useEffect(() => {
-    // Skip polling if no tokens or loading
-    if (!fromToken || !toToken) return
-    if (quoteLoading) return
-
-    // Get the current amount to poll
-    const amountStr = lastEditedSideRef.current === "to" ? toAmount : fromAmount
-    if (!amountStr || parseFloat(amountStr) <= 0) return
-
-    const interval = setInterval(() => {
-      fetchQuote(amountStr, "indicative")
-    }, 10000) // 10 seconds between quote refreshes
-
-    return () => clearInterval(interval)
-  }, [fromToken, toToken, fromAmount, toAmount, fetchQuote, quoteLoading])
-
   const refreshBindingQuote = useCallback(async () => {
     const amountStr = lastEditedSideRef.current === "to" ? toAmount : fromAmount
     if (!amountStr || parseFloat(amountStr) <= 0) return false

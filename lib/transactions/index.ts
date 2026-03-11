@@ -78,6 +78,35 @@ export {
   type Permit2ApproveTransactionInfo,
 } from './transactionDetails'
 
+// Execution primitives (Layer 1)
+export {
+  executeApproval,
+  executePermitSign,
+  sendAndConfirmTransaction,
+  checkAllowanceSufficient,
+  fetchPermitData,
+  type SendTransactionFn,
+  type WaitForReceiptFn,
+  type SignTypedDataFn,
+  type ExecuteApprovalParams,
+  type ExecutePermitSignParams,
+  type SendAndConfirmParams,
+  type CheckAllowanceParams,
+  type FetchPermitDataParams,
+  type PermitDataResponse,
+} from './primitives'
+
+// Step orchestrator (Layer 2)
+export {
+  useStepExecutor,
+  type StepResult,
+  type StepExecutionContext,
+  type StepExecutorFn,
+  type UseStepExecutorConfig,
+  type StepGenerationResult,
+  type UseStepExecutorReturn,
+} from './useStepExecutor'
+
 // Local types
 export type { PendingTransactionDetails, ConfirmedTransactionDetails } from './types-local'
 

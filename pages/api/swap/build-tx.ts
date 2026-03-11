@@ -9,6 +9,7 @@ import { BigNumber } from 'ethers'; // For V4Planner compatibility if it expects
 
 import { createNetworkClient } from '../../../lib/viemClient';
 import type { AggregatorSource, KyberswapRouteSummary } from '../../../lib/aggregators/types';
+import { isKyberswapError } from '../../../lib/aggregators/types';
 import { getKyberswapRouterAddress, getKyberswapRoute, buildKyberswapSwap } from '../../../lib/aggregators/kyberswap';
 import {
     TokenSymbol,
@@ -573,43 +574,88 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             }
 
             // Step 1: Fetch fresh route from Kyberswap (GET /routes)
-            const routeResponse = await getKyberswapRoute({
+            const kyberSlippageBps = slippageBps ?? 50;
+            const routeRequest = {
                 fromTokenAddress: kyberFromAddress,
                 toTokenAddress: kyberToAddress,
                 amount: parsedAmountIn.toString(),
                 fromTokenDecimals: fromDecimals,
                 toTokenDecimals: toDecimals,
                 isExactIn: true,
-                slippageBps: 50,
+                slippageBps: kyberSlippageBps,
                 networkMode,
-            });
+            };
 
-            if (!routeResponse?.data?.routeSummary) {
-                return res.status(502).json({
+            let routeResponse = await getKyberswapRoute(routeRequest);
+
+            // Retry once on transient route errors (rate limit, timeout, server error)
+            if (isKyberswapError(routeResponse) && routeResponse.retryable) {
+                const retryDelay = routeResponse.kind === 'rate_limit' ? 2000 : 500;
+                console.warn(`[build-tx] Kyberswap route failed (${routeResponse.kind}), retrying in ${retryDelay}ms...`);
+                await new Promise(r => setTimeout(r, retryDelay));
+                routeResponse = await getKyberswapRoute(routeRequest);
+            }
+
+            if (isKyberswapError(routeResponse)) {
+                const status = routeResponse.kind === 'rate_limit' ? 429 : routeResponse.kind === 'token_not_found' ? 400 : 502;
+                return res.status(status).json({
                     ok: false,
-                    message: 'Kyberswap route request failed. The route may no longer be available.'
+                    message: `Kyberswap route failed: ${routeResponse.message}`,
+                    kyberswapError: { code: routeResponse.code, kind: routeResponse.kind, retryable: routeResponse.retryable },
                 });
             }
 
             // Step 2: Build swap calldata (POST /route/build)
-            const kyberSlippageBps = slippageBps ?? 50;
-            const buildResponse = await buildKyberswapSwap(
+            let buildResponse = await buildKyberswapSwap(
                 routeResponse.data.routeSummary,
                 userAddress,
                 kyberSlippageBps,
                 networkMode
             );
 
-            if (!buildResponse?.data?.data) {
-                return res.status(502).json({
+            // Error-specific retry for build failures
+            if (isKyberswapError(buildResponse)) {
+                if (buildResponse.kind === 'stale_route') {
+                    // 4222: stale quote — refetch route and rebuild
+                    console.warn('[build-tx] Stale route (4222), refetching...');
+                    routeResponse = await getKyberswapRoute(routeRequest);
+                    if (!isKyberswapError(routeResponse)) {
+                        buildResponse = await buildKyberswapSwap(routeResponse.data.routeSummary, userAddress, kyberSlippageBps, networkMode);
+                    }
+                } else if (buildResponse.kind === 'gas_estimation' && buildResponse.suggestedSlippage) {
+                    // 4227 with suggestedSlippage: refetch route, retry with suggested slippage
+                    console.warn(`[build-tx] Gas estimation failed (4227), refetching with suggestedSlippage=${buildResponse.suggestedSlippage}bps...`);
+                    routeResponse = await getKyberswapRoute(routeRequest);
+                    if (!isKyberswapError(routeResponse)) {
+                        buildResponse = await buildKyberswapSwap(routeResponse.data.routeSummary, userAddress, buildResponse.suggestedSlippage, networkMode);
+                    }
+                } else if (buildResponse.kind === 'rate_limit') {
+                    // 429: wait and retry once
+                    console.warn('[build-tx] Rate limited on build, waiting 2s...');
+                    await new Promise(r => setTimeout(r, 2000));
+                    buildResponse = await buildKyberswapSwap(routeResponse.data.routeSummary, userAddress, kyberSlippageBps, networkMode);
+                }
+            }
+
+            if (isKyberswapError(buildResponse)) {
+                const status = buildResponse.kind === 'rate_limit' ? 429 : 502;
+                return res.status(status).json({
                     ok: false,
-                    message: 'Kyberswap build request failed. Please try again.'
+                    message: `Kyberswap build failed: ${buildResponse.message}`,
+                    kyberswapError: { code: buildResponse.code, kind: buildResponse.kind, retryable: buildResponse.retryable, suggestedSlippage: buildResponse.suggestedSlippage },
                 });
             }
 
+            // At this point both routeResponse and buildResponse are guaranteed non-error
+            // (error paths returned above). Extract the gas limit from the build response.
+            const kyberGasLimit = buildResponse.data.gas
+              ? BigInt(buildResponse.data.gas) + BigInt(buildResponse.data.gas) / 5n  // 20% buffer per Kyberswap docs
+              : undefined;
+
             // Validate router address matches
             const kyberRouter = getKyberswapRouterAddress(networkMode);
-            const responseRouter = buildResponse.data.routerAddress || routeResponse.data.routerAddress;
+            const responseRouter = buildResponse.data.routerAddress
+              || (!isKyberswapError(routeResponse) ? routeResponse.data.routerAddress : kyberRouter);
             if (getAddress(responseRouter) !== getAddress(kyberRouter)) {
                 return res.status(400).json({
                     ok: false,
@@ -618,7 +664,10 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             }
 
             const freshEncodedData = buildResponse.data.data;
-            const freshRouteSummary = routeResponse.data.routeSummary;
+            // routeResponse may have been reassigned during retry — narrow safely
+            const freshRouteSummary = !isKyberswapError(routeResponse)
+              ? routeResponse.data.routeSummary
+              : buildResponse.data as any; // Fallback: build response has amountIn/amountOut
 
             // Step 3: Simulate the transaction to catch real reverts before user signs.
             // NOTE: By this point the user has already approved the Kyberswap router
@@ -654,6 +703,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 to: kyberRouter,
                 data: freshEncodedData,
                 value: txValueKyber.toString(),
+                gasLimit: kyberGasLimit?.toString(),
                 deadline: txDeadline.toString(),
                 commands: null,
                 inputs: null,

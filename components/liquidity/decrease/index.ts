@@ -24,6 +24,4 @@ export {
   type DecreaseTxStep,
 } from './DecreaseLiquidityTxContext';
 
-export { DecreaseLiquidityForm } from './DecreaseLiquidityForm';
-export { DecreaseLiquidityReview } from './DecreaseLiquidityReview';
 export { DecreaseLiquidityModal, default } from './DecreaseLiquidityModal';

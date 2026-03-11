@@ -4,7 +4,7 @@ import { memo, useMemo } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { PositionCardCompact } from "@/components/liquidity/PositionCardCompact";
 import { UnifiedYieldPositionCard } from "@/components/liquidity/UnifiedYieldPositionCard";
-import { PositionSkeleton } from "@/components/liquidity/PositionSkeleton";
+import { PositionCardCompactLoader } from "@/components/liquidity/PositionCardCompact";
 import type { V4ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import { isUnifiedYieldPosition, type UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
 
@@ -94,14 +94,8 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
         </div>
         {/* Full-width cards (single column) */}
         <div className="flex flex-col gap-3">
-          <PositionSkeleton
-            token0Symbol={token0Symbol}
-            token1Symbol={token1Symbol}
-          />
-          <PositionSkeleton
-            token0Symbol={token0Symbol}
-            token1Symbol={token1Symbol}
-          />
+          <PositionCardCompactLoader />
+          <PositionCardCompactLoader />
         </div>
       </div>
     );
@@ -139,10 +133,7 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
       <div className="flex flex-col gap-3">
         {/* New position skeleton (while deriving) */}
         {isDerivingNewPosition && (
-          <PositionSkeleton
-            token0Symbol={token0Symbol}
-            token1Symbol={token1Symbol}
-          />
+          <PositionCardCompactLoader />
         )}
 
         {/* Existing positions */}

@@ -97,6 +97,9 @@ interface IncreaseLiquidityTxContextType {
   zapPreviewError: Error | null;
   zapDataUpdatedAt: number;
   refetchZapPreview: () => Promise<any>;
+
+  // Execution state — pauses zap refetch during tx execution
+  setExecuting: (executing: boolean) => void;
 }
 
 const IncreaseLiquidityTxContext = createContext<IncreaseLiquidityTxContextType | null>(null);
@@ -168,6 +171,9 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   // ZAP MODE HOOKS - Single-token deposit with auto-swap (USDS/USDC only)
   // =========================================================================
 
+  // Execution state — when true, pauses zap refetch to avoid stale quotes overwriting
+  const [isExecuting, setExecuting] = useState(false);
+
   // Determine if we're in zap mode
   const isZapMode = isUnifiedYield && isZapEligible && depositMode === 'zap' && zapInputToken !== null;
 
@@ -189,7 +195,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     inputAmount: zapInputAmount || '',
     hookAddress: (poolConfig?.hooks ?? '0x0') as Address,
     enabled: isZapMode && !!zapToken && !!zapInputAmount && parseFloat(zapInputAmount) > 0 && !!poolConfig?.hooks,
-    refetchEnabled: true, // Enable auto-refetch
+    refetchEnabled: !isExecuting, // Pause auto-refetch during execution
     networkMode,
   });
 
@@ -204,6 +210,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       ? zapPreviewQuery.data.swapAmount + zapPreviewQuery.data.remainingInputAmount
       : undefined,
     enabled: isZapMode && !!zapPreviewQuery.data && !!accountAddress && !!poolConfig?.hooks,
+    networkMode,
   });
 
   console.log('[IncreaseLiquidityTxContext] Zap mode:', {
@@ -789,6 +796,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     zapPreviewError: zapPreviewQuery.error ?? null,
     zapDataUpdatedAt: zapPreviewQuery.dataUpdatedAt ?? 0,
     refetchZapPreview: zapPreviewQuery.refetch,
+    setExecuting,
   }), [
     isLoading,
     error,

@@ -344,6 +344,7 @@ export default async function handler(
           args: [getAddress(userAddress), PERMIT2_ADDRESS]
         })),
         allowFailure: false,
+        blockTag: 'latest',
       });
 
       // Use permitAmount (slippage-adjusted) for the check to ensure approval covers actual transfer
@@ -401,6 +402,7 @@ export default async function handler(
             args: [getAddress(userAddress), t.address, POSITION_MANAGER_ADDRESS] as const
           })),
           allowFailure: false,
+          blockTag: 'latest',
         });
 
         permit2TokensToCheck.forEach((t, i) => {
