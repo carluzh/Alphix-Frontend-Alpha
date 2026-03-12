@@ -2,7 +2,7 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { batchQuotePrices } from '@/lib/swap/quote-prices';
-import { modeForChainId, type NetworkMode } from '@/lib/network-mode';
+import { modeForChainId, type NetworkMode, CHAIN_REGISTRY } from '@/lib/network-mode';
 import { checkRateLimit } from '@/lib/api/ratelimit';
 
 /**
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const symbols: string[] = body.symbols || [];
-    const chainId = parseInt(body.chainId || '8453', 10);
+    const chainId = parseInt(body.chainId || String(CHAIN_REGISTRY.base.chainId), 10);
 
     if (!Array.isArray(symbols) || symbols.length === 0) {
       return NextResponse.json({ error: 'symbols array required' }, { status: 400 });

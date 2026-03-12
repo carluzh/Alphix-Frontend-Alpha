@@ -2,7 +2,7 @@ export const runtime = 'nodejs';
 
 import { NextResponse } from 'next/server';
 import { getQuotePrice } from '@/lib/swap/quote-prices';
-import { modeForChainId, type NetworkMode } from '@/lib/network-mode';
+import { modeForChainId, type NetworkMode, CHAIN_REGISTRY } from '@/lib/network-mode';
 import { checkRateLimit } from '@/lib/api/ratelimit';
 
 /**
@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   if (rateLimited) return rateLimited;
   const { searchParams } = new URL(request.url);
   const symbol = searchParams.get('symbol');
-  const chainId = parseInt(searchParams.get('chainId') || '8453', 10);
+  const chainId = parseInt(searchParams.get('chainId') || String(CHAIN_REGISTRY.base.chainId), 10);
 
   if (!symbol) {
     return NextResponse.json({ error: 'symbol parameter required' }, { status: 400 });

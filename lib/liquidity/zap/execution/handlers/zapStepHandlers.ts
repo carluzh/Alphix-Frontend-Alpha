@@ -358,11 +358,18 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
 
   if (!buildTxResponse.ok) {
     const errorData = await buildTxResponse.json().catch(() => ({}));
-    throw new Error(`Failed to build ${swapSource} swap tx: ${errorData.message || buildTxResponse.statusText}`);
+    const rawMsg = errorData.message || buildTxResponse.statusText;
+    if (swapSource === 'kyberswap') {
+      throw new Error('Kyberswap API denied request. Try again or switch to dual token deposit.');
+    }
+    throw new Error(`Failed to build ${swapSource} swap tx: ${rawMsg}`);
   }
 
   const txData = await buildTxResponse.json();
   if (!txData.ok) {
+    if (swapSource === 'kyberswap') {
+      throw new Error('Kyberswap API denied request. Try again or switch to dual token deposit.');
+    }
     throw new Error(`${swapSource} swap build failed: ${txData.message}`);
   }
 

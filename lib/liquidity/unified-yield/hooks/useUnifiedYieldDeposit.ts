@@ -278,7 +278,7 @@ export function useUnifiedYieldDeposit(
           sharesToMint: preview.shares,
           userAddress,
           poolId: params.poolId || '',
-          chainId: params.chainId || 8453,
+          chainId: params.chainId || chainIdForMode(networkMode),
         };
 
         // Validate

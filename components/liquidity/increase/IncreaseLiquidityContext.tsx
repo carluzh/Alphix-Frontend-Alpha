@@ -69,10 +69,9 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
   const isUnifiedYield = position.isUnifiedYield ?? false;
   const isZapEligible = isUnifiedYield && isZapEligiblePool(position.poolId);
 
-  // Initialize deposit mode based on zap eligibility
-  // Default to 'zap' for eligible positions, 'balanced' otherwise
-  const initialDepositMode: UnifiedYieldDepositMode = isZapEligible ? 'zap' : 'balanced';
-  const initialZapInputToken: 'token0' | 'token1' | null = isZapEligible ? 'token1' : null; // Default to USDC (token1)
+  // Default to balanced (dual token) mode; user can switch to zap (single token) via toggle
+  const initialDepositMode: UnifiedYieldDepositMode = 'balanced';
+  const initialZapInputToken: 'token0' | 'token1' | null = null;
 
   const [increaseLiquidityState, setIncreaseLiquidityState] = useState<IncreaseLiquidityState>({
     position,

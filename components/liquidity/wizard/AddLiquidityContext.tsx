@@ -187,10 +187,8 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
 
     const initialPoolId = urlPool || entryConfig?.poolId || null;
 
-    // Set deposit mode based on zap eligibility of the initial pool
-    const depositModeForPool = initialPoolId && isZapEligiblePool(initialPoolId)
-      ? { depositMode: 'zap' as const, zapInputToken: 'token1' as const }
-      : { depositMode: 'balanced' as const, zapInputToken: null };
+    // Default to balanced (dual token) mode; user can switch to zap (single token) via toggle
+    const depositModeForPool = { depositMode: 'balanced' as const, zapInputToken: null };
 
     return {
       ...DEFAULT_WIZARD_STATE,

@@ -64,9 +64,11 @@ export function usePositionsChartData({
   const { subscribeToSnapshots, isConnected } = useSSEContext();
 
   const queryKey = ["positions-chart", address, period, "all-chains"];
-  // Use ref to avoid stale closure in subscription callback
+  // Use refs to avoid stale closures in subscription callback
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
+  const currentTotalValueRef = useRef(currentTotalValue);
+  currentTotalValueRef.current = currentTotalValue;
 
   // Store time range from backend response
   const timeRangeRef = useRef<{ from: number; to: number } | null>(null);
@@ -127,11 +129,12 @@ export function usePositionsChartData({
     if (!enabled || !address) return;
 
     const unsubscribe = subscribeToSnapshots((snapshot) => {
-      // Calculate total value from all positions in the snapshot
-      const totalValue = snapshot.positions.reduce(
-        (sum, pos) => sum + pos.valueUsd,
-        0
-      );
+      // Use the multi-chain currentTotalValue (via ref) instead of the
+      // single-chain snapshot positions. The SSE stream only connects to the
+      // currently connected chain, so snapshot.positions is incomplete.
+      // currentTotalValue is computed from Apollo queries across ALL chains.
+      const totalValue = currentTotalValueRef.current;
+      if (totalValue === undefined || totalValue <= 0) return;
 
       const newPoint: PositionsChartPoint = {
         timestamp: snapshot.timestamp,

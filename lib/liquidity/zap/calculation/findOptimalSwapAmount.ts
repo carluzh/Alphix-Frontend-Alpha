@@ -381,7 +381,7 @@ async function fetchKyberQuoteViaApi(
         fromTokenDecimals,
         toTokenDecimals,
         swapType: 'ExactIn',
-        chainId: networkMode ? chainIdForMode(networkMode) : 8453,
+        chainId: chainIdForMode(networkMode ?? 'base'),
         slippageBps: slippageBps ?? 50,
         userAddress,
       }),
