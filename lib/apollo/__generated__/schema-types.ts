@@ -38,7 +38,7 @@ export type Amount = IAmount & {
 
 export type Chain =
   | 'BASE'
-  | 'BASE_SEPOLIA';
+  | 'ARBITRUM';
 
 export type Currency =
   | 'ETH'

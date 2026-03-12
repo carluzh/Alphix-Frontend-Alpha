@@ -17,7 +17,7 @@ export const typeDefs = /* GraphQL */ `
 
 enum Chain {
   BASE
-  BASE_SEPOLIA
+  ARBITRUM
 }
 
 enum Currency {

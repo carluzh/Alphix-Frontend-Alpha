@@ -1,38 +1,15 @@
-/**
- * AlphixBackend Client
- *
- * Client for calling the AlphixBackend API for portfolio chart data.
- * The backend handles pool snapshots, position value calculations, and fee estimation.
- *
- * Network-aware: Most endpoints support ?network=base (mainnet) or ?network=base-sepolia (testnet)
- */
+// AlphixBackend API client — network-aware via ?network= param.
 
 import { type NetworkMode } from './network-mode';
+import { CHAIN_REGISTRY } from './chain-registry';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
-// =============================================================================
-// NETWORK HELPERS
-// =============================================================================
-
-/**
- * Map frontend NetworkMode to backend network query param value
- *
- * @param networkMode - 'mainnet' | 'testnet' from NetworkContext
- * @returns 'base' for mainnet, 'base-sepolia' for testnet
- */
-export function getNetworkParam(networkMode: NetworkMode): 'base' | 'base-sepolia' {
-  return networkMode === 'testnet' ? 'base-sepolia' : 'base';
+/** Map frontend NetworkMode to backend network query param */
+export function getNetworkParam(networkMode: NetworkMode): string {
+  return CHAIN_REGISTRY[networkMode].backendNetwork;
 }
 
-/**
- * Build a backend URL with network param and optional additional params
- *
- * @param path - API path (e.g., '/pools/0x123/history')
- * @param networkMode - Network mode from context
- * @param params - Additional query params
- * @returns Full URL string
- */
 export function buildBackendUrl(
   path: string,
   networkMode: NetworkMode,
@@ -51,7 +28,7 @@ export function buildBackendUrl(
 }
 
 /**
- * Build a backend URL WITHOUT network param (for mainnet-only endpoints)
+ * Build a backend URL WITHOUT network param (for base-only endpoints)
  *
  * Used for: /aave/rates, /spark/rates, /points/*, /referral/*
  */
@@ -208,12 +185,12 @@ export async function checkBackendHealth(): Promise<HealthStatus> {
  *
  * @param address - User's wallet address
  * @param period - Time period (DAY, WEEK, MONTH)
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchPositionsChart(
   address: string,
   period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<PortfolioChartResponse> {
   try {
     const url = buildBackendUrl('/portfolio/chart', networkMode, {
@@ -251,12 +228,12 @@ export async function fetchPositionsChart(
  *
  * @param poolId - Pool ID
  * @param period - Time period (DAY, WEEK, MONTH)
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchPoolHistory(
   poolId: string,
   period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<PoolHistoryResponse> {
   try {
     const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/history`, networkMode, {
@@ -320,12 +297,12 @@ export interface PositionFeeChartResponse {
  *
  * @param positionId - Position token ID
  * @param period - Time period (1W, 1M, 1Y, ALL - mapped to backend format)
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchPositionFees(
   positionId: string,
   period: '1W' | '1M' | '1Y' | 'ALL' = '1W',
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<PositionFeeChartResponse> {
   // Map frontend period format to backend format
   const periodMap: Record<string, 'DAY' | 'WEEK' | 'MONTH'> = {
@@ -396,11 +373,11 @@ export interface PositionAprResponse {
  * Returns daysCovered < 7 for positions younger than 7 days.
  *
  * @param positionId - Position token ID
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchPositionApr(
   positionId: string,
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<PositionAprResponse> {
   // Convert position ID to full 66-char hex format expected by backend
   const fullHexPositionId = toFullHexPositionId(positionId);
@@ -438,11 +415,11 @@ export async function fetchPositionApr(
  * Get current pool state
  *
  * @param poolId - Pool ID
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchPoolCurrent(
   poolId: string,
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<{
   success: boolean;
   snapshot?: PoolSnapshot;
@@ -502,10 +479,10 @@ export interface UnifiedYieldPoolsResponse {
 /**
  * Fetch all Unified Yield pools for a network
  *
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchUnifiedYieldPools(
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<UnifiedYieldPoolsResponse> {
   try {
     const url = buildBackendUrl('/unified-yield/pools', networkMode);
@@ -550,11 +527,11 @@ export interface UnifiedYieldPoolAprResponse {
  * Fetch swap APR for a Unified Yield pool
  *
  * @param poolId - Pool ID
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchUnifiedYieldPoolApr(
   poolId: string,
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<UnifiedYieldPoolAprResponse> {
   try {
     const url = buildBackendUrl(`/unified-yield/pool/${encodeURIComponent(poolId)}/apr`, networkMode);
@@ -606,12 +583,12 @@ export interface UnifiedYieldAprHistoryResponse {
  *
  * @param poolId - Pool ID
  * @param period - Time period (DAY, WEEK, MONTH)
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchUnifiedYieldPoolAprHistory(
   poolId: string,
   period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<UnifiedYieldAprHistoryResponse> {
   try {
     const url = buildBackendUrl(`/unified-yield/pool/${encodeURIComponent(poolId)}/apr/history`, networkMode, {
@@ -655,11 +632,11 @@ export interface PoolPricesResponse {
  * Fetch token prices from a pool
  *
  * @param poolId - Pool ID
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchPoolPrices(
   poolId: string,
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<PoolPricesResponse> {
   try {
     const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/prices`, networkMode);
@@ -707,12 +684,12 @@ export interface PoolPricesHistoryResponse {
  *
  * @param poolId - Pool ID
  * @param period - Time period (DAY, WEEK, MONTH)
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchPoolPricesHistory(
   poolId: string,
   period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<PoolPricesHistoryResponse> {
   try {
     const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/prices/history`, networkMode, {
@@ -765,7 +742,7 @@ export interface SparkRatesResponse {
 /**
  * Fetch Spark rates (sUSDS yield on Ethereum mainnet)
  *
- * Note: This is mainnet-only - no network param needed
+ * Note: This is Base-only - no network param needed
  */
 export async function fetchSparkRates(): Promise<SparkRatesResponse> {
   try {
@@ -813,7 +790,7 @@ export interface SparkHistoryResponse {
 /**
  * Fetch historical Spark rates for a token
  *
- * Note: This is mainnet-only - no network param needed
+ * Note: This is Base-only - no network param needed
  *
  * @param token - Token symbol (e.g., 'DAI', 'USDS')
  * @param period - Time period (DAY, WEEK, MONTH)
@@ -884,12 +861,12 @@ export interface UnifiedYieldCompoundedFeesResponse {
  *
  * @param hookAddress - Hook contract address
  * @param userAddress - User wallet address
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchUnifiedYieldPositionCompoundedFees(
   hookAddress: string,
   userAddress: string,
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<UnifiedYieldCompoundedFeesResponse> {
   const positionId = `${hookAddress.toLowerCase()}-${userAddress.toLowerCase()}`;
 
@@ -958,11 +935,11 @@ export interface UserPositionsWithFeesResponse {
  * Used for WebSocket initial load - fetches all positions at once.
  *
  * @param address - User's wallet address
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchUserPositionsWithFees(
   address: string,
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<UserPositionsWithFeesResponse> {
   try {
     const url = buildBackendUrl(
@@ -1043,12 +1020,12 @@ export async function fetchWSStats(): Promise<WSStatsResponse> {
  * Get the WebSocket URL based on environment and network mode
  *
  * Returns:
- * - Development: ws://34.60.82.34:3001/ws?network=base|base-sepolia
- * - Production: wss://api.alphix.fi/ws?network=base|base-sepolia
+ * - Development: ws://34.60.82.34:3001/ws?network=base|arbitrum
+ * - Production: wss://api.alphix.fi/ws?network=base|arbitrum
  *
- * @param networkMode - Optional network mode ('mainnet' | 'testnet'). If not provided, returns base URL without network param.
+ * @param networkMode - Optional network mode ('base' | 'arbitrum'). If not provided, returns base URL without network param.
  */
-export function getWebSocketUrl(networkMode?: 'mainnet' | 'testnet'): string {
+export function getWebSocketUrl(networkMode?: NetworkMode): string {
   let baseUrl: string;
 
   const wsUrl = process.env.NEXT_PUBLIC_ALPHIX_WS_URL;
@@ -1066,10 +1043,8 @@ export function getWebSocketUrl(networkMode?: 'mainnet' | 'testnet'): string {
     baseUrl = 'ws://34.60.82.34:3001/ws';
   }
 
-  // Append network param if provided
   if (networkMode) {
-    const networkParam = networkMode === 'mainnet' ? 'base' : 'base-sepolia';
-    return `${baseUrl}?network=${networkParam}`;
+    return `${baseUrl}?network=${getNetworkParam(networkMode)}`;
   }
 
   return baseUrl;
@@ -1116,10 +1091,10 @@ export interface PoolsMetricsResponse {
  * Used for initial load before WebSocket updates.
  * Returns the same data structure as WebSocket pools:metrics channel.
  *
- * @param networkMode - Network mode ('mainnet' | 'testnet')
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
 export async function fetchPoolsMetrics(
-  networkMode: NetworkMode = 'mainnet'
+  networkMode: NetworkMode = 'base'
 ): Promise<PoolsMetricsResponse> {
   try {
     const url = buildBackendUrl('/pools/metrics', networkMode);
@@ -1143,6 +1118,21 @@ export async function fetchPoolsMetrics(
       timestamp: Date.now(),
       error: error instanceof Error ? error.message : 'Unknown error',
     };
+  }
+}
+
+/** Fetch pool metrics for ALL chains in one request (no ?network= param). */
+export async function fetchAllPoolsMetrics(): Promise<PoolsMetricsResponse> {
+  try {
+    const url = buildBackendUrlNoNetwork('/pools/metrics');
+    const response = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+    return await response.json();
+  } catch (error) {
+    return { success: false, network: 'all', pools: [], timestamp: Date.now(), error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }
 

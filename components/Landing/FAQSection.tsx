@@ -65,7 +65,7 @@ const faqItems: { number: string; question: string; answer: React.ReactNode }[] 
         <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
           Unified Pools
         </Link>
-        . By stacking multiple features into a single pool, we eliminate liquidity fragmentation and create more efficient markets. Think dynamic fees, liquidity rehypothecation, and other innovations, all coexisting without splitting liquidity.
+        . By stacking multiple features into a single pool, we eliminate liquidity fragmentation and create more efficient markets. Think dynamic fees, liquidity rehypothecation, and other innovations, all coexisting without splitting liquidity. Alphix is live on Base and Arbitrum.
       </>
     ),
   },
@@ -90,18 +90,24 @@ const faqItems: { number: string; question: string; answer: React.ReactNode }[] 
   },
   {
     number: '04',
-    question: 'Is Alphix safe to use?',
+    question: 'What is rehypothecation?',
     answer:
-      'Security is non-negotiable for us. We work with leading security teams to audit every feature before it is added to Unified Pools. Alphix is fully non-custodial, meaning you retain complete control over your assets at all times. No protocol can be considered entirely risk-free, but we take extensive steps to minimize risks.',
+      'Rehypothecation allows idle liquidity sitting in Unified Pools to be deployed into trusted, yield-generating protocols. This means LPs earn additional yield on top of trading fees without any extra effort. We carefully vet and audit every integration partner to ensure security remains our top priority while maximizing capital efficiency.',
   },
   {
     number: '05',
-    question: 'Which chains is Alphix available on?',
+    question: 'Is Alphix safe to use?',
     answer:
-      'Alphix is live on Base. We chose Base for its strong growth potential and alignment with the Uniswap ecosystem.',
+      'Security is non-negotiable for us. We work with leading security teams to audit every feature before it is added to Unified Pools, including all rehypothecation integrations. Alphix is fully non-custodial, meaning you retain complete control over your assets at all times. No protocol can be considered entirely risk-free, but we take extensive steps to minimize risks.',
   },
   {
     number: '06',
+    question: 'Which chains is Alphix available on?',
+    answer:
+      'Alphix is live on Base and Arbitrum. We chose Base for its strong growth potential and alignment with the Uniswap ecosystem, and Arbitrum for its thriving DeFi ecosystem and deep liquidity. We plan to expand to additional chains as the protocol grows.',
+  },
+  {
+    number: '07',
     question: 'How can I provide liquidity or trade?',
     answer: (
       <>
@@ -109,7 +115,7 @@ const faqItems: { number: string; question: string; answer: React.ReactNode }[] 
         <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
           provide liquidity
         </Link>{' '}
-        directly through our app by depositing tokens into Unified Pools. For trading, you can{' '}
+        directly through our app by depositing tokens into Unified Pools on Base or Arbitrum. For trading, you can{' '}
         <Link href="/swap" className="underline hover:text-foreground transition-colors">
           swap directly on Alphix
         </Link>{' '}

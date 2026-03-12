@@ -5,7 +5,7 @@ import Image from "next/image";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getAllTokens, type TokenConfig } from "@/lib/pools-config";
-import { useNetwork } from "@/lib/network-context";
+import type { NetworkMode } from "@/lib/network-mode";
 
 interface TokenSearchBarProps {
   /** Current search value */
@@ -18,6 +18,8 @@ interface TokenSearchBarProps {
   placeholder?: string;
   /** Additional class names */
   className?: string;
+  /** Network mode for token list — caller provides, no context fallback */
+  networkMode?: NetworkMode;
 }
 
 /**
@@ -35,8 +37,8 @@ export const TokenSearchBar = memo(function TokenSearchBar({
   onTokenSelect,
   placeholder = "Search tokens...",
   className,
+  networkMode,
 }: TokenSearchBarProps) {
-  const { networkMode } = useNetwork();
   const [localValue, setLocalValue] = useState(value);
   const [showDropdown, setShowDropdown] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);

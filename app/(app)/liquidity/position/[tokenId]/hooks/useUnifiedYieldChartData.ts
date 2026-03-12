@@ -20,8 +20,7 @@ import {
   fetchSparkRatesHistory,
 } from "@/lib/backend-client";
 import { fetchAaveHistory, getTokenProtocol, getPoolYieldFactor } from "@/lib/aave-rates";
-import { useNetwork } from "@/lib/network-context";
-import type { YieldSource } from "@/lib/pools-config";
+import type { YieldSource, NetworkMode } from "@/lib/pools-config";
 
 export type ChartPeriod = "1W" | "1M" | "1Y";
 
@@ -48,6 +47,8 @@ interface UseUnifiedYieldChartDataParams {
   /** Current live Swap APR (%) from yield breakdown – appended as a "now" point */
   currentSwapApr?: number | null;
   enabled?: boolean;
+  /** Override network mode (for cross-chain display where context may differ) */
+  networkModeOverride?: NetworkMode;
 }
 
 interface UseUnifiedYieldChartDataResult {
@@ -83,6 +84,7 @@ async function fetchTokenYieldHistory(
   protocol: 'aave' | 'spark',
   frontendPeriod: ChartPeriod,
   backendPeriod: 'DAY' | 'WEEK' | 'MONTH',
+  networkMode?: NetworkMode,
 ): Promise<Array<{ timestamp: number; apy: number }>> {
   if (protocol === 'spark') {
     const mapping = getTokenProtocol(tokenSymbol);
@@ -90,7 +92,7 @@ async function fetchTokenYieldHistory(
     const result = await fetchSparkRatesHistory(key, backendPeriod);
     return result.success ? result.points.map(p => ({ timestamp: p.timestamp, apy: p.apy })) : [];
   } else {
-    const result = await fetchAaveHistory(tokenSymbol, frontendPeriod);
+    const result = await fetchAaveHistory(tokenSymbol, frontendPeriod, networkMode);
     return result.success ? result.points.map(p => ({ timestamp: p.timestamp, apy: p.apy })) : [];
   }
 }
@@ -109,8 +111,9 @@ export function useUnifiedYieldChartData({
   token1Symbol,
   currentSwapApr,
   enabled = true,
+  networkModeOverride,
 }: UseUnifiedYieldChartDataParams): UseUnifiedYieldChartDataResult {
-  const { networkMode } = useNetwork();
+  const networkMode = networkModeOverride;
   const backendPeriod = mapPeriodToBackend(period);
 
   // Determine which protocol each token uses
@@ -142,10 +145,10 @@ export function useUnifiedYieldChartData({
 
   // Fetch yield history for token0 (e.g., Aave ETH or Spark USDS)
   const token0YieldQuery = useQuery({
-    queryKey: ["token-yield-history", token0Symbol, token0Protocol, period],
+    queryKey: ["token-yield-history", token0Symbol, token0Protocol, period, networkMode],
     queryFn: async () => {
       if (!token0Symbol || !token0Protocol) return null;
-      return fetchTokenYieldHistory(token0Symbol, token0Protocol, period, backendPeriod);
+      return fetchTokenYieldHistory(token0Symbol, token0Protocol, period, backendPeriod, networkMode);
     },
     enabled: enabled && token0HasYield && !!token0Symbol,
     staleTime: 5 * 60 * 1000,
@@ -153,10 +156,10 @@ export function useUnifiedYieldChartData({
 
   // Fetch yield history for token1 (e.g., Aave USDC)
   const token1YieldQuery = useQuery({
-    queryKey: ["token-yield-history", token1Symbol, token1Protocol, period],
+    queryKey: ["token-yield-history", token1Symbol, token1Protocol, period, networkMode],
     queryFn: async () => {
       if (!token1Symbol || !token1Protocol) return null;
-      return fetchTokenYieldHistory(token1Symbol, token1Protocol, period, backendPeriod);
+      return fetchTokenYieldHistory(token1Symbol, token1Protocol, period, backendPeriod, networkMode);
     },
     enabled: enabled && token1HasYield && !!token1Symbol,
     staleTime: 5 * 60 * 1000,

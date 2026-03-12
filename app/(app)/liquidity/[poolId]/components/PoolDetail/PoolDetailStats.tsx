@@ -7,6 +7,7 @@ import { StatSectionBubble } from "../shared/DetailBubble";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { APRBreakdownTooltip } from "@/components/liquidity/APRBreakdownTooltip";
 import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
+import type { NetworkMode } from "@/lib/network-mode";
 import type { PoolStats } from "../../hooks";
 
 
@@ -16,6 +17,8 @@ interface PoolDetailStatsProps {
   /** Token symbols for APR tooltip */
   token0Symbol?: string;
   token1Symbol?: string;
+  /** Network mode for fetching correct Aave rates */
+  networkMode?: NetworkMode;
 }
 
 interface StatItemProps {
@@ -69,15 +72,15 @@ export const PoolDetailStats = memo(function PoolDetailStats({
   loading,
   token0Symbol,
   token1Symbol,
+  networkMode,
 }: PoolDetailStatsProps) {
   const isLoading = loading || poolStats.tvlFormatted === "Loading...";
-  const hasPositiveApr = poolStats.apr !== "0.00%" && poolStats.aprRaw > 0;
   const hasUnifiedYield = true; // All Alphix pools have unified yield
 
-  // Fetch Aave rates for Lending Yield display
+  // Fetch Aave rates for Lending Yield display (network-aware)
   const { data: aaveRatesData } = useQuery({
-    queryKey: ['aaveRates'],
-    queryFn: fetchAaveRates,
+    queryKey: ['aaveRates', networkMode ?? 'default'],
+    queryFn: () => fetchAaveRates(networkMode),
     staleTime: 5 * 60_000, // 5 minutes
   });
 
@@ -98,6 +101,9 @@ export const PoolDetailStats = memo(function PoolDetailStats({
       totalAprFormatted: total > 0 ? `${total.toFixed(2)}%` : "0.00%",
     };
   }, [poolStats.aprRaw, unifiedYieldApr]);
+
+  // Check if total APR (swap + lending) is positive — not just swap APR
+  const hasPositiveApr = totalApr > 0;
 
   // Stat card class (solid border, not dashed - the outer wrapper has the dashed border)
   const statCardClass = "flex-1 min-w-[130px] rounded-lg bg-muted/30 border border-sidebar-border/60 px-4 py-3";

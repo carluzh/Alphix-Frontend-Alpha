@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { parseAbi, encodeAbiParameters, keccak256 } from 'viem';
 import { getPositionDetails, calculateUnclaimedFeesV4 } from '@/lib/liquidity/liquidity-utils';
-import { getNetworkModeFromRequest, getPositionManagerAddress, getStateViewAddress } from '@/lib/pools-config';
+import { getPositionManagerAddress, getStateViewAddress } from '@/lib/pools-config';
+import { chainIdForMode, resolveNetworkMode } from '@/lib/network-mode';
 import { createNetworkClient } from '@/lib/viemClient';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
 
@@ -49,8 +50,8 @@ export default async function handler(
       return res.status(400).json({ error: 'Invalid tokenId format' });
     }
 
-    const networkMode = getNetworkModeFromRequest(req.headers.cookie);
-    const chainId = networkMode === 'mainnet' ? 8453 : 84532;
+    const networkMode = resolveNetworkMode(req);
+    const chainId = chainIdForMode(networkMode);
     const client = createNetworkClient(networkMode);
     const positionManager = getPositionManagerAddress(networkMode);
 

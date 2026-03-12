@@ -25,6 +25,8 @@ interface UseLiquidityChartDataParams {
   token0?: Currency;
   /** SDK token1 for proper decimal handling in price conversion */
   token1?: Currency;
+  /** Network mode for chain-specific pool lookups */
+  networkMode?: import('@/lib/network-mode').NetworkMode;
 }
 
 interface UseLiquidityChartDataResult {
@@ -38,13 +40,14 @@ export function useLiquidityChartData({
   priceInverted,
   token0,
   token1,
+  networkMode,
 }: UseLiquidityChartDataParams): UseLiquidityChartDataResult {
   const [rawData, setRawData] = useState<ChartEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   // Get the subgraph pool ID for API calls
-  const subgraphPoolId = poolId ? (getPoolSubgraphId(poolId) || poolId) : undefined;
+  const subgraphPoolId = poolId ? (getPoolSubgraphId(poolId, networkMode) || poolId) : undefined;
 
   // Fetch raw liquidity data
   useEffect(() => {
@@ -64,7 +67,7 @@ export function useLiquidityChartData({
         const resp = await fetch('/api/liquidity/get-ticks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ poolId: subgraphPoolId, first: 500 }),
+          body: JSON.stringify({ poolId: subgraphPoolId, first: 500, networkMode }),
         });
 
         if (!resp.ok) throw new Error(`API failed: ${resp.status}`);
@@ -122,7 +125,7 @@ export function useLiquidityChartData({
 
     fetchData();
     return () => { cancelled = true; };
-  }, [poolId, subgraphPoolId, token0, token1]);
+  }, [poolId, subgraphPoolId, token0, token1, networkMode]);
 
   // Transform and sort by price0 (inverts if needed)
   const liquidityData = useMemo(() => {

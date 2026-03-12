@@ -40,16 +40,6 @@ export {
   type UsePositionAPRParams,
   type UsePositionAPRResult,
   type CachedPoolMetrics,
-  // Step-based hooks - Uniswap pattern
-  useStepBasedIncreaseLiquidity,
-  useStepBasedDecreaseLiquidity,
-  useStepBasedCollectFees,
-  type UseStepBasedIncreaseProps,
-  type UseStepBasedDecreaseProps,
-  type UseStepBasedCollectProps,
-  type IncreasePositionParams,
-  type DecreasePositionParams,
-  type CollectFeesParams,
 } from './position'
 
 // Approval hooks

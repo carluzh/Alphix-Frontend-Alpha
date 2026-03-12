@@ -13,7 +13,7 @@ import { fetchUnifiedYieldPositions } from "@/lib/liquidity/unified-yield/fetchU
  */
 type Position = V4ProcessedPosition | UnifiedYieldPosition;
 import { createNetworkClient } from "@/lib/viemClient";
-import { useNetwork } from "@/lib/network-context";
+import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import {
   loadUserPositionIds,
   derivePositionsFromIds,
@@ -25,6 +25,8 @@ import { invalidateAfterTx } from "@/lib/apollo/mutations";
 interface UsePoolPositionsOptions {
   poolId: string;
   subgraphId: string;
+  /** Pool's networkMode — positions must be fetched from the correct chain */
+  networkModeOverride?: NetworkMode;
 }
 
 interface UsePoolPositionsReturn {
@@ -60,9 +62,12 @@ interface MutationInfo {
 export function usePoolPositions({
   poolId,
   subgraphId,
+  networkModeOverride,
 }: UsePoolPositionsOptions): UsePoolPositionsReturn {
-  const { address: accountAddress, isConnected, chainId } = useAccount();
-  const { networkMode } = useNetwork();
+  const { address: accountAddress, isConnected } = useAccount();
+  // Use the pool's chain, not the wallet's chain or global context
+  const networkMode = networkModeOverride ?? 'base' as NetworkMode;
+  const chainId = chainIdForMode(networkMode);
 
   const [userPositions, setUserPositions] = useState<Position[]>([]);
   const [isLoadingPositions, setIsLoadingPositions] = useState(true);
@@ -85,7 +90,7 @@ export function usePoolPositions({
     const v4Ids = ids.filter(id => !isUnifiedYieldPositionId(id));
 
     // Fetch V4 positions from on-chain
-    const timestamps = getCachedPositionTimestamps(accountAddress);
+    const timestamps = getCachedPositionTimestamps(accountAddress, networkMode);
     const v4Positions = v4Ids.length > 0
       ? await derivePositionsFromIds(accountAddress, v4Ids, chainId, timestamps)
       : [];
@@ -120,7 +125,7 @@ export function usePoolPositions({
 
     setIsLoadingPositions(true);
     try {
-      const ids = await loadUserPositionIds(accountAddress, {
+      const ids = await loadUserPositionIds(accountAddress, networkMode, {
         onRefreshed: async (freshIds) => {
           const allPositions = await fetchAllPositions(freshIds);
           setUserPositions(filterPositionsForPool(allPositions));
@@ -147,7 +152,7 @@ export function usePoolPositions({
 
     setIsDerivingNewPosition(true);
     try {
-      const ids = await loadUserPositionIds(accountAddress);
+      const ids = await loadUserPositionIds(accountAddress, networkMode);
       const allDerived = await fetchAllPositions(ids);
       const filtered = filterPositionsForPool(allDerived);
 
@@ -214,7 +219,7 @@ export function usePoolPositions({
   const removePositionOptimistically = useCallback((positionId: string) => {
     setUserPositions(prev => prev.filter(p => p.positionId !== positionId));
     if (accountAddress) {
-      removePositionIdFromCache(accountAddress, positionId);
+      removePositionIdFromCache(accountAddress, positionId, networkMode);
     }
   }, [accountAddress]);
 

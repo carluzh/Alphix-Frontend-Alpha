@@ -19,6 +19,7 @@ import { parseUnits, type Address } from "viem";
 import * as Sentry from "@sentry/nextjs";
 import { getTokenDefinitions, getPoolById, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
+import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import { useDerivedIncreaseInfo } from "@/lib/liquidity/hooks";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
@@ -92,16 +93,20 @@ interface IncreaseLiquidityTxContextType {
   zapApprovals: ZapApprovalStatus | null;
   isZapPreviewLoading: boolean;
   isZapPreviewFetching: boolean;
+  isZapPreviewError: boolean;
+  zapPreviewError: Error | null;
   zapDataUpdatedAt: number;
   refetchZapPreview: () => Promise<any>;
+
+  // Execution state — pauses zap refetch during tx execution
+  setExecuting: (executing: boolean) => void;
 }
 
 const IncreaseLiquidityTxContext = createContext<IncreaseLiquidityTxContextType | null>(null);
 
 export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildren) {
   const { address: accountAddress, isConnected } = useAccount();
-  const { chainId, networkMode } = useNetwork();
-  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+  const { ensureChain } = useNetwork();
   const {
     increaseLiquidityState,
     derivedIncreaseLiquidityInfo,
@@ -115,13 +120,18 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   } = useIncreaseLiquidityContext();
   const { position, exactField } = increaseLiquidityState;
 
+  // Derive networkMode from the position's chain — never use global context
+  const networkMode = position.networkMode || 'base';
+  const chainId = chainIdForMode(networkMode);
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+
   // Get pool config for Unified Yield (hook address)
   const poolConfig = useMemo(() => {
     return position.poolId ? getPoolById(position.poolId, networkMode) : null;
   }, [position.poolId, networkMode]);
 
   // Pool state for slippage protection (sqrtPriceX96)
-  const { data: poolStateData } = usePoolState(poolConfig?.subgraphId ?? '');
+  const { data: poolStateData } = usePoolState(poolConfig?.subgraphId ?? '', networkMode);
 
   // Unified Yield deposit hook - only active for ReHypothecation positions
   const unifiedYieldDeposit = useUnifiedYieldDeposit({
@@ -134,6 +144,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     chainId,
     sqrtPriceX96: poolStateData?.sqrtPriceX96,
     maxPriceSlippage: 500, // 0.05%
+    networkModeOverride: networkMode,
   });
 
   // Unified Yield approval checking hook - uses preview from deposit hook
@@ -160,6 +171,9 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   // ZAP MODE HOOKS - Single-token deposit with auto-swap (USDS/USDC only)
   // =========================================================================
 
+  // Execution state — when true, pauses zap refetch to avoid stale quotes overwriting
+  const [isExecuting, setExecuting] = useState(false);
+
   // Determine if we're in zap mode
   const isZapMode = isUnifiedYield && isZapEligible && depositMode === 'zap' && zapInputToken !== null;
 
@@ -181,7 +195,8 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     inputAmount: zapInputAmount || '',
     hookAddress: (poolConfig?.hooks ?? '0x0') as Address,
     enabled: isZapMode && !!zapToken && !!zapInputAmount && parseFloat(zapInputAmount) > 0 && !!poolConfig?.hooks,
-    refetchEnabled: true, // Enable auto-refetch
+    refetchEnabled: !isExecuting, // Pause auto-refetch during execution
+    networkMode,
   });
 
   // Zap approvals hook - checks approval status for swap + Hook deposit
@@ -195,6 +210,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       ? zapPreviewQuery.data.swapAmount + zapPreviewQuery.data.remainingInputAmount
       : undefined,
     enabled: isZapMode && !!zapPreviewQuery.data && !!accountAddress && !!poolConfig?.hooks,
+    networkMode,
   });
 
   console.log('[IncreaseLiquidityTxContext] Zap mode:', {
@@ -338,6 +354,10 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
    */
   const fetchAndBuildContext = useCallback(async (): Promise<ValidatedLiquidityTxContext | null> => {
     if (!accountAddress || !chainId) return null;
+
+    // Ensure wallet is on the correct chain before submitting
+    const ok = await ensureChain(chainIdForMode(networkMode));
+    if (!ok) return null;
 
     setIsLoading(true);
     setError(null);
@@ -772,8 +792,11 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     zapApprovals: zapApprovalsQuery.approvals ?? null,
     isZapPreviewLoading: zapPreviewQuery.isLoading,
     isZapPreviewFetching: zapPreviewQuery.isFetching,
+    isZapPreviewError: zapPreviewQuery.isError,
+    zapPreviewError: zapPreviewQuery.error ?? null,
     zapDataUpdatedAt: zapPreviewQuery.dataUpdatedAt ?? 0,
     refetchZapPreview: zapPreviewQuery.refetch,
+    setExecuting,
   }), [
     isLoading,
     error,
@@ -799,6 +822,8 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     zapPreviewQuery.data,
     zapPreviewQuery.isLoading,
     zapPreviewQuery.isFetching,
+    zapPreviewQuery.isError,
+    zapPreviewQuery.error,
     zapPreviewQuery.dataUpdatedAt,
     zapPreviewQuery.refetch,
     zapApprovalsQuery.approvals,

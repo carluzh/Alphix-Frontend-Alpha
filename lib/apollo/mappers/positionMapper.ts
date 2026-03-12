@@ -58,7 +58,7 @@ export interface GraphQLPosition {
  * Maps a single V4 position to GraphQL Position type
  *
  * @param pos - V4 position from API response
- * @param chain - Chain identifier (BASE or BASE_SEPOLIA)
+ * @param chain - Chain identifier (BASE or ARBITRUM)
  * @returns GraphQL-compatible Position object
  */
 export function mapPositionToGraphQL(
@@ -107,7 +107,7 @@ export function mapPositionToGraphQL(
  * Maps an array of V4 positions to GraphQL Position types
  *
  * @param positions - Array of V4 positions from API response
- * @param chain - Chain identifier (BASE or BASE_SEPOLIA)
+ * @param chain - Chain identifier (BASE or ARBITRUM)
  * @returns Array of GraphQL-compatible Position objects
  */
 export function mapPositionsToGraphQL(

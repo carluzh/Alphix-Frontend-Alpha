@@ -15,16 +15,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefetchOnHover } from "@/hooks/usePrefetchOnHover";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
-import { getEnabledPools, getToken, getPoolSubgraphId } from "@/lib/pools-config";
+import { getMultiChainEnabledPools, getToken, getPoolSubgraphId, resolveTokenIcon, type NetworkMode } from "@/lib/pools-config";
+import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 import { Pool } from "@/types";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useNetwork } from "@/lib/network-context";
 import { prefetchService } from "@/lib/prefetch-service";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 import { APRBadge } from "@/components/liquidity/APRBadge";
 import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { useWSPools } from "@/lib/websocket";
+import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 
 /**
  * PoolRowPrefetchWrapper - Wraps pool table rows with hover prefetch and stagger animation
@@ -72,11 +71,11 @@ function PoolRowPrefetchWrapper({
 }
 
 const generatePoolsFromConfig = (): Pool[] => {
-  const enabledPools = getEnabledPools();
+  const enabledPools = getMultiChainEnabledPools();
 
   return enabledPools.map(poolConfig => {
-    const token0 = getToken(poolConfig.currency0.symbol);
-    const token1 = getToken(poolConfig.currency1.symbol);
+    const token0 = getToken(poolConfig.currency0.symbol, poolConfig.networkMode);
+    const token1 = getToken(poolConfig.currency1.symbol, poolConfig.networkMode);
 
     if (!token0 || !token1) {
       console.warn(`Missing token configuration for pool ${poolConfig.id}`);
@@ -86,8 +85,8 @@ const generatePoolsFromConfig = (): Pool[] => {
     return {
       id: poolConfig.id,
       tokens: [
-        { symbol: token0.symbol, icon: token0.icon },
-        { symbol: token1.symbol, icon: token1.icon }
+        { symbol: token0.symbol, icon: resolveTokenIcon(token0.symbol) },
+        { symbol: token1.symbol, icon: resolveTokenIcon(token1.symbol) }
       ],
       pair: `${token0.symbol} / ${token1.symbol}`,
       volume24h: "Loading...",
@@ -96,6 +95,7 @@ const generatePoolsFromConfig = (): Pool[] => {
       apr: "Loading...",
       highlighted: poolConfig.featured,
       type: poolConfig.type,
+      networkMode: poolConfig.networkMode,
     } as Pool;
   }).filter(Boolean) as Pool[];
 };
@@ -124,10 +124,8 @@ const formatAPR = (aprValue: number) => {
 };
 
 export default function LiquidityPage() {
-  const { networkMode } = useNetwork();
-
-  // Pool config (static: tokens, icons, pair names)
-  const poolConfigs = useMemo(() => generatePoolsFromConfig(), [networkMode]);
+  // Pool config (static: tokens, icons, pair names) — includes all chains
+  const poolConfigs = useMemo(() => generatePoolsFromConfig(), []);
 
   // Pool metrics from WebSocket (real-time: TVL, volume, fees, APR)
   // Pattern: Initial REST from api.alphix.fi → WebSocket updates
@@ -136,7 +134,7 @@ export default function LiquidityPage() {
   // Merge pool config with WebSocket metrics
   const poolsData = useMemo(() => {
     return poolConfigs.map(poolConfig => {
-      const subgraphId = (getPoolSubgraphId(poolConfig.id) || poolConfig.id).toLowerCase();
+      const subgraphId = (getPoolSubgraphId(poolConfig.id, poolConfig.networkMode) || poolConfig.id).toLowerCase();
       const wsPool = wsPoolsMap.get(subgraphId);
 
       if (wsPool) {
@@ -159,21 +157,31 @@ export default function LiquidityPage() {
     });
   }, [poolConfigs, wsPoolsMap]);
 
-  // Fetch Aave rates for Unified Yield display
-  const { data: aaveRatesData } = useQuery({
-    queryKey: ['aaveRates'],
-    queryFn: fetchAaveRates,
-    staleTime: 5 * 60_000, // 5 minutes
+  // Fetch Aave rates for Unified Yield display — both networks for multi-chain list
+  const { data: aaveRatesBase } = useQuery({
+    queryKey: ['aaveRates', 'base'],
+    queryFn: () => fetchAaveRates('base'),
+    staleTime: 5 * 60_000,
+  });
+  const { data: aaveRatesArbitrum } = useQuery({
+    queryKey: ['aaveRates', 'arbitrum'],
+    queryFn: () => fetchAaveRates('arbitrum'),
+    staleTime: 5 * 60_000,
   });
 
-  // Calculate lending yield APR for a pool (with pool-level factor applied)
-  const getPoolAaveApy = useCallback((token0Symbol: string, token1Symbol: string): number | undefined => {
-    return getLendingAprForPair(aaveRatesData, token0Symbol, token1Symbol) ?? undefined;
-  }, [aaveRatesData]);
+  // Map network mode to fetched aave rates for easy lookup
+  const aaveRatesByMode: Record<string, typeof aaveRatesBase> = useMemo(() => ({
+    base: aaveRatesBase,
+    arbitrum: aaveRatesArbitrum,
+  }), [aaveRatesBase, aaveRatesArbitrum]);
+
+  // Calculate lending yield APR for a pool (network-aware, with pool-level factor applied)
+  const getPoolAaveApy = useCallback((token0Symbol: string, token1Symbol: string, networkMode?: NetworkMode): number | undefined => {
+    const ratesData = aaveRatesByMode[networkMode ?? 'base'];
+    return getLendingAprForPair(ratesData, token0Symbol, token1Symbol) ?? undefined;
+  }, [aaveRatesByMode]);
 
   const isMobile = useIsMobile();
-  const router = useRouter();
-  const searchParams = useSearchParams();
 
   // Track window width for responsive column hiding
   // Below 1170px: hide Fees, Below 940px: also hide Volume
@@ -185,22 +193,25 @@ export default function LiquidityPage() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Token search state - sync with URL param
-  const initialTokenSearch = searchParams?.get('token') || '';
-  const [tokenSearch, setTokenSearch] = useState(initialTokenSearch);
-
-  // Update URL when token search changes
-  const handleTokenSearchChange = useCallback((value: string) => {
-    setTokenSearch(value);
-    const params = new URLSearchParams(searchParams?.toString() || '');
-    if (value) {
-      params.set('token', value);
-    } else {
-      params.delete('token');
-    }
-    const newUrl = params.toString() ? `?${params.toString()}` : '/liquidity';
-    router.replace(newUrl, { scroll: false });
-  }, [router, searchParams]);
+  // Chain filter state — all chains active by default
+  const CHAIN_FILTERS: { mode: NetworkMode; label: string; icon: string }[] = [
+    { mode: 'base', label: 'Base', icon: '/chains/base.svg' },
+    { mode: 'arbitrum', label: 'Arbitrum', icon: '/chains/arbitrum.svg' },
+  ];
+  const [activeChains, setActiveChains] = useState<Set<NetworkMode>>(
+    () => new Set(CHAIN_FILTERS.map(c => c.mode))
+  );
+  const toggleChain = useCallback((mode: NetworkMode) => {
+    setActiveChains(prev => {
+      const next = new Set(prev);
+      if (next.has(mode)) {
+        if (next.size > 1) next.delete(mode);
+      } else {
+        next.add(mode);
+      }
+      return next;
+    });
+  }, []);
 
   // Sorting state
   type SortField = 'tvl' | 'volume24h' | 'fees24h' | 'apr';
@@ -230,40 +241,40 @@ export default function LiquidityPage() {
   };
 
 
+  // Token search state
+  const [tokenSearch, setTokenSearch] = useState("");
+  const handleTokenSearchChange = useCallback((value: string) => {
+    setTokenSearch(value);
+  }, []);
+
   const poolsWithPositionCounts = poolsData;
 
   const filteredPools = useMemo(() => {
-    // Add link property for row navigation in table-v2
-    let poolsWithLinks = poolsWithPositionCounts.map(pool => ({
-      ...pool,
-      link: `/liquidity/${pool.id}`,
-    }));
+    let poolsWithLinks = poolsWithPositionCounts
+      .filter(pool => activeChains.has(pool.networkMode ?? 'base'))
+      .filter(pool => {
+        if (!tokenSearch.trim()) return true;
+        const search = tokenSearch.toLowerCase().trim();
+        const tokens = pool.tokens || [];
+        return tokens.some((t: any) => t.symbol?.toLowerCase().includes(search));
+      })
+      .map(pool => ({
+        ...pool,
+        link: `/liquidity/${pool.id}?chain=${CHAIN_REGISTRY[pool.networkMode ?? 'base'].backendNetwork}`,
+      }));
 
-    // Apply token search filter
-    if (tokenSearch.trim()) {
-      const searchLower = tokenSearch.toLowerCase().trim();
-      poolsWithLinks = poolsWithLinks.filter(pool => {
-        // Match against token symbols in the pool pair
-        const token0 = pool.tokens[0]?.symbol?.toLowerCase() || '';
-        const token1 = pool.tokens[1]?.symbol?.toLowerCase() || '';
-        return token0.includes(searchLower) || token1.includes(searchLower);
-      });
-    }
-
-    // Apply sorting
     const getSortValue = (pool: any): number => {
       switch (sortMethod) {
         case 'tvl': return pool.tvlUSD || 0;
         case 'volume24h': return pool.volume24hUSD || 0;
         case 'fees24h': return pool.fees24hUSD || 0;
         case 'apr': {
-          // Use unified yield (pool APR + lending APR) for sorting
           const aprStr = pool.apr || '0';
           const isK = aprStr.includes('K%');
           const poolApr = parseFloat(aprStr.replace(/[~%K]/g, '')) || 0;
           const normalizedPoolApr = isK ? poolApr * 1000 : poolApr;
           const tokens = pool.tokens || [];
-          const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '') || 0;
+          const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '', pool.networkMode) || 0;
           return normalizedPoolApr + lendingApr;
         }
         default: return 0;
@@ -273,10 +284,9 @@ export default function LiquidityPage() {
     return [...poolsWithLinks].sort((a, b) => {
       const aVal = getSortValue(a);
       const bVal = getSortValue(b);
-      // sortAscending=false means descending (highest first), arrow points down
       return sortAscending ? aVal - bVal : bVal - aVal;
     });
-  }, [poolsWithPositionCounts, sortMethod, sortAscending, tokenSearch, getPoolAaveApy]);
+  }, [poolsWithPositionCounts, sortMethod, sortAscending, activeChains, getPoolAaveApy, tokenSearch]);
 
   const [mobileSortBy, setMobileSortBy] = useState<"apr" | "tvl" | "volume">("tvl");
 
@@ -410,7 +420,7 @@ export default function LiquidityPage() {
           const isAprCalculated = pool.apr !== undefined && pool.apr !== "Loading..." && pool.apr !== "N/A";
           const aprValue = isAprCalculated ? parseFloat(pool.apr.replace(/[~%K]/g, '')) : undefined;
           const tokens = pool.tokens || [];
-          const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '');
+          const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '', pool.networkMode);
 
           return (
             <Cell justifyContent="flex-end">
@@ -435,11 +445,26 @@ export default function LiquidityPage() {
     });
   }, [sortMethod, sortAscending, getPoolAaveApy, tableWidth]);
 
+  // Split filtered pools by chain for separate table sections
+  const { basePools, arbitrumPools } = useMemo(() => {
+    const base: typeof filteredPools = [];
+    const arb: typeof filteredPools = [];
+    for (const pool of filteredPools) {
+      if ((pool.networkMode ?? 'base') === 'arbitrum') {
+        arb.push(pool);
+      } else {
+        base.push(pool);
+      }
+    }
+    return { basePools: base, arbitrumPools: arb };
+  }, [filteredPools]);
+
+  // Aggregate stats across ALL visible pools (both sections)
   const poolAggregates = React.useMemo(() => {
     let totalTVL = 0;
     let totalVol24h = 0;
     let totalFees24h = 0;
-    for (const p of poolsData || []) {
+    for (const p of filteredPools || []) {
       const tvl = (p as any).tvlUSD;
       const vol = (p as any).volume24hUSD;
       const fees = (p as any).fees24hUSD;
@@ -448,7 +473,7 @@ export default function LiquidityPage() {
       if (typeof fees === 'number' && isFinite(fees)) totalFees24h += fees;
     }
     return { totalTVL, totalVol24h, totalFees24h, isLoading: isLoadingPools };
-  }, [poolsData, isLoadingPools]);
+  }, [filteredPools, isLoadingPools]);
 
   // Prefetch wrapper for pool rows - prefetches data on hover with stagger animation
   const poolRowWrapper = useCallback(
@@ -499,13 +524,12 @@ export default function LiquidityPage() {
             </div>
           </div>
 
-          {/* Search bar + New Position button (desktop only) */}
+          {/* Search + New Position button (desktop only) */}
           <div className="hidden sm:flex items-center justify-end gap-3 flex-shrink-0">
             <TokenSearchBar
               value={tokenSearch}
               onValueChange={handleTokenSearchChange}
               placeholder="Search tokens..."
-              className="hidden min-[1200px]:flex"
             />
             <Button
               asChild
@@ -520,7 +544,7 @@ export default function LiquidityPage() {
         </div>
       </div>
 
-      {/* Table Section */}
+      {/* Table Sections — split by chain */}
       {isMobile ? (
         <div className="flex flex-col gap-3">
           {mobilePools.length >= 3 && (
@@ -537,7 +561,25 @@ export default function LiquidityPage() {
               </Select>
             </div>
           )}
-          <MobileLiquidityList pools={mobilePools} />
+          {/* Mobile: chain-grouped sections */}
+          {activeChains.has('base') && basePools.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 px-1">
+                <img src="/chains/base.svg" alt="Base" className="w-4.5 h-4.5 rounded-[5px]" />
+                <span className="text-xs font-medium text-muted-foreground">Base</span>
+              </div>
+              <MobileLiquidityList pools={basePools} />
+            </div>
+          )}
+          {activeChains.has('arbitrum') && arbitrumPools.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 px-1">
+                <img src="/chains/arbitrum.svg" alt="Arbitrum" className="w-4.5 h-4.5 rounded-[5px]" />
+                <span className="text-xs font-medium text-muted-foreground">Arbitrum</span>
+              </div>
+              <MobileLiquidityList pools={arbitrumPools} />
+            </div>
+          )}
           <div className="flex justify-end">
             <Button
               asChild
@@ -551,14 +593,43 @@ export default function LiquidityPage() {
           </div>
         </div>
       ) : (
-        <Table
-          columns={columns}
-          data={filteredPools}
-          loading={poolAggregates.isLoading}
-          maxWidth={1200}
-          loadingRowsCount={6}
-          rowWrapper={poolRowWrapper}
-        />
+        <div className="flex flex-col gap-6">
+          {/* Base section */}
+          {activeChains.has('base') && basePools.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 px-1">
+                <img src="/chains/base.svg" alt="Base" className="w-4 h-4 rounded-full" />
+                <span className="text-sm font-medium text-foreground/70">Base</span>
+              </div>
+              <Table
+                columns={columns}
+                data={basePools}
+                loading={isLoadingPools}
+                maxWidth={1200}
+                loadingRowsCount={4}
+                rowWrapper={poolRowWrapper}
+              />
+            </div>
+          )}
+
+          {/* Arbitrum section */}
+          {activeChains.has('arbitrum') && arbitrumPools.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 px-1">
+                <img src="/chains/arbitrum.svg" alt="Arbitrum" className="w-4 h-4 rounded-full" />
+                <span className="text-sm font-medium text-foreground/70">Arbitrum</span>
+              </div>
+              <Table
+                columns={columns}
+                data={arbitrumPools}
+                loading={isLoadingPools}
+                maxWidth={1200}
+                loadingRowsCount={2}
+                rowWrapper={poolRowWrapper}
+              />
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -2,8 +2,10 @@
  * Transaction Components - Barrel exports
  *
  * Shared components for multi-step transaction flows
- * Adapted from Uniswap's ConfirmSwapModal pattern
  */
+
+// Shared transaction modal (Layer 4)
+export { TransactionModal, type TransactionModalProps } from './TransactionModal'
 
 // Main progress indicator
 export { ProgressIndicator } from './ProgressIndicator'

@@ -17,7 +17,8 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getNetworkModeFromRequest, getTokenSymbolByAddress } from "@/lib/pools-config";
+import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getTokenSymbolByAddress } from "@/lib/pools-config";
+import { resolveNetworkMode } from "@/lib/network-mode";
 import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
 import { iallowance_transfer_abi } from "@/lib/abis/IAllowanceTransfer_abi";
 import { createNetworkClient } from "@/lib/viemClient";
@@ -155,8 +156,7 @@ export default async function handler(
     return res.status(429).json({ message: 'Too many requests. Please try again later.' });
   }
 
-  // Get network mode from cookies
-  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+  const networkMode = resolveNetworkMode(req);
   const publicClient = createNetworkClient(networkMode);
   const POSITION_MANAGER_ADDRESS = getPositionManagerAddress(networkMode);
   const STATE_VIEW_ADDRESS = getStateViewAddress(networkMode);
@@ -344,6 +344,7 @@ export default async function handler(
           args: [getAddress(userAddress), PERMIT2_ADDRESS]
         })),
         allowFailure: false,
+        blockTag: 'latest',
       });
 
       // Use permitAmount (slippage-adjusted) for the check to ensure approval covers actual transfer
@@ -401,6 +402,7 @@ export default async function handler(
             args: [getAddress(userAddress), t.address, POSITION_MANAGER_ADDRESS] as const
           })),
           allowFailure: false,
+          blockTag: 'latest',
         });
 
         permit2TokensToCheck.forEach((t, i) => {

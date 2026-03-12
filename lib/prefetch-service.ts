@@ -1,5 +1,6 @@
 import { getAllPools } from './pools-config';
-import { getStoredNetworkMode } from './network-mode';
+import { type NetworkMode } from './network-mode';
+import { ALL_MODES } from './chain-registry';
 import { fetchPoolsMetrics } from './backend-client';
 
 /** Time to keep prefetched pools in memory before allowing re-prefetch (5 minutes) */
@@ -24,10 +25,13 @@ class SimplePrefetchService {
    * Simple pool data prefetch
    * Uses backend /pools/metrics endpoint
    */
-  static async prefetchPoolData(poolId: string): Promise<void> {
+  static async prefetchPoolData(poolId: string, networkMode?: NetworkMode): Promise<void> {
     try {
-      const networkMode = getStoredNetworkMode();
-      await fetchPoolsMetrics(networkMode); // Just fetch, caching handled by backend
+      if (networkMode) {
+        await fetchPoolsMetrics(networkMode);
+      } else {
+        await Promise.allSettled(ALL_MODES.map(m => fetchPoolsMetrics(m)));
+      }
     } catch (error) {
       // Silent failure - prefetch is not critical
     }
@@ -48,12 +52,9 @@ class SimplePrefetchService {
     this.prefetchedPools.set(poolId, Date.now());
 
     try {
-      const networkMode = getStoredNetworkMode();
-
-      // Prefetch pool chart data in parallel
+      // Prefetch pool chart data in parallel — fetch metrics for all chains
       await Promise.all([
-        // Pool batch data (includes TVL, volume, fees, APR) - from backend
-        fetchPoolsMetrics(networkMode).catch(() => {}),
+        ...ALL_MODES.map(m => fetchPoolsMetrics(m).catch(() => {})),
         // Pool chart data (60 days of history)
         fetch(`/api/liquidity/pool-chart-data?poolId=${poolId}&days=60`).catch(() => {}),
       ]);

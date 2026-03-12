@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { fetchPoolsMetrics } from '@/lib/backend-client'
+import { fetchAllPoolsMetrics } from '@/lib/backend-client'
 import { SeasonIcon } from '@/components/PointsIcons'
 
 const formatUSD = (value: number) => {
@@ -58,7 +58,7 @@ export function TVLDisplay({ className }: { className?: string }) {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const response = await fetchPoolsMetrics('mainnet')
+        const response = await fetchAllPoolsMetrics()
         if (response.success && Array.isArray(response.pools)) {
           const totalTvl = response.pools.reduce((sum, pool) => sum + (pool.tvlUsd || 0), 0)
           setTvl(totalTvl)

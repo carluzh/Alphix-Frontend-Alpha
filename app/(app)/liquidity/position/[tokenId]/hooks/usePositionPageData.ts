@@ -1,17 +1,17 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { CurrencyAmount, Token, Price, Currency } from "@uniswap/sdk-core";
 import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
 import JSBI from "jsbi";
 import { getAddress, type Address } from "viem";
-import { getAllPools, getToken, type PoolConfig, type TokenConfig } from "@/lib/pools-config";
+import { getAllPools, getMultiChainEnabledPools, getToken, type PoolConfig, type TokenConfig } from "@/lib/pools-config";
+import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 import { usePoolPriceChartData } from "@/lib/chart/hooks/usePoolPriceChartData";
 import { HistoryDuration } from "@/lib/chart/types";
-import { useNetwork } from "@/lib/network-context";
 import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { fetchPositionApr, fetchPoolsMetrics } from "@/lib/backend-client";
 import {
@@ -117,11 +117,12 @@ export interface PositionPageData {
 // Data Fetching
 // ============================================================================
 
-async function fetchPosition(tokenId: string): Promise<PositionInfo | null> {
+async function fetchPosition(tokenId: string, networkMode?: NetworkMode): Promise<PositionInfo | null> {
   // Don't fetch V4 position for Unified Yield position IDs
   if (!tokenId || tokenId.startsWith('uy-')) return null;
 
-  const response = await fetch(`/api/liquidity/get-position?tokenId=${tokenId}`);
+  const networkParam = networkMode ? `&networkMode=${networkMode}` : '';
+  const response = await fetch(`/api/liquidity/get-position?tokenId=${tokenId}${networkParam}`);
   if (!response.ok) {
     throw new Error("Failed to fetch position");
   }
@@ -140,10 +141,11 @@ async function fetchPosition(tokenId: string): Promise<PositionInfo | null> {
   };
 }
 
-async function fetchPoolState(poolId: string): Promise<PoolStateData | null> {
+async function fetchPoolState(poolId: string, networkMode?: NetworkMode): Promise<PoolStateData | null> {
   if (!poolId) return null;
 
-  const response = await fetch(`/api/liquidity/get-pool-state?poolId=${poolId}`);
+  const chainParam = networkMode ? `&networkMode=${networkMode}` : '';
+  const response = await fetch(`/api/liquidity/get-pool-state?poolId=${poolId}${chainParam}`);
   if (!response.ok) {
     throw new Error("Failed to fetch pool state");
   }
@@ -161,10 +163,8 @@ async function fetchPoolState(poolId: string): Promise<PoolStateData | null> {
 // Main Hook
 // ============================================================================
 
-export function usePositionPageData(tokenId: string): PositionPageData {
-  const { address, chainId = 8453 } = useAccount();
-  const { networkMode } = useNetwork();
-  const publicClient = usePublicClient();
+export function usePositionPageData(tokenId: string, networkModeOverride?: NetworkMode): PositionPageData {
+  const { address } = useAccount();
   const [priceInverted, setPriceInverted] = useState(false);
   const [chartDuration, setChartDuration] = useState<ChartDuration>("1W");
   const [denominationBase, setDenominationBase] = useState(true);
@@ -172,6 +172,28 @@ export function usePositionPageData(tokenId: string): PositionPageData {
   // Check if this is a Unified Yield position (uy-{hookAddress}-{userAddress})
   const unifiedYieldParsed = useMemo(() => parseUnifiedYieldPositionId(tokenId), [tokenId]);
   const isUnifiedYieldPosition = !!unifiedYieldParsed;
+
+  // Auto-detect networkMode from pool config BEFORE any data fetches.
+  // For UY positions, we can detect immediately from the hook address in the URL.
+  // For V4 positions, we detect after the position info fetch returns token addresses.
+  // Always persist the detected mode so it survives across renders.
+  const [detectedNetworkMode, setDetectedNetworkMode] = useState<NetworkMode | undefined>(() => {
+    if (networkModeOverride) return undefined; // URL param takes precedence
+    if (isUnifiedYieldPosition && unifiedYieldParsed) {
+      const allChainPools = getMultiChainEnabledPools();
+      const config = allChainPools.find(
+        (pool) => pool.hooks?.toLowerCase() === unifiedYieldParsed.hookAddress.toLowerCase()
+      );
+      if (config) {
+        return config.networkMode;
+      }
+    }
+    return undefined;
+  });
+
+  const networkMode = networkModeOverride ?? detectedNetworkMode ?? 'base' as NetworkMode;
+  const chainId = chainIdForMode(networkMode);
+  const publicClient = usePublicClient({ chainId });
 
   // Fetch Unified Yield position (if applicable)
   const {
@@ -195,18 +217,17 @@ export function usePositionPageData(tokenId: string): PositionPageData {
   });
 
   // Fetch V4 position info (if not Unified Yield)
-  // Note: Only runs for V4 positions (non-uy- prefix)
   const {
     data: positionInfo,
     isLoading: isLoadingPosition,
     error: positionError,
     refetch: refetchV4,
   } = useQuery({
-    queryKey: ["position", "v4", tokenId],
-    queryFn: () => fetchPosition(tokenId),
+    queryKey: ["position", "v4", tokenId, networkMode],
+    queryFn: () => fetchPosition(tokenId, networkMode),
     enabled: !!tokenId && !isUnifiedYieldPosition,
     staleTime: 30_000,
-    retry: false, // Don't retry on 400 errors
+    retry: false,
   });
 
   // Combined refetch
@@ -218,40 +239,49 @@ export function usePositionPageData(tokenId: string): PositionPageData {
   }, [isUnifiedYieldPosition, refetchUnifiedYield, refetchV4]);
 
   // Get pool config from position info (handles both V4 and Unified Yield)
+  // Search all chains — pure computation, no side effects
   const poolConfig = useMemo((): PoolConfig | null => {
-    const allPools = getAllPools(networkMode);
+    const allChainPools = getMultiChainEnabledPools();
 
     // For Unified Yield positions, find pool by hook address
     if (isUnifiedYieldPosition && unifiedYieldParsed) {
-      const config = allPools.find(
+      return allChainPools.find(
         (pool) => pool.hooks?.toLowerCase() === unifiedYieldParsed.hookAddress.toLowerCase()
-      );
-      return config || null;
+      ) || null;
     }
 
-    // For V4 positions, find pool by token addresses
+    // For V4 positions, find pool by token addresses across all chains
     if (!positionInfo) return null;
 
-    const config = allPools.find(
+    return allChainPools.find(
       (pool) =>
         (pool.currency0.address.toLowerCase() === positionInfo.token0.toLowerCase() &&
           pool.currency1.address.toLowerCase() === positionInfo.token1.toLowerCase()) ||
         (pool.currency0.address.toLowerCase() === positionInfo.token1.toLowerCase() &&
           pool.currency1.address.toLowerCase() === positionInfo.token0.toLowerCase())
-    );
-    return config || null;
-  }, [positionInfo, isUnifiedYieldPosition, unifiedYieldParsed, networkMode]);
+    ) || null;
+  }, [positionInfo, isUnifiedYieldPosition, unifiedYieldParsed]);
+
+  // Auto-detect networkMode from pool config for V4 positions (after fetch)
+  // UY positions are handled by the useState initializer above, but we also handle
+  // late-arriving V4 position data here. Always persist so it survives context changes.
+  useEffect(() => {
+    if (networkModeOverride || !poolConfig) return;
+    if (detectedNetworkMode !== poolConfig.networkMode) {
+      setDetectedNetworkMode(poolConfig.networkMode);
+    }
+  }, [poolConfig, networkModeOverride, detectedNetworkMode]);
 
   // Get token configs
   const token0Config = useMemo((): TokenConfig | null => {
     if (!poolConfig) return null;
-    return getToken(poolConfig.currency0.symbol);
-  }, [poolConfig]);
+    return getToken(poolConfig.currency0.symbol, networkMode);
+  }, [poolConfig, networkMode]);
 
   const token1Config = useMemo((): TokenConfig | null => {
     if (!poolConfig) return null;
-    return getToken(poolConfig.currency1.symbol);
-  }, [poolConfig]);
+    return getToken(poolConfig.currency1.symbol, networkMode);
+  }, [poolConfig, networkMode]);
 
   // Determine LP type
   // V4 positions (via Position Manager) are always "concentrated" - they don't participate in rehypothecation
@@ -260,8 +290,8 @@ export function usePositionPageData(tokenId: string): PositionPageData {
 
   // Fetch pool state
   const { data: poolState, isLoading: isLoadingPool } = useQuery({
-    queryKey: ["poolState", poolConfig?.id],
-    queryFn: () => fetchPoolState(poolConfig?.id || ""),
+    queryKey: ["poolState", poolConfig?.id, networkMode],
+    queryFn: () => fetchPoolState(poolConfig?.id || "", networkMode),
     enabled: !!poolConfig?.id,
     staleTime: 30_000,
   });
@@ -548,8 +578,8 @@ export function usePositionPageData(tokenId: string): PositionPageData {
 
   // Fetch Aave APY for rehypo positions
   const { data: aaveRatesData } = useQuery({
-    queryKey: ["aaveRates"],
-    queryFn: fetchAaveRates,
+    queryKey: ["aaveRates", networkMode],
+    queryFn: () => fetchAaveRates(networkMode),
     enabled: lpType === "rehypo",
     staleTime: 5 * 60_000, // 5 minutes - matches backend cache
   });
@@ -572,6 +602,7 @@ export function usePositionPageData(tokenId: string): PositionPageData {
       duration: DURATION_MAP[chartDuration],
     },
     priceInverted,
+    networkModeOverride: networkMode,
   });
 
   // Denomination toggle

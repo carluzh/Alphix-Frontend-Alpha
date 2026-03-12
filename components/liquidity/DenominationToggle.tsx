@@ -10,7 +10,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { cn, getTokenIcon } from '@/lib/utils';
-import { useNetwork } from '@/lib/network-context';
+import type { NetworkMode } from '@/lib/network-mode';
 
 interface DenominationToggleProps {
   /** Symbol of token0 */
@@ -23,6 +23,8 @@ interface DenominationToggleProps {
   onToggle: (newBase: string) => void;
   /** Additional CSS classes */
   className?: string;
+  /** Network mode for token icon resolution — must be provided by caller */
+  networkMode?: NetworkMode;
 }
 
 /**
@@ -35,10 +37,10 @@ export function DenominationToggle({
   activeBase,
   onToggle,
   className,
+  networkMode: networkModeProp,
 }: DenominationToggleProps) {
-  const { networkMode } = useNetwork();
-  const icon0 = getTokenIcon(token0Symbol, networkMode);
-  const icon1 = getTokenIcon(token1Symbol, networkMode);
+  const icon0 = getTokenIcon(token0Symbol, networkModeProp);
+  const icon1 = getTokenIcon(token1Symbol, networkModeProp);
 
   return (
     <div

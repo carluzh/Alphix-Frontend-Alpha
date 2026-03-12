@@ -53,12 +53,8 @@ export {
 // Main step generator - COPIED FROM UNISWAP
 export { generateLPTransactionSteps } from './steps'
 
-// Executor hook and handlers - ADAPTED FROM UNISWAP
+// Step handlers and execution store
 export {
-  useLiquidityStepExecutor,
-  type UseLiquidityStepExecutorOptions,
-  type UseLiquidityStepExecutorReturn,
-  type LiquidityExecutorState,
   handleApprovalTransactionStep,
   handlePermitTransactionStep,
   handleSignatureStep,
@@ -69,6 +65,14 @@ export {
   getApprovalTransactionInfo,
   getPermitTransactionInfo,
   checkApprovalAmount,
+  // Execution store
+  useExecutionStore,
+  selectIsLocked,
+  selectCurrentStepState,
+  selectSteps,
+  selectExecutionStatus,
+  type ExecutionState,
+  type ExecutionStore,
 } from './executor'
 
 // Context builders

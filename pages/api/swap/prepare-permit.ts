@@ -10,7 +10,8 @@ import {
     getPermit2Domain,
     Erc20AbiDefinition,
 } from '@/lib/swap/swap-constants';
-import { TokenSymbol, getNetworkModeFromRequest, getUniversalRouterAddress } from '../../../lib/pools-config';
+import { TokenSymbol, getUniversalRouterAddress } from '../../../lib/pools-config';
+import { resolveNetworkMode } from '../../../lib/network-mode';
 import { iallowance_transfer_abi } from '../../../lib/abis/IAllowanceTransfer_abi';
 import { PERMIT_TYPES } from '../../../lib/permit-types';
 
@@ -54,9 +55,7 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
     try {
         const { userAddress, fromTokenSymbol, fromTokenAddress, chainId, amountIn, approvalMode = 'infinite' } = req.body;
 
-        // Get network mode from cookies for proper chain-specific addresses
-        const networkMode = getNetworkModeFromRequest(req.headers.cookie);
-        console.log('[prepare-permit] Network mode from cookies:', networkMode);
+        const networkMode = resolveNetworkMode(req);
 
         if (fromTokenSymbol === 'ETH') {
             return res.status(200).json({
@@ -171,10 +170,16 @@ export default async function handler(req: PreparePermitRequest, res: NextApiRes
             }
         });
     } catch (error) {
+        const errMsg = error instanceof Error ? error.message : 'Unknown error';
+        console.error('[prepare-permit] Error:', errMsg);
+        if (error instanceof Error && error.stack) {
+            console.error('[prepare-permit] Stack:', error.stack);
+        }
+        console.error('[prepare-permit] Request body:', JSON.stringify(req.body, null, 2));
         res.status(500).json({
             ok: false,
             message: 'Failed to prepare permit',
-            error: error instanceof Error ? error.message : 'Unknown error'
+            error: errMsg
         });
     }
 } 

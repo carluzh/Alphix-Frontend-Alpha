@@ -18,12 +18,12 @@ interface TokenImageProps {
  * Uses Next.js Image for local images for optimization benefits.
  */
 export function TokenImage({ src, alt, size = 32, className }: TokenImageProps) {
-  const [imgSrc, setImgSrc] = useState(src || '/placeholder-logo.svg');
+  const [imgSrc, setImgSrc] = useState(src || '/tokens/placeholder.svg');
   const [hasError, setHasError] = useState(false);
 
   // Sync imgSrc with src prop when it changes
   useEffect(() => {
-    setImgSrc(src || '/placeholder-logo.svg');
+    setImgSrc(src || '/tokens/placeholder.svg');
     setHasError(false);
   }, [src]);
 
@@ -42,7 +42,7 @@ export function TokenImage({ src, alt, size = 32, className }: TokenImageProps) 
         className={cn("rounded-full", className)}
         onError={() => {
           setHasError(true);
-          setImgSrc('/placeholder-logo.svg');
+          setImgSrc('/tokens/placeholder.svg');
         }}
       />
     );
@@ -57,7 +57,7 @@ export function TokenImage({ src, alt, size = 32, className }: TokenImageProps) 
       height={size}
       className={cn("rounded-full", className)}
       onError={() => {
-        setImgSrc('/placeholder-logo.svg');
+        setImgSrc('/tokens/placeholder.svg');
       }}
     />
   );

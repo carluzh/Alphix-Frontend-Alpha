@@ -4,7 +4,8 @@ export const preferredRegion = 'iad1';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { checkRateLimit } from '@/lib/api/ratelimit';
-import { getPoolSubgraphId, type NetworkMode } from '@/lib/pools-config';
+import { getPoolSubgraphId, getPoolByIdMultiChain } from '@/lib/pools-config';
+import { parseNetworkMode, type NetworkMode } from '@/lib/network-mode';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
 import { poolKeys } from '@/lib/cache/redis-keys';
 import { fetchPoolHistory } from '@/lib/backend-client';
@@ -45,15 +46,25 @@ function getPeriodForDays(days: number): 'DAY' | 'WEEK' | 'MONTH' {
 
 async function computeChartData(poolId: string, days: number, networkMode: NetworkMode, baseUrl: string): Promise<ChartDataResponse> {
   try {
-    const subgraphId = (getPoolSubgraphId(poolId, networkMode) || poolId).toLowerCase();
+    // Try specified network first, then multi-chain fallback for cross-chain pool IDs
+    let subgraphId = getPoolSubgraphId(poolId, networkMode);
+    let effectiveNetworkMode = networkMode;
+    if (!subgraphId) {
+      const multiChainPool = getPoolByIdMultiChain(poolId);
+      if (multiChainPool) {
+        subgraphId = multiChainPool.subgraphId;
+        effectiveNetworkMode = multiChainPool.networkMode;
+      }
+    }
+    subgraphId = (subgraphId || poolId).toLowerCase();
     if (!/^0x[a-f0-9]+$/i.test(subgraphId)) throw new Error('Invalid pool ID format');
 
     // Fetch historical data from backend
     const period = getPeriodForDays(days);
     const [historyResponse, feeEventsResult] = await Promise.all([
-      fetchPoolHistory(subgraphId, period, networkMode),
+      fetchPoolHistory(subgraphId, period, effectiveNetworkMode),
       // Fee events still from internal API (until backend provides this)
-      fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphId)}&network=${networkMode}`)
+      fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphId)}&network=${effectiveNetworkMode}`)
     ]);
 
     if (!historyResponse.success || !historyResponse.snapshots) {
@@ -176,8 +187,9 @@ export async function GET(request: Request) {
       );
     }
 
-    // OVERRIDE: Always use mainnet (testnet removed)
-    const networkMode: NetworkMode = 'mainnet';
+    // Read network from query param, default to base
+    const networkParam = searchParams.get('network');
+    const networkMode = parseNetworkMode(networkParam);
 
     // Use poolKeys helper for consistent cache key naming (include network mode)
     const cacheKey = poolKeys.chart(poolId, days, networkMode);

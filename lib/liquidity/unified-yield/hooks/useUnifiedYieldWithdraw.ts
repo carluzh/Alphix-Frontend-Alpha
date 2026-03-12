@@ -29,6 +29,8 @@ import {
 } from '../buildUnifiedYieldWithdrawTx';
 import type { UnifiedYieldWithdrawParams, UnifiedYieldWithdrawPreview, WithdrawPercentage } from '../types';
 import { BUILDER_CODE_SUFFIX } from '@/lib/builder-code';
+import { useNetwork } from '@/lib/network-context';
+import { chainIdForMode } from '@/lib/network-mode';
 import { calculateWithdrawShares } from '../types';
 
 export interface UseUnifiedYieldWithdrawParams {
@@ -53,6 +55,8 @@ export interface UseUnifiedYieldWithdrawParams {
    * Default: 10000 (1%)
    */
   maxPriceSlippage?: number;
+  /** Override networkMode (use pool's chain instead of global context) */
+  networkModeOverride?: import('@/lib/network-mode').NetworkMode;
 }
 
 export interface UseUnifiedYieldWithdrawResult {
@@ -109,7 +113,7 @@ export interface UseUnifiedYieldWithdrawResult {
  *   token0Decimals: 18,
  *   token1Decimals: 6,
  *   poolId: 'eth-usdc',
- *   chainId: 84532,
+ *   chainId: 8453,
  * });
  *
  * // Preview to show user expected amounts
@@ -127,7 +131,9 @@ export function useUnifiedYieldWithdraw(
   params?: UseUnifiedYieldWithdrawParams
 ): UseUnifiedYieldWithdrawResult {
   const { address: userAddress } = useAccount();
-  const publicClient = usePublicClient();
+  const { ensureChain } = useNetwork();
+  const networkMode = params?.networkModeOverride ?? 'base';
+  const publicClient = usePublicClient({ chainId: chainIdForMode(networkMode) });
   const [error, setError] = useState<Error | null>(null);
   const [lastPreview, setLastPreview] = useState<UnifiedYieldWithdrawPreview | null>(null);
 
@@ -217,12 +223,16 @@ export function useUnifiedYieldWithdraw(
       }
 
       try {
+        // Ensure wallet is on the correct chain before submitting
+        const ok = await ensureChain(chainIdForMode(networkMode));
+        if (!ok) return undefined;
+
         const withdrawParams: UnifiedYieldWithdrawParams = {
           hookAddress: params.hookAddress,
           shares,
           userAddress,
           poolId: params.poolId || '',
-          chainId: params.chainId || 84532,
+          chainId: params.chainId || 8453,
         };
 
         const validation = validateUnifiedYieldWithdrawParams(withdrawParams);

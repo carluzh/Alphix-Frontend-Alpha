@@ -6,9 +6,8 @@
  */
 
 import type { Hex, Address, PublicClient } from 'viem';
-import { formatUnits, createPublicClient, encodeFunctionData } from 'viem';
-import { baseMainnet } from '@/lib/chains';
-import { createFallbackTransport } from '@/lib/viemClient';
+import { formatUnits, encodeFunctionData } from 'viem';
+import { createNetworkClient } from '@/lib/viemClient';
 import type {
   ZapSwapApprovalStep,
   ZapPSMSwapStep,
@@ -30,6 +29,7 @@ import { buildPSMSwapCalldata } from '../../routing/psmQuoter';
 import type { ZapToken } from '../../types';
 import { isNativeToken } from '@/lib/aggregators/types';
 import { getKyberswapRouterAddress } from '@/lib/aggregators/kyberswap';
+import { modeForChainId } from '@/lib/network-mode';
 
 // =============================================================================
 // SWAP APPROVAL HANDLER
@@ -97,10 +97,12 @@ export const handleZapPSMSwapStep: TransactionStepHandler = async (
 
   if (typedStep.hookAddress && typedStep.totalInputAmount && typedStep.inputToken) {
     try {
-      const publicClient = createPublicClient({
-        chain: baseMainnet,
-        transport: createFallbackTransport(baseMainnet),
-      });
+      // Use cached network client — same RPC connection as the rest of the app
+      const targetMode = context.chainId ? modeForChainId(context.chainId) : null;
+      if (!targetMode) {
+        throw new Error(`[ZapPSMSwap] Unknown chainId ${context.chainId} — cannot determine network`);
+      }
+      const publicClient = createNetworkClient(targetMode);
 
       // Query the Hook's CURRENT ratio to calculate fresh optimal swap amount
       const inputToken = typedStep.inputToken;
@@ -231,7 +233,11 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
   txFunctions
 ): Promise<`0x${string}`> => {
   const typedStep = step as unknown as ZapPoolSwapStep;
-  const chainId = context.chainId || 8453; // Default to Base mainnet
+  // Use pool's chain (from step), NOT wallet's chain (from context)
+  const chainId = typedStep.targetChainId || context.chainId;
+  if (!chainId) {
+    throw new Error('[ZapPoolSwap] Missing chainId — neither step.targetChainId nor context.chainId is set');
+  }
 
   // Resolve pool config from token addresses to get correct decimals
   const poolConfig = getZapPoolConfigByTokens(
@@ -345,18 +351,25 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
       // Pass source and router address for Kyberswap routing
       ...(swapSource === 'kyberswap' ? {
         source: 'kyberswap',
-        kyberswapData: { routerAddress: getKyberswapRouterAddress() },
+        kyberswapData: { routerAddress: getKyberswapRouterAddress(modeForChainId(chainId) ?? undefined) },
       } : {}),
     }),
   });
 
   if (!buildTxResponse.ok) {
     const errorData = await buildTxResponse.json().catch(() => ({}));
-    throw new Error(`Failed to build ${swapSource} swap tx: ${errorData.message || buildTxResponse.statusText}`);
+    const rawMsg = errorData.message || buildTxResponse.statusText;
+    if (swapSource === 'kyberswap') {
+      throw new Error('Kyberswap API denied request. Try again or switch to dual token deposit.');
+    }
+    throw new Error(`Failed to build ${swapSource} swap tx: ${rawMsg}`);
   }
 
   const txData = await buildTxResponse.json();
   if (!txData.ok) {
+    if (swapSource === 'kyberswap') {
+      throw new Error('Kyberswap API denied request. Try again or switch to dual token deposit.');
+    }
     throw new Error(`${swapSource} swap build failed: ${txData.message}`);
   }
 
@@ -453,11 +466,12 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
 ): Promise<`0x${string}`> => {
   const typedStep = step as unknown as ZapDynamicDepositStep;
 
-  // Create a public client for RPC calls
-  const publicClient = createPublicClient({
-    chain: baseMainnet,
-    transport: createFallbackTransport(baseMainnet),
-  });
+  // Use cached network client — same RPC connection as the swap tx, avoids stale block issues
+  const targetMode = context.chainId ? modeForChainId(context.chainId) : null;
+  if (!targetMode) {
+    throw new Error(`[ZapDynamicDeposit] Unknown chainId ${context.chainId} — cannot determine network`);
+  }
+  const publicClient = createNetworkClient(targetMode);
 
   // Detect if token0 is native ETH
   const token0IsNative = typedStep.isToken0Native ?? isNativeToken(typedStep.token0Address);
@@ -570,6 +584,9 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
   const sharesFromToken0 = BigInt(previewFrom0[1]);
   const requiredToken0ForToken1 = BigInt(previewFrom1[0]);
   const sharesFromToken1 = BigInt(previewFrom1[1]);
+
+  console.log(`[ZapDynamicDeposit] Preview results: sharesFrom0=${sharesFromToken0.toString()}, sharesFrom1=${sharesFromToken1.toString()}`);
+  console.log(`[ZapDynamicDeposit] Required: token1For0=${requiredToken1ForToken0.toString()}, token0For1=${requiredToken0ForToken1.toString()}`);
 
   // Determine which option is viable and has less dust
   // Option A: Use all of token0, need requiredToken1ForToken0 of token1

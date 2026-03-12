@@ -40,7 +40,7 @@ import {
 import { getWebSocketUrl } from '@/lib/backend-client';
 
 /** Network mode for WebSocket filtering */
-export type WSNetworkMode = 'mainnet' | 'testnet';
+export type WSNetworkMode = 'base' | 'arbitrum';
 
 // Default configuration (without url - resolved at runtime)
 const DEFAULT_CONFIG_BASE = {
@@ -55,7 +55,7 @@ const DEFAULT_CONFIG_BASE = {
  * This ensures the URL is determined at runtime (not build time),
  * properly detecting localhost vs production environments.
  *
- * @param networkMode - Optional network mode for filtering ('mainnet' | 'testnet')
+ * @param networkMode - Optional network mode for filtering ('base' | 'arbitrum')
  */
 function getDefaultConfig(networkMode?: WSNetworkMode): Required<WSConfig> {
   return {
@@ -237,7 +237,7 @@ export class WebSocketManager {
    * Disconnects from current WebSocket, updates URL with new network param,
    * and reconnects. Subscribed channels are preserved and re-subscribed on connect.
    *
-   * @param networkMode - New network mode ('mainnet' | 'testnet')
+   * @param networkMode - New network mode ('base' | 'arbitrum')
    */
   switchNetwork(networkMode: WSNetworkMode): void {
     if (this.networkMode === networkMode) {
@@ -451,7 +451,7 @@ export class WebSocketManager {
  * Use this in contexts where you need a shared connection across the app.
  * Optionally provide a network mode to filter events by network.
  *
- * @param networkMode - Optional network mode ('mainnet' | 'testnet')
+ * @param networkMode - Optional network mode ('base' | 'arbitrum')
  */
 let sharedInstance: WebSocketManager | null = null;
 

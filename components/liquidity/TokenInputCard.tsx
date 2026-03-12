@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn, sanitizeDecimalInput } from "@/lib/utils";
-import { getToken } from "@/lib/pools-config";
+import { resolveTokenIcon } from "@/lib/pools-config";
 import { PERCENTAGE_OPTIONS } from './liquidity-form-utils';
 
 // CSS for gradient border effect - inject once per component tree
@@ -84,6 +84,8 @@ interface TokenInputCardProps {
   onTokenClick?: () => void;
   /** Custom icon to show in token selector when onTokenClick is provided (defaults to caret) */
   tokenClickIcon?: React.ReactNode;
+  /** Network mode for chain-specific token icon lookup */
+  networkMode?: import('@/lib/network-mode').NetworkMode;
 }
 
 /**
@@ -110,6 +112,7 @@ export function TokenInputCard({
   className,
   onTokenClick,
   tokenClickIcon,
+  networkMode,
 }: TokenInputCardProps) {
   // Internal animation controls if not provided externally
   const internalControls = useAnimation();
@@ -119,8 +122,10 @@ export function TokenInputCard({
   const [wiggleCount, setWiggleCount] = useState(0);
   const [wasOverBalance, setWasOverBalance] = useState(false);
 
-  // Get token icon
-  const tokenIcon = getToken(tokenSymbol)?.icon || '/placeholder-logo.svg';
+  // Get token icon - chain-independent static asset lookup
+  const tokenIcon = useMemo(() => {
+    return resolveTokenIcon(tokenSymbol);
+  }, [tokenSymbol]);
 
   // Has balance for showing percentage buttons
   const hasBalance = parseFloat(maxAmount) > 0;
@@ -199,10 +204,9 @@ export function TokenInputCard({
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: INPUT_GRADIENT_STYLES }} />
-      <div className={cn("input-gradient-hover", className)}>
-        <motion.div
+      <motion.div className={cn("input-gradient-hover", className)} animate={wiggleControls}>
+        <div
           className="relative z-[1] group rounded-lg bg-surface border border-sidebar-border/60 p-4 space-y-3"
-          animate={wiggleControls}
         >
           {/* Label + Balance Row */}
           <div className="flex items-center justify-between">
@@ -305,8 +309,8 @@ export function TokenInputCard({
               </div>
             </div>
           </div>
-        </motion.div>
-      </div>
+        </div>
+      </motion.div>
     </>
   );
 }

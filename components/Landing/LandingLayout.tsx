@@ -24,6 +24,12 @@ const DiscordIcon = ({ size = 20 }: { size?: number }) => (
   </svg>
 )
 
+const DefiLlamaIcon = ({ size = 20 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 100 100" fill="currentColor">
+    <path d="M50 5C25.2 5 5 25.2 5 50s20.2 45 45 45 45-20.2 45-45S74.8 5 50 5zm17.4 62.8c-1.2 1.8-3.2 2.8-5.4 2.8h-24c-2.2 0-4.2-1-5.4-2.8-1.2-1.8-1.4-4-.6-5.9l12-28c1-2.4 3.4-4 6-4s5 1.6 6 4l12 28c.8 2 .6 4.1-.6 5.9z" />
+  </svg>
+)
+
 const GrainOverlay = () => (
   <div
     className="pointer-events-none absolute inset-0 z-[100]"
@@ -276,9 +282,17 @@ const LandingPageFooter = () => {
                 >
                   <GithubIcon size={20} />
                 </a>
+                <a
+                  href="https://defillama.com/protocol/alphix"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <DefiLlamaIcon size={20} />
+                </a>
               </div>
               <p className="text-[10px] md:text-sm text-muted-foreground">
-                © 2025 Alphix v{process.env.NEXT_PUBLIC_APP_VERSION}<span className="opacity-50">+{process.env.NEXT_PUBLIC_GIT_COMMIT}</span>
+                © 2026 Alphix v{process.env.NEXT_PUBLIC_APP_VERSION}<span className="opacity-50">+{process.env.NEXT_PUBLIC_GIT_COMMIT}</span>
               </p>
             </div>
           </div>

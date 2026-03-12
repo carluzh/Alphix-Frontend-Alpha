@@ -212,11 +212,12 @@ export function WebSocketProvider({
   }, [autoConnect, config, handlePoolMetricsMessage]);
 
   // Handle network mode changes - switch WebSocket connection
+  // IMPORTANT: Do NOT clear pools — preserve cross-chain data from REST.
+  // WS only sends connected chain's pools; clearing wipes the other chain.
   useEffect(() => {
     if (wsManagerRef.current) {
-      // Clear pool data for new network
-      setPools(new Map());
       // Switch to new network (reconnects with ?network= param)
+      // Existing pool data is preserved — new WS data will overlay for the connected chain
       wsManagerRef.current.switchNetwork(networkMode);
     }
   }, [networkMode]);

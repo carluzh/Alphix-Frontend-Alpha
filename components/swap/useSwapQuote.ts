@@ -1,7 +1,7 @@
 import { createElement, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential"
-import { MAINNET_CHAIN_ID } from "@/lib/network-mode"
+import { BASE_CHAIN_ID, ARBITRUM_CHAIN_ID } from "@/lib/network-mode"
 
 import type { AggregatorSource, KyberswapRouteSummary } from "@/lib/aggregators/types"
 
@@ -99,7 +99,7 @@ export function useSwapQuote({
             amountDecimalsStr: amountStr,
             swapType: lastEditedSideRef.current === "to" ? "ExactOut" : "ExactIn",
             chainId: targetChainId,
-            network: targetChainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet',
+            network: targetChainId === ARBITRUM_CHAIN_ID ? 'arbitrum' : 'base',
             debug: true,
             binding: mode === "binding",
             // cache-bust only for binding; harmless if backend ignores
@@ -297,23 +297,6 @@ export function useSwapQuote({
     }, 300)
     return () => clearTimeout(handler)
   }, [toAmount, fetchQuote])
-
-  // Quote polling - refresh every 10s
-  useEffect(() => {
-    // Skip polling if no tokens or loading
-    if (!fromToken || !toToken) return
-    if (quoteLoading) return
-
-    // Get the current amount to poll
-    const amountStr = lastEditedSideRef.current === "to" ? toAmount : fromAmount
-    if (!amountStr || parseFloat(amountStr) <= 0) return
-
-    const interval = setInterval(() => {
-      fetchQuote(amountStr, "indicative")
-    }, 10000) // 10 seconds between quote refreshes
-
-    return () => clearInterval(interval)
-  }, [fromToken, toToken, fromAmount, toAmount, fetchQuote, quoteLoading])
 
   const refreshBindingQuote = useCallback(async () => {
     const amountStr = lastEditedSideRef.current === "to" ? toAmount : fromAmount

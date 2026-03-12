@@ -10,6 +10,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { type Address, formatUnits, parseUnits } from 'viem';
 import { usePublicClient } from 'wagmi';
+import { chainIdForMode } from '@/lib/network-mode';
 
 import { findOptimalSwapAmount } from '../calculation';
 import { USDS_USDC_POOL_CONFIG, MAX_PREVIEW_AGE_MS, getZapPoolConfigByHook } from '../constants';
@@ -31,8 +32,9 @@ import { UNIFIED_YIELD_HOOK_ABI } from '../../unified-yield/abi/unifiedYieldHook
  * @returns Query result with preview data
  */
 export function useZapPreview(params: UseZapPreviewParams) {
-  const { inputToken, inputAmount, hookAddress, enabled = true, refetchEnabled = true } = params;
-  const publicClient = usePublicClient();
+  const { inputToken, inputAmount, hookAddress, enabled = true, refetchEnabled = true, networkMode } = params;
+  const targetChainId = networkMode ? chainIdForMode(networkMode) : undefined;
+  const publicClient = usePublicClient({ chainId: targetChainId });
 
   return useQuery({
     queryKey: ['zap-preview', inputToken, inputAmount, hookAddress],
@@ -66,6 +68,7 @@ export function useZapPreview(params: UseZapPreviewParams) {
         hookAddress,
         publicClient,
         poolConfig,
+        networkMode,
       });
 
       // Determine output token from pool config

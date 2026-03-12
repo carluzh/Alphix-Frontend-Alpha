@@ -18,13 +18,14 @@ import {
 import { cn } from '@/lib/utils';
 import { useAccount } from 'wagmi';
 import { batchQuotePrices } from '@/lib/swap/quote-prices';
-import { useNetwork } from '@/lib/network-context';
+
 import { readContracts, getBalance } from '@wagmi/core';
 import { erc20Abi, formatUnits } from 'viem';
 import { config } from '@/lib/wagmiConfig';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useUserTokens } from '@/hooks/useUserTokens';
 import { type TokenInfo } from '@/lib/aggregators';
+import { modeForChainId } from '@/lib/network-mode';
 
 export interface TokenSelectorToken {
   address: `0x${string}`;
@@ -35,6 +36,10 @@ export interface TokenSelectorToken {
   balance?: string;
   value?: string;
   usdPrice?: number;
+  networkMode?: string;
+  chainId?: number;
+  chainIcon?: string;
+  chainLabel?: string;
 }
 
 interface TokenSelectorProps {
@@ -49,13 +54,15 @@ interface TokenSelectorProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-// Popular tokens for quick selection (addresses must be lowercase)
-const POPULAR_TOKEN_ADDRESSES = [
-  '0x0000000000000000000000000000000000000000', // ETH
-  '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
-  '0x820c137fa70c8691f0e44dc420a5e53c168921dc', // USDS
-  '0x4200000000000000000000000000000000000006', // WETH
-];
+// Chain metadata resolver for user tokens
+const CHAIN_META_MAP: Record<number, { icon: string; label: string }> = {
+  8453: { icon: '/chains/base.svg', label: 'Base' },
+  42161: { icon: '/chains/arbitrum.svg', label: 'Arbitrum' },
+};
+
+function resolveChainMeta(chainId?: number): { icon: string; label: string } | undefined {
+  return chainId ? CHAIN_META_MAP[chainId] : undefined;
+}
 
 const formatTokenAddress = (address: string): string => {
   if (address.length <= 11) return address;
@@ -112,10 +119,17 @@ function TokenItem({ token, isSelected, balanceData, onClick }: TokenItemProps) 
     >
       <div className="relative w-8 h-8">
         <TokenImage
-          src={token.icon || '/placeholder-logo.svg'}
+          src={token.icon || '/tokens/placeholder.svg'}
           alt={token.symbol}
           size={32}
         />
+        {token.chainIcon && (
+          <img
+            src={token.chainIcon}
+            alt={token.chainLabel || ''}
+            className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full"
+          />
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between">
@@ -125,7 +139,7 @@ function TokenItem({ token, isSelected, balanceData, onClick }: TokenItemProps) 
               {isSelected && <IconCheck className="h-3 w-3 text-primary" />}
             </div>
             <div className="text-xs text-muted-foreground font-mono">
-              {formatTokenAddress(token.address)}
+              {token.chainLabel ? `${token.chainLabel} · ${formatTokenAddress(token.address)}` : formatTokenAddress(token.address)}
             </div>
           </div>
           <div className="text-right">
@@ -145,36 +159,6 @@ function TokenItem({ token, isSelected, balanceData, onClick }: TokenItemProps) 
           </div>
         </div>
       </div>
-    </button>
-  );
-}
-
-// Popular token chip for quick selection
-interface PopularTokenChipProps {
-  token: TokenSelectorToken;
-  isSelected: boolean;
-  isExcluded: boolean;
-  onClick: () => void;
-}
-
-function PopularTokenChip({ token, isSelected, isExcluded, onClick }: PopularTokenChipProps) {
-  return (
-    <button
-      className={cn(
-        "flex items-center gap-1.5 px-3 py-2 rounded-lg border transition-all",
-        "hover:bg-muted/50 hover:border-muted-foreground/30",
-        isSelected && "bg-primary/10 border-primary/30",
-        isExcluded && "opacity-40 cursor-not-allowed"
-      )}
-      onClick={isExcluded ? undefined : onClick}
-      disabled={isExcluded}
-    >
-      <TokenImage
-        src={token.icon || '/placeholder-logo.svg'}
-        alt={token.symbol}
-        size={20}
-      />
-      <span className="text-sm font-medium">{token.symbol}</span>
     </button>
   );
 }
@@ -213,9 +197,7 @@ export function TokenSelector({
   const searchAbortRef = useRef<AbortController | null>(null);
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  const { address: accountAddress, isConnected, chain } = useAccount();
-  const currentChainId = chain?.id;
-  const { chainId: targetChainId } = useNetwork();
+  const { address: accountAddress, isConnected } = useAccount();
 
   const availableTokensKey = useMemo(
     () => availableTokens.map((t) => t.address).join("|"),
@@ -231,6 +213,41 @@ export function TokenSelector({
 
   const excludeAddress = excludeToken?.address?.toLowerCase();
 
+  // --- Chain filter state ---
+  // Detect available chains from the token list
+  const availableChains = useMemo(() => {
+    const chains = new Map<string, { networkMode: string; chainId: number; icon: string; label: string }>();
+    for (const token of stableAvailableTokens) {
+      const mode = token.networkMode || 'base';
+      if (!chains.has(mode)) {
+        chains.set(mode, {
+          networkMode: mode,
+          chainId: token.chainId || 8453,
+          icon: token.chainIcon || '/chains/base.svg',
+          label: token.chainLabel || 'Base',
+        });
+      }
+    }
+    return Array.from(chains.values());
+  }, [stableAvailableTokens]);
+
+  const [chainFilter, setChainFilter] = useState<string>(
+    () => (selectedToken as any)?.networkMode || 'base'
+  );
+
+  // Chain filter's chainId for balance + price fetching
+  const filterChainId = useMemo(() => {
+    const chain = availableChains.find(c => c.networkMode === chainFilter);
+    return chain?.chainId || 8453;
+  }, [chainFilter, availableChains]);
+
+  // Reset chain filter to current token's chain when selector opens
+  useEffect(() => {
+    if (isOpen) {
+      setChainFilter((selectedToken as any)?.networkMode || 'base');
+    }
+  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Fetch user's tokens from Alchemy (includes balances, metadata, logos)
   const { tokens: userTokens, isLoading: isLoadingUserTokens } = useUserTokens();
 
@@ -238,39 +255,40 @@ export function TokenSelector({
 
   // Merge pool tokens with user's tokens from Alchemy
   const allTokens = useMemo((): TokenSelectorToken[] => {
-    const poolTokenAddresses = new Set(stableAvailableTokens.map(t => t.address.toLowerCase()));
+    // Use address+chainId composite key to properly differentiate cross-chain tokens
+    const poolTokenKeys = new Set(stableAvailableTokens.map(t => `${t.address.toLowerCase()}:${t.chainId || ''}`));
 
     // Convert user tokens from Uniswap Portfolio API to TokenSelectorToken format
     const userTokensConverted: TokenSelectorToken[] = userTokens
-      .filter(t => !poolTokenAddresses.has(t.address.toLowerCase())) // Exclude duplicates
-      .map(t => ({
-        address: t.address as `0x${string}`,
-        symbol: t.symbol,
-        name: t.name,
-        decimals: t.decimals,
-        icon: t.logo || '/placeholder-logo.svg',
-        balance: t.balance,
-        // Pass through USD value from Uniswap API (formatted as string for consistency)
-        value: t.balanceUSD != null ? `$${t.balanceUSD.toFixed(2)}` : undefined,
-        usdPrice: t.balanceUSD != null && parseFloat(t.balance) > 0
-          ? t.balanceUSD / parseFloat(t.balance)
-          : undefined,
-      }));
+      .filter(t => !poolTokenKeys.has(`${t.address.toLowerCase()}:${t.chainId || ''}`)) // Exclude duplicates
+      .map(t => {
+        const chainMeta = resolveChainMeta(t.chainId);
+        return {
+          address: t.address as `0x${string}`,
+          symbol: t.symbol,
+          name: t.name,
+          decimals: t.decimals,
+          icon: t.logo || '/tokens/placeholder.svg',
+          balance: t.balance,
+          // Pass through USD value from Uniswap API (formatted as string for consistency)
+          value: t.balanceUSD != null ? `$${t.balanceUSD.toFixed(2)}` : undefined,
+          usdPrice: t.balanceUSD != null && parseFloat(t.balance) > 0
+            ? t.balanceUSD / parseFloat(t.balance)
+            : undefined,
+          networkMode: t.chainId ? modeForChainId(t.chainId) ?? undefined : undefined,
+          chainId: t.chainId,
+          chainIcon: chainMeta?.icon,
+          chainLabel: chainMeta?.label,
+        };
+      });
 
     // Pool tokens first, then user's other tokens
     return [...stableAvailableTokens, ...userTokensConverted];
   }, [stableAvailableTokens, userTokens]);
 
-  // Popular tokens from all tokens
-  const popularTokens = useMemo(() => {
-    return POPULAR_TOKEN_ADDRESSES
-      .map(addr => allTokens.find(t => t.address.toLowerCase() === addr))
-      .filter((t): t is TokenSelectorToken => t !== undefined);
-  }, [allTokens]);
-
-  // Pool tokens (always shown in "Supported Tokens" section)
-  const poolTokenAddressSet = useMemo(
-    () => new Set(stableAvailableTokens.map(t => t.address.toLowerCase())),
+  // Pool tokens (always shown in "Supported Tokens" section) - keyed by address+chainId
+  const poolTokenKeySet = useMemo(
+    () => new Set(stableAvailableTokens.map(t => `${t.address.toLowerCase()}:${t.chainId || ''}`)),
     [stableAvailableTokens]
   );
 
@@ -278,14 +296,14 @@ export function TokenSelector({
   const userOwnedTokens = useMemo(() => {
     return allTokens.filter(token => {
       // Exclude pool tokens — they're shown in the "Supported Tokens" section
-      if (poolTokenAddressSet.has(token.address.toLowerCase())) return false;
+      if (poolTokenKeySet.has(`${token.address.toLowerCase()}:${token.chainId || ''}`)) return false;
       // Must have a positive balance
       const balance = tokenBalances[token.address];
       if (!balance) return false;
       const numericBalance = parseFloat(balance.balance);
       return !isNaN(numericBalance) && numericBalance > 0;
     });
-  }, [allTokens, tokenBalances, poolTokenAddressSet]);
+  }, [allTokens, tokenBalances, poolTokenKeySet]);
 
   // Handle search input change with debouncing
   const handleSearchChange = useCallback((value: string) => {
@@ -416,11 +434,16 @@ export function TokenSelector({
     if (shouldClose) setIsOpen(false);
   };
 
-  // Filter all tokens based on search
+  // Filter all tokens based on chain filter + search
   const filteredAvailableTokens = useMemo(() => {
     return allTokens
       .filter(token => excludeAddress ? token.address.toLowerCase() !== excludeAddress : true)
       .filter(token => {
+        // Always apply chain filter (for both search and non-search)
+        if (availableChains.length > 1) {
+          const tokenChain = token.networkMode || 'base';
+          if (tokenChain !== chainFilter) return false;
+        }
         if (!searchTerm) return true;
         const search = searchTerm.toLowerCase();
         return (
@@ -429,7 +452,7 @@ export function TokenSelector({
           token.address.toLowerCase().includes(search)
         );
       });
-  }, [allTokens, excludeAddress, searchTerm]);
+  }, [allTokens, excludeAddress, searchTerm, chainFilter, availableChains.length]);
 
   const filteredTokensKey = useMemo(
     () => filteredAvailableTokens.map((t) => t.address).join("|"),
@@ -453,9 +476,9 @@ export function TokenSelector({
     if (filteredAvailableTokens.length > 0) {
       hasFetchedPricesRef.current = true;
       const symbols = filteredAvailableTokens.map(t => t.symbol);
-      batchQuotePrices(symbols, targetChainId).then(setTokenPrices).catch(() => {});
+      batchQuotePrices(symbols, filterChainId).then(setTokenPrices).catch(() => {});
     }
-  }, [isOpen, filteredAvailableTokens, targetChainId]);
+  }, [isOpen, filteredAvailableTokens, filterChainId]);
 
   // Store fetched raw balances so we can re-compute USD values when prices arrive
   const rawBalancesRef = useRef<Record<string, { balance: string; numericBalance: number }>>({});
@@ -473,7 +496,17 @@ export function TokenSelector({
     return 0;
   }, []);
 
-  // Fetch balances once when modal opens — don't re-fetch while open
+  // Reset fetch flags when chain filter changes (while selector is open)
+  const prevChainFilterRef = useRef(chainFilter);
+  useEffect(() => {
+    if (prevChainFilterRef.current !== chainFilter && isOpen) {
+      prevChainFilterRef.current = chainFilter;
+      hasLoadedForSessionRef.current = false;
+      hasFetchedPricesRef.current = false;
+    }
+  }, [chainFilter, isOpen]);
+
+  // Fetch balances once when modal opens — re-fetches when chain filter changes
   useEffect(() => {
     if (!isOpen) {
       hasLoadedForSessionRef.current = false;
@@ -481,7 +514,7 @@ export function TokenSelector({
       return;
     }
 
-    if (!isConnected || currentChainId !== targetChainId || !accountAddress) {
+    if (!isConnected || !accountAddress) {
       const resetBalances: Record<string, TokenBalanceData> = {};
       (filteredTokensRef.current?.value || filteredAvailableTokens).forEach(token => {
         resetBalances[token.address] = {
@@ -494,7 +527,7 @@ export function TokenSelector({
       return;
     }
 
-    // Only fetch once per open session
+    // Only fetch once per open session + chain filter combo
     if (hasLoadedForSessionRef.current) return;
     hasLoadedForSessionRef.current = true;
 
@@ -520,12 +553,14 @@ export function TokenSelector({
 
       if (nativeToken) {
         try {
-          const ethBalance = await getBalance(config, { address: accountAddress, chainId: targetChainId });
+          const ethBalance = await getBalance(config, { address: accountAddress, chainId: filterChainId });
           const balance = formatUnits(ethBalance.value, 18);
           const numericBalance = parseFloat(balance);
           const displayBal = getFormattedDisplayBalance(numericBalance);
           rawBals[nativeToken.address] = { balance: displayBal, numericBalance };
-          newBalances[nativeToken.address] = { balance: displayBal, usdValue: 0, isLoading: false };
+          let usdValue = 0;
+          if (nativeToken.usdPrice) usdValue = numericBalance * nativeToken.usdPrice;
+          newBalances[nativeToken.address] = { balance: displayBal, usdValue, isLoading: false };
         } catch {
           rawBals[nativeToken.address] = { balance: "Error", numericBalance: 0 };
           newBalances[nativeToken.address] = { balance: "Error", usdValue: 0, isLoading: false };
@@ -536,7 +571,7 @@ export function TokenSelector({
         const contracts = erc20Tokens.map(token => ({
           address: token.address, abi: erc20Abi,
           functionName: 'balanceOf' as const, args: [accountAddress] as const,
-          chainId: targetChainId,
+          chainId: filterChainId,
         }));
         try {
           const results = await readContracts(config, { contracts });
@@ -568,7 +603,7 @@ export function TokenSelector({
     };
 
     fetchBalances();
-  }, [isOpen, isConnected, currentChainId, targetChainId, accountAddress, filteredTokensKey, getTokenUsdValue]);
+  }, [isOpen, isConnected, accountAddress, filteredTokensKey, chainFilter, filterChainId, getTokenUsdValue]);
 
   // When prices arrive, update USD values in-place (no skeleton flash)
   useEffect(() => {
@@ -608,7 +643,7 @@ export function TokenSelector({
     symbol: info.symbol,
     name: info.name,
     decimals: info.decimals,
-    icon: info.logoURI || '/placeholder-logo.svg',
+    icon: info.logoURI || '/tokens/placeholder.svg',
   });
 
   const handleToggle = () => {
@@ -649,8 +684,29 @@ export function TokenSelector({
         .token-list-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
         .token-list-scroll { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.12) transparent; }
       `}} />
-      {/* Search Input */}
-      <div className="p-4 pb-3">
+      {/* Chain Picker + Search Input */}
+      <div className="p-4 pb-3 flex flex-col gap-3">
+        {/* Chain Toggle — above search, right-aligned */}
+        {!searchTerm && availableChains.length > 1 && (
+          <div className="flex gap-2 justify-end">
+            {availableChains.map((chain) => (
+              <button
+                key={chain.networkMode}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs",
+                  chainFilter === chain.networkMode
+                    ? "bg-primary/10 border-primary/30"
+                    : "border-sidebar-border/60 hover:bg-muted/50 hover:border-muted-foreground/30"
+                )}
+                onClick={() => setChainFilter(chain.networkMode)}
+              >
+                <img src={chain.icon} alt={chain.label} className="w-3.5 h-3.5 rounded-full" />
+                <span className="font-medium">{chain.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {/* Search */}
         <div className="relative">
           <SearchIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -665,26 +721,6 @@ export function TokenSelector({
           )}
         </div>
       </div>
-
-      {/* Popular Tokens - Quick Select */}
-      {!searchTerm && popularTokens.length > 0 && (
-        <div className="px-4 pb-3">
-          <div className="flex flex-wrap gap-2">
-            {popularTokens.map((token) => (
-              <PopularTokenChip
-                key={token.address}
-                token={token}
-                isSelected={selectedToken ? token.address === selectedToken.address : false}
-                isExcluded={token.address.toLowerCase() === excludeAddress}
-                onClick={() => handleTokenSelect(token)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Divider */}
-      {!searchTerm && <div className="border-t border-sidebar-border/60" />}
 
       {/* Scrollable token list — Your Tokens + All Tokens */}
       <div
@@ -736,6 +772,7 @@ export function TokenSelector({
                 </div>
                 {stableAvailableTokens
                   .filter(token => token.address.toLowerCase() !== excludeAddress)
+                  .filter(token => availableChains.length <= 1 || (token.networkMode || 'base') === chainFilter)
                   .map((token) => (
                     <TokenItem
                       key={`pool-${token.address}`}
@@ -760,9 +797,10 @@ export function TokenSelector({
                   </div>
                   {userOwnedTokens
                     .filter(token => token.address.toLowerCase() !== excludeAddress)
+                    .filter(token => availableChains.length <= 1 || (token.networkMode || 'base') === chainFilter)
                     .map((token) => (
                       <TokenItem
-                        key={`yours-${token.address}`}
+                        key={`yours-${token.address}:${token.chainId || ''}`}
                         token={token}
                         isSelected={selectedToken ? token.address === selectedToken.address : false}
                         balanceData={tokenBalances[token.address]}
@@ -820,7 +858,7 @@ export function TokenSelector({
         {selectedToken ? (
           <>
             <TokenImage
-              src={selectedToken.icon || '/placeholder-logo.svg'}
+              src={selectedToken.icon || '/tokens/placeholder.svg'}
               alt={selectedToken.symbol}
               size={20}
             />

@@ -33,7 +33,7 @@ export interface FetchUnifiedYieldPositionsConfig {
   /** Chain ID */
   chainId: number;
 
-  /** Network mode (mainnet/testnet) */
+  /** Network mode (base/arbitrum) */
   networkMode: NetworkMode;
 
   /** Viem public client for RPC calls */

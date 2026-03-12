@@ -14,7 +14,7 @@ import { formatUnits as viemFormatUnits, erc20Abi } from "viem";
 import { useBalance, useReadContracts } from "wagmi";
 import { getAllTokens, NATIVE_TOKEN_ADDRESS, type NetworkMode } from "@/lib/pools-config";
 import { batchQuotePrices } from "@/lib/swap/quote-prices";
-import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID } from "@/lib/network-mode";
+import { chainIdForMode } from "@/lib/network-mode";
 
 interface TokenBalance {
   symbol: string;
@@ -50,7 +50,7 @@ export function useWalletBalances({
   const [priceMap, setPriceMap] = useState<Map<string, number>>(new Map());
   const [isFetchingPrices, setIsFetchingPrices] = useState(false);
 
-  const chainId = networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
+  const chainId = chainIdForMode(networkMode);
 
   // Parse token list into structured format
   const tokenList = useMemo((): TokenInfo[] => {

@@ -39,11 +39,8 @@ interface PersistQueryClientProviderProps {
   children: ReactNode
 }
 
-/**
- * OVERRIDE: Always use mainnet cache key (testnet removed)
- */
 function getNetworkAwareCacheKey(): string {
-  return 'alphix-rq-cache-mainnet'
+  return 'alphix-rq-cache-base'
 }
 
 /**
@@ -51,7 +48,7 @@ function getNetworkAwareCacheKey(): string {
  * to save React Query cache to localStorage.
  *
  * Features:
- * - Network-aware cache keys (mainnet vs testnet)
+ * - Network-aware cache keys
  * - SSR-safe (only creates persister on client)
  * - Cache buster for version invalidation
  * - Configurable max age (default: 24 days)

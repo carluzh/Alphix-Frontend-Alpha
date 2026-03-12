@@ -5,16 +5,8 @@
 
 import React from "react";
 import { formatUSD } from "@/lib/format";
-import { getToken, TokenSymbol } from "@/lib/pools-config";
-
-/**
- * Get token icon URL from symbol
- */
-export const getTokenIcon = (symbol?: string) => {
-  if (!symbol) return "/placeholder-logo.svg";
-  const tokenConfig = getToken(symbol);
-  return tokenConfig?.icon || "/placeholder-logo.svg";
-};
+import { type TokenSymbol } from "@/lib/pools-config";
+export { getTokenIcon } from "@/lib/utils";
 
 /**
  * Format token display amount with proper precision

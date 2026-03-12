@@ -25,7 +25,7 @@ import {
   WIZARD_STEPS,
 } from './types';
 import { usePoolState } from '@/lib/apollo/hooks/usePoolState';
-import { getPoolById } from '@/lib/pools-config';
+import { getPoolById, getPoolByIdMultiChain, getChainId, type NetworkMode } from '@/lib/pools-config';
 import { useDerivedPositionInfo } from '@/lib/liquidity/hooks/position/useDerivedPositionInfo';
 import type { CreatePositionInfo } from '@/lib/liquidity/types';
 import { isZapEligiblePool } from '@/lib/liquidity/zap';
@@ -87,6 +87,7 @@ interface AddLiquidityContextType {
   poolId: string | null;
   pool: V4Pool | undefined;
   poolLoading: boolean;
+  poolNetworkMode: NetworkMode | undefined;
   ticks: [number | null, number | null];
 
   // Pool state data (from usePoolState)
@@ -186,10 +187,8 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
 
     const initialPoolId = urlPool || entryConfig?.poolId || null;
 
-    // Set deposit mode based on zap eligibility of the initial pool
-    const depositModeForPool = initialPoolId && isZapEligiblePool(initialPoolId)
-      ? { depositMode: 'zap' as const, zapInputToken: 'token1' as const }
-      : { depositMode: 'balanced' as const, zapInputToken: null };
+    // Default to balanced (dual token) mode; user can switch to zap (single token) via toggle
+    const depositModeForPool = { depositMode: 'balanced' as const, zapInputToken: null };
 
     return {
       ...DEFAULT_WIZARD_STATE,
@@ -212,16 +211,19 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   const poolId = state.poolId;
   const ticks: [number | null, number | null] = [state.tickLower, state.tickUpper];
 
-  // Get pool config to find subgraphId (Uniswap pattern: derive from selection)
-  const poolConfig = useMemo(() => {
+  // Get pool config to find subgraphId — use multi-chain lookup so Arbitrum pools
+  // are found regardless of the user's current network context
+  const poolConfigWithNetwork = useMemo(() => {
     if (!poolId) return null;
-    return getPoolById(poolId);
+    return getPoolByIdMultiChain(poolId);
   }, [poolId]);
 
+  const poolConfig = poolConfigWithNetwork;
+  const poolNetworkMode: NetworkMode | undefined = poolConfigWithNetwork?.networkMode;
   const subgraphId = poolConfig?.subgraphId || '';
 
   // Fetch pool state when pool is selected (Uniswap pattern: useDerivedPositionInfo internally fetches)
-  const { data: poolStateRaw, loading: poolStateLoading, refetch: refetchPoolState } = usePoolState(subgraphId);
+  const { data: poolStateRaw, loading: poolStateLoading, refetch: refetchPoolState } = usePoolState(subgraphId, poolNetworkMode);
 
   // Transform pool state to match our interface
   const poolStateData = useMemo(() => {
@@ -234,7 +236,7 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     };
   }, [poolStateRaw]);
 
-  // Derive position info using Uniswap's pattern
+  // Derive position info using Uniswap's pattern — pass pool's networkMode for correct chain config
   const derivedPositionInfo = useDerivedPositionInfo({
     poolId: poolId || undefined,
     poolState: poolStateData ? {
@@ -242,6 +244,7 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
       currentTick: poolStateData.currentPoolTick || 0,
       liquidity: poolStateData.liquidity || '0',
     } : undefined,
+    networkMode: poolNetworkMode,
   });
 
   // Extract shortcuts from derived info (convenience for components)
@@ -467,6 +470,7 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     poolId,
     pool,
     poolLoading,
+    poolNetworkMode,
     ticks,
 
     // Pool state data (current price, tick, etc.)

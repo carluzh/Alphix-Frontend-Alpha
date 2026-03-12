@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { motion } from "framer-motion";
-import { getToken as getTokenConfig } from "@/lib/pools-config";
+import { resolveTokenIcon } from "@/lib/pools-config";
 
 /**
  * Minimal position type for TokenStack - only needs token symbols
@@ -19,12 +19,8 @@ interface TokenStackProps {
 export function TokenStack({ position }: TokenStackProps) {
 
   const getTokenIcon = (positionToken: { symbol?: string; address?: string }) => {
-    if (!positionToken?.symbol) return "/placeholder-logo.svg";
-    const tokenConfig = getTokenConfig(positionToken.symbol);
-    if (tokenConfig?.icon) {
-      return tokenConfig.icon;
-    }
-    return "/placeholder-logo.svg";
+    if (!positionToken?.symbol) return "/tokens/placeholder.svg";
+    return resolveTokenIcon(positionToken.symbol);
   };
 
   const iconSize = 32;

@@ -16,7 +16,7 @@ import {
 } from 'lightweight-charts'
 import { cn } from '@/lib/utils'
 import { useUnifiedYieldChartData, type ChartPeriod } from '@/app/(app)/liquidity/position/[tokenId]/hooks'
-import type { YieldSource } from '@/lib/pools-config'
+import type { YieldSource, NetworkMode } from '@/lib/pools-config'
 
 // Chart dimensions - matches PositionRangeChart
 export const CHART_HEIGHT = 48
@@ -43,6 +43,8 @@ interface PositionYieldChartProps {
   height?: number
   /** Additional class name */
   className?: string
+  /** Override network mode for cross-chain display */
+  networkModeOverride?: NetworkMode
 }
 
 export function PositionYieldChart({
@@ -53,6 +55,7 @@ export function PositionYieldChart({
   width = '100%',
   height = CHART_HEIGHT,
   className,
+  networkModeOverride,
 }: PositionYieldChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -69,6 +72,7 @@ export function PositionYieldChart({
     token0Symbol,
     token1Symbol,
     enabled: !!poolId,
+    networkModeOverride,
   })
 
   // Transform yield data to chart format

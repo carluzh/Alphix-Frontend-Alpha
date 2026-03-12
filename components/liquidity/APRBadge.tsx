@@ -4,7 +4,6 @@ import { cn } from "@/lib/utils";
 import { calculateTotalApr, formatTotalApr } from "@/lib/apr";
 import { PointsTooltip, TooltipSize } from "./PointsCampaign/PointsTooltip";
 import { APRBreakdownTooltip } from "./APRBreakdownTooltip";
-
 export interface APRBreakdown {
   poolApr?: number;
   pointsApr?: number;
@@ -43,11 +42,15 @@ export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, t
   }
 
   const isZeroApr = totalApr === 0;
-  const formattedApr = formatTotalApr({
-    swapApr: breakdown?.poolApr ?? totalApr,
-    unifiedYieldApr: breakdown?.lendingApr,
-    pointsApr: breakdown?.pointsApr,
-  });
+  // Use the same breakdown values for formatting — never substitute totalApr for swapApr
+  // as totalApr already includes lending, which would cause double-counting
+  const formattedApr = breakdown
+    ? formatTotalApr({
+        swapApr: breakdown.poolApr,
+        unifiedYieldApr: breakdown.lendingApr,
+        pointsApr: breakdown.pointsApr,
+      })
+    : formatTotalApr({ swapApr: totalApr });
 
   const badge = (
     <div className={cn(

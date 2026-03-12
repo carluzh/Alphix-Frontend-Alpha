@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { TokenSymbol } from "@/lib/pools-config"
+import type { NetworkMode } from "@/lib/network-mode"
 import type { SwapRoute } from "@/lib/swap/routing-engine"
 import { findBestRoute } from "@/lib/swap/routing-engine"
 
@@ -17,6 +18,7 @@ type Args = {
   currentRoute: SwapRoute | null
   setCurrentRoute: (r: SwapRoute | null) => void
   setSelectedPoolIndexForChart: (n: number) => void
+  networkMode?: NetworkMode
 }
 
 export function useSwapRoutingFees({
@@ -26,6 +28,7 @@ export function useSwapRoutingFees({
   currentRoute,
   setCurrentRoute,
   setSelectedPoolIndexForChart,
+  networkMode,
 }: Args) {
   const [routeInfo, setRouteInfo] = useState<RouteInfo>(null)
   const [routeError, setRouteError] = useState<string | null>(null)
@@ -59,7 +62,7 @@ export function useSwapRoutingFees({
     isCalculatingRef.current = true
 
     try {
-      const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol)
+      const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol, networkMode)
       if (!routeResult.bestRoute) {
         setRouteError(`No route found for ${fromTokenSymbol}/${toTokenSymbol}`)
         setCurrentRoute(null)
@@ -88,7 +91,7 @@ export function useSwapRoutingFees({
     } finally {
       isCalculatingRef.current = false
     }
-  }, [fromToken?.address, toToken?.address, tokenDefinitions, currentRoute, setCurrentRoute, setSelectedPoolIndexForChart])
+  }, [fromToken?.address, toToken?.address, tokenDefinitions, currentRoute, setCurrentRoute, setSelectedPoolIndexForChart, networkMode])
 
   useEffect(() => {
     calculateRoute()

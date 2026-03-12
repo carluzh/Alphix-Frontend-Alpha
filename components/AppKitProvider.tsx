@@ -2,7 +2,7 @@
 
 import { config, wagmiAdapter, projectId } from '@/lib/wagmiConfig'
 import { createAppKit } from '@reown/appkit'
-import { base as appKitBase } from '@reown/appkit/networks'
+import { base as appKitBase, arbitrum as appKitArbitrum } from '@reown/appkit/networks'
 import { QueryClient } from '@tanstack/react-query'
 import { ApolloProvider } from '@apollo/client'
 import { type ReactNode } from 'react'
@@ -19,7 +19,7 @@ export const appKit = typeof window !== 'undefined' && projectId
   ? createAppKit({
       adapters: [wagmiAdapter],
       projectId,
-      networks: [appKitBase],
+      networks: [appKitBase, appKitArbitrum],
       defaultNetwork: appKitBase,
       metadata: { name: 'Alphix', description: 'Alphix AMM', url: window.location.origin, icons: ['/favicon.ico'] },
       features: { analytics: true, email: false, socials: [] },

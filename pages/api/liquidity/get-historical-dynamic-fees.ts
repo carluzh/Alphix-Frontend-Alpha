@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '../../../lib/cache/CacheService';
-import { getNetworkModeFromRequest, type NetworkMode } from '../../../lib/pools-config';
+import { resolveNetworkMode } from '@/lib/network-mode';
 
 // Unified query: Both networks use Goldsky subgraph with pool (Bytes) filter
 const GET_LAST_HOOK_EVENTS = `
@@ -45,8 +45,7 @@ export default async function handler(
     return res.status(400).json({ message: 'Valid poolId query parameter is required.' });
   }
 
-  // OVERRIDE: Always use mainnet (testnet removed)
-  const networkMode: NetworkMode = 'mainnet';
+  const networkMode = resolveNetworkMode(req);
 
   const cacheKey = `dynamic-fees:${poolId.toLowerCase()}:${networkMode}`;
 

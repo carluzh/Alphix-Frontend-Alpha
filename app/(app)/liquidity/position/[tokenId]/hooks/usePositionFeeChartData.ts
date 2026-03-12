@@ -17,7 +17,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { fetchPositionFees } from "@/lib/backend-client";
 import { fetchPositionAaveHistory } from "@/lib/aave-rates";
-import { useNetwork } from "@/lib/network-context";
 
 export type ChartPeriod = "1W" | "1M" | "1Y";
 
@@ -43,6 +42,8 @@ interface UsePositionFeeChartDataParams {
   token1Symbol?: string;
   /** Whether this is a rehypo position (enables Aave rate fetching) */
   isRehypo?: boolean;
+  /** Override networkMode for cross-chain positions */
+  networkModeOverride?: import('@/lib/network-mode').NetworkMode;
 }
 
 interface UsePositionFeeChartDataResult {
@@ -65,8 +66,9 @@ export function usePositionFeeChartData({
   token0Symbol,
   token1Symbol,
   isRehypo = false,
+  networkModeOverride,
 }: UsePositionFeeChartDataParams): UsePositionFeeChartDataResult {
-  const { networkMode } = useNetwork();
+  const networkMode = networkModeOverride;
   const queryKey = ["position-fee-chart", positionId, period, networkMode];
 
   // Fetch position fee history

@@ -9,7 +9,7 @@
 
 import { usePlatformBasedFetchPolicy } from '@/hooks/usePlatformBasedFetchPolicy'
 import { usePollingIntervalByChain } from '@/hooks/usePollingIntervalByChain'
-import { useNetwork } from '@/lib/network-context'
+import { apolloChainForMode } from '@/lib/network-mode'
 import { useGetUserPositionsQuery, type Chain } from '../__generated__'
 
 interface PositionToken {
@@ -56,23 +56,22 @@ interface UseUserPositionsResult {
  * @example
  * const { data: positions, loading } = useUserPositions(address)
  */
-export function useUserPositions(ownerAddress: string): UseUserPositionsResult {
-  const { networkMode } = useNetwork()
-  const chain: Chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
+export function useUserPositions(ownerAddress: string, networkModeOverride?: import('@/lib/network-mode').NetworkMode): UseUserPositionsResult {
+  const networkMode = networkModeOverride
+  const chain = networkMode ? apolloChainForMode(networkMode) as Chain : undefined
   const ownerLc = (ownerAddress || '').toLowerCase()
-  const enabled = !!ownerLc && ownerLc.length > 0
+  const enabled = !!ownerLc && ownerLc.length > 0 && !!networkMode
 
-  // Chain-based polling interval (L2 = 3s base, x10 for positions = 30s)
   const chainPollingInterval = usePollingIntervalByChain()
 
-  // Adaptive fetch policy - reduces polling when window not visible
   const { fetchPolicy, pollInterval } = usePlatformBasedFetchPolicy({
     fetchPolicy: 'cache-and-network',
-    pollInterval: chainPollingInterval * 10, // ~30 seconds - positions can change after transactions
+    pollInterval: chainPollingInterval * 10,
   })
 
   const { data, loading, error, refetch } = useGetUserPositionsQuery({
-    variables: { chain, owner: ownerLc },
+    variables: { chain: chain!, owner: ownerLc },
+    context: { networkMode: networkMode! },
     skip: !enabled,
     fetchPolicy,
     pollInterval,

@@ -79,8 +79,8 @@ async function buildPercentageDecrease(
   const { token0Symbol, token1Symbol } = params;
   const decreasePercentage = options.decreasePercentage ?? 0;
 
-  const token0Def = getToken(token0Symbol);
-  const token1Def = getToken(token1Symbol);
+  const token0Def = getToken(token0Symbol, networkMode);
+  const token1Def = getToken(token1Symbol, networkMode);
   if (!token0Def || !token1Def) return null;
 
   try {
@@ -245,8 +245,8 @@ async function buildPlannerDecrease(
   const { token0Symbol, token1Symbol, isFullBurn, collectOnly } = params;
   const tokenDefinitions = getTokenDefinitions(networkMode);
 
-  const token0Def = getToken(token0Symbol);
-  const token1Def = getToken(token1Symbol);
+  const token0Def = getToken(token0Symbol, networkMode);
+  const token1Def = getToken(token1Symbol, networkMode);
 
   if (!token0Def || !token1Def) {
     throw new Error('Token definitions not found for one or both tokens in the position.');

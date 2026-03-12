@@ -10,7 +10,7 @@
 
 import { apolloClient } from '../client'
 import { gql } from '@apollo/client'
-import { getStoredNetworkMode } from '@/lib/network-mode'
+import { modeForChainId, apolloChainForMode } from '@/lib/network-mode'
 
 // Query document for cache operations
 const USER_POSITIONS_QUERY = gql`
@@ -64,8 +64,8 @@ type Params = {
 export async function invalidateAfterTx(_qc: any, params: Params) {
   const client = apolloClient
   const ownerLc = (params.owner || '').toLowerCase()
-  const networkMode = getStoredNetworkMode()
-  const chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
+  const networkMode = modeForChainId(params.chainId) ?? 'base'
+  const chain = apolloChainForMode(networkMode)
 
   // === LAYER 1: Update cache immediately ===
   if (params.optimisticUpdates) {

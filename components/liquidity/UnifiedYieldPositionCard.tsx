@@ -16,8 +16,8 @@
 
 import React, { useState, useMemo } from 'react';
 import { TokenStack } from "./TokenStack";
-import { getPoolById, getToken } from '@/lib/pools-config';
-import { useNetwork } from '@/lib/network-context';
+import { getPoolById, getToken, type NetworkMode } from '@/lib/pools-config';
+import { chainIdForMode } from '@/lib/network-mode';
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
 import { getOptimalBaseToken } from '@/lib/denomination-utils';
@@ -53,6 +53,10 @@ interface UnifiedYieldPositionCardProps {
     };
     /** Additional CSS classes */
     className?: string;
+    /** Chain badge for multi-chain display */
+    chainBadge?: { icon: string; borderColor: string };
+    /** Which chain this position lives on (for cross-chain display) */
+    positionNetworkMode?: NetworkMode;
 }
 
 export function UnifiedYieldPositionCard({
@@ -61,10 +65,13 @@ export function UnifiedYieldPositionCard({
     onClick,
     poolContext,
     className,
+    chainBadge,
+    positionNetworkMode,
 }: UnifiedYieldPositionCardProps) {
     const [isHovered, setIsHovered] = useState(false);
     const [pricesInverted, setPricesInverted] = useState(false);
-    const { networkMode, chainId } = useNetwork();
+    const networkMode = positionNetworkMode;
+    const chainId = positionNetworkMode ? chainIdForMode(positionNetworkMode) : 8453;
 
     const { currentPrice, isLoadingPrices, poolAPR } = poolContext;
 
@@ -83,8 +90,8 @@ export function UnifiedYieldPositionCard({
 
     // Fetch Aave rates for yield display
     const { data: aaveRatesData } = useQuery({
-        queryKey: ['aaveRates'],
-        queryFn: fetchAaveRates,
+        queryKey: ['aaveRates', networkMode ?? 'default'],
+        queryFn: () => fetchAaveRates(networkMode),
         staleTime: 5 * 60_000, // 5 minutes
     });
 
@@ -213,7 +220,15 @@ export function UnifiedYieldPositionCard({
             onClick={onClick}
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
+
         >
+            {chainBadge && (
+                <img
+                    src={chainBadge.icon}
+                    alt=""
+                    className="absolute top-2 left-2 w-4 h-4 rounded-full z-10"
+                />
+            )}
             {/* Main content row - matches PositionCardCompact exactly */}
             <div className={cn(
                 "relative flex items-center justify-between gap-4 py-3 sm:py-5 px-4 overflow-visible transition-colors",
@@ -249,6 +264,7 @@ export function UnifiedYieldPositionCard({
                         token1Symbol={token1Symbol}
                         yieldSources={poolConfig?.yieldSources}
                         className="w-full h-full"
+                        networkModeOverride={networkMode}
                     />
                 </div>
 
@@ -260,6 +276,7 @@ export function UnifiedYieldPositionCard({
                         token1Symbol={token1Symbol}
                         yieldSources={poolConfig?.yieldSources}
                         className="w-full h-full"
+                        networkModeOverride={networkMode}
                     />
                 </div>
             </div>

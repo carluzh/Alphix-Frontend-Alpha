@@ -114,7 +114,7 @@ export function usePositionAPR(params: UsePositionAPRParams): UsePositionAPRResu
 
     const timer = setTimeout(async () => {
       try {
-        const poolConfig = getPoolById(selectedPoolId!)
+        const poolConfig = getPoolById(selectedPoolId!, networkMode)
         const token0Def = tokenDefinitions[token0Symbol]
         const token1Def = tokenDefinitions[token1Symbol]
 

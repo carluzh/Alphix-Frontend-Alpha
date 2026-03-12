@@ -1,32 +1,17 @@
-/**
- * Apollo Network Mode Link
- *
- * Injects network mode (mainnet/testnet) into request context.
- * This allows queries to be network-aware without manual parameter passing.
- *
- * @see interface/packages/uniswap/src/data/links.ts
- */
-
 import { ApolloLink } from '@apollo/client'
-import { getStoredNetworkMode, type NetworkMode } from '@/lib/network-mode'
+import { apolloChainForMode } from '@/lib/network-mode'
+import type { NetworkMode } from '@/lib/network-mode'
 
-/**
- * Get current network mode safely (works on both client and server)
- */
-function getCurrentNetworkMode(): NetworkMode {
-  return getStoredNetworkMode()
-}
-
-/**
- * Get link that adds network mode to operation context and headers.
- * Downstream links and resolvers can access via context.networkMode
- */
 export function getNetworkModeLink(): ApolloLink {
   return new ApolloLink((operation, forward) => {
-    const networkMode = getCurrentNetworkMode()
-    const chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
+    // Prefer networkMode from operation variables/context (set by the calling hook)
+    // This allows each query to target a specific chain rather than relying on global state
+    const vars = operation.variables as Record<string, any> | undefined
+    const ctx = operation.getContext() as Record<string, any>
+    const networkMode: NetworkMode = ctx.networkMode ?? vars?.networkMode ?? 'base'
+    const chain = apolloChainForMode(networkMode)
 
-    operation.setContext(({ headers = {} }) => ({
+    operation.setContext(({ headers = {} }: { headers?: Record<string, string> }) => ({
       headers: {
         ...headers,
         'x-network-mode': networkMode,
@@ -40,5 +25,4 @@ export function getNetworkModeLink(): ApolloLink {
   })
 }
 
-// Default export for backward compatibility
 export const networkModeLink = getNetworkModeLink()

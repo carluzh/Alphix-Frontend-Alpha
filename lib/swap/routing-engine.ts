@@ -188,7 +188,7 @@ export function findBestRoute(fromToken: string, toToken: string, networkMode?: 
   const allRoutes = findAllRoutes(fromToken, toToken, 3, networkMode); // Max 3 hops
 
   if (allRoutes.length === 0) {
-    // No warning - missing routes are expected for tokens without pools (e.g., ETH on testnet)
+    // No warning - missing routes are expected for tokens without pools
     return {
       bestRoute: null,
       allRoutes: [],

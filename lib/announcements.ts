@@ -52,7 +52,7 @@ export const ANNOUNCEMENTS: Announcement[] = [
     id: "marketing-twitter",
     kind: "marketing",
     title: "Follow us on X",
-    description: "To see all our product updates, release notes, and mainnet announcements.",
+    description: "To see all our product updates, release notes, and launch announcements.",
     href: "https://x.com/AlphixFi",
     ctaLabel: "Follow",
     image: "/ann/Twitter.png",

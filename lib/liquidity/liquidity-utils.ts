@@ -29,7 +29,7 @@ import JSBI from 'jsbi'; // v3-sdk utilities often return JSBI
 import { createNetworkClient } from '@/lib/viemClient';
 // Removed WETH_TOKEN, USDC_TOKEN from this import as they are not in swap-constants.ts
 import { getPositionManagerAddress, getStateViewAddress, getToken as getTokenConfig, getTokenSymbolByAddress } from '@/lib/pools-config';
-import { MAINNET_CHAIN_ID, type NetworkMode } from '@/lib/network-mode';
+import { modeForChainId, type NetworkMode } from '@/lib/network-mode';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
 import { parseAbi } from 'viem';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
@@ -198,7 +198,7 @@ export interface PositionDetails {
 }
 
 export async function getPositionDetails(tokenId: bigint, chainId: number): Promise<PositionDetails> {
-    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
     const publicClient = createNetworkClient(networkMode);
     const pmAddress = getPositionManagerAddress(networkMode) as Address;
     const pmAbi: Abi = position_manager_abi as unknown as Abi;
@@ -252,7 +252,7 @@ export interface PoolState {
 }
 
 export async function getPoolState(poolId: Hex, chainId: number): Promise<PoolState> {
-    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
     const publicClient = createNetworkClient(networkMode);
     const stateViewAddr = getStateViewAddress(networkMode) as Address;
     // Parse human-readable ABI into viem Abi
@@ -297,7 +297,7 @@ export interface BuildCollectFeesCallParams {
 }
 
 export async function buildCollectFeesCall({ tokenId, userAddress, chainId }: BuildCollectFeesCallParams): Promise<{ calldata: Hex; value: bigint; pool: V4Pool; position: V4Position }>{
-    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
     // Load position details and live pool state
     const details = await getPositionDetails(tokenId, chainId);
     // Resolve token metadata (decimals) for building SDK Pool/Position
@@ -400,7 +400,7 @@ export async function preparePermit2BatchForPosition(
     amount0?: bigint,
     amount1?: bigint,
 ): Promise<PreparedPermit2Batch> {
-    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
     const publicClient = createNetworkClient(networkMode);
     const pm = getPositionManagerAddress(networkMode) as Address;
     const details = await getPositionDetails(tokenId, chainId);
@@ -476,7 +476,7 @@ export async function preparePermit2BatchForNewPosition(
     amount0?: bigint,
     amount1?: bigint,
 ): Promise<PreparedPermit2Batch> {
-    const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+    const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
     const publicClient = createNetworkClient(networkMode);
     const pm = getPositionManagerAddress(networkMode) as Address;
     const token0Def = getToken(token0Symbol, networkMode);

@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { getPoolById } from '@/lib/pools-config';
+import type { NetworkMode } from '@/lib/network-mode';
 import { getDecimalsForDenomination, convertTickToPrice } from '@/lib/denomination-utils';
 import { isFullRangePosition } from '@/lib/liquidity';
 import { type CalculatedLiquidityData } from '@/lib/liquidity/hooks';
@@ -27,6 +28,7 @@ export interface UseRangeDisplayParams {
   activePreset: string | null;
   initialDefaultApplied: boolean;
   calculatedData: CalculatedLiquidityData | null;
+  networkMode?: NetworkMode;
 }
 
 export interface RangeDisplayResult {
@@ -58,6 +60,7 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
     activePreset,
     initialDefaultApplied,
     calculatedData,
+    networkMode,
   } = params;
 
   // State for price input strings
@@ -119,7 +122,7 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
       : getTickPrice(numTickLower, rawApiLower);
 
     // Format price value for display
-    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId, networkMode) : null;
     const displayDecimals = getDecimalsForDenomination(baseTokenForPriceDisplay, poolCfg?.type);
     const formatPrice = (val: number | null): string => {
       if (val === null || isNaN(val)) return '';
@@ -155,7 +158,7 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
     if (isNaN(lower) || isNaN(upper)) return null;
 
     const shouldInvert = baseTokenForPriceDisplay === token0Symbol;
-    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId, networkMode) : null;
 
     // Use denomination-utils for price calculation
     const priceAt = (tickVal: number): number => {
@@ -218,7 +221,7 @@ export function useRangeDisplay(params: UseRangeDisplayParams): RangeDisplayResu
     if (!currentPrice) return null;
     const shouldInvert = baseTokenForPriceDisplay === token0Symbol;
     const denomToken = shouldInvert ? token0Symbol : token1Symbol;
-    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId) : null;
+    const poolCfg = selectedPoolId ? getPoolById(selectedPoolId, networkMode) : null;
     const displayDecimals = getDecimalsForDenomination(denomToken, poolCfg?.type);
     const numeric = shouldInvert ? 1 / parseFloat(currentPrice) : parseFloat(currentPrice);
     if (!isFinite(numeric)) return '∞';

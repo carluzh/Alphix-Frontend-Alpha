@@ -1,8 +1,8 @@
 import { isAddress } from 'viem';
-import { MAINNET_CHAIN_ID, TESTNET_CHAIN_ID, type NetworkMode } from './network-mode';
+import { chainIdForMode, type NetworkMode } from './network-mode';
 
 export function getExpectedChainId(networkMode: NetworkMode): number {
-  return networkMode === 'mainnet' ? MAINNET_CHAIN_ID : TESTNET_CHAIN_ID;
+  return chainIdForMode(networkMode);
 }
 
 export function validateChainId(chainId: number, networkMode: NetworkMode): string | null {

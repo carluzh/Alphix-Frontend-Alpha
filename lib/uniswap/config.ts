@@ -2,8 +2,7 @@
 
 import { Token } from '@uniswap/sdk-core'
 
-export const BASE_CHAIN_ID = 8453
-export const BASE_SEPOLIA_CHAIN_ID = 84532
+import { BASE_CHAIN_ID, ARBITRUM_CHAIN_ID } from '@/lib/network-mode'
 
 // Stablecoins for USD pricing
 export const USDC_BASE = new Token(
@@ -14,9 +13,9 @@ export const USDC_BASE = new Token(
   'USD Coin'
 )
 
-export const USDC_BASE_SEPOLIA = new Token(
-  BASE_SEPOLIA_CHAIN_ID,
-  '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+export const USDC_ARBITRUM = new Token(
+  ARBITRUM_CHAIN_ID,
+  '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
   6,
   'USDC',
   'USD Coin'
@@ -26,8 +25,8 @@ export function getStablecoin(chainId: number): Token | undefined {
   switch (chainId) {
     case BASE_CHAIN_ID:
       return USDC_BASE
-    case BASE_SEPOLIA_CHAIN_ID:
-      return USDC_BASE_SEPOLIA
+    case ARBITRUM_CHAIN_ID:
+      return USDC_ARBITRUM
     default:
       return undefined
   }

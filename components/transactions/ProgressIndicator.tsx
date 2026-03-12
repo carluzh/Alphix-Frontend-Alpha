@@ -28,6 +28,8 @@ import {
 interface ProgressIndicatorProps {
   steps: TransactionStep[]
   currentStep?: CurrentStepState
+  /** Override the banner and active step subtitle (e.g. "Building Transaction...") */
+  statusText?: string
 }
 
 function areStepsEqual(
@@ -171,13 +173,16 @@ function getStepIcon(step: TransactionStep): StepIconInfo {
 function StepRow({
   step,
   status,
+  subtitleOverride,
 }: {
   step: TransactionStep
   status: StepStatus
+  subtitleOverride?: string
 }): React.ReactNode {
-  const { title, subtitle } = getStepText(step, status)
-  const iconInfo = getStepIcon(step)
   const isComplete = status === StepStatus.Complete
+  const { title, subtitle: defaultSubtitle } = getStepText(step, status)
+  const subtitle = (!isComplete && subtitleOverride) ? subtitleOverride : defaultSubtitle
+  const iconInfo = getStepIcon(step)
 
   const renderIcon = () => {
     if (isComplete) {
@@ -221,6 +226,7 @@ function StepRow({
 export function ProgressIndicator({
   steps,
   currentStep,
+  statusText,
 }: ProgressIndicatorProps): React.ReactNode {
   if (steps.length === 0) return null
 
@@ -241,14 +247,14 @@ export function ProgressIndicator({
     <div className="animate-in fade-in duration-200">
       <div className="flex items-center gap-3 mb-3">
         <div className="flex-1 h-px bg-sidebar-border" />
-        <span className="text-xs text-muted-foreground">Continue in wallet</span>
+        <span className="text-xs text-muted-foreground">{statusText || 'Continue in wallet'}</span>
         <div className="flex-1 h-px bg-sidebar-border" />
       </div>
 
       <div className="space-y-0.5">
         {visibleSteps.map(({ step, index }, i) => (
           <Fragment key={`step-${index}-${step.type}`}>
-            <StepRow step={step} status={getStepStatus(step, steps, currentStep)} />
+            <StepRow step={step} status={getStepStatus(step, steps, currentStep)} subtitleOverride={index === currentIndex ? statusText : undefined} />
             {i < visibleSteps.length - 1 && (
               <div className="w-8 flex justify-center">
                 <div className="w-0.5 h-2 bg-green-500/30 rounded-full" />

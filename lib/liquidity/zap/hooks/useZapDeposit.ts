@@ -141,8 +141,10 @@ export function formatZapPreviewForDisplay(
   depositDescription: string;
   leftoverWarning: string | null;
 } {
-  const outputToken: ZapToken = inputToken === 'USDS' ? 'USDC' : 'USDS';
-  const routeLabel = preview.route.type === 'psm' ? 'PSM (1:1)' : 'Pool swap';
+  const outputToken = preview.outputTokenInfo.symbol;
+  const routeLabel = preview.route.type === 'psm' ? 'PSM (1:1)'
+    : preview.route.type === 'kyberswap' ? 'Kyberswap'
+    : 'Pool swap';
 
   const swapDescription = `Swap ${preview.formatted.swapAmount} ${inputToken} for ~${preview.formatted.swapOutputAmount} ${outputToken} via ${routeLabel}`;
 
@@ -155,7 +157,7 @@ export function formatZapPreviewForDisplay(
     const token1Leftover = parseFloat(preview.formatted.leftoverToken1);
 
     if (token0Leftover > 0.01 || token1Leftover > 0.01) {
-      leftoverWarning = `Expected leftover: ${token0Leftover.toFixed(4)} USDS, ${token1Leftover.toFixed(4)} USDC (${preview.leftoverPercent.toFixed(2)}%)`;
+      leftoverWarning = `Expected leftover: ${token0Leftover.toFixed(4)} ${preview.inputTokenInfo.symbol === inputToken ? preview.outputTokenInfo.symbol : preview.inputTokenInfo.symbol}, ${token1Leftover.toFixed(4)} ${inputToken} (${preview.leftoverPercent.toFixed(2)}%)`;
     }
   }
 

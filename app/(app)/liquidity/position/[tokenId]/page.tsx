@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { PositionDetail } from "./components/PositionDetail/PositionDetail";
 import { usePositionPageData } from "./hooks";
+import { parseNetworkMode, type NetworkMode } from "@/lib/network-mode";
 
 /**
  * Normalize tokenId from URL format to decimal string
@@ -44,10 +45,14 @@ export default function PositionDetailPage() {
     return null;
   }, [searchParams]);
 
-  return <PositionDetailContent key={tokenId} tokenId={tokenId} fromPage={fromPage} />;
+  // Extract chain from URL for cross-chain position lookup
+  const chainParam = searchParams?.get("chain");
+  const networkModeOverride = chainParam ? parseNetworkMode(chainParam) : undefined;
+
+  return <PositionDetailContent key={tokenId} tokenId={tokenId} fromPage={fromPage} networkModeOverride={networkModeOverride} />;
 }
 
-function PositionDetailContent({ tokenId, fromPage }: { tokenId: string; fromPage: "pool" | "overview" | null }) {
+function PositionDetailContent({ tokenId, fromPage, networkModeOverride }: { tokenId: string; fromPage: "pool" | "overview" | null; networkModeOverride?: NetworkMode }) {
   const {
     // Position data
     position,
@@ -101,7 +106,7 @@ function PositionDetailContent({ tokenId, fromPage }: { tokenId: string; fromPag
     isOwner,
     // Actions
     refetch,
-  } = usePositionPageData(tokenId);
+  } = usePositionPageData(tokenId, networkModeOverride);
 
   return (
     <PositionDetail

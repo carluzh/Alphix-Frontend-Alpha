@@ -11,7 +11,8 @@ import { useState, useMemo } from "react"
 import { ChevronRight, ChevronDown, ChevronUp } from "lucide-react"
 import { TokenImage } from "@/components/ui/token-image"
 import { cn } from "@/lib/utils"
-import { getToken } from "@/lib/pools-config"
+import { getToken, resolveTokenIcon as resolveTokenIconBySymbol } from "@/lib/pools-config"
+import type { NetworkMode } from "@/lib/network-mode"
 import type { KyberswapRouteSummary, KyberswapRouteStep } from "@/lib/aggregators/types"
 import type { AggregatorSource } from "@/lib/aggregators/types"
 import type { Token } from "./swap-interface"
@@ -37,7 +38,7 @@ interface SwapRouteDisplayProps {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Resolve a token symbol to its icon path using pools-config, from/to tokens, or server metadata */
+/** Resolve a token symbol to its icon path using from/to tokens, server metadata, or static assets */
 export function resolveTokenIcon(
   symbol: string,
   fromToken: Token,
@@ -46,12 +47,10 @@ export function resolveTokenIcon(
 ): string {
   if (symbol === fromToken.symbol) return fromToken.icon
   if (symbol === toToken.symbol) return toToken.icon
-  // Check pools-config for known tokens (ETH, USDC, USDS, WETH)
-  const poolToken = getToken(symbol)
-  if (poolToken?.icon) return poolToken.icon
   // Check server-provided icon map (CoinGecko logos from token registry)
   if (iconMap?.[symbol]) return iconMap[symbol]
-  return "/placeholder-logo.svg"
+  // Static icon lookup by symbol (chain-independent)
+  return resolveTokenIconBySymbol(symbol)
 }
 
 /**
@@ -62,6 +61,7 @@ export function buildAddressSymbolMap(
   fromToken: Token,
   toToken: Token,
   serverMetadata?: RouteTokenMetadata,
+  networkMode?: NetworkMode,
 ): Record<string, string> {
   const map: Record<string, string> = {}
 
@@ -79,7 +79,7 @@ export function buildAddressSymbolMap(
   // Known addresses from pools-config
   const knownSymbols = ["ETH", "USDC", "USDS", "WETH"]
   for (const sym of knownSymbols) {
-    const t = getToken(sym)
+    const t = getToken(sym, networkMode)
     if (t) map[t.address.toLowerCase()] = t.symbol
   }
 

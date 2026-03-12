@@ -105,8 +105,8 @@ export async function buildIncreaseLiquidityTx(
   const { accountAddress, chainId, networkMode, signTypedDataAsync, publicClient } = context;
   const { token0Symbol, token1Symbol, additionalAmount0, additionalAmount1 } = params;
 
-  const token0Def = getToken(token0Symbol);
-  const token1Def = getToken(token1Symbol);
+  const token0Def = getToken(token0Symbol, networkMode);
+  const token1Def = getToken(token1Symbol, networkMode);
 
   if (!token0Def || !token1Def) {
     throw new Error('Token definitions not found for one or both tokens in the position.');

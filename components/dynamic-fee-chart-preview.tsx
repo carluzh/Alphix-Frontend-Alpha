@@ -1,7 +1,7 @@
 "use client"
 
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, ReferenceLine, Tooltip, ReferenceArea } from "recharts";
-import { getToken, getPoolByTokens } from "@/lib/pools-config";
+import { getPoolByTokens, resolveTokenIcon } from "@/lib/pools-config";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -367,7 +367,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                  <div className="relative w-8 h-4">
                    <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
                      <Image
-                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"}
+                       src={resolveTokenIcon(poolInfo.token0Symbol)}
                        alt={poolInfo.token0Symbol}
                        width={16}
                        height={16}
@@ -376,7 +376,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                    </div>
                    <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
                      <Image
-                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"}
+                       src={resolveTokenIcon(poolInfo.token1Symbol)}
                        alt={poolInfo.token1Symbol}
                        width={16}
                        height={16}
@@ -435,7 +435,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                  <div className="relative w-8 h-4">
                    <div className="absolute top-0 left-0 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
                      <Image 
-                       src={getToken(poolInfo.token0Symbol)?.icon || "/placeholder-logo.svg"} 
+                       src={resolveTokenIcon(poolInfo.token0Symbol)} 
                        alt={poolInfo.token0Symbol} 
                        width={16} 
                        height={16} 
@@ -444,7 +444,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
                    </div>
                    <div className="absolute top-0 left-2.5 w-4 h-4 rounded-full overflow-hidden bg-background border border-border/50">
                      <Image 
-                       src={getToken(poolInfo.token1Symbol)?.icon || "/placeholder-logo.svg"} 
+                       src={resolveTokenIcon(poolInfo.token1Symbol)} 
                        alt={poolInfo.token1Symbol} 
                        width={16} 
                        height={16} 
@@ -479,7 +479,7 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
               setIsHovering(false);
             }}
           >
-            {showLoadingSkeleton || !isContentStable ? (
+            {isActuallyLoading ? (
               <div className="w-full h-full bg-muted/40 rounded flex items-center justify-center">
                 <div className="animate-pulse">
                   <Image 

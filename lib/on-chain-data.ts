@@ -14,7 +14,7 @@ import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from './abis/state_vi
 import { getStateViewAddress, getPositionManagerAddress } from './pools-config';
 import { getToken as getTokenConfig, getTokenSymbolByAddress } from './pools-config';
 import { position_manager_abi } from './abis/PositionManager_abi';
-import { MAINNET_CHAIN_ID, type NetworkMode } from './network-mode';
+import { modeForChainId, type NetworkMode } from './network-mode';
 
 /**
  * Decoded position tick and subscription info from on-chain position data
@@ -61,7 +61,7 @@ export async function derivePositionsFromIds(
   if (!Array.isArray(tokenIds) || tokenIds.length === 0) return [];
 
   // Derive network mode from chainId
-  const networkMode: NetworkMode = chainId === MAINNET_CHAIN_ID ? 'mainnet' : 'testnet';
+  const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
   const publicClient = createNetworkClient(networkMode);
 
   const pmAddress = getPositionManagerAddress(networkMode) as Address;

@@ -9,8 +9,19 @@
 
 import { ApolloLink } from '@apollo/client'
 import { RestLink } from 'apollo-link-rest'
-import { getStoredNetworkMode } from '@/lib/network-mode'
+import { apolloChainForMode } from '@/lib/network-mode'
+import type { NetworkMode } from '@/lib/network-mode'
 import { getAllTokenSymbols } from '@/lib/pools-config'
+
+/**
+ * Derive chain from response data's networkMode field,
+ * defaulting to 'base'. Type patchers in apollo-link-rest don't
+ * receive operation context, so data-carried chain is the best we can do.
+ */
+function chainFromData(data: any): string {
+  const mode: NetworkMode = data?.networkMode ?? 'base'
+  return apolloChainForMode(mode)
+}
 
 /**
  * Get REST link for Alphix API endpoints
@@ -45,8 +56,8 @@ export function getRestLink(): ApolloLink {
     typePatcher: {
       TokenPrices: (data: any) => {
         if (!data) return data
-        const networkMode = getStoredNetworkMode()
-        const chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
+        const networkMode: NetworkMode = data.networkMode ?? 'base'
+        const chain = apolloChainForMode(networkMode)
 
         // Convert price response to Token array - use config-derived token list
         const tokens = getAllTokenSymbols(networkMode)
@@ -65,32 +76,28 @@ export function getRestLink(): ApolloLink {
 
       Pool: (data: any) => {
         if (!data) return data
-        const networkMode = getStoredNetworkMode()
         return {
           __typename: 'Pool',
-          chain: networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA',
+          chain: chainFromData(data),
           ...data,
         }
       },
 
       Position: (data: any) => {
         if (!data) return data
-        const networkMode = getStoredNetworkMode()
         return {
           __typename: 'Position',
-          chain: networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA',
+          chain: chainFromData(data),
           ...data,
         }
       },
 
       PositionArray: (data: any) => {
         if (!Array.isArray(data)) return data
-        const networkMode = getStoredNetworkMode()
-        const chain = networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA'
 
         return data.map(position => ({
           __typename: 'Position',
-          chain,
+          chain: chainFromData(position),
           ...position,
         }))
       },
@@ -109,10 +116,9 @@ export function getRestLink(): ApolloLink {
 
       PoolState: (data: any) => {
         if (!data) return data
-        const networkMode = getStoredNetworkMode()
         return {
           __typename: 'PoolState',
-          chain: networkMode === 'mainnet' ? 'BASE' : 'BASE_SEPOLIA',
+          chain: chainFromData(data),
           ...data,
         }
       },

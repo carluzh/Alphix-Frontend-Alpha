@@ -99,5 +99,6 @@ export function adaptUnifiedYieldToProcessedPosition(
     hookAddress: uyPosition.hookAddress,
     // Share balance for withdrawals (formatted string, parseable by parseUnits)
     shareBalance: uyPosition.shareBalanceFormatted,
+    networkMode,
   };
 }

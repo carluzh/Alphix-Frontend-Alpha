@@ -104,6 +104,37 @@ export const ETH_USDC_POOL_CONFIG = {
   fee: 8388608,
 };
 
+/**
+ * USDC/USDT Unified Yield pool configuration (Arbitrum)
+ */
+export const USDC_USDT_ARB_POOL_CONFIG = {
+  /** Pool ID */
+  poolId: 'usdc-usdt',
+
+  /** Hook contract address (also the share token) - checksummed */
+  hookAddress: getAddress('0x5e645C3D580976Ca9e3fe77525D954E73a0Ce0C0'),
+
+  /** Token0 is USDC (6 decimals) */
+  token0: {
+    symbol: 'USDC' as const,
+    address: getAddress('0xaf88d065e77c8cC2239327C5EDb3A432268e5831'),
+    decimals: 6,
+  },
+
+  /** Token1 is USDT (6 decimals) */
+  token1: {
+    symbol: 'USDT' as const,
+    address: getAddress('0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9'),
+    decimals: 6,
+  },
+
+  /** Pool tick spacing */
+  tickSpacing: 1,
+
+  /** Pool fee (dynamic fee flag) */
+  fee: 8388608,
+};
+
 // =============================================================================
 // ZAP POOL CONFIG INTERFACE
 // =============================================================================
@@ -165,6 +196,12 @@ const ZAP_POOL_CONFIGS: ZapPoolConfig[] = [
     priceImpactThreshold: KYBERSWAP_PRICE_IMPACT_THRESHOLD,
     isPegged: false,
   },
+  {
+    ...USDC_USDT_ARB_POOL_CONFIG,
+    fallbackRoute: 'kyberswap',
+    priceImpactThreshold: PSM_PRICE_IMPACT_THRESHOLD,
+    isPegged: true,
+  },
 ];
 
 /**
@@ -172,13 +209,17 @@ const ZAP_POOL_CONFIGS: ZapPoolConfig[] = [
  * Returns null if the pool doesn't support zap.
  */
 export function getZapPoolConfig(poolId: string): ZapPoolConfig | null {
-  // Also check via getPoolById for subgraphId lookups
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { getPoolById } = require('@/lib/pools-config');
-  const pool = getPoolById(poolId);
-  const resolvedId = pool?.id;
+  // Direct match first (most common case)
+  const direct = ZAP_POOL_CONFIGS.find(c => c.poolId === poolId);
+  if (direct) return direct;
 
-  return ZAP_POOL_CONFIGS.find(c => c.poolId === resolvedId) ?? null;
+  // Fallback: resolve subgraphId via multi-chain lookup
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getPoolByIdMultiChain } = require('@/lib/pools-config');
+  const pool = getPoolByIdMultiChain(poolId);
+  if (!pool) return null;
+
+  return ZAP_POOL_CONFIGS.find(c => c.poolId === pool.id) ?? null;
 }
 
 /**

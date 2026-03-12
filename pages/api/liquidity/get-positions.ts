@@ -1,7 +1,8 @@
 import { ethers } from "ethers";
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAddress } from "viem";
-import { getChainId, getNetworkModeFromRequest, type NetworkMode } from "../../../lib/pools-config";
+import { getChainId, type NetworkMode } from "../../../lib/pools-config";
+import { resolveNetworkMode } from "../../../lib/network-mode";
 import { getAlphixSubgraphUrl } from "../../../lib/subgraph-url-helper";
 import { fetchUserPositions, type V4ProcessedPosition as SharedV4ProcessedPosition, type Position as SharedPosition } from "@/lib/positions/fetchPositions";
 
@@ -35,10 +36,10 @@ interface SubgraphPosition {
     liquidity: string;
     creationTimestamp: string;
     lastTimestamp: string;
-    poolId: string; // Both testnet and mainnet now use poolId directly
+    poolId: string;
 }
 
-// Both testnet and mainnet now use poolId directly (Goldsky subgraph migration)
+// All networks use poolId directly (Goldsky subgraph)
 const GET_USER_HOOK_POSITIONS_QUERY = `
   query GetUserPositions($owner: Bytes!) {
     hookPositions(first: 200, orderBy: id, orderDirection: desc, where: { owner: $owner, liquidity_gt: 0 }) {
@@ -58,18 +59,6 @@ const GET_USER_HOOK_POSITIONS_QUERY = `
 function getPoolIdFromPosition(pos: SubgraphPosition): string {
   return pos.poolId || '';
 }
-
-const GET_USER_LEGACY_POSITIONS_QUERY = `
-  query GetUserPositions($owner: Bytes!) {
-    positions(first: 200, orderBy: tokenId, orderDirection: desc, where: { owner: $owner }) {
-      id
-      tokenId
-      owner
-      createdAtTimestamp
-    }
-  }
-`;
-// duplicate removed
 
 // --- Interface for Processed Position Data ---
 interface ProcessedPositionToken {
@@ -116,6 +105,10 @@ export interface V4ProcessedPosition {
     isUnifiedYield?: boolean;
     hookAddress?: string;
     shareBalance?: string;
+
+    /** Chain this position lives on — set by the page that creates the ProcessedPosition.
+     *  Used by action modals (add/remove/collect) to target the correct chain. */
+    networkMode: NetworkMode;
 }
 
 /**
@@ -165,8 +158,7 @@ export default async function handler(
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  // Get network mode from cookies
-  const networkMode = getNetworkModeFromRequest(req.headers.cookie);
+  const networkMode = resolveNetworkMode(req);
 
   const { ownerAddress, countOnly, idsOnly, withCreatedAt } = req.query as { ownerAddress?: string; countOnly?: string; idsOnly?: string; withCreatedAt?: string };
 
@@ -215,20 +207,7 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
       clearTimeout(timeoutId);
       if (!resp.ok) return [];
       const json = await resp.json() as any;
-      let raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
-      if (networkMode === 'testnet' && (!Array.isArray(raw) || raw.length === 0)) {
-        try {
-          const legacyController = new AbortController();
-          const legacyTimeoutId = setTimeout(() => legacyController.abort(), 10000);
-          const respLegacy = await fetch(subgraphUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: GET_USER_LEGACY_POSITIONS_QUERY, variables: { owner: ownerAddress.toLowerCase() } }), signal: legacyController.signal });
-          clearTimeout(legacyTimeoutId);
-          if (respLegacy.ok) {
-            const jsonLegacy = await respLegacy.json() as any;
-            const legacy = (jsonLegacy?.data?.positions || []) as Array<{ id: string; tokenId?: string; owner: string; createdAtTimestamp?: string }>;
-            raw = legacy.map(p => ({ id: p.id, owner: p.owner, tickLower: '0', tickUpper: '0', liquidity: '0', creationTimestamp: p.createdAtTimestamp || '0', lastTimestamp: '0', poolId: '' }));
-          }
-        } catch {}
-      }
+      const raw = (json?.data?.hookPositions || []) as SubgraphPosition[];
       return raw;
     } catch (error) {
       clearTimeout(timeoutId);

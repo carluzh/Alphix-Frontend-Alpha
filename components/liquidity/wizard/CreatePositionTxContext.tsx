@@ -37,12 +37,14 @@ import { PositionField } from '@/lib/liquidity/types';
 import { useUserSlippageTolerance } from '@/hooks/useSlippage';
 import type { Address } from 'viem';
 import { useNetwork } from '@/lib/network-context';
+import { chainIdForMode } from '@/lib/network-mode';
 
 // Unified Yield imports for 'rehypo' mode
 import { useCheckMintApprovalsWithMode } from '@/lib/liquidity/hooks/approval/useModeAwareApprovals';
 import { previewDeposit } from '@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx';
 import type { DepositPreviewResult } from '@/lib/liquidity/unified-yield/types';
-import { usePublicClient } from 'wagmi';
+// usePublicClient not needed — poolChainClient from createNetworkClient is used instead
+import { createNetworkClient } from '@/lib/viemClient';
 import * as Sentry from '@sentry/nextjs';
 
 // =============================================================================
@@ -131,9 +133,8 @@ const CreatePositionTxContext = createContext<CreatePositionTxContextType | unde
 // =============================================================================
 
 export function CreatePositionTxContextProvider({ children }: PropsWithChildren) {
-  const { address: accountAddress, chainId } = useAccount();
-  const publicClient = usePublicClient();
-  const { networkMode } = useNetwork();
+  const { address: accountAddress } = useAccount();
+  const { ensureChain } = useNetwork();
 
   // Get wizard state from AddLiquidityContext
   const {
@@ -142,6 +143,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     poolStateData,
     derivedPositionInfo,
     ticks,
+    poolNetworkMode,
   } = useAddLiquidityContext();
 
   // Extract state values
@@ -165,14 +167,22 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   const [depositPreview, setDepositPreview] = useState<DepositPreviewResult | null>(null);
   const [isUnifiedYieldCalculating, setIsUnifiedYieldCalculating] = useState(false);
 
-  // Get pool config for token symbols
-  const poolConfig = poolId ? getPoolById(poolId, networkMode) : null;
+  // Get pool config for token symbols - use pool's chain for correct config lookup
+  const effectiveNetworkMode = poolNetworkMode ?? 'base';
+  // Derive chainId from pool's network — ensures calculations use the correct chain
+  const chainId = chainIdForMode(effectiveNetworkMode);
+  // Use chain-specific client for contract reads (wallet may be on different chain)
+  const poolChainClient = useMemo(
+    () => createNetworkClient(effectiveNetworkMode),
+    [effectiveNetworkMode]
+  );
+  const poolConfig = poolId ? getPoolById(poolId, effectiveNetworkMode) : null;
   const token0Symbol = (poolConfig?.currency0.symbol || stateToken0Symbol) as TokenSymbol | undefined;
   const token1Symbol = (poolConfig?.currency1.symbol || stateToken1Symbol) as TokenSymbol | undefined;
 
   // Get token configs
-  const token0Config = token0Symbol ? getToken(token0Symbol, networkMode) : null;
-  const token1Config = token1Symbol ? getToken(token1Symbol, networkMode) : null;
+  const token0Config = token0Symbol ? getToken(token0Symbol, effectiveNetworkMode) : null;
+  const token1Config = token1Symbol ? getToken(token1Symbol, effectiveNetworkMode) : null;
 
   // Get hook address for Unified Yield
   const hookAddress = poolConfig?.hooks as Address | undefined;
@@ -210,6 +220,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     token0Symbol: token0Symbol || 'atUSDC' as TokenSymbol,
     token1Symbol: token1Symbol || 'atDAI' as TokenSymbol,
     chainId,
+    networkMode: effectiveNetworkMode,
   });
 
   // Trigger calculation when inputs change
@@ -264,7 +275,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   // Calculate Unified Yield deposit preview when in 'rehypo' mode AND balanced deposit mode
   // IMPORTANT: Skip when in 'zap' mode - the zap preview hook handles that differently
   useEffect(() => {
-    if (!isUnifiedYield || !hookAddress || !publicClient) {
+    if (!isUnifiedYield || !hookAddress || !poolChainClient) {
       setDepositPreview(null);
       return;
     }
@@ -321,7 +332,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
       token0Config?.decimals ?? 18,
       token1Config?.decimals ?? 18,
       18, // Share decimals (standard)
-      publicClient
+      poolChainClient
     )
       .then((preview) => {
         if (!cancelled && preview) {
@@ -364,7 +375,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     isUnifiedYield,
     depositMode,
     hookAddress,
-    publicClient,
+    poolChainClient,
     inputSide,
     amount0,
     amount1,

@@ -1,14 +1,5 @@
-/**
- * Token Registry - Token Metadata Provider
- *
- * Provides token metadata for route display and decimals lookup.
- * Uses pools-config for known pool tokens, and lazily fetches the CoinGecko
- * Base token list (cached 6h) for all other tokens Kyberswap routes through.
- *
- * For full token balances + metadata, use the Uniswap API at /api/tokens/balances
- */
-
-import { getAllTokens as getPoolTokens, getToken as getPoolToken } from '../pools-config';
+import { getAllTokens as getPoolTokens, resolveTokenIcon } from '../pools-config';
+import { getStoredNetworkMode, chainIdForMode, type NetworkMode } from '../network-mode';
 
 export interface TokenInfo {
   chainId: number;
@@ -19,94 +10,108 @@ export interface TokenInfo {
   logoURI?: string;
 }
 
-// Build lookup map from pools-config (only pool tokens: ETH, USDC, USDS)
-const tokenMap = new Map<string, TokenInfo>();
+// Per-chain token maps
+const chainTokenMaps = new Map<string, Map<string, TokenInfo>>();
 
 function normalizeAddress(address: string): string {
   return address.toLowerCase();
 }
 
-// Initialize the token map from pools-config
-function initializeTokenMap(): void {
-  const poolTokens = getPoolTokens();
+// WETH addresses per chain
+const WETH_ADDRESSES: Record<string, { address: string; chainId: number }> = {
+  base: { address: '0x4200000000000000000000000000000000000006', chainId: 8453 },
+  arbitrum: { address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', chainId: 42161 },
+};
 
-  for (const [symbol, token] of Object.entries(poolTokens)) {
-    const normalized = normalizeAddress(token.address);
-    tokenMap.set(normalized, {
-      chainId: 8453, // Base
+function getTokenMapForChain(mode?: NetworkMode): Map<string, TokenInfo> {
+  const networkMode = mode ?? getStoredNetworkMode();
+  let map = chainTokenMaps.get(networkMode);
+  if (map) return map;
+
+  map = new Map<string, TokenInfo>();
+  const chainId = chainIdForMode(networkMode);
+  const poolTokens = getPoolTokens(networkMode);
+
+  for (const [, token] of Object.entries(poolTokens)) {
+    map.set(normalizeAddress(token.address), {
+      chainId,
       address: token.address,
       name: token.name,
       symbol: token.symbol,
       decimals: token.decimals,
-      logoURI: token.icon,
+      logoURI: resolveTokenIcon(token.symbol),
     });
   }
 
-  // Add the Kyberswap native token address mapping to ETH
-  const ethToken = tokenMap.get('0x0000000000000000000000000000000000000000');
+  // Kyberswap native ETH alias
+  const ethToken = map.get('0x0000000000000000000000000000000000000000');
   if (ethToken) {
-    tokenMap.set('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', ethToken);
+    map.set('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', ethToken);
   }
 
-  // Add WETH mapping
-  tokenMap.set('0x4200000000000000000000000000000000000006', {
-    chainId: 8453,
-    address: '0x4200000000000000000000000000000000000006',
-    name: 'Wrapped Ether',
-    symbol: 'WETH',
-    decimals: 18,
-    logoURI: '/tokens/ETH.png',
-  });
+  // WETH
+  const weth = WETH_ADDRESSES[networkMode];
+  if (weth) {
+    map.set(normalizeAddress(weth.address), {
+      chainId: weth.chainId,
+      address: weth.address,
+      name: 'Wrapped Ether',
+      symbol: 'WETH',
+      decimals: 18,
+      logoURI: '/tokens/ETH.png',
+    });
+  }
+
+  chainTokenMaps.set(networkMode, map);
+  return map;
 }
 
-// Initialize on module load
-initializeTokenMap();
+// Legacy alias: default tokenMap points at stored mode
+const tokenMap = getTokenMapForChain();
 
-// ---------------------------------------------------------------------------
-// Lazy-loaded CoinGecko Base token list (fetched once, cached in-memory)
-// ---------------------------------------------------------------------------
+const COINGECKO_LIST_URLS: Record<string, string> = {
+  base: 'https://tokens.coingecko.com/base/all.json',
+  arbitrum: 'https://tokens.coingecko.com/arbitrum-one/all.json',
+};
 
-const COINGECKO_BASE_LIST_URL = 'https://tokens.coingecko.com/base/all.json';
-const TOKEN_LIST_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
-let tokenListFetchedAt = 0;
+const TOKEN_LIST_CACHE_TTL = 6 * 60 * 60 * 1000;
+const tokenListFetchedAt: Record<string, number> = {};
 let tokenListPromise: Promise<void> | null = null;
 
-/**
- * Ensure the full Base token list is loaded into the registry.
- * Fetches from CoinGecko once, then serves from cache for 6 hours.
- * Safe to call multiple times — deduplicates concurrent requests.
- */
-export async function ensureTokenListLoaded(): Promise<void> {
-  if (Date.now() - tokenListFetchedAt < TOKEN_LIST_CACHE_TTL) return;
+export async function ensureTokenListLoaded(mode?: NetworkMode): Promise<void> {
+  const networkMode = mode ?? getStoredNetworkMode();
+  const lastFetched = tokenListFetchedAt[networkMode] ?? 0;
+  if (Date.now() - lastFetched < TOKEN_LIST_CACHE_TTL) return;
   if (tokenListPromise) return tokenListPromise;
+
+  const listUrl = COINGECKO_LIST_URLS[networkMode];
+  if (!listUrl) return;
+
+  const map = getTokenMapForChain(networkMode);
+  const chainId = chainIdForMode(networkMode);
 
   tokenListPromise = (async () => {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const res = await fetch(COINGECKO_BASE_LIST_URL, {
+      const res = await fetch(listUrl, {
         signal: controller.signal,
         headers: { 'Accept': 'application/json' },
       });
       clearTimeout(timeoutId);
 
-      if (!res.ok) {
-        console.warn(`[TokenRegistry] CoinGecko list fetch failed: ${res.status}`);
-        return;
-      }
+      if (!res.ok) return;
 
-      const data = await res.json() as { tokens?: Array<{ chainId?: number; address: string; symbol: string; name: string; decimals: number; logoURI?: string }> };
-      const tokens = data.tokens;
-      if (!Array.isArray(tokens)) return;
+      const data = await res.json() as { tokens?: Array<{ address: string; symbol: string; name: string; decimals: number; logoURI?: string }> };
+      if (!Array.isArray(data.tokens)) return;
 
       let added = 0;
-      for (const t of tokens) {
+      for (const t of data.tokens) {
         const addr = normalizeAddress(t.address);
-        // Don't overwrite pool tokens (they have local icons)
-        if (!tokenMap.has(addr)) {
-          tokenMap.set(addr, {
-            chainId: 8453,
+        if (!map.has(addr)) {
+          map.set(addr, {
+            chainId,
             address: t.address,
             name: t.name,
             symbol: t.symbol,
@@ -117,11 +122,10 @@ export async function ensureTokenListLoaded(): Promise<void> {
         }
       }
 
-      tokenListFetchedAt = Date.now();
-      console.log(`[TokenRegistry] Loaded ${added} tokens from CoinGecko Base list (${tokenMap.size} total)`);
+      tokenListFetchedAt[networkMode] = Date.now();
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
-        console.warn('[TokenRegistry] Failed to fetch CoinGecko token list:', err?.message);
+        console.warn('[TokenRegistry] CoinGecko fetch failed:', err?.message);
       }
     } finally {
       tokenListPromise = null;
@@ -205,21 +209,28 @@ export function getTokenCacheSize(): number {
   return tokenMap.size;
 }
 
-/**
- * Popular tokens for quick selection UI (pool tokens only)
- */
-export const POPULAR_TOKEN_ADDRESSES: string[] = [
-  '0x0000000000000000000000000000000000000000', // ETH
-  '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
-  '0x820c137fa70c8691f0e44dc420a5e53c168921dc', // USDS
-  '0x4200000000000000000000000000000000000006', // WETH
-];
+const POPULAR_ADDRESSES_BY_CHAIN: Record<string, string[]> = {
+  base: [
+    '0x0000000000000000000000000000000000000000', // ETH
+    '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
+    '0x820c137fa70c8691f0e44dc420a5e53c168921dc', // USDS
+    '0x4200000000000000000000000000000000000006', // WETH
+  ],
+  arbitrum: [
+    '0x0000000000000000000000000000000000000000', // ETH
+    '0xaf88d065e77c8cc2239327c5edb3a432268e5831', // USDC
+    '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', // USDT
+    '0x82af49447d8a07e3bd95bd0d56f35241523fbab1', // WETH
+  ],
+};
 
-/**
- * Get popular tokens for quick selection
- */
-export function getPopularTokens(): TokenInfo[] {
-  return POPULAR_TOKEN_ADDRESSES
+// Legacy export
+export const POPULAR_TOKEN_ADDRESSES = POPULAR_ADDRESSES_BY_CHAIN.base;
+
+export function getPopularTokens(mode?: NetworkMode): TokenInfo[] {
+  const networkMode = mode ?? getStoredNetworkMode();
+  const addresses = POPULAR_ADDRESSES_BY_CHAIN[networkMode] ?? POPULAR_ADDRESSES_BY_CHAIN.base;
+  return addresses
     .map(addr => getTokenInfoSync(addr))
     .filter((t): t is TokenInfo => t !== null);
 }
