@@ -8,7 +8,7 @@ import { ArrowRight } from 'lucide-react'
 const UNISWAP_PINK = '#ff37c7'
 const UNISWAP_LOGO_FILTER = 'brightness(0) saturate(100%) invert(47%) sepia(95%) saturate(2158%) hue-rotate(301deg) brightness(101%) contrast(101%)'
 const BASE_BLUE = '#3c8aff'
-const BASE_LOGO_FILTER = 'brightness(0) saturate(100%) invert(55%) sepia(57%) saturate(2159%) hue-rotate(199deg) brightness(101%) contrast(101%)'
+const BASE_LOGO_FILTER = 'brightness(0) saturate(100%) invert(44%) sepia(82%) saturate(2689%) hue-rotate(209deg) brightness(101%) contrast(104%)'
 const ARBITRUM_BLUE = '#12AAFF'
 const ARBITRUM_LOGO_FILTER = 'brightness(0) saturate(100%) invert(58%) sepia(72%) saturate(2035%) hue-rotate(176deg) brightness(101%) contrast(101%)'
 
@@ -49,23 +49,12 @@ const BaseCard = () => (
 
       {/* Content */}
       <div className="relative z-10 flex h-full flex-col gap-y-6">
-        <div className="flex items-center relative">
-          <Image
+        <div style={{ height: 28 }} className="flex items-center">
+          <img
             src="/landing/base-lockup-white.svg"
             alt="Base"
-            width={85}
-            height={22}
-            style={{ filter: BASE_LOGO_FILTER }}
-            className="opacity-100 transition-opacity duration-300 group-hover:opacity-0"
-            unoptimized
-          />
-          <Image
-            src="/landing/base-lockup-white.svg"
-            alt=""
-            width={85}
-            height={22}
-            className="absolute left-0 top-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-            unoptimized
+            style={{ width: 85, height: 'auto', filter: BASE_LOGO_FILTER, transition: 'filter 0.3s' }}
+            className="group-hover:[filter:none!important]"
           />
         </div>
 
@@ -126,23 +115,12 @@ const ArbitrumCard = () => (
 
       {/* Content */}
       <div className="relative z-10 flex h-full flex-col gap-y-6">
-        <div className="flex items-center relative">
-          <Image
+        <div style={{ height: 28 }} className="flex items-center">
+          <img
             src="/landing/arbitrum-lockup-white.svg"
             alt="Arbitrum"
-            width={85}
-            height={22}
-            style={{ filter: ARBITRUM_LOGO_FILTER }}
-            className="opacity-100 transition-opacity duration-300 group-hover:opacity-0"
-            unoptimized
-          />
-          <Image
-            src="/landing/arbitrum-lockup-white.svg"
-            alt=""
-            width={85}
-            height={22}
-            className="absolute left-0 top-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-            unoptimized
+            style={{ width: 120, height: 'auto', filter: ARBITRUM_LOGO_FILTER, transition: 'filter 0.3s' }}
+            className="group-hover:[filter:none!important]"
           />
         </div>
 

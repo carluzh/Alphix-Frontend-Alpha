@@ -82,6 +82,18 @@ function TransactionWatcherInternal({ children }: PropsWithChildren) {
     return cleanup
   }, [pendingDiff, address, chainId, watchTransactions, queryClient])
 
+  // Global listener: invalidate wagmi balance queries when any flow dispatches
+  // the walletBalancesRefresh event (fired by invalidateAfterTx and TransactionModal)
+  useEffect(() => {
+    const onBalanceRefresh = () => {
+      queryClient.invalidateQueries({ queryKey: ['balance'] })
+    }
+    window.addEventListener('walletBalancesRefresh', onBalanceRefresh)
+    return () => {
+      window.removeEventListener('walletBalancesRefresh', onBalanceRefresh)
+    }
+  }, [queryClient])
+
   // Cleanup all timeouts on unmount
   useEffect(() => {
     return () => {
