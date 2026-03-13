@@ -102,10 +102,18 @@ export function watchTransactions(params: WatchTransactionsCallbackParams): () =
     keys.forEach((key) => keysToInvalidate.add(key))
   }
 
+  // Also invalidate wagmi's balance queries when tokenBalances is in the set.
+  // Wagmi useBalance uses queryKey ["balance", {...}] which doesn't match our
+  // custom "tokenBalances" key — so we invalidate it explicitly.
+  const shouldInvalidateWagmiBalances = keysToInvalidate.has('tokenBalances')
+
   // Layer 1: Immediate invalidation (React Query + Apollo)
   keysToInvalidate.forEach((key) => {
     queryClient.invalidateQueries({ queryKey: [key] })
   })
+  if (shouldInvalidateWagmiBalances) {
+    queryClient.invalidateQueries({ queryKey: ['balance'] })
+  }
   invalidateApolloCache()
 
   // Layer 2: Delayed refetch for blockchain state propagation
@@ -114,6 +122,9 @@ export function watchTransactions(params: WatchTransactionsCallbackParams): () =
     keysToInvalidate.forEach((key) => {
       queryClient.invalidateQueries({ queryKey: [key] })
     })
+    if (shouldInvalidateWagmiBalances) {
+      queryClient.invalidateQueries({ queryKey: ['balance'] })
+    }
     invalidateApolloCache()
   }, REFETCH_DELAY_MS)
 

@@ -19,7 +19,6 @@ import { getMultiChainEnabledPools, getToken, getPoolSubgraphId, resolveTokenIco
 import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 import { Pool } from "@/types";
 import { prefetchService } from "@/lib/prefetch-service";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { APRBadge } from "@/components/liquidity/APRBadge";
 import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { useWSPools } from "@/lib/websocket";
@@ -288,28 +287,6 @@ export default function LiquidityPage() {
     });
   }, [poolsWithPositionCounts, sortMethod, sortAscending, activeChains, getPoolAaveApy, tokenSearch]);
 
-  const [mobileSortBy, setMobileSortBy] = useState<"apr" | "tvl" | "volume">("tvl");
-
-  const mobilePools = useMemo(() => {
-    if (!isMobile) return filteredPools;
-
-    const parseApr = (apr: unknown) => {
-      if (typeof apr !== "string") return 0;
-      if (!apr || apr === "Loading..." || apr === "N/A" || apr === "—") return 0;
-      const isK = apr.includes("K%");
-      const n = parseFloat(apr.replace(/[~%K]/g, ""));
-      if (!Number.isFinite(n)) return 0;
-      return isK ? n * 1000 : n;
-    };
-
-    const getMetric = (p: any) => {
-      if (mobileSortBy === "apr") return parseApr(p?.apr);
-      if (mobileSortBy === "volume") return Number.isFinite(p?.volume24hUSD) ? Number(p.volume24hUSD) : 0;
-      return Number.isFinite(p?.tvlUSD) ? Number(p.tvlUSD) : 0;
-    };
-
-    return [...filteredPools].sort((a: any, b: any) => getMetric(b) - getMetric(a));
-  }, [filteredPools, isMobile, mobileSortBy]);
 
   const columns: ColumnDef<Pool & { link: string }>[] = useMemo(() => {
     const allColumns: ColumnDef<Pool & { link: string }>[] = [
@@ -547,25 +524,11 @@ export default function LiquidityPage() {
       {/* Table Sections — split by chain */}
       {isMobile ? (
         <div className="flex flex-col gap-3">
-          {mobilePools.length >= 3 && (
-            <div className="flex items-center justify-end">
-              <Select value={mobileSortBy} onValueChange={(v) => setMobileSortBy(v as any)}>
-                <SelectTrigger className="h-9 w-[128px] bg-muted/30 border-sidebar-border/60">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="apr">APR</SelectItem>
-                  <SelectItem value="tvl">TVL</SelectItem>
-                  <SelectItem value="volume">Volume</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
           {/* Mobile: chain-grouped sections */}
           {activeChains.has('base') && basePools.length > 0 && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 px-1">
-                <img src="/chains/base.svg" alt="Base" className="w-4.5 h-4.5 rounded-[5px]" />
+                <img src="/chains/base.svg" alt="Base" className="w-[18px] h-[18px] rounded-[5px]" />
                 <span className="text-xs font-medium text-muted-foreground">Base</span>
               </div>
               <MobileLiquidityList pools={basePools} />
@@ -574,7 +537,7 @@ export default function LiquidityPage() {
           {activeChains.has('arbitrum') && arbitrumPools.length > 0 && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 px-1">
-                <img src="/chains/arbitrum.svg" alt="Arbitrum" className="w-4.5 h-4.5 rounded-[5px]" />
+                <img src="/chains/arbitrum.svg" alt="Arbitrum" className="w-[18px] h-[18px] rounded-[5px]" />
                 <span className="text-xs font-medium text-muted-foreground">Arbitrum</span>
               </div>
               <MobileLiquidityList pools={arbitrumPools} />

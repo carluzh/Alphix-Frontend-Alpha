@@ -2,13 +2,13 @@ export const runtime = 'nodejs';
 export const preferredRegion = 'iad1';
 
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { checkRateLimit } from '@/lib/api/ratelimit';
 import { getPoolSubgraphId, getPoolByIdMultiChain } from '@/lib/pools-config';
 import { parseNetworkMode, type NetworkMode } from '@/lib/network-mode';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
 import { poolKeys } from '@/lib/cache/redis-keys';
 import { fetchPoolHistory } from '@/lib/backend-client';
+import { getUniswapV4SubgraphUrl } from '@/lib/subgraph-url-helper';
 
 interface ChartDataPoint {
   date: string;
@@ -44,7 +44,55 @@ function getPeriodForDays(days: number): 'DAY' | 'WEEK' | 'MONTH' {
   return 'MONTH';
 }
 
-async function computeChartData(poolId: string, days: number, networkMode: NetworkMode, baseUrl: string): Promise<ChartDataResponse> {
+const FEE_EVENTS_QUERY = `
+  query GetLastHookEvents($poolId: Bytes!) {
+    alphixHooks(
+      where: { pool: $poolId }
+      orderBy: timestamp
+      orderDirection: desc
+      first: 500
+    ) {
+      timestamp
+      newFeeBps
+      currentRatio
+      newTargetRatio
+      oldTargetRatio
+    }
+  }
+`;
+
+/**
+ * Fetch fee events directly from the subgraph (avoids serverless self-request anti-pattern)
+ */
+async function fetchFeeEvents(subgraphId: string, networkMode: NetworkMode): Promise<DynamicFeeEvent[]> {
+  try {
+    const subgraphUrl = getUniswapV4SubgraphUrl(networkMode);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const resp = await fetch(subgraphUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: FEE_EVENTS_QUERY, variables: { poolId: subgraphId.toLowerCase() } }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!resp.ok) return [];
+    const json = await resp.json() as { data?: { alphixHooks?: DynamicFeeEvent[] }; errors?: unknown[] };
+    if (json.errors) {
+      console.error('[pool-chart-data] Subgraph fee events errors:', json.errors);
+      return [];
+    }
+    return Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
+  } catch (error) {
+    console.error('[pool-chart-data] Fee events fetch failed:', error);
+    return [];
+  }
+}
+
+async function computeChartData(poolId: string, days: number, networkMode: NetworkMode): Promise<ChartDataResponse> {
   try {
     // Try specified network first, then multi-chain fallback for cross-chain pool IDs
     let subgraphId = getPoolSubgraphId(poolId, networkMode);
@@ -59,12 +107,11 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
     subgraphId = (subgraphId || poolId).toLowerCase();
     if (!/^0x[a-f0-9]+$/i.test(subgraphId)) throw new Error('Invalid pool ID format');
 
-    // Fetch historical data from backend
+    // Fetch historical data from backend + fee events from subgraph in parallel
     const period = getPeriodForDays(days);
-    const [historyResponse, feeEventsResult] = await Promise.all([
+    const [historyResponse, feeEvents] = await Promise.all([
       fetchPoolHistory(subgraphId, period, effectiveNetworkMode),
-      // Fee events still from internal API (until backend provides this)
-      fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(subgraphId)}&network=${effectiveNetworkMode}`)
+      fetchFeeEvents(subgraphId, effectiveNetworkMode),
     ]);
 
     if (!historyResponse.success || !historyResponse.snapshots) {
@@ -140,13 +187,6 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
       }
     }
 
-    // Process fee events
-    let feeEvents: DynamicFeeEvent[] = [];
-    if (feeEventsResult.ok) {
-      feeEvents = await feeEventsResult.json();
-      if (!Array.isArray(feeEvents)) feeEvents = [];
-    }
-
     return {
       success: true,
       poolId,
@@ -167,7 +207,6 @@ export async function GET(request: Request) {
 
   try {
     const requestUrl = new URL(request.url);
-    const baseUrl = requestUrl.origin;
     const searchParams = requestUrl.searchParams;
     const poolId = searchParams.get('poolId');
     const daysParam = searchParams.get('days');
@@ -208,7 +247,7 @@ export async function GET(request: Request) {
 
     // Invalidated cache: blocking fetch (user just did an action)
     if (cachedData && isInvalidated) {
-      const payload = await computeChartData(poolId, days, networkMode, baseUrl);
+      const payload = await computeChartData(poolId, days, networkMode);
       // Only cache successful responses
       if (payload.success) {
         await setCachedData(cacheKey, payload, 3600); // 1 hour TTL
@@ -219,7 +258,7 @@ export async function GET(request: Request) {
     // Stale cache (not invalidated): return immediately, refresh in background
     if (cachedData && isStale) {
       // Trigger background revalidation (fire-and-forget)
-      void computeChartData(poolId, days, networkMode, baseUrl)
+      void computeChartData(poolId, days, networkMode)
         .then((payload) => {
           // Only cache successful responses
           if (payload.success) {
@@ -235,7 +274,7 @@ export async function GET(request: Request) {
     }
 
     // Cache miss: fetch fresh data
-    const payload = await computeChartData(poolId, days, networkMode, baseUrl);
+    const payload = await computeChartData(poolId, days, networkMode);
 
     // Only cache successful responses
     if (payload.success) {

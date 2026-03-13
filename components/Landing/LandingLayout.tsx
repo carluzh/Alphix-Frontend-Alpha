@@ -25,9 +25,13 @@ const DiscordIcon = ({ size = 20 }: { size?: number }) => (
 )
 
 const DefiLlamaIcon = ({ size = 20 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 100 100" fill="currentColor">
-    <path d="M50 5C25.2 5 5 25.2 5 50s20.2 45 45 45 45-20.2 45-45S74.8 5 50 5zm17.4 62.8c-1.2 1.8-3.2 2.8-5.4 2.8h-24c-2.2 0-4.2-1-5.4-2.8-1.2-1.8-1.4-4-.6-5.9l12-28c1-2.4 3.4-4 6-4s5 1.6 6 4l12 28c.8 2 .6 4.1-.6 5.9z" />
-  </svg>
+  <img
+    src="/landing/defillama-logo.png"
+    alt="DefiLlama"
+    width={size}
+    height={size}
+    className="grayscale brightness-[0.7] hover:grayscale-0 hover:brightness-100 transition-[filter] duration-200"
+  />
 )
 
 const GrainOverlay = () => (

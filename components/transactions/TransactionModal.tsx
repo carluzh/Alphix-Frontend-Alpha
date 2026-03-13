@@ -109,6 +109,10 @@ export function TransactionModal({
   const { execute, reset, cancel, isExecuting } = useStepExecutor({
     executors,
     onComplete: useCallback((results: Map<number, StepResult>) => {
+      // Trigger global balance refresh for all wagmi useBalance consumers
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('walletBalancesRefresh'));
+      }
       if (successBehavior === 'show') {
         setSuccessResults(results);
         setView('success');
