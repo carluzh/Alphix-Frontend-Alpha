@@ -93,39 +93,3 @@ export function useTokenPrices(
     refetch: async () => { await refetch(); },
   };
 }
-
-/**
- * Convenience: get a single token's USD price.
- * Prefer useTokenPrices([...]) when you need multiple prices.
- */
-export function useTokenPrice(
-  symbol: string | null | undefined,
-  options: UseTokenPricesOptions = {}
-): { price: number | null; isLoading: boolean } {
-  const symbols = useMemo(
-    () => (symbol ? [symbol] : []),
-    [symbol]
-  );
-  const { prices, isLoading } = useTokenPrices(symbols, options);
-  return {
-    price: symbol && prices[symbol] > 0 ? prices[symbol] : null,
-    isLoading,
-  };
-}
-
-/**
- * Convenience: get USD value of a token amount.
- * Drop-in replacement for the old useTokenUSDValue.
- */
-export function useTokenUSDValue(
-  symbol: string | null | undefined,
-  amount: string | null | undefined,
-  options: UseTokenPricesOptions = {}
-): { value: number | null; isLoading: boolean } {
-  const { price, isLoading } = useTokenPrice(symbol, options);
-  const amountNum = amount ? parseFloat(amount) : null;
-  return {
-    value: price !== null && amountNum !== null ? price * amountNum : null,
-    isLoading,
-  };
-}

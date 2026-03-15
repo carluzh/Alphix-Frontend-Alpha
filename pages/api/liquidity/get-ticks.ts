@@ -1,21 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { getPoolSubgraphId } from '../../../lib/pools-config'
 import { resolveNetworkMode, type NetworkMode } from '../../../lib/network-mode'
-import { getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper'
+import { getAlphixSubgraphUrl } from '../../../lib/subgraph-url-helper'
 import { cacheService } from '@/lib/cache/CacheService'
 import { poolKeys } from '@/lib/cache/redis-keys'
 import { CHAIN_REGISTRY } from '@/lib/chain-registry'
+import { UNISWAP_GRAPHQL_GATEWAY, UNISWAP_GRAPHQL_HEADERS } from '@/lib/uniswap/gateway'
 
 // Cache TTL configuration (in seconds)
 const CACHE_TTL = { fresh: 300, stale: 3600 } // 5min fresh, 1hr stale
-
-// Uniswap Gateway configuration (same as pool-price-history.ts)
-const UNISWAP_GATEWAY = 'https://interface.gateway.uniswap.org/v1/graphql'
-const UNISWAP_HEADERS = {
-  'Content-Type': 'application/json',
-  'Origin': 'https://app.uniswap.org',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-}
 
 type TickRow = {
   tickIdx: string | number
@@ -43,9 +36,9 @@ async function fetchUniswapGatewayTicks(poolId: string, networkMode: NetworkMode
   const timeoutId = setTimeout(() => controller.abort(), 15000) // 15s for external API
 
   try {
-    const response = await fetch(UNISWAP_GATEWAY, {
+    const response = await fetch(UNISWAP_GRAPHQL_GATEWAY, {
       method: 'POST',
-      headers: UNISWAP_HEADERS,
+      headers: UNISWAP_GRAPHQL_HEADERS,
       body: JSON.stringify({ query, variables: { poolId } }),
       signal: controller.signal,
     })
@@ -81,7 +74,7 @@ async function fetchUniswapGatewayTicks(poolId: string, networkMode: NetworkMode
  * Fetch tick data from subgraph.
  */
 async function fetchSubgraphTicks(poolId: string, limit: number, networkMode: NetworkMode): Promise<TickRow[] | null> {
-  const subgraphUrl = getUniswapV4SubgraphUrl(networkMode)
+  const subgraphUrl = getAlphixSubgraphUrl(networkMode)
   const query = `
     query GetTicks($pool: Bytes!, $first: Int!) {
       ticks(

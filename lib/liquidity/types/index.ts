@@ -90,10 +90,6 @@ export {
   type CollectFeesTxAndGasInfo,
   type LiquidityTxAndGasInfo,
   // Validated tx context
-  type ValidatedIncreasePositionTxAndGasInfo,
-  type ValidatedCreatePositionTxAndGasInfo,
-  type ValidatedDecreasePositionTxAndGasInfo,
-  type ValidatedCollectFeesTxAndGasInfo,
   type ValidatedLiquidityTxContext,
   // Validation functions
   isValidLiquidityTxContext,

@@ -13,19 +13,21 @@
  */
 
 import { keccak256, encodeAbiParameters, parseAbiParameters, toHex, pad, parseEther, type Hex } from 'viem';
+import { getToken, getPoolManagerAddress } from '@/lib/pools-config';
 
 // =============================================================================
-// CONSTANTS
+// CONSTANTS (derived from pool config — single source of truth)
 // =============================================================================
 
-/** USDS token address on Base mainnet */
-const USDS_ADDRESS = '0x820C137fa70C8691f0e44Dc420a5e53c168921Dc';
+/** USDS token address on Base mainnet — derived from pool config */
+const USDS_ADDRESS = getToken('USDS', 'base')!.address;
 
 /**
  * Uniswap V4 Pool Manager singleton address on Base mainnet
  * This contract holds all pool liquidity and is the bottleneck for USDS quotes
+ * Derived from pool config
  */
-const POOL_MANAGER_ADDRESS = '0x498581ff718922c3f8e6a244956af099b2652b2b';
+const POOL_MANAGER_ADDRESS = getPoolManagerAddress('base');
 
 /**
  * USDS balance mapping storage slot
@@ -61,7 +63,7 @@ const OVERRIDE_BALANCE = 1_000_000n * 10n ** 18n; // 1,000,000 USDS (in wei, 18 
  * @param mappingSlot - The storage slot of the balances mapping (varies by token, USDS uses slot 2)
  * @returns The storage slot as a hex string
  */
-export function calculateBalanceSlot(
+function calculateBalanceSlot(
   holderAddress: string,
   mappingSlot: bigint = USDS_BALANCE_MAPPING_SLOT
 ): Hex {
@@ -76,7 +78,7 @@ export function calculateBalanceSlot(
 /**
  * Get the storage slot for Pool Manager's USDS balance
  */
-export function getPoolManagerUsdsBalanceSlot(): Hex {
+function getPoolManagerUsdsBalanceSlot(): Hex {
   return calculateBalanceSlot(POOL_MANAGER_ADDRESS, USDS_BALANCE_MAPPING_SLOT);
 }
 
@@ -162,18 +164,6 @@ export function getPoolManagerEthBalanceOverrideViem(): Array<{
   ];
 }
 
-/**
- * Generate Pool Manager native ETH balance override for ethers.js eth_call.
- * Used by get-quote.ts for V4Quoter.
- */
-export function getPoolManagerEthBalanceOverrideEthers(): Record<string, { balance: string }> {
-  return {
-    [POOL_MANAGER_ADDRESS.toLowerCase()]: {
-      balance: `0x${NATIVE_ETH_OVERRIDE_BALANCE.toString(16)}`,
-    },
-  };
-}
-
 // =============================================================================
 // QUOTE HELPER FUNCTIONS
 // =============================================================================
@@ -206,7 +196,7 @@ function isNativeTokenAddress(address: string): boolean {
  * @param outputTokenAddress - Output token address
  * @param poolHooks - The pool's hooks address (non-zero = hooked/potentially rehypothecated)
  */
-export function needsRehypothecatedOverride(
+function needsRehypothecatedOverride(
   inputTokenAddress: string,
   outputTokenAddress: string,
   poolHooks?: string
@@ -253,13 +243,3 @@ export function getSwapSimulationStateOverrides(
   return overrides.length > 0 ? overrides : undefined;
 }
 
-// =============================================================================
-// EXPORTS FOR EXTERNAL USE
-// =============================================================================
-
-export const QUOTE_STATE_OVERRIDE_CONFIG = {
-  USDS_ADDRESS,
-  POOL_MANAGER_ADDRESS,
-  USDS_BALANCE_MAPPING_SLOT,
-  OVERRIDE_BALANCE,
-};

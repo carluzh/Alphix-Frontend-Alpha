@@ -15,27 +15,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useWebSocketOptional } from '../WebSocketProvider';
 import { fetchAllPoolsMetrics, type PoolMetrics } from '../../backend-client';
 import { parseNetworkMode } from '../../network-mode';
-
-// =============================================================================
-// TYPES
-// =============================================================================
-
-export interface PoolData {
-  poolId: string;
-  name: string;
-  network: string;
-  networkMode: import('../../network-mode').NetworkMode;
-  tvlUsd: number;
-  volume24hUsd: number;
-  fees24hUsd: number;
-  lendingYield24hUsd?: number;
-  totalFees24hUsd?: number;
-  lpFee: number;
-  token0Price: number;
-  token1Price: number;
-  apr24h: number;
-  lastUpdated: number;
-}
+import type { PoolData } from './useWSPool';
 
 interface UseWSPoolsReturn {
   pools: PoolData[];
@@ -87,6 +67,9 @@ function toPoolData(metrics: PoolMetrics): PoolData {
     lendingYield24hUsd: metrics.lendingYield24hUsd,
     totalFees24hUsd: metrics.totalFees24hUsd,
     lpFee: metrics.lpFee,
+    tvlToken0Usd: metrics.tvlToken0Usd,
+    tvlToken1Usd: metrics.tvlToken1Usd,
+    cumulativeFeesUsd: metrics.cumulativeFeesUsd,
     token0Price: metrics.token0Price,
     token1Price: metrics.token1Price,
     apr24h: calculateApr(metrics.fees24hUsd, metrics.tvlUsd),
@@ -189,6 +172,9 @@ export function useWSPools(): UseWSPoolsReturn {
           lendingYield24hUsd: wsPool.lendingYield24hUsd,
           totalFees24hUsd: wsPool.totalFees24hUsd,
           lpFee: wsPool.lpFee,
+          tvlToken0Usd: wsPool.tvlToken0Usd,
+          tvlToken1Usd: wsPool.tvlToken1Usd,
+          cumulativeFeesUsd: wsPool.cumulativeFeesUsd,
           token0Price: wsPool.token0Price,
           token1Price: wsPool.token1Price,
           apr24h: calculateApr(wsPool.fees24hUsd, wsPool.tvlUsd),

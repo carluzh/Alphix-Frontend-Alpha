@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { cacheService } from '@/lib/cache/CacheService';
+import { UNISWAP_DATA_API_PORTFOLIO, UNISWAP_DATA_API_HEADERS } from '@/lib/uniswap/gateway';
+import { ALL_CHAIN_IDS } from '@/lib/chain-registry';
 
 /**
  * Token Balances API - Using Uniswap's Portfolio API
@@ -9,19 +11,6 @@ import { cacheService } from '@/lib/cache/CacheService';
  *
  * This replaces the old Alchemy + vetted list approach which was too restrictive.
  */
-
-// Uniswap Data API endpoint (same as their interface uses)
-const UNISWAP_DATA_API = 'https://interface.gateway.uniswap.org/v2/data.v1.DataApiService/GetPortfolio';
-
-// Headers to look like Uniswap interface
-const UNISWAP_HEADERS = {
-  'Content-Type': 'application/json',
-  'Origin': 'https://app.uniswap.org',
-  'Referer': 'https://app.uniswap.org/',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'application/json',
-  'Connect-Protocol-Version': '1',
-};
 
 // Cache TTL: 30s fresh, 60s stale
 const CACHE_TTL = { fresh: 30, stale: 60 };
@@ -88,16 +77,16 @@ async function fetchUniswapPortfolio(address: string): Promise<UniswapPortfolioR
         { platform: 'EVM', address: address },
       ],
     },
-    chainIds: [8453, 42161],
+    chainIds: ALL_CHAIN_IDS,
     modifier: {
       includeSmallBalances: true,
       includeSpamTokens: false,
     },
   };
 
-  const response = await fetch(UNISWAP_DATA_API, {
+  const response = await fetch(UNISWAP_DATA_API_PORTFOLIO, {
     method: 'POST',
-    headers: UNISWAP_HEADERS,
+    headers: UNISWAP_DATA_API_HEADERS,
     body: JSON.stringify(requestPayload),
   });
 
@@ -130,7 +119,7 @@ export default async function handler(
 
   // Use lowercase address (Uniswap API prefers it)
   const address = rawAddress.toLowerCase();
-  const cacheKey = `portfolio:base:${address}`;
+  const cacheKey = `portfolio:all:${address}`;
 
   try {
     const result = await cacheService.cachedApiCall(

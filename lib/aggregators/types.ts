@@ -138,17 +138,6 @@ export interface KyberswapBuildResponse {
 }
 
 /**
- * Approval status for a token
- */
-export interface ApprovalStatus {
-  needsApproval: boolean;
-  spender: string;
-  token: string;
-  currentAllowance: bigint;
-  requiredAmount: bigint;
-}
-
-/**
  * Native token address constant (used by Kyberswap for ETH)
  */
 export const NATIVE_TOKEN_ADDRESS_KYBER = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';

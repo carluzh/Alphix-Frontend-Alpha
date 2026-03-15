@@ -26,14 +26,12 @@ import {
 } from 'react';
 import { useAccount } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
-import { CurrencyAmount, Currency } from '@uniswap/sdk-core';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useAddLiquidityCalculation, type CalculatedLiquidityData } from '@/lib/liquidity/hooks/transaction/useAddLiquidityCalculation';
 import { usePrepareMintQuery, useGasFeeEstimate } from '@/lib/liquidity';
 import { getToken, getPoolById, TokenSymbol } from '@/lib/pools-config';
 import { useTokenPrices } from '@/hooks/useTokenPrices';
-import { PositionField } from '@/lib/liquidity/types';
 import { useUserSlippageTolerance } from '@/hooks/useSlippage';
 import type { Address } from 'viem';
 import { useNetwork } from '@/lib/network-context';
@@ -197,7 +195,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   const token1USDPrice = token1Symbol ? (createPrices[token1Symbol] || null) : null;
 
   // Get slippage settings
-  const { currentSlippage, updateAutoSlippage } = useUserSlippageTolerance();
+  const { currentSlippage } = useUserSlippageTolerance();
   const slippageToleranceBps = Math.round(currentSlippage * 100);
 
   // Transaction error state

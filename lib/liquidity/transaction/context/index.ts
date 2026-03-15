@@ -11,7 +11,6 @@ export {
   buildIncreasePositionContext,
   buildDecreasePositionContext,
   buildCollectFeesContext,
-  validateLiquidityContext,
   type MintTxApiResponse,
   type TokenConfig,
   type BuildLiquidityContextParams,

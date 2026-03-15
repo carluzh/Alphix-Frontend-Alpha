@@ -1,6 +1,5 @@
-import { createElement, useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { IconCircleXmarkFilled } from "nucleo-micro-bold-essential"
 import { BASE_CHAIN_ID, ARBITRUM_CHAIN_ID } from "@/lib/network-mode"
 
 import type { AggregatorSource, KyberswapRouteSummary } from "@/lib/aggregators/types"
@@ -168,20 +167,18 @@ export function useSwapQuote({
         if (requestId !== requestIdRef.current) return
 
         if (errorMsg === "Amount exceeds available liquidity") {
-          toast.error("Quote Error", {
-            icon: createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
+          toast.error("Quote error", {
             description: "Not enough liquidity. Try a smaller amount.",
             action: {
-              label: "Open Ticket",
+              label: "Open ticket",
               onClick: () => window.open("https://discord.com/invite/NTXRarFbTr", "_blank"),
             },
           })
         } else if (errorMsg === "Cannot fulfill exact output amount") {
-          toast.error("Quote Error", {
-            icon: createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
-            description: "Exact Output failed. Reduce the amount or use exact input instead.",
+          toast.error("Quote error", {
+            description: "Exact output failed. Reduce the amount or use exact input instead.",
             action: {
-              label: "Open Ticket",
+              label: "Open ticket",
               onClick: () => window.open("https://discord.com/invite/NTXRarFbTr", "_blank"),
             },
           })
@@ -242,11 +239,10 @@ export function useSwapQuote({
           }
         }
 
-        toast.error("Quote Error", {
-          icon: createElement(IconCircleXmarkFilled, { className: "h-4 w-4 text-red-500" }),
+        toast.error("Quote error", {
           description: toastDescription,
           action: {
-            label: "Open Ticket",
+            label: "Open ticket",
             onClick: () => window.open("https://discord.com/invite/NTXRarFbTr", "_blank"),
           },
         })

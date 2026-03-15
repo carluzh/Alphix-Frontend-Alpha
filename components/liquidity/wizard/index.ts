@@ -25,9 +25,6 @@ export {
   type LPMode,
   type RangePreset,
   type WizardNavigationConfig,
-  type PoolOption,
-  type TransactionStatus,
-  type TransactionStep,
   WIZARD_STEPS,
   DEFAULT_WIZARD_STATE,
 } from './types';
@@ -38,7 +35,6 @@ export { RangeAndAmountsStep } from './steps/RangeAndAmountsStep';
 export { ReviewExecuteModal } from './ReviewExecuteModal';
 
 // Shared components
-export { Container, AnimatedContainer } from './shared/Container';
-export { WizardProgressSidebar, WizardProgressHeader, WizardProgressDots } from './shared/WizardProgress';
-export { WizardNavigation, ContinueButton } from './shared/WizardNavigation';
-export { FormWrapper, StepContainer, CollapsedStep } from './FormWrapper';
+export { Container } from './shared/Container';
+export { WizardProgressSidebar, WizardProgressHeader } from './shared/WizardProgress';
+export { FormWrapper } from './FormWrapper';

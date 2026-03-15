@@ -113,9 +113,8 @@ export function UnifiedYieldPositionCard({
 
     // Determine denomination base
     const denominationBase = useMemo(() => {
-        const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
-        return getOptimalBaseToken(token0Symbol, token1Symbol, priceNum);
-    }, [token0Symbol, token1Symbol, currentPrice]);
+        return getOptimalBaseToken(token0Symbol, token1Symbol);
+    }, [token0Symbol, token1Symbol]);
 
     // Parse tick values from pool config's rehypoRange
     const { isFullRange, tickLower, tickUpper } = useMemo(() => {

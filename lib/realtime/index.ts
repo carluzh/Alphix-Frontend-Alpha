@@ -25,20 +25,6 @@
  * }
  * ```
  *
- * @example Consuming position snapshots:
- * ```tsx
- * import { usePositionSnapshots } from '@/lib/realtime';
- *
- * function PositionChart({ positionId }) {
- *   const { isConnected, getPositionHistory, totalValueUsd } = usePositionSnapshots({
- *     positionIds: [positionId],
- *   });
- *
- *   const history = getPositionHistory(positionId);
- *   // Render chart with history...
- * }
- * ```
- *
  */
 
 // Types
@@ -56,9 +42,3 @@ export type {
 
 // Provider
 export { SSEProvider, useSSEContext } from './SSEProvider';
-
-// Hooks
-export { usePositionSnapshots } from './hooks/usePositionSnapshots';
-
-// Core hook (for advanced use cases)
-export { useSSE } from './useSSE';

@@ -1,5 +1,3 @@
-import { ClosestTimeIndexFinder } from './helpers/closest-index'
-import { UpperLowerInRange } from './helpers/min-max-in-range'
 import { cloneReadonly } from './helpers/simple-clone'
 import { PluginBase } from './plugin-base'
 import { CanvasRenderingTarget2D } from 'fancy-canvas'
@@ -113,15 +111,11 @@ export class BandsIndicator extends PluginBase implements ISeriesPrimitive<Time>
   _seriesData: SeriesDataItemTypeMap[SeriesType][] = []
   _bandsData: BandData[] = []
   _options: Required<BandsIndicatorOptions>
-  _timeIndices: ClosestTimeIndexFinder<{ time: number }>
-  _upperLower: UpperLowerInRange<BandData>
 
   constructor(options: Required<BandsIndicatorOptions>) {
     super()
     this._options = options
     this._paneViews = [new BandsIndicatorPaneView(this)]
-    this._timeIndices = new ClosestTimeIndexFinder([])
-    this._upperLower = new UpperLowerInRange([])
   }
 
   updateOptions(options: Required<BandsIndicatorOptions>) {
@@ -142,13 +136,10 @@ export class BandsIndicator extends PluginBase implements ISeriesPrimitive<Time>
     this.dataUpdated('full')
   }
 
-  dataUpdated(scope: DataChangedScope) {
+  dataUpdated(_scope: DataChangedScope) {
     // plugin base has fired a data changed event
     this._seriesData = cloneReadonly(this.series.data())
     this.calculateBands()
-    if (scope === 'full') {
-      this._timeIndices = new ClosestTimeIndexFinder(this._seriesData as { time: number }[])
-    }
   }
 
   calculateBands() {
@@ -160,6 +151,5 @@ export class BandsIndicator extends PluginBase implements ISeriesPrimitive<Time>
       }
     })
     this._bandsData = bandData
-    this._upperLower = new UpperLowerInRange(this._bandsData, 4)
   }
 }

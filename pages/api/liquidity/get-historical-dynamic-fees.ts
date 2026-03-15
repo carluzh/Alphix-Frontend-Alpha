@@ -1,48 +1,20 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '../../../lib/cache/CacheService';
 import { resolveNetworkMode } from '@/lib/network-mode';
-
-// Unified query: Both networks use Goldsky subgraph with pool (Bytes) filter
-const GET_LAST_HOOK_EVENTS = `
-  query GetLastHookEvents($poolId: Bytes!) {
-    alphixHooks(
-      where: { pool: $poolId }
-      orderBy: timestamp
-      orderDirection: desc
-      first: 500
-    ) {
-      timestamp
-      newFeeBps
-      currentRatio
-      newTargetRatio
-      oldTargetRatio
-    }
-  }
-`;
-
-type HookEvent = {
-  timestamp: string;
-  newFeeBps?: string;
-  currentRatio?: string;      // Current Vol/TVL activity measurement (volatile)
-  newTargetRatio?: string;    // New EMA target after this update (smooth)
-  oldTargetRatio?: string;    // Previous EMA target before this update
-};
-
-type HookResp = { data?: { alphixHooks?: HookEvent[] }, errors?: any[] };
+import { fetchFeeEvents, type HookEvent } from '@/lib/liquidity/fetchFeeEvents';
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<HookEvent[] | { message: string; error?: any }>
+  res: NextApiResponse<HookEvent[] | { error: string }>
 ) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
+    return res.status(405).json({ error: `Method ${req.method} Not Allowed` });
   }
 
-  const { poolId, v: versionQuery, network: networkQuery } = req.query as { poolId?: string; v?: string; network?: string };
+  const { poolId, v: versionQuery } = req.query as { poolId?: string; v?: string };
   if (!poolId || typeof poolId !== 'string') {
-    return res.status(400).json({ message: 'Valid poolId query parameter is required.' });
+    return res.status(400).json({ error: 'Valid poolId query parameter is required.' });
   }
 
   const networkMode = resolveNetworkMode(req);
@@ -58,33 +30,7 @@ export default async function handler(
     const result = await cacheService.cachedApiCall<HookEvent[]>(
       cacheKey,
       { fresh: 6 * 60 * 60, stale: 24 * 60 * 60 }, // 6h fresh, 24h stale
-      async () => {
-        const SUBGRAPH_URL = getUniswapV4SubgraphUrl(networkMode);
-        const query = GET_LAST_HOOK_EVENTS;
-
-        // AbortController timeout pattern for subgraph fetch
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s for subgraph
-
-        const resp = await fetch(SUBGRAPH_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, variables: { poolId: poolId.toLowerCase() } }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!resp.ok) {
-          const body = await resp.text();
-          throw new Error(`Subgraph error: ${body}`);
-        }
-        const json = await resp.json() as HookResp;
-        if (json.errors) {
-          throw new Error(`Subgraph errors: ${JSON.stringify(json.errors)}`);
-        }
-        return Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
-      },
+      () => fetchFeeEvents(poolId, networkMode),
       { skipCache: shouldBypassCache }
     );
 
@@ -98,6 +44,6 @@ export default async function handler(
   } catch (error: any) {
     console.error(`Fee events API error for pool ${poolId}:`, error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error fetching fee events';
-    return res.status(500).json({ message: errorMessage });
+    return res.status(500).json({ error: errorMessage });
   }
 }

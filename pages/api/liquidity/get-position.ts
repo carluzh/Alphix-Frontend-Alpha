@@ -25,7 +25,7 @@ interface PositionResponse {
 
 interface ErrorResponse {
   error: string;
-  message?: string;
+  details?: string;
 }
 
 export default async function handler(
@@ -165,7 +165,7 @@ export default async function handler(
     console.error('[get-position] Error:', error);
     return res.status(500).json({
       error: 'Failed to fetch position',
-      message: error?.message || 'Unknown error',
+      details: error?.message || 'Unknown error',
     });
   }
 }

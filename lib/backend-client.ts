@@ -144,39 +144,6 @@ export interface PoolHistoryResponse {
 }
 
 /**
- * Backend health status
- */
-export interface HealthStatus {
-  status: 'healthy' | 'unhealthy';
-  timestamp: string;
-  version: string;
-  database: 'connected' | 'disconnected';
-  error?: string;
-}
-
-/**
- * Check backend health
- */
-export async function checkBackendHealth(): Promise<HealthStatus> {
-  try {
-    const response = await fetch(`${BACKEND_URL}/health`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    return await response.json();
-  } catch (error) {
-    return {
-      status: 'unhealthy',
-      timestamp: new Date().toISOString(),
-      version: 'unknown',
-      database: 'disconnected',
-      error: error instanceof Error ? error.message : 'Connection failed',
-    };
-  }
-}
-
-/**
  * Fetch portfolio chart data (historical position values)
  *
  * Simple GET endpoint - just pass address and period.
@@ -456,58 +423,6 @@ export async function fetchPoolCurrent(
 // =============================================================================
 
 /**
- * Unified Yield pool info
- */
-export interface UnifiedYieldPool {
-  poolId: string;
-  name: string;
-  token0: { address: string; symbol: string; decimals: number };
-  token1: { address: string; symbol: string; decimals: number };
-  hookAddress: string;
-  tvlUsd?: number;
-}
-
-/**
- * Response for listing UY pools
- */
-export interface UnifiedYieldPoolsResponse {
-  success: boolean;
-  pools: UnifiedYieldPool[];
-  error?: string;
-}
-
-/**
- * Fetch all Unified Yield pools for a network
- *
- * @param networkMode - Network mode ('base' | 'arbitrum')
- */
-export async function fetchUnifiedYieldPools(
-  networkMode: NetworkMode = 'base'
-): Promise<UnifiedYieldPoolsResponse> {
-  try {
-    const url = buildBackendUrl('/unified-yield/pools', networkMode);
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    return {
-      success: false,
-      pools: [],
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-/**
  * APR response for a UY pool
  */
 export interface UnifiedYieldPoolAprResponse {
@@ -618,52 +533,6 @@ export async function fetchUnifiedYieldPoolAprHistory(
 }
 
 /**
- * Token prices from pool
- */
-export interface PoolPricesResponse {
-  success: boolean;
-  poolId: string;
-  token0Price: number | null;
-  token1Price: number | null;
-  error?: string;
-}
-
-/**
- * Fetch token prices from a pool
- *
- * @param poolId - Pool ID
- * @param networkMode - Network mode ('base' | 'arbitrum')
- */
-export async function fetchPoolPrices(
-  poolId: string,
-  networkMode: NetworkMode = 'base'
-): Promise<PoolPricesResponse> {
-  try {
-    const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/prices`, networkMode);
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    return {
-      success: false,
-      poolId,
-      token0Price: null,
-      token1Price: null,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-/**
  * Historical pool prices response
  */
 export interface PoolPricesHistoryResponse {
@@ -725,7 +594,7 @@ export async function fetchPoolPricesHistory(
 /**
  * Spark rate data (sUSDS yield)
  */
-export interface SparkRateData {
+interface SparkRateData {
   apy: number;
   timestamp: number;
 }
@@ -733,45 +602,16 @@ export interface SparkRateData {
 /**
  * Spark rates response
  */
-export interface SparkRatesResponse {
+interface SparkRatesResponse {
   success: boolean;
   data: SparkRateData | null;
   error?: string;
 }
 
 /**
- * Fetch Spark rates (sUSDS yield on Ethereum mainnet)
- *
- * Note: This is Base-only - no network param needed
- */
-export async function fetchSparkRates(): Promise<SparkRatesResponse> {
-  try {
-    const url = buildBackendUrlNoNetwork('/spark/rates');
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    return {
-      success: false,
-      data: null,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-/**
  * Spark historical rate point
  */
-export interface SparkHistoryPoint {
+interface SparkHistoryPoint {
   timestamp: number;
   apy: number;
 }
@@ -779,7 +619,7 @@ export interface SparkHistoryPoint {
 /**
  * Spark rates history response
  */
-export interface SparkHistoryResponse {
+interface SparkHistoryResponse {
   success: boolean;
   token: string;
   period: string;
@@ -897,125 +737,6 @@ export async function fetchUnifiedYieldPositionCompoundedFees(
   }
 }
 
-// =============================================================================
-// WEBSOCKET REST ENDPOINTS (Initial Load)
-// =============================================================================
-// These endpoints are used for initial data load before WebSocket updates.
-// Pattern: Fetch initial data via REST, then apply WebSocket updates on top.
-
-/**
- * User positions with compounded fees (for WebSocket initial load)
- */
-export interface UserPositionsWithFeesResponse {
-  success: boolean;
-  network: string;
-  address: string;
-  positions: Array<{
-    positionId: string;
-    hookAddress: string;
-    poolId: string;
-    poolName?: string;
-    compoundedFeesUSD: number;
-    netDepositUSD: number;
-    currentValueUSD: number;
-    createdAtTimestamp: number;
-    calculationMethod?: string;
-  }>;
-  totals: {
-    compoundedFeesUSD: number;
-    netDepositUSD: number;
-    currentValueUSD: number;
-  };
-  error?: string;
-}
-
-/**
- * Fetch all positions for a user with compounded fees
- *
- * Used for WebSocket initial load - fetches all positions at once.
- *
- * @param address - User's wallet address
- * @param networkMode - Network mode ('base' | 'arbitrum')
- */
-export async function fetchUserPositionsWithFees(
-  address: string,
-  networkMode: NetworkMode = 'base'
-): Promise<UserPositionsWithFeesResponse> {
-  try {
-    const url = buildBackendUrl(
-      `/unified-yield/user/${encodeURIComponent(address)}/compounded-fees`,
-      networkMode
-    );
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    return {
-      success: false,
-      network: getNetworkParam(networkMode),
-      address,
-      positions: [],
-      totals: {
-        compoundedFeesUSD: 0,
-        netDepositUSD: 0,
-        currentValueUSD: 0,
-      },
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-/**
- * WebSocket connection stats response
- */
-export interface WSStatsResponse {
-  success: boolean;
-  connectedClients: number;
-  totalSubscriptions: number;
-  channels: Record<string, number>;
-  uptime: number;
-  error?: string;
-}
-
-/**
- * Get WebSocket server stats (for debugging/monitoring)
- */
-export async function fetchWSStats(): Promise<WSStatsResponse> {
-  try {
-    const url = `${getBackendUrl()}/ws/stats`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    return {
-      success: false,
-      connectedClients: 0,
-      totalSubscriptions: 0,
-      channels: {},
-      uptime: 0,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
 /**
  * Get the WebSocket URL based on environment and network mode
  *
@@ -1069,6 +790,12 @@ export interface PoolMetrics {
   /** 24h total fees in USD (swap fees + lending yield) */
   totalFees24hUsd?: number;
   lpFee: number;
+  /** USD value of token0 reserves (CL + UY combined) */
+  tvlToken0Usd?: number;
+  /** USD value of token1 reserves (CL + UY combined) */
+  tvlToken1Usd?: number;
+  /** Total lifetime fees earned by LPs in this pool */
+  cumulativeFeesUsd?: number;
   token0Price: number;
   token1Price: number;
   timestamp: number;

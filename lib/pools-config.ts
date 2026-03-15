@@ -1,21 +1,20 @@
 import { getAddress, type Address } from 'viem';
 import { Token } from '@uniswap/sdk-core';
-import basePoolsConfig from '../config/pools.json';
+import basePoolsConfig from '../config/base_pools.json';
 import arbitrumPoolsConfig from '../config/arbitrum_pools.json';
-import { getStoredNetworkMode, getNetworkModeFromCookies, type NetworkMode } from './network-mode';
+import { getStoredNetworkMode, type NetworkMode } from './network-mode';
 import { ALL_MODES } from './chain-registry';
 
 export type { NetworkMode };
 
 interface PoolsConfigFile {
-  meta: { version: string; description: string; chainId: number; chainName: string };
+  meta: { chainId: number; chainName: string };
   contracts: { poolManager: string; universalRouter?: string; quoter: string; positionManager: string; stateView: string };
   hooks: { alphixHookId: string };
-  tokens: Record<string, { symbol: string; name: string; address: string; decimals: number; icon: string; usdPrice?: string; color?: string }>;
+  tokens: Record<string, { symbol: string; name: string; address: string; decimals: number; icon: string; color?: string }>;
   pools: Array<{
     id: string;
     name: string;
-    description: string;
     subgraphId: string;
     currency0: { symbol: string; address: string };
     currency1: { symbol: string; address: string };
@@ -28,7 +27,6 @@ interface PoolsConfigFile {
     yieldSources?: Array<'aave' | 'spark'>;
     rehypoRange?: { min: string; max: string; isFullRange: boolean };
   }>;
-  fees: { initialFee: number; initialTargetRatio: string; currentRatio: string };
 }
 
 const CONFIG_MAP: Record<NetworkMode, PoolsConfigFile> = {
@@ -54,21 +52,12 @@ function getTaggedPools(networkModeOverride?: NetworkMode): PoolConfig[] {
   return config.pools.map(pool => ({ ...pool, networkMode: mode }));
 }
 
-/**
- * @deprecated Use `resolveNetworkMode(req)` from `lib/network-mode.ts` instead.
- * That function resolves from body.chainId → body.networkMode → query params → cookie → default.
- */
-export function getNetworkModeFromRequest(cookieHeader: string | undefined | null): NetworkMode {
-  return getNetworkModeFromCookies(cookieHeader) ?? 'base';
-}
-
 export interface TokenConfig {
   symbol: string;
   name: string;
   address: string;
   decimals: number;
   icon: string;
-  usdPrice?: string;
   color?: string;
 }
 
@@ -88,7 +77,6 @@ export type YieldSource = 'aave' | 'spark';
 export interface PoolConfig {
   id: string;
   name: string;
-  description: string;
   subgraphId: string;
   currency0: PoolCurrency;
   currency1: PoolCurrency;
@@ -161,6 +149,18 @@ export function getEnabledPools(networkModeOverride?: NetworkMode): PoolConfig[]
 }
 
 const PRODUCTION_MODES = ALL_MODES;
+
+/** Get tokens from ALL chains (deduped by symbol, base takes priority) */
+export function getMultiChainTokens(): Record<string, TokenConfig> {
+  const merged: Record<string, TokenConfig> = {};
+  for (const mode of PRODUCTION_MODES) {
+    const tokens = getPoolsConfig(mode).tokens;
+    for (const [symbol, token] of Object.entries(tokens)) {
+      if (!merged[symbol]) merged[symbol] = token;
+    }
+  }
+  return merged;
+}
 
 export function getMultiChainEnabledPools(): PoolConfig[] {
   return PRODUCTION_MODES.flatMap(mode =>
@@ -280,7 +280,7 @@ export function getQuoterAddress(networkModeOverride?: NetworkMode): Address {
 export function getUniversalRouterAddress(networkModeOverride?: NetworkMode): Address {
   const config = getPoolsConfig(networkModeOverride);
   if (!config.contracts.universalRouter) {
-    throw new Error('Missing contracts.universalRouter in config/pools.json');
+    throw new Error('Missing contracts.universalRouter in pool config');
   }
   return getAddress(config.contracts.universalRouter);
 }

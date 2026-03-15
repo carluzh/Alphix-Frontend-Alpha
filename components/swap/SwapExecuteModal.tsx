@@ -10,10 +10,8 @@
  * @see lib/transactions/flows/useSwapFlow.ts
  */
 
-import { createElement } from "react"
 import Image from "next/image"
 import { ArrowDown } from "lucide-react"
-import { IconBadgeCheck2 } from "nucleo-micro-bold-essential"
 import { toast } from "sonner"
 
 import { getExplorerTxUrl } from "@/lib/wagmiConfig"
@@ -36,7 +34,6 @@ interface SwapExecuteModalProps {
   onClose: () => void
   fromToken: Token
   toToken: Token
-  queryClient: any
   fromAmount: string
   toAmount: string
   lastEditedSideRef: React.MutableRefObject<"from" | "to">
@@ -103,13 +100,12 @@ export function SwapExecuteModal({
     }
 
     const desc = `Swapped ${formatTokenAmountDisplay(fromAmount, fromToken)} ${fromToken.symbol} to ${formatTokenAmountDisplay(toAmount, toToken)} ${toToken.symbol}`
-    toast.success("Swap Successful", {
+    toast.success("Swap successful", {
       id: hash ? `swap-success-${hash}` : undefined,
-      icon: createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
       description: desc,
       duration: 4000,
       action: hash
-        ? { label: "View Transaction", onClick: () => window.open(getExplorerTxUrl(hash!), "_blank") }
+        ? { label: "View transaction", onClick: () => window.open(getExplorerTxUrl(hash!), "_blank") }
         : undefined,
     })
   }

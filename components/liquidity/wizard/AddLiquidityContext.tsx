@@ -13,7 +13,6 @@ import { createContext, useContext, useCallback, useEffect, useMemo, useState, t
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useAccount } from 'wagmi';
 import { Pool as V4Pool } from '@uniswap/v4-sdk';
-import { Price, Currency } from '@uniswap/sdk-core';
 
 import {
   WizardStep,
@@ -22,7 +21,6 @@ import {
   RangePreset,
   UnifiedYieldDepositMode,
   DEFAULT_WIZARD_STATE,
-  WIZARD_STEPS,
 } from './types';
 import { usePoolState } from '@/lib/apollo/hooks/usePoolState';
 import { getPoolById, getPoolByIdMultiChain, getChainId, type NetworkMode } from '@/lib/pools-config';
@@ -538,6 +536,3 @@ export function useAddLiquidityContext(): AddLiquidityContextType {
   }
   return context;
 }
-
-// Re-export for compatibility with Uniswap patterns
-export { useAddLiquidityContext as useCreateLiquidityContext };

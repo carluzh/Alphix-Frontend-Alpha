@@ -2,7 +2,7 @@
  * Generic Step Orchestrator — useStepExecutor
  *
  * Unified hook that runs any sequence of transaction steps.
- * Replaces both useLiquidityStepExecutor and useSwapStepExecutor.
+ * Replaces prior flow-specific step executors.
  *
  * - Uses executionStore (Zustand) for lock-protected state
  * - Registry-based dispatch: executors map keyed by step type string
@@ -11,7 +11,7 @@
  * - Signature/data forwarding between steps via shared context
  * - Cancellation via ref + lock validation
  *
- * @see TRANSACTION_STEPPER_PLAN.md — Layer 2
+ * @see EXECUTION_REFACTOR_BRIEF.md — Layer 2
  */
 
 import { useCallback, useRef } from 'react';
@@ -165,8 +165,9 @@ export function useStepExecutor(config: UseStepExecutorConfig): UseStepExecutorR
         return;
       }
 
-      // Skip pre-completed steps
+      // Skip pre-completed steps — notify consumers so UI advances past them
       if (preCompleted?.has(i)) {
+        onStepComplete?.(i, {});
         continue;
       }
 

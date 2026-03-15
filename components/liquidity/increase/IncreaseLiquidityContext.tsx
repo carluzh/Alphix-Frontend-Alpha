@@ -96,7 +96,6 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
 
   // Zap mode setters
   const setDepositMode = useCallback((mode: UnifiedYieldDepositMode) => {
-    console.log('[IncreaseLiquidityContext] setDepositMode:', mode);
     setIncreaseLiquidityState((prev) => ({
       ...prev,
       depositMode: mode,
@@ -111,7 +110,6 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
   }, []);
 
   const setZapInputToken = useCallback((token: 'token0' | 'token1' | null) => {
-    console.log('[IncreaseLiquidityContext] setZapInputToken:', token);
     setIncreaseLiquidityState((prev) => ({
       ...prev,
       zapInputToken: token,

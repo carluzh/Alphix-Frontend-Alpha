@@ -64,29 +64,11 @@
  * ```
  */
 
-// Types
-export type {
-  // Server messages
-  WSServerMessage,
-  // Data payloads
-  WSPoolData,
-  // Configuration
-  WSConnectionState,
-  WSConfig,
-} from './types';
-
-// Type guards and utilities
-export { isPoolData } from './types';
-
 // Manager (for advanced use cases)
-export {
-  WebSocketManager,
-  getSharedWebSocketManager,
-  resetSharedWebSocketManager,
-} from './WebSocketManager';
+export { WebSocketManager } from './WebSocketManager';
 
 // Provider
-export { WebSocketProvider, useWebSocket, useWebSocketOptional } from './WebSocketProvider';
+export { WebSocketProvider, useWebSocketOptional } from './WebSocketProvider';
 
 // Hooks
 export { useWSPool, type PoolData } from './hooks/useWSPool';

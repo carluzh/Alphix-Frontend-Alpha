@@ -21,10 +21,6 @@ import type {
   UnifiedYieldApprovalStep,
   UnifiedYieldDepositStep,
   UnifiedYieldWithdrawStep,
-  ZapSwapApprovalStep,
-  ZapPSMSwapStep,
-  ZapPoolSwapStep,
-  ZapDynamicDepositStep,
   LiquidityAction,
 } from '../../../types';
 import { TransactionStepType } from '../../../types';

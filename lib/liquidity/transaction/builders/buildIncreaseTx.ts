@@ -7,7 +7,7 @@
 
 import { V4PositionManager, Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
 import { Token, Ether, CurrencyAmount, Percent } from '@uniswap/sdk-core';
-import { getAddress, type Hex, parseUnits, encodeAbiParameters, keccak256 } from 'viem';
+import { getAddress, type Hex, encodeAbiParameters, keccak256 } from 'viem';
 import JSBI from 'jsbi';
 
 import { getToken, getTokenSymbolByAddress, type TokenSymbol } from '@/lib/pools-config';
@@ -32,9 +32,6 @@ export interface IncreasePositionData {
   salt?: string;
   feesForIncrease?: { amount0: string; amount1: string } | null;
 }
-
-/** @deprecated Use IncreasePositionData instead */
-export type IncreasePositionParams = IncreasePositionData;
 
 export interface BuildIncreaseOptions {
   slippageBps?: number;

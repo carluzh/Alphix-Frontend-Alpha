@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parseSubgraphPosition, type SubgraphPosition, type PositionInfo } from "@/lib/uniswap/liquidity";
 import type { V4ProcessedPosition } from "@/pages/api/liquidity/get-positions";
@@ -12,9 +12,10 @@ import type { TokenSymbol } from "@/lib/pools-config";
 import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 import { useQuery } from "@tanstack/react-query";
-import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
+import { fetchAaveRates, getLendingAprForPair, getLendingAprBySource } from "@/lib/aave-rates";
 
 import dynamic from "next/dynamic";
+import { ChartType } from "../ChartSection/hooks";
 import { PoolDetailHeader } from "./PoolDetailHeader";
 import { PoolDetailStats } from "./PoolDetailStats";
 import { PoolDetailPositions } from "./PoolDetailPositions";
@@ -74,6 +75,7 @@ const ChartSection = dynamic(
   () => import("../ChartSection").then(mod => mod.ChartSection),
   { ssr: false, loading: () => <ChartLoadingSkeleton /> }
 );
+
 import type {
   PoolConfig,
   PoolStats,
@@ -148,6 +150,13 @@ export const PoolDetail = memo(function PoolDetail({
 }: PoolDetailProps) {
   const router = useRouter();
 
+  // Lifted chart type state so stats can control the chart
+  const [chartType, setChartType] = useState<ChartType>(ChartType.FEE);
+
+  const handleStatClick = useCallback((stat: "tvl" | "volume") => {
+    setChartType(stat === "tvl" ? ChartType.TVL : ChartType.VOLUME);
+  }, []);
+
   // Use pool's chain ID for position parsing, not wallet's chain
   const poolChainId = networkMode ? chainIdForMode(networkMode) : undefined;
 
@@ -165,6 +174,15 @@ export const PoolDetail = memo(function PoolDetail({
     const token1 = poolConfig.tokens[1]?.symbol;
     if (!token0 || !token1) return undefined;
     return getLendingAprForPair(aaveRatesData, token0, token1) ?? undefined;
+  }, [poolConfig, aaveRatesData]);
+
+  // Per-source lending APR breakdown (e.g. { aave: 3.2, spark: 5.1 })
+  const aprBySource = useMemo(() => {
+    if (!poolConfig) return undefined;
+    const token0 = poolConfig.tokens[0]?.symbol;
+    const token1 = poolConfig.tokens[1]?.symbol;
+    if (!token0 || !token1) return undefined;
+    return getLendingAprBySource(aaveRatesData, token0, token1);
   }, [poolConfig, aaveRatesData]);
 
   // =========================================================================
@@ -274,9 +292,9 @@ export const PoolDetail = memo(function PoolDetail({
       {/* Header - spans full width like Position page */}
       <PoolDetailHeader poolConfig={poolConfig} />
 
-      {/* Two-column layout on desktop - matches Overview page ratios */}
+      {/* Two-column layout on desktop */}
       <div className="flex flex-col xl:flex-row gap-10">
-        {/* Left Column: Stats, Chart (Positions moved out for mobile ordering) */}
+        {/* Left Column: Stats, Charts, Yield, Positions */}
         <div className="flex-1 flex flex-col gap-6 min-w-0 w-full">
           {/* Stats */}
           <PoolDetailStats
@@ -284,13 +302,22 @@ export const PoolDetail = memo(function PoolDetail({
             token0Symbol={token0Symbol}
             token1Symbol={token1Symbol}
             networkMode={networkMode}
+            onStatClick={handleStatClick}
           />
 
-          {/* Chart */}
+          {/* Chart — Dynamic Fee, Yield, Volume, TVL */}
           <ChartSection
             chartData={chartData}
             isLoading={isLoadingChartData}
             windowWidth={windowWidth}
+            chartType={chartType}
+            onChartTypeChange={setChartType}
+            poolId={poolConfig?.subgraphId}
+            token0Symbol={poolConfig?.tokens[0]?.symbol}
+            token1Symbol={poolConfig?.tokens[1]?.symbol}
+            yieldSources={poolConfig?.yieldSources}
+            currentSwapApr={poolStats.aprRaw}
+            networkMode={networkMode}
           />
 
           {/* Positions - Only visible on desktop (xl+) */}
@@ -314,13 +341,18 @@ export const PoolDetail = memo(function PoolDetail({
           </div>
         </div>
 
-        {/* Right Column: Add Liquidity Actions + Pool Info - 380px matches Overview */}
+        {/* Right Column: Pool Details — sticky while scrolling */}
         <div className="w-full xl:w-[380px] flex-shrink-0">
-          <div className="xl:sticky xl:top-6">
+          <div className="xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:overflow-y-auto xl:scrollbar-hidden">
             <PoolDetailSidebar
               poolConfig={poolConfig}
               poolApr={poolStats.aprRaw}
               aaveApr={aaveApr}
+              aprBySource={aprBySource}
+              tvlUsd={poolStats.tvlUSD}
+              tvlToken0Usd={poolStats.tvlToken0Usd}
+              tvlToken1Usd={poolStats.tvlToken1Usd}
+              networkMode={networkMode ?? 'base'}
             />
           </div>
         </div>

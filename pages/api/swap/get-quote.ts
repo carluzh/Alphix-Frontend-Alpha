@@ -13,7 +13,8 @@ import { ensureTokenListLoaded, getTokenInfoSync } from '../../../lib/aggregator
  * Sent to the client so SwapRoutePreview can resolve symbols + icons.
  */
 function buildRouteTokenMetadata(
-  routeSummary: KyberswapRouteSummary | undefined
+  routeSummary: KyberswapRouteSummary | undefined,
+  mode?: NetworkMode
 ): Record<string, { symbol: string; logoURI?: string }> | undefined {
   if (!routeSummary?.route) return undefined;
 
@@ -29,7 +30,7 @@ function buildRouteTokenMetadata(
 
   const metadata: Record<string, { symbol: string; logoURI?: string }> = {};
   for (const addr of addresses) {
-    const info = getTokenInfoSync(addr);
+    const info = getTokenInfoSync(addr, mode);
     if (info) {
       metadata[addr] = { symbol: info.symbol, logoURI: info.logoURI };
     }
@@ -53,7 +54,7 @@ const shouldRetryRpc = (_attempt: number, error: any): boolean => {
   return msg.includes('timeout') || msg.includes('network') ||
          msg.includes('econnrefused') || msg.includes('etimedout');
 };
-import { chainIdForMode, backendNetworkForMode, resolveNetworkMode } from '../../../lib/network-mode';
+import { chainIdForMode, resolveNetworkMode } from '../../../lib/network-mode';
 import { CHAIN_REGISTRY } from '../../../lib/chain-registry';
 import { Token, CurrencyAmount } from '@uniswap/sdk-core';
 import { tickToPrice } from '@uniswap/v3-sdk';
@@ -61,7 +62,6 @@ import {
   TokenSymbol,
   getPoolConfigForTokens,
   createTokenSDK,
-  createPoolKeyFromConfig,
   createCanonicalPoolKey,
   getQuoterAddress,
   getStateViewAddress,
@@ -73,7 +73,8 @@ import { V4QuoterAbi, EMPTY_BYTES } from '@/lib/swap/swap-constants';
 import { getUsdsQuoteStateOverridesEthers, needsUsdsStateOverride } from '@/lib/swap/quote-state-override';
 import { getRpcUrlForNetwork } from '../../../lib/viemClient';
 import { ethers } from 'ethers';
-import { findBestRoute, SwapRoute, routeToString } from '@/lib/swap/routing-engine';
+import { findBestRoute, SwapRoute } from '@/lib/swap/routing-engine';
+import { classifySwapError } from '@/lib/swap/error-classification';
 
 /**
  * Create an ethers provider that skips network detection entirely.
@@ -537,8 +538,6 @@ async function getV4QuoteExactOutputMultiHop(
   networkMode?: NetworkMode
 ): Promise<{ amountIn: bigint; gasEstimate: bigint; dynamicFeeBps?: number }> {
   try {
-    const _provider = createProvider(networkMode);
-
     let requiredOut = amountOutSmallestUnits;
     let totalGas = 0n;
     let dynamicFeeBps: number | undefined;
@@ -582,7 +581,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
   }
 
   try {
-    const { fromTokenSymbol, toTokenSymbol, amountDecimalsStr, swapType = 'ExactIn', network: networkParam } = req.body;
+    const { fromTokenSymbol, toTokenSymbol, amountDecimalsStr, swapType = 'ExactIn' } = req.body;
 
     const networkMode = resolveNetworkMode(req);
 
@@ -624,7 +623,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
 
     // Ensure token list is loaded for Kyberswap route resolution (non-blocking, cached 6h)
     if (isKyberswapOnly || req.body.fromTokenAddress || req.body.toTokenAddress) {
-      await ensureTokenListLoaded().catch(() => {/* non-critical */});
+      await ensureTokenListLoaded(networkMode).catch(() => {/* non-critical */});
     }
 
     // For Kyberswap-only swaps, we need token addresses from the request
@@ -639,9 +638,9 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       }
 
       // Use decimals from frontend request first, then fallback to static registry
-      const { getTokenInfoSync } = await import('../../../lib/aggregators/token-registry');
-      const fromTokenInfo = getTokenInfoSync(fromTokenAddress);
-      const toTokenInfo = getTokenInfoSync(toTokenAddress);
+      const { getTokenInfoSync: getTokenInfoSyncDynamic } = await import('../../../lib/aggregators/token-registry');
+      const fromTokenInfo = getTokenInfoSyncDynamic(fromTokenAddress, networkMode);
+      const toTokenInfo = getTokenInfoSyncDynamic(toTokenAddress, networkMode);
 
       // Priority: frontend-provided decimals > token registry > default 18
       const fromDecimals = fromTokenDecimals ?? fromTokenInfo?.decimals ?? 18;
@@ -701,7 +700,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
             routerAddress: kyberQuote.routerAddress,
             encodedSwapData: kyberQuote.encodedSwapData,
             routeSummary: kyberQuote.routeSummary,
-            tokenMetadata: buildRouteTokenMetadata(kyberQuote.routeSummary),
+            tokenMetadata: buildRouteTokenMetadata(kyberQuote.routeSummary, networkMode),
           },
         };
 
@@ -894,7 +893,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     }
 
     // Compare quotes and select the best one
-    const comparison = selectBestQuote(alphixQuote, kyberQuote, slippageBps);
+    const comparison = selectBestQuote(alphixQuote, kyberQuote);
     const selectedQuote = comparison.selectedQuote;
     const selectedSource: AggregatorSource = comparison.selectedSource;
 
@@ -944,7 +943,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
         routerAddress: kyberQuote.routerAddress,
         encodedSwapData: kyberQuote.encodedSwapData,
         routeSummary: kyberQuote.routeSummary,
-        tokenMetadata: buildRouteTokenMetadata(kyberQuote.routeSummary),
+        tokenMetadata: buildRouteTokenMetadata(kyberQuote.routeSummary, networkMode),
       } : undefined,
       debug: process.env.NODE_ENV !== 'production'
     };
@@ -964,52 +963,15 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
       stack: error.stack?.substring(0, 500)
     });
 
-    // Check for specific error types
     let errorMessage = 'Failed to get quote';
-    
+
     if (error instanceof Error) {
-      const errorStr = error.message.toLowerCase();
-      
-      // Check for smart contract call exceptions (common in ExactOut multihop)
-      if (errorStr.includes('call_exception') ||
-          errorStr.includes('call revert exception') ||
-          (errorStr.includes('0x6190b2b0') || errorStr.includes('0x486aa307'))) {
-        if (req.body?.swapType === 'ExactOut') {
-          errorMessage = 'Amount exceeds available liquidity';
-        } else {
-          errorMessage = 'Not enough liquidity';
-        }
-      }
-      // Check for actual liquidity depth errors (be more specific)
-      else if (errorStr.includes('insufficient liquidity for swap') || 
-               errorStr.includes('not enough liquidity') ||
-               errorStr.includes('pool has no liquidity')) {
-        errorMessage = 'Not enough liquidity';
-      }
-      // Check for slippage-related errors  
-      else if (errorStr.includes('price impact too high') ||
-               errorStr.includes('slippage') ||
-               errorStr.includes('price moved too much')) {
-        errorMessage = 'Price impact too high';
-      }
-      // Generic revert without specific liquidity message
-      else if (errorStr.includes('revert') || errorStr.includes('execution reverted')) {
-        if (req.body?.swapType === 'ExactOut') {
-          errorMessage = 'Cannot fulfill exact output amount';
-        } else {
-          errorMessage = 'Transaction would revert';
-        }
-      }
-      // For ExactOut specific errors
-      else if (req.body?.swapType === 'ExactOut' && (
-        errorStr.includes('exceeds balance') ||
-        errorStr.includes('insufficient balance') ||
-        errorStr.includes('amount too large')
-      )) {
-        errorMessage = 'Amount exceeds available liquidity';
+      const classified = classifySwapError(error.message, req.body?.swapType);
+      if (classified) {
+        errorMessage = classified;
       }
     }
-    
+
     return res.status(500).json({ success: false, error: errorMessage });
   }
 } 

@@ -7,13 +7,22 @@ import Image from "next/image";
 import { ChevronRight, Plus, Minus } from "lucide-react";
 import { PointsIcon } from "@/components/PointsIcons";
 import { DenominationToggle } from "@/components/liquidity/DenominationToggle";
-import { LendingSourceIcons } from "@/components/liquidity/APRBreakdownTooltip";
 import { CurrencyAmount, Price, Currency } from "@uniswap/sdk-core";
 import { Position as V4Position } from "@uniswap/v4-sdk";
 import { Button } from "@/components/ui/button";
 import { cn, getTokenIcon, getTokenColor } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { formatNumber } from "@/lib/format";
+/** Local number formatter matching the legacy formatNumber(value, {min?, max?}) API */
+function formatNumber(
+  value: number,
+  opts?: { min?: number; max?: number }
+): string {
+  if (!Number.isFinite(value)) return "0";
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: opts?.min ?? 0,
+    maximumFractionDigits: opts?.max ?? 2,
+  }).format(value);
+}
 import { getDecimalsForDenomination } from "@/lib/denomination-utils";
 import type { PoolConfig } from "@/lib/pools-config";
 import type { LPType, ChartDuration, PositionInfo, PoolStateData } from "../../hooks";
@@ -125,6 +134,7 @@ export interface PositionDetailProps {
   // APR data
   poolApr: number | null;
   aaveApr: number | null;
+  aprBySource?: Record<'aave' | 'spark', number>;
   totalApr: number | null;
   // LP Type
   lpType: LPType;
@@ -679,151 +689,82 @@ function EarningsSection({
   );
 }
 
-/**
- * Yield info callout content
- */
-const YIELD_INFO: Record<string, { title: string; description: React.ReactNode }> = {
-  swap: {
-    title: "Swap APR",
-    description: "Earned from trading fees when swaps occur through your position's price range. The APR varies based on trading volume and your position's concentration.",
+
+// ─── Earning on cards (same as pool detail sidebar) ───────────────────────────
+
+const EARNING_SOURCE_CONFIG: Record<'aave' | 'spark', {
+  name: string;
+  logo: string;
+  pillBg: string;
+  pillText: string;
+}> = {
+  aave: {
+    name: 'Aave',
+    logo: '/aave/Logomark-light.png',
+    pillBg: 'rgba(152, 150, 255, 0.25)',
+    pillText: '#BDBBFF',
   },
-  lending: {
-    title: "Lending APY",
-    description: "Additional yield earned by lending idle liquidity. When your liquidity isn't being used for swaps, it generates lending interest automatically.",
-  },
-  points: {
-    title: "Points",
-    description: (
-      <>
-        This position earns points continuously while providing liquidity. Points are distributed every Thursday at 02:00 UTC.{" "}
-        <Link href="/points" className="underline hover:text-foreground transition-colors">
-          Visit the Points page
-        </Link>{" "}
-        for more details.
-      </>
-    ),
+  spark: {
+    name: 'Spark',
+    logo: '/spark/Spark-Logomark-RGB.svg',
+    pillBg: 'rgba(250, 67, 189, 0.2)',
+    pillText: '#FA7BD4',
   },
 };
 
-/**
- * Yield Breakdown Section
- * Matches pool page style - table with hover rows
- * Clickable rows show info callout
- */
-function APRSection({
-  poolApr,
-  aaveApr,
-  totalApr,
-  lpType,
-  pointsEarned = 220,
-  yieldSources = ['aave'],
-}: {
-  poolApr: number | null;
-  aaveApr: number | null;
-  totalApr: number | null;
-  lpType: LPType;
-  pointsEarned?: number;
-  yieldSources?: Array<'aave' | 'spark'>;
-}) {
-  const [selectedInfo, setSelectedInfo] = useState<"swap" | "lending" | "points" | null>(null);
-  const isRehypo = lpType === "rehypo";
-
-  const handleRowClick = (row: "swap" | "lending" | "points") => {
-    setSelectedInfo(selectedInfo === row ? null : row);
-  };
-
+function EarningOnCard({ source, apr }: { source: 'aave' | 'spark'; apr?: number }) {
+  const cfg = EARNING_SOURCE_CONFIG[source];
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-sidebar-border/60 p-4 pb-2">
-      <h4 className="text-sm font-semibold text-foreground">Yield Breakdown</h4>
-      <div className="flex flex-col -mx-2">
-        {/* Swap APR - Clickable */}
-        <div
-          className={cn(
-            "flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors cursor-pointer",
-            selectedInfo === "swap" && "bg-muted/40"
-          )}
-          onClick={() => handleRowClick("swap")}
+    <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 surface-depth p-3">
+      <Image src={cfg.logo} alt={cfg.name} width={18} height={18} />
+      <span className="text-sm text-muted-foreground flex-1">Earning on {cfg.name}</span>
+      {apr !== undefined && apr > 0 && (
+        <span
+          className="px-2.5 py-0.5 rounded-md text-xs font-semibold font-mono"
+          style={{ backgroundColor: cfg.pillBg, color: cfg.pillText }}
         >
-          <span className="text-xs text-muted-foreground">Swap APR</span>
-          <span className="text-xs font-mono text-foreground">
-            {poolApr !== null ? `${formatNumber(poolApr, { max: 2 })}%` : "-"}
-          </span>
-        </div>
-
-        {/* Lending APY - Only shown for rehypo positions */}
-        {isRehypo && (
-          <div
-            className={cn(
-              "flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors cursor-pointer",
-              selectedInfo === "lending" && "bg-muted/40"
-            )}
-            onClick={() => handleRowClick("lending")}
-          >
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <LendingSourceIcons sources={yieldSources} />
-              Lending APY
-            </span>
-            <span className="text-xs font-mono text-foreground">
-              {aaveApr !== null ? `${formatNumber(aaveApr, { max: 2 })}%` : "-"}
-            </span>
-          </div>
-        )}
-
-        {/* Points - + left muted, Icon+Points right white */}
-        <div
-          className={cn(
-            "flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors cursor-pointer",
-            selectedInfo === "points" && "bg-muted/40"
-          )}
-          onClick={() => handleRowClick("points")}
-        >
-          <span className="text-xs text-muted-foreground">+</span>
-          <span className="flex items-center gap-1.5">
-            <PointsIcon className="w-3.5 h-3.5 text-foreground" />
-            <span className="text-xs font-mono text-foreground">Points</span>
-          </span>
-        </div>
-
-        {/* Divider */}
-        <div className="border-t border-sidebar-border/40 mx-2 my-1" />
-
-        {/* Total label: "Unified Yield" for rehypo, "Total APR" for v4 */}
-        <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-muted/40 transition-colors">
-          <span className="text-xs font-medium text-foreground">
-            {isRehypo ? "Unified Yield" : "Total APR"}
-          </span>
-          <span className="text-xs font-mono font-medium text-foreground">
-            {totalApr !== null ? `~${formatNumber(totalApr, { max: 2 })}%` : "-"}
-          </span>
-        </div>
-      </div>
-
-      {/* Info Callout - appears when a row is clicked */}
-      {selectedInfo && (
-        <div className="flex items-start gap-2 p-3 mt-1 rounded-lg bg-muted/30 border border-sidebar-border/40">
-          <svg
-            className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-xs font-medium text-foreground">
-              {YIELD_INFO[selectedInfo].title}
-            </span>
-            <span className="text-xs text-muted-foreground leading-relaxed">
-              {YIELD_INFO[selectedInfo].description}
-            </span>
-          </div>
-        </div>
+          {apr.toFixed(2)}%
+        </span>
       )}
+    </div>
+  );
+}
+
+function EarningPointsCard() {
+  return (
+    <div className="relative flex items-center gap-2.5 rounded-lg bg-muted/30 border border-sidebar-border/60 p-3 overflow-hidden">
+      <div
+        className="absolute inset-0 pointer-events-none opacity-60"
+        style={{
+          backgroundImage: `url(/patterns/button-default.svg)`,
+          backgroundSize: '200px',
+        }}
+      />
+      <PointsIcon className="w-[18px] h-[18px] text-muted-foreground relative z-10" />
+      <span className="text-sm text-muted-foreground flex-1 relative z-10">Earning Points</span>
+      <span
+        className="px-2.5 py-0.5 rounded-md text-xs font-semibold font-mono relative z-10"
+        style={{ backgroundColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.7)' }}
+      >
+        Active
+      </span>
+    </div>
+  );
+}
+
+function EarningSourcesSection({
+  yieldSources = ['aave'],
+  aprBySource,
+}: {
+  yieldSources?: Array<'aave' | 'spark'>;
+  aprBySource?: Record<'aave' | 'spark', number>;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {yieldSources.map((source) => (
+        <EarningOnCard key={source} source={source} apr={aprBySource?.[source]} />
+      ))}
+      <EarningPointsCard />
     </div>
   );
 }
@@ -863,6 +804,7 @@ export const PositionDetail = memo(function PositionDetail({
   isInRange,
   poolApr,
   aaveApr,
+  aprBySource,
   totalApr,
   lpType,
   chartDuration,
@@ -1177,12 +1119,9 @@ export const PositionDetail = memo(function PositionDetail({
         )}
 
         {/* APR */}
-        <APRSection
-          poolApr={poolApr}
-          aaveApr={aaveApr}
-          totalApr={totalApr}
-          lpType={lpType}
+        <EarningSourcesSection
           yieldSources={poolConfig?.yieldSources}
+          aprBySource={aprBySource}
         />
       </div>
 
@@ -1314,13 +1253,10 @@ export const PositionDetail = memo(function PositionDetail({
             />
           )}
 
-          {/* APR */}
-          <APRSection
-            poolApr={poolApr}
-            aaveApr={aaveApr}
-            totalApr={totalApr}
-            lpType={lpType}
+          {/* Earning on sources */}
+          <EarningSourcesSection
             yieldSources={poolConfig?.yieldSources}
+            aprBySource={aprBySource}
           />
         </div>
       </div>

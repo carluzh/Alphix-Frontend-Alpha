@@ -8,7 +8,7 @@
 import { V4PositionPlanner, V4PositionManager, Pool as V4Pool, Position as V4Position, toHex } from '@uniswap/v4-sdk';
 import { TickMath } from '@uniswap/v3-sdk';
 import { Token, Percent } from '@uniswap/sdk-core';
-import { getAddress, type Hex, parseUnits, formatUnits, encodeAbiParameters, keccak256 } from 'viem';
+import { getAddress, type Hex, formatUnits, encodeAbiParameters, keccak256 } from 'viem';
 import JSBI from 'jsbi';
 
 import { getToken, getTokenSymbolByAddress, getTokenDefinitions, type TokenSymbol } from '@/lib/pools-config';
@@ -40,9 +40,6 @@ export interface DecreasePositionData {
   enteredSide?: 'token0' | 'token1';
   feesForWithdraw?: { amount0: string; amount1: string } | null;
 }
-
-/** @deprecated Use DecreasePositionData instead */
-export type DecreasePositionParams = DecreasePositionData;
 
 export interface BuildDecreaseOptions {
   slippageBps?: number;
@@ -243,8 +240,6 @@ async function buildPlannerDecrease(
 ): Promise<BuildDecreaseTxResult> {
   const { accountAddress, chainId, networkMode } = context;
   const { token0Symbol, token1Symbol, isFullBurn, collectOnly } = params;
-  const tokenDefinitions = getTokenDefinitions(networkMode);
-
   const token0Def = getToken(token0Symbol, networkMode);
   const token1Def = getToken(token1Symbol, networkMode);
 

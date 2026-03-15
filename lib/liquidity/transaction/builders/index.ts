@@ -6,10 +6,8 @@
 
 export {
   buildIncreaseLiquidityTx,
-  prepareIncreasePermit,
   parseTokenIdFromPosition,
   type IncreasePositionData,
-  type IncreasePositionParams,
   type BuildIncreaseOptions,
   type BuildIncreaseTxResult,
   type BuildIncreaseTxContext,
@@ -20,7 +18,6 @@ export {
   buildDecreaseLiquidityTx,
   buildCollectFeesTx,
   type DecreasePositionData,
-  type DecreasePositionParams,
   type BuildDecreaseOptions,
   type BuildDecreaseTxResult,
   type BuildDecreaseTxContext,

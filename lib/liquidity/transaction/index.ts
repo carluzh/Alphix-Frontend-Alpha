@@ -7,10 +7,8 @@
 // Transaction builders
 export {
   buildIncreaseLiquidityTx,
-  prepareIncreasePermit,
   parseTokenIdFromPosition,
   type IncreasePositionData,
-  type IncreasePositionParams,
   type BuildIncreaseOptions,
   type BuildIncreaseTxResult,
   type BuildIncreaseTxContext,
@@ -18,7 +16,6 @@ export {
   buildDecreaseLiquidityTx,
   buildCollectFeesTx,
   type DecreasePositionData,
-  type DecreasePositionParams,
   type BuildDecreaseOptions,
   type BuildDecreaseTxResult,
   type BuildDecreaseTxContext,
@@ -60,11 +57,7 @@ export {
   handleSignatureStep,
   handlePositionTransactionStep,
   handlePositionTransactionBatchedStep,
-  getLiquidityTransactionInfo,
   getLiquidityTxRequest,
-  getApprovalTransactionInfo,
-  getPermitTransactionInfo,
-  checkApprovalAmount,
   // Execution store
   useExecutionStore,
   selectIsLocked,
@@ -75,6 +68,16 @@ export {
   type ExecutionStore,
 } from './executor'
 
+// Permit2 shared utilities
+export {
+  checkERC20Allowances,
+  buildPermitBatchData,
+  buildPermitBatchForSDK,
+  type TokenForPermitCheck,
+  type ERC20ApprovalResult,
+  type PermitBatchDataResult,
+} from './permit2-checks'
+
 // Context builders
 export {
   buildLiquidityTxContext,
@@ -82,7 +85,6 @@ export {
   buildIncreasePositionContext,
   buildDecreasePositionContext,
   buildCollectFeesContext,
-  validateLiquidityContext,
   type MintTxApiResponse,
   type TokenConfig,
   type BuildLiquidityContextParams,

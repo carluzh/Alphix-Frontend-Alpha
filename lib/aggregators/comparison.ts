@@ -95,7 +95,7 @@ export function compareQuotes(
  * Calculate the percentage difference between two quotes
  * Returns positive if kyber is better, negative if alphix is better
  */
-export function calculateQuoteDifference(
+function calculateQuoteDifference(
   alphixOutput: bigint,
   kyberOutput: bigint
 ): number {
@@ -123,8 +123,7 @@ export function calculateQuoteDifference(
  */
 export function selectBestQuote(
   alphixQuote: AggregatorQuote | null,
-  kyberQuote: AggregatorQuote | null,
-  _userSlippageBps?: number
+  kyberQuote: AggregatorQuote | null
 ): QuoteComparison {
   // Fixed 100bps (1%) Alphix preference
   return compareQuotes(alphixQuote, kyberQuote, 100);

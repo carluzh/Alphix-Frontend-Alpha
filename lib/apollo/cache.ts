@@ -1,6 +1,6 @@
 import { FieldFunctionOptions, InMemoryCache } from '@apollo/client'
-import { Reference, relayStylePagination, StoreObject } from '@apollo/client/utilities'
-import { getAddress, isAddress } from 'viem'
+import { Reference, StoreObject } from '@apollo/client/utilities'
+import { isAddress } from 'viem'
 
 export function setupSharedApolloCache(): InMemoryCache {
   return new InMemoryCache({
@@ -141,17 +141,10 @@ function ignoreIncomingNullValue(
   return mergeObjects(existing, incoming)
 }
 
-function incomingOrExistingArray(
-  existing: unknown[] | undefined,
-  incoming: unknown[] | undefined,
-): unknown[] | undefined {
-  return incoming ?? existing
-}
-
-export function normalizeTokenAddressForCache(address: string): string
-export function normalizeTokenAddressForCache(address: null): null
-export function normalizeTokenAddressForCache(address: string | null): string | null
-export function normalizeTokenAddressForCache(address: string | null): string | null {
+function normalizeTokenAddressForCache(address: string): string
+function normalizeTokenAddressForCache(address: null): null
+function normalizeTokenAddressForCache(address: string | null): string | null
+function normalizeTokenAddressForCache(address: string | null): string | null {
   // Our backend would sometimes return checksummed addresses and sometimes lowercase addresses.
   // In order to improve local cache hits, avoid unnecessary network requests, and avoid having duplicate `Token` items stored in the cache,
   // we use lowercase addresses when accessing the `Token` object from our local cache.

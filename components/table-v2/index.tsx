@@ -411,23 +411,4 @@ export function Table<T extends RowData>({
 
 // Re-export components for external use
 export { Cell, HeaderCell } from './Cell'
-export { TableSizeProvider, useTableSize } from './TableSizeProvider'
-export { ROW_HEIGHT_DESKTOP, ROW_HEIGHT_MOBILE_WEB } from './constants'
-export {
-  breakpoints,
-  CellContainer,
-  DataRow,
-  HeaderRow,
-  TableBodyContainer,
-  TableContainer,
-  TableRowLink,
-  TableText,
-  EllipsisText,
-  HeaderArrow,
-  HeaderSortText,
-  ClickableHeaderRow,
-  FilterHeaderRow,
-} from './styled'
-export { getColumnSizingStyles, getCommonPinningStyles, getDefaultColors, zIndexes, padding } from './utils'
-export type { TableBodyProps } from './types'
-export type { TableColors } from './utils'
+export { HeaderArrow, HeaderSortText, ClickableHeaderRow } from './styled'

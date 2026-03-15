@@ -89,23 +89,43 @@ const GET_USER_HOOK_POSITIONS_QUERY = `
   }
 `;
 
-const GET_USER_LEGACY_POSITIONS_QUERY = `
-  query GetUserPositions($owner: Bytes!) {
-    positions(first: 200, orderBy: tokenId, orderDirection: desc, where: { owner: $owner }) {
-      id
-      tokenId
-      owner
-      createdAtTimestamp
-    }
-  }
-`;
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function getPoolIdFromPosition(pos: SubgraphPosition): string {
     return pos.poolId || '';
+}
+
+/**
+ * Derive pool ID hex from a pool key, falling back to subgraph-provided poolId.
+ * If subgraphPoolId is already a valid hex string, returns it as-is.
+ * Otherwise, ABI-encodes the pool key tuple and keccak256-hashes it.
+ */
+function derivePoolIdHex(
+    poolKey: { currency0: string; currency1: string; fee: number; tickSpacing: number; hooks: string },
+    subgraphPoolId: string
+): `0x${string}` {
+    if (subgraphPoolId && subgraphPoolId.startsWith('0x')) {
+        return subgraphPoolId as `0x${string}`;
+    }
+    const encoded = encodeAbiParameters(
+        [{ type: 'tuple', components: [
+            { name: 'currency0', type: 'address' },
+            { name: 'currency1', type: 'address' },
+            { name: 'fee', type: 'uint24' },
+            { name: 'tickSpacing', type: 'int24' },
+            { name: 'hooks', type: 'address' },
+        ]}],
+        [{
+            currency0: poolKey.currency0 as `0x${string}`,
+            currency1: poolKey.currency1 as `0x${string}`,
+            fee: poolKey.fee,
+            tickSpacing: poolKey.tickSpacing,
+            hooks: poolKey.hooks as `0x${string}`,
+        }]
+    );
+    return keccak256(encoded);
 }
 
 function parseTokenIdFromHexId(idHex: string): bigint | null {
@@ -199,25 +219,10 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
             // Step 2: Determine unique pool IDs and batch fetch pool states
             const poolIdMap = new Map<string, Hex>();
             for (const { r, details } of positionsWithDetails) {
-                let poolIdHex = getPoolIdFromPosition(r) as Hex;
-                if (!poolIdHex || !poolIdHex.startsWith('0x')) {
-                    const encodedPoolKey = encodeAbiParameters([
-                        { type: 'tuple', components: [
-                            { name: 'currency0', type: 'address' },
-                            { name: 'currency1', type: 'address' },
-                            { name: 'fee', type: 'uint24' },
-                            { name: 'tickSpacing', type: 'int24' },
-                            { name: 'hooks', type: 'address' },
-                        ]}
-                    ], [{
-                        currency0: details.poolKey.currency0 as `0x${string}`,
-                        currency1: details.poolKey.currency1 as `0x${string}`,
-                        fee: Number(details.poolKey.fee),
-                        tickSpacing: Number(details.poolKey.tickSpacing),
-                        hooks: details.poolKey.hooks as `0x${string}`,
-                    }]);
-                    poolIdHex = keccak256(encodedPoolKey) as Hex;
-                }
+                const poolIdHex = derivePoolIdHex(
+                    { currency0: details.poolKey.currency0, currency1: details.poolKey.currency1, fee: Number(details.poolKey.fee), tickSpacing: Number(details.poolKey.tickSpacing), hooks: details.poolKey.hooks },
+                    getPoolIdFromPosition(r)
+                ) as Hex;
                 poolIdMap.set(poolIdHex, poolIdHex);
             }
 
@@ -259,25 +264,10 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
                 const feeMetadata: Array<{ positionId: string; poolIdBytes32: `0x${string}`; tickLower: number; tickUpper: number; salt: `0x${string}` }> = [];
 
                 for (const { r, details } of positionsWithDetails) {
-                    let poolIdBytes32 = getPoolIdFromPosition(r) as `0x${string}`;
-                    if (!poolIdBytes32 || !poolIdBytes32.startsWith('0x')) {
-                        const encodedPoolKey = encodeAbiParameters([
-                            { type: 'tuple', components: [
-                                { name: 'currency0', type: 'address' },
-                                { name: 'currency1', type: 'address' },
-                                { name: 'fee', type: 'uint24' },
-                                { name: 'tickSpacing', type: 'int24' },
-                                { name: 'hooks', type: 'address' },
-                            ]}
-                        ], [{
-                            currency0: details.poolKey.currency0 as `0x${string}`,
-                            currency1: details.poolKey.currency1 as `0x${string}`,
-                            fee: Number(details.poolKey.fee),
-                            tickSpacing: Number(details.poolKey.tickSpacing),
-                            hooks: details.poolKey.hooks as `0x${string}`,
-                        }]);
-                        poolIdBytes32 = keccak256(encodedPoolKey) as `0x${string}`;
-                    }
+                    const poolIdBytes32 = derivePoolIdHex(
+                        { currency0: details.poolKey.currency0, currency1: details.poolKey.currency1, fee: Number(details.poolKey.fee), tickSpacing: Number(details.poolKey.tickSpacing), hooks: details.poolKey.hooks },
+                        getPoolIdFromPosition(r)
+                    );
 
                     const tokenIdStr = r.id.includes('-') ? r.id.split('-').pop()! : r.id;
                     const salt = `0x${BigInt(tokenIdStr).toString(16).padStart(64, '0')}` as `0x${string}`;
@@ -348,26 +338,10 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
                         continue;
                     }
 
-                    let poolIdHex = getPoolIdFromPosition(r) as Hex;
-                    if (!poolIdHex || !poolIdHex.startsWith('0x')) {
-                        const encodedPoolKey = encodeAbiParameters([
-                            { type: 'tuple', components: [
-                                { name: 'currency0', type: 'address' },
-                                { name: 'currency1', type: 'address' },
-                                { name: 'fee', type: 'uint24' },
-                                { name: 'tickSpacing', type: 'int24' },
-                                { name: 'hooks', type: 'address' },
-                            ]}
-                        ], [{
-                            currency0: details.poolKey.currency0 as `0x${string}`,
-                            currency1: details.poolKey.currency1 as `0x${string}`,
-                            fee: Number(details.poolKey.fee),
-                            tickSpacing: Number(details.poolKey.tickSpacing),
-                            hooks: details.poolKey.hooks as `0x${string}`,
-                        }]);
-                        poolIdHex = keccak256(encodedPoolKey) as Hex;
-                    }
-                    const poolIdStr = poolIdHex;
+                    const poolIdStr = derivePoolIdHex(
+                        { currency0: details.poolKey.currency0, currency1: details.poolKey.currency1, fee: Number(details.poolKey.fee), tickSpacing: Number(details.poolKey.tickSpacing), hooks: details.poolKey.hooks },
+                        getPoolIdFromPosition(r)
+                    );
                     const state = stateCache.get(poolIdStr);
                     if (!state) {
                         console.warn('[fetchUserPositions] no pool state found for', poolIdStr, '- skipping');

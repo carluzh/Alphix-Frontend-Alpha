@@ -1,10 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getAddress, encodeFunctionData, type Address, type Hex, type Abi, TransactionExecutionError } from 'viem';
+import { getAddress, type Address, type Hex, TransactionExecutionError } from 'viem';
 import { validateChainId, validateAddress, checkTxRateLimit } from '../../../lib/tx-validation';
 import { safeParseUnits } from '../../../lib/liquidity/utils/parsing/amountParsing';
 import { Token } from '@uniswap/sdk-core';
 import { RoutePlanner, CommandType } from '@uniswap/universal-router-sdk';
-import { Pool, Route as V4Route, PoolKey, V4Planner, Actions, encodeRouteToPath } from '@uniswap/v4-sdk';
+import { PoolKey, V4Planner, Actions } from '@uniswap/v4-sdk';
 import { BigNumber } from 'ethers'; // For V4Planner compatibility if it expects Ethers BigNumber
 
 import { createNetworkClient } from '../../../lib/viemClient';
@@ -16,21 +16,16 @@ import {
     getPoolConfigForTokens,
     createTokenSDK,
     createPoolKeyFromConfig,
-    createCanonicalPoolKey,
     getToken,
     NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
 // State overrides for rehypothecated pools (Pool Manager has limited on-chain balance)
 import { needsUsdsStateOverride, getSwapSimulationStateOverrides } from '../../../lib/swap/quote-state-override';
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
-import { getUniversalRouterAddress, getStateViewAddress } from '../../../lib/pools-config';
-import { findBestRoute, SwapRoute, routeToString } from '@/lib/swap/routing-engine';
+import { getUniversalRouterAddress } from '../../../lib/pools-config';
+import { findBestRoute, SwapRoute } from '@/lib/swap/routing-engine';
 import { resolveNetworkMode, type NetworkMode } from '../../../lib/network-mode';
-import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
-import { ethers } from 'ethers';
-
-// Define MaxUint160 here as well
-const MaxUint160 = BigInt('0xffffffffffffffffffffffffffffffffffffffff');
+import { classifySwapError } from '@/lib/swap/error-classification';
 
 // --- Helper: Convert human-readable price to sqrtPriceLimitX96 ---
 function priceToSqrtPriceX96(price: number, token0: Token, token1: Token): bigint {
@@ -73,13 +68,6 @@ function calculatePriceLimitX96(
     }
     
     return priceToSqrtPriceX96(priceT1perT0, token0, token1);
-}
-
-// --- Helper: Determine swap direction ---
-function determineSwapDirection(inputToken: Token, outputToken: Token): boolean {
-    // Returns true if token0 -> token1 (zeroForOne = true)
-    // Returns false if token1 -> token0 (zeroForOne = false)
-    return inputToken.sortsBefore(outputToken);
 }
 
 // --- Guide-Exact Helper: encodeMultihopExactInPath ---
@@ -670,8 +658,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
               : buildResponse.data as any; // Fallback: build response has amountIn/amountOut
 
             // Step 3: Simulate the transaction to catch real reverts before user signs.
-            // NOTE: By this point the user has already approved the Kyberswap router
-            // (approval step completed before swap step in useSwapStepExecutor).
+            // NOTE: By this point the user has already approved the Kyberswap router.
             try {
                 await publicClient.call({
                     account: getAddress(userAddress) as Address,
@@ -954,47 +941,10 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         let errorMessage = "Failed to build transaction.";
 
         if (error?.message) {
-            const errorStr = error.message.toLowerCase();
-            const swapType = req.body?.swapType;
-
-            // Check for smart contract call exceptions
-            if (errorStr.includes('call_exception') ||
-                errorStr.includes('call revert exception') ||
-                errorStr.includes('0x6190b2b0') || errorStr.includes('0x486aa307')) {
-                errorMessage = swapType === 'ExactOut'
-                    ? 'Amount exceeds available liquidity'
-                    : 'Not enough liquidity';
-            }
-            // Check for liquidity depth errors
-            else if (errorStr.includes('insufficient liquidity') ||
-                     errorStr.includes('not enough liquidity') ||
-                     errorStr.includes('pool has no liquidity')) {
-                errorMessage = 'Not enough liquidity';
-            }
-            // Check for slippage-related errors
-            else if (errorStr.includes('price impact too high') ||
-                     errorStr.includes('slippage') ||
-                     errorStr.includes('price moved too much')) {
-                errorMessage = 'Price impact too high';
-            }
-            // Nonce errors (S9)
-            else if (errorStr.includes('nonce') || errorStr.includes('invalid signature')) {
-                errorMessage = 'Permit signature invalid or expired. Please try again.';
-            }
-            // Generic revert
-            else if (errorStr.includes('revert') || errorStr.includes('execution reverted')) {
-                errorMessage = swapType === 'ExactOut'
-                    ? 'Cannot fulfill exact output amount'
-                    : 'Transaction would revert';
-            }
-            // Balance errors
-            else if (errorStr.includes('exceeds balance') ||
-                     errorStr.includes('insufficient balance') ||
-                     errorStr.includes('amount too large')) {
-                errorMessage = 'Amount exceeds available liquidity';
-            }
-            // Keep specific error for viem TransactionExecutionError
-            else if (error instanceof TransactionExecutionError) {
+            const classified = classifySwapError(error.message, req.body?.swapType);
+            if (classified) {
+                errorMessage = classified;
+            } else if (error instanceof TransactionExecutionError) {
                 errorMessage = error.shortMessage || error.message || errorMessage;
             }
         } else if (error instanceof TransactionExecutionError) {

@@ -135,7 +135,7 @@ function DecreaseLiquidityInner({
   // Success handler
   const handleSuccess = useCallback((results: Map<number, { txHash?: string }>) => {
     const isFullBurn = percentRef.current >= 99;
-    const msg = isFullBurn ? "Position closed successfully!" : "Liquidity withdrawn successfully!";
+    const msg = isFullBurn ? "Position closed" : "Liquidity withdrawn";
 
     // Extract last tx hash for explorer link
     let hash: string | undefined;
@@ -145,7 +145,7 @@ function DecreaseLiquidityInner({
 
     if (hash) {
       toast.success(msg, {
-        action: { label: "View", onClick: () => window.open(getExplorerTxUrl(hash!), "_blank") },
+        action: { label: "View transaction", onClick: () => window.open(getExplorerTxUrl(hash!), "_blank") },
       });
     } else {
       toast.success(msg);

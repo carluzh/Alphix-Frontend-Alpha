@@ -6,6 +6,7 @@ import { Table, Cell, HeaderCell, ClickableHeaderRow, HeaderArrow, HeaderSortTex
 import Image from "next/image";
 import Link from "next/link";
 import { Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { motion, useReducedMotion } from "framer-motion";
 
@@ -23,6 +24,8 @@ import { APRBadge } from "@/components/liquidity/APRBadge";
 import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { useWSPools } from "@/lib/websocket";
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
+import { ProtocolStatsHero } from "./components/ProtocolStatsHero";
+import { useProtocolStats } from "./hooks/useProtocolStats";
 
 /**
  * PoolRowPrefetchWrapper - Wraps pool table rows with hover prefetch and stagger animation
@@ -116,12 +119,6 @@ const formatUSD = (value: number) => {
   }).format(value);
 };
 
-const formatAPR = (aprValue: number) => {
-  if (!isFinite(aprValue)) return '—';
-  if (aprValue < 1000) return `${aprValue.toFixed(2)}%`;
-  return `${(aprValue / 1000).toFixed(2)}K%`;
-};
-
 export default function LiquidityPage() {
   // Pool config (static: tokens, icons, pair names) — includes all chains
   const poolConfigs = useMemo(() => generatePoolsFromConfig(), []);
@@ -129,6 +126,9 @@ export default function LiquidityPage() {
   // Pool metrics from WebSocket (real-time: TVL, volume, fees, APR)
   // Pattern: Initial REST from api.alphix.fi → WebSocket updates
   const { pools: wsPoolsData, poolsMap: wsPoolsMap, isLoading: isLoadingPools } = useWSPools();
+
+  // Protocol-level aggregate stats for the hero section
+  const protocolStats = useProtocolStats({ pools: wsPoolsData, isLoading: isLoadingPools });
 
   // Merge pool config with WebSocket metrics
   const poolsData = useMemo(() => {
@@ -192,25 +192,12 @@ export default function LiquidityPage() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Chain filter state — all chains active by default
-  const CHAIN_FILTERS: { mode: NetworkMode; label: string; icon: string }[] = [
-    { mode: 'base', label: 'Base', icon: '/chains/base.svg' },
-    { mode: 'arbitrum', label: 'Arbitrum', icon: '/chains/arbitrum.svg' },
-  ];
-  const [activeChains, setActiveChains] = useState<Set<NetworkMode>>(
-    () => new Set(CHAIN_FILTERS.map(c => c.mode))
-  );
-  const toggleChain = useCallback((mode: NetworkMode) => {
-    setActiveChains(prev => {
-      const next = new Set(prev);
-      if (next.has(mode)) {
-        if (next.size > 1) next.delete(mode);
-      } else {
-        next.add(mode);
-      }
-      return next;
-    });
-  }, []);
+  // All chains shown — constant set for filteredPools compatibility
+  const activeChains = useMemo(() => new Set<NetworkMode>(['base', 'arbitrum']), []);
+
+  // Pool type filter
+  type PoolTypeFilter = 'all' | 'Stable' | 'Volatile';
+  const [activePoolType, setActivePoolType] = useState<PoolTypeFilter>('all');
 
   // Sorting state
   type SortField = 'tvl' | 'volume24h' | 'fees24h' | 'apr';
@@ -251,6 +238,7 @@ export default function LiquidityPage() {
   const filteredPools = useMemo(() => {
     let poolsWithLinks = poolsWithPositionCounts
       .filter(pool => activeChains.has(pool.networkMode ?? 'base'))
+      .filter(pool => activePoolType === 'all' || pool.type === activePoolType)
       .filter(pool => {
         if (!tokenSearch.trim()) return true;
         const search = tokenSearch.toLowerCase().trim();
@@ -285,7 +273,7 @@ export default function LiquidityPage() {
       const bVal = getSortValue(b);
       return sortAscending ? aVal - bVal : bVal - aVal;
     });
-  }, [poolsWithPositionCounts, sortMethod, sortAscending, activeChains, getPoolAaveApy, tokenSearch]);
+  }, [poolsWithPositionCounts, sortMethod, sortAscending, activeChains, activePoolType, getPoolAaveApy, tokenSearch]);
 
 
   const columns: ColumnDef<Pool & { link: string }>[] = useMemo(() => {
@@ -436,22 +424,6 @@ export default function LiquidityPage() {
     return { basePools: base, arbitrumPools: arb };
   }, [filteredPools]);
 
-  // Aggregate stats across ALL visible pools (both sections)
-  const poolAggregates = React.useMemo(() => {
-    let totalTVL = 0;
-    let totalVol24h = 0;
-    let totalFees24h = 0;
-    for (const p of filteredPools || []) {
-      const tvl = (p as any).tvlUSD;
-      const vol = (p as any).volume24hUSD;
-      const fees = (p as any).fees24hUSD;
-      if (typeof tvl === 'number' && isFinite(tvl)) totalTVL += tvl;
-      if (typeof vol === 'number' && isFinite(vol)) totalVol24h += vol;
-      if (typeof fees === 'number' && isFinite(fees)) totalFees24h += fees;
-    }
-    return { totalTVL, totalVol24h, totalFees24h, isLoading: isLoadingPools };
-  }, [filteredPools, isLoadingPools]);
-
   // Prefetch wrapper for pool rows - prefetches data on hover with stagger animation
   const poolRowWrapper = useCallback(
     (row: Row<Pool & { link: string }>, content: React.ReactNode) => {
@@ -469,62 +441,59 @@ export default function LiquidityPage() {
 
   return (
     <div className="flex flex-col gap-4 p-3 sm:p-6 overflow-x-hidden w-full max-w-[1200px] mx-auto">
-      {/* Header Section */}
-      <div className="flex flex-col gap-2 sm:gap-4">
-        {/* Title - hidden on mobile */}
-        <div className="hidden sm:block">
-          <h2 className="text-xl font-semibold">Unified Pools</h2>
-          <p className="text-sm text-muted-foreground">Explore and manage your liquidity positions.</p>
+      {/* Protocol Stats Hero */}
+      <ProtocolStatsHero stats={protocolStats} />
+
+      {/* Toolbar: All Pools label (left) + Search + New Position (right) */}
+      <div className="flex items-center justify-between mt-4">
+        {/* Pool type filter */}
+        <div className="flex items-center gap-1">
+          {([
+            { id: 'all' as PoolTypeFilter, label: 'All Pools' },
+            { id: 'Stable' as PoolTypeFilter, label: 'Stable' },
+            { id: 'Volatile' as PoolTypeFilter, label: 'Volatile' },
+          ]).map((opt) => (
+            <button
+              key={opt.id}
+              onClick={() => setActivePoolType(opt.id)}
+              className={cn(
+                "h-9 px-4 text-sm font-medium rounded-lg transition-colors",
+                activePoolType === opt.id
+                  ? "text-foreground bg-muted/30 border border-sidebar-border"
+                  : "text-muted-foreground hover:text-foreground",
+                "focus:outline-none"
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
 
-        {/* Stats + Button - stacked on mobile, inline on desktop */}
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-          {/* Stats */}
-          <div className="flex items-center gap-2 sm:gap-4 w-fit rounded-lg border border-dashed border-sidebar-border/60 bg-muted/10 p-1.5 sm:p-2.5">
-            <div className="flex flex-col min-w-[81px] sm:min-w-[108px] px-3 sm:px-5 py-1.5 sm:py-2 rounded-md bg-muted/30 border border-sidebar-border/60">
-              <span className="text-xs sm:text-sm text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Tvl</span>
-              <span className="text-base sm:text-lg font-medium">
-                {poolAggregates.isLoading ? <span className="inline-block h-5 sm:h-6 w-16 sm:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalTVL)}
-              </span>
-            </div>
-            <div className="flex flex-col min-w-[81px] sm:min-w-[108px] px-3 sm:px-5 py-1.5 sm:py-2 rounded-md bg-muted/30 border border-sidebar-border/60">
-              <span className="text-xs sm:text-sm text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Volume</span>
-              <span className="text-base sm:text-lg font-medium">
-                {poolAggregates.isLoading ? <span className="inline-block h-5 sm:h-6 w-16 sm:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalVol24h)}
-              </span>
-            </div>
-            <div className="flex flex-col min-w-[81px] sm:min-w-[108px] px-3 sm:px-5 py-1.5 sm:py-2 rounded-md bg-muted/30 border border-sidebar-border/60">
-              <span className="text-xs sm:text-sm text-muted-foreground font-light mb-0.5" style={{ fontFamily: 'Consolas, monospace' }}>Fees</span>
-              <span className="text-base sm:text-lg font-medium">
-                {poolAggregates.isLoading ? <span className="inline-block h-5 sm:h-6 w-16 sm:w-20 bg-muted/60 rounded animate-pulse" /> : formatUSD(poolAggregates.totalFees24h)}
-              </span>
-            </div>
-          </div>
-
-          {/* Search + New Position button (desktop only) */}
-          <div className="hidden sm:flex items-center justify-end gap-3 flex-shrink-0">
-            <TokenSearchBar
-              value={tokenSearch}
-              onValueChange={handleTokenSearchChange}
-              placeholder="Search tokens..."
-            />
-            <Button
-              asChild
-              className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
-            >
-              <Link href="/liquidity/add?from=pools">
-                <Plus className="h-4 w-4" strokeWidth={2.5} />
-                New position
-              </Link>
-            </Button>
-          </div>
+        {/* Search + New Position (desktop) */}
+        <div className="hidden sm:flex items-center gap-3">
+          <TokenSearchBar
+            value={tokenSearch}
+            onValueChange={handleTokenSearchChange}
+            placeholder="Search tokens..."
+            multiChain
+          />
+          <Button
+            asChild
+            className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
+          >
+            <Link href="/liquidity/add?from=pools">
+              <Plus className="h-4 w-4" strokeWidth={2.5} />
+              New position
+            </Link>
+          </Button>
         </div>
       </div>
 
-      {/* Table Sections — split by chain */}
+      <hr className="border-sidebar-border my-0" />
+
+      {/* Pool Tables */}
       {isMobile ? (
         <div className="flex flex-col gap-3">
-          {/* Mobile: chain-grouped sections */}
           {activeChains.has('base') && basePools.length > 0 && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 px-1">
@@ -556,8 +525,7 @@ export default function LiquidityPage() {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-6">
-          {/* Base section */}
+        <div className="flex flex-col gap-3">
           {activeChains.has('base') && basePools.length > 0 && (
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2 px-1">
@@ -575,7 +543,6 @@ export default function LiquidityPage() {
             </div>
           )}
 
-          {/* Arbitrum section */}
           {activeChains.has('arbitrum') && arbitrumPools.length > 0 && (
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2 px-1">

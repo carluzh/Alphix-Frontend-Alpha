@@ -1,7 +1,7 @@
 // Network mode utilities - SSR-safe (no "use client" directive)
 // This file can be imported by both client and server code
 
-import { CHAIN_REGISTRY, ALL_MODES, type ChainConfig } from './chain-registry';
+import { CHAIN_REGISTRY, ALL_MODES } from './chain-registry';
 
 /**
  * NetworkMode identifies which chain the app is operating on.
@@ -97,13 +97,8 @@ export function resolveNetworkMode(req: {
   return 'base';
 }
 
-// --- Storage helpers (to be removed in Phase 4) ---
-
 export const NETWORK_STORAGE_KEY = 'alphix-network-mode';
 export const NETWORK_COOKIE_NAME = 'alphix-network-mode';
-
-/** Valid NetworkMode values for cookies/storage */
-const VALID_MODES: NetworkMode[] = ALL_MODES;
 
 /**
  * Parse network mode from a cookie string (for server-side usage)
@@ -111,7 +106,7 @@ const VALID_MODES: NetworkMode[] = ALL_MODES;
 export function getNetworkModeFromCookies(cookieString: string | undefined | null): NetworkMode | null {
   if (!cookieString) return null;
   const match = cookieString.match(new RegExp(`(?:^|;\\s*)${NETWORK_COOKIE_NAME}=([^;]*)`));
-  if (match && VALID_MODES.includes(match[1] as NetworkMode)) {
+  if (match && ALL_MODES.includes(match[1] as NetworkMode)) {
     return match[1] as NetworkMode;
   }
   return null;
@@ -130,9 +125,5 @@ export function getStoredChainId(): number {
   return chainIdForMode(getStoredNetworkMode());
 }
 
-export function isBaseMode(): boolean {
-  return getStoredNetworkMode() === 'base';
-}
-
 // Re-export registry types and values for convenience
-export { CHAIN_REGISTRY, ALL_MODES, type ChainConfig } from './chain-registry';
+export { CHAIN_REGISTRY, ALL_MODES } from './chain-registry';

@@ -20,7 +20,6 @@ import type { PositionPointsData } from '@/types';
 /**
  * Props for MinMaxRange component.
  * Simplified - uses pre-formatted prices instead of SDK Price objects.
- * TODO: Replace with Uniswap SDK Position when full SDK integration is done.
  */
 export interface LiquidityPositionMinMaxRangeProps {
   /** Pool tick spacing for at-limit detection */

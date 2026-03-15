@@ -8,7 +8,6 @@ import { IconCheck, IconXmark } from 'nucleo-micro-bold-essential';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Sheet,
   SheetContent,
@@ -462,11 +461,6 @@ export function TokenSelector({
   useEffect(() => {
     filteredTokensRef.current = { key: filteredTokensKey, value: filteredAvailableTokens };
   }, [filteredTokensKey, filteredAvailableTokens]);
-
-  const tokenPricesKey = useMemo(
-    () => Object.entries(tokenPrices).map(([k, v]) => `${k}:${v}`).join('|'),
-    [tokenPrices]
-  );
 
   // Fetch prices once when modal opens — don't re-fetch while open
   const hasFetchedPricesRef = useRef(false);

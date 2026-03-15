@@ -42,8 +42,6 @@ export type {
   ZapPSMSwapStep,
   ZapPoolSwapStep,
   ZapStep,
-  UseZapDepositParams,
-  UseZapDepositReturn,
   UseZapPreviewParams,
   ZapErrorCode,
 } from './types';
@@ -113,7 +111,6 @@ export {
   calculateMinOutputWithSlippage,
   selectSwapRoute,
   getPoolQuote,
-  compareRoutes,
   type PSMQuoteResult,
   type RouteSelectionParams,
   type RouteSelectionResult,
@@ -126,11 +123,6 @@ export {
 
 export {
   generateZapSteps,
-  handleZapSwapApprovalStep,
-  handleZapPSMSwapStep,
-  handleZapPoolSwapStep,
-  ZAP_STEP_HANDLERS,
-  isZapStep,
   type GenerateZapStepsParams,
   type GenerateZapStepsResult,
 } from './execution';
@@ -139,7 +131,7 @@ export {
 // ABI
 // =============================================================================
 
-export { PSM_ABI, PSM3_ABI, type PSM3Abi } from './abi/psmABI';
+export { PSM3_ABI, type PSM3Abi } from './abi/psmABI';
 
 // =============================================================================
 // HOOKS
@@ -150,18 +142,6 @@ export {
   isPreviewFresh,
   useZapApprovals,
   getNeededApprovalDescriptions,
-  useZapDeposit,
-  estimateZapGas,
-  formatZapPreviewForDisplay,
   type UseZapApprovalsParams,
   type UseZapApprovalsReturn,
 } from './hooks';
-
-// =============================================================================
-// UTILITIES
-// =============================================================================
-
-export {
-  reportZapDust,
-  type DustReport,
-} from './utils';

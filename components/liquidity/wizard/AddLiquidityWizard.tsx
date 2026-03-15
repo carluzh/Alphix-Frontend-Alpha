@@ -60,16 +60,6 @@ function WizardStepRenderer() {
   );
 }
 
-// Toolbar component with settings
-function WizardToolbar() {
-  // TODO: Add settings dropdown for slippage, deadline, etc.
-  return (
-    <div className="flex items-center gap-2">
-      {/* Settings button would go here */}
-    </div>
-  );
-}
-
 // Inner wizard content (needs context)
 function WizardContent() {
   const { currentStep } = useAddLiquidityContext();
@@ -90,7 +80,6 @@ function WizardContent() {
     <>
       <FormWrapper
         title={title}
-        toolbar={<WizardToolbar />}
       >
         <WizardStepRenderer />
       </FormWrapper>

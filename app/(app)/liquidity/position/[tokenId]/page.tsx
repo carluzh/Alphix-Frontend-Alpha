@@ -91,6 +91,7 @@ function PositionDetailContent({ tokenId, fromPage, networkModeOverride }: { tok
     // APR data
     poolApr,
     aaveApr,
+    aprBySource,
     totalApr,
     // LP Type
     lpType,
@@ -140,6 +141,7 @@ function PositionDetailContent({ tokenId, fromPage, networkModeOverride }: { tok
       isInRange={isInRange}
       poolApr={poolApr}
       aaveApr={aaveApr}
+      aprBySource={aprBySource}
       totalApr={totalApr}
       lpType={lpType}
       chartDuration={chartDuration}

@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-
-const UNISWAP_API_URL = 'https://interface.gateway.uniswap.org/v2/data.v1.DataApiService/GetPortfolioChart'
+import { UNISWAP_DATA_API_PORTFOLIO_CHART } from '@/lib/uniswap/gateway'
+import { ALL_CHAIN_IDS } from '@/lib/chain-registry'
 
 const CHART_PERIOD_MAP: Record<string, number> = {
   'HOUR': 1,
@@ -10,7 +10,7 @@ const CHART_PERIOD_MAP: Record<string, number> = {
   'YEAR': 5,
 }
 
-const SUPPORTED_CHAIN_IDS = ['8453', '42161']
+const SUPPORTED_CHAIN_IDS = ALL_CHAIN_IDS.map(String)
 
 interface PortfolioChartPoint {
   timestamp: number
@@ -49,7 +49,7 @@ export default async function handler(
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 30000) // 30s timeout
 
-    const response = await fetch(UNISWAP_API_URL, {
+    const response = await fetch(UNISWAP_DATA_API_PORTFOLIO_CHART, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -16,11 +16,11 @@ import React, { createContext, useContext, useState, useMemo, useCallback, type 
 import { useAccount } from "wagmi";
 import { formatUnits, parseUnits, type Address, type Hash } from "viem";
 import * as Sentry from "@sentry/nextjs";
-import { getTokenDefinitions, getPoolById, type TokenSymbol } from "@/lib/pools-config";
+import { getTokenDefinitions, getPoolById, getTokenSymbolByAddress, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
-import { getTokenSymbolByAddress, debounce } from "@/lib/utils";
+import { debounce } from "@/lib/utils";
 import { useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
 import { getStoredUserSettings } from "@/hooks/useUserSettings";
 
@@ -40,7 +40,7 @@ import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
 // Unified Yield withdraw hook for ReHypothecation positions
 import { useUnifiedYieldWithdraw } from "@/lib/liquidity/unified-yield/hooks/useUnifiedYieldWithdraw";
 import { buildUnifiedYieldWithdrawTx, calculateSharesFromPercentage } from "@/lib/liquidity/unified-yield/buildUnifiedYieldWithdrawTx";
-import type { WithdrawPercentage } from "@/lib/liquidity/unified-yield/types";
+type WithdrawPercentage = 25 | 50 | 75 | 100;
 
 export type DecreaseTxStep = "input" | "withdraw";
 

@@ -20,7 +20,7 @@ function calculateMarketPriceRatio(
 }
 
 // Deviation thresholds (percentages)
-export const DEVIATION_THRESHOLDS = {
+const DEVIATION_THRESHOLDS = {
   LOW: 0.1,     // 0.1% - Start showing warning
   MEDIUM: 5,   // 5% - Show orange warning
   HIGH: 10,    // 10% - Show red warning + require acknowledgment
@@ -89,8 +89,6 @@ interface UsePriceDeviationParams {
   token1Symbol: string | null | undefined;
   /** Pool's current price (token0 in terms of token1) from usePoolState */
   poolPrice: string | number | null | undefined;
-  /** Whether the price display is inverted (showing token1/token0 instead of token0/token1) */
-  priceInverted?: boolean;
 }
 
 /**
@@ -111,7 +109,6 @@ export function usePriceDeviation({
   token0Symbol,
   token1Symbol,
   poolPrice,
-  priceInverted = false,
 }: UsePriceDeviationParams): PriceDeviationResult {
   // Get CoinGecko prices for both tokens
   const tokenSymbols = useMemo(() => {
@@ -187,7 +184,7 @@ export function usePriceDeviation({
       poolPrice: poolPriceNum,
       message,
     };
-  }, [token0Symbol, token1Symbol, poolPrice, priceInverted, prices, isLoading]);
+  }, [token0Symbol, token1Symbol, poolPrice, prices, isLoading]);
 
   return result;
 }

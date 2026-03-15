@@ -1,42 +1,23 @@
-import { getAddress, parseAbi, type Address, type Chain, type Abi } from 'viem';
+import { getAddress, parseAbi, type Address, type Abi } from 'viem';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 
 import {
-  getChainId,
-  getChainName,
-  getTokenDefinitions,
   getPositionManagerAddress,
   getHooksAddress,
   type TokenDefinitions,
 } from '@/lib/pools-config';
 
 // --- Blockchain & Network Configuration ---
-// These are now imported from pools-config.ts which reads from pools.json
-export const CHAIN_ID = getChainId();
-export const CHAIN_NAME = getChainName();
 export const NATIVE_CURRENCY_NAME = 'Ether';
 export const NATIVE_CURRENCY_SYMBOL = 'ETH';
 export const NATIVE_CURRENCY_DECIMALS = 18;
 
 // --- Contract Addresses ---
-export const PERMIT2_ADDRESS_RAW = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+const PERMIT2_ADDRESS_RAW = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 export const PERMIT2_ADDRESS: Address = getAddress(PERMIT2_ADDRESS_RAW);
-
-// --- TOKEN DEFINITIONS ---
-// Now imported from pools-config.ts which reads from pools.json
-// Use getTokenDefinitions() for dynamic network support
-export const TOKEN_DEFINITIONS = getTokenDefinitions();
 
 // Re-export types for backwards compatibility
 export type { TokenDefinitions };
-export type TokenSymbol = string;
-
-// Explicitly define the type for a single token definition
-export interface TokenDefinition {
-    readonly addressRaw: string;
-    readonly decimals: number;
-    readonly symbol: string;
-}
 
 // --- V4 Pool Configuration ---
 // Note: Fee and tick spacing vary per pool - use pool config for specific values
@@ -44,7 +25,7 @@ export interface TokenDefinition {
 export const V4_POOL_FEE = 8388608; // Dynamic fee flag (0x800000)
 export const V4_POOL_TICK_SPACING = 1; // Default, varies per pool
 
-// Hooks address - imported from pools-config.ts which reads from pools.json
+// Hooks address - imported from pools-config.ts which reads from pool config
 export const V4_POOL_HOOKS: Address = getHooksAddress();
 export const V4_POOL_HOOKS_RAW = V4_POOL_HOOKS;
 
@@ -94,25 +75,8 @@ export const ERC20_ABI_STRINGS = [
 ] as const;
 export const Erc20AbiDefinition: Abi = parseAbi(ERC20_ABI_STRINGS);
 
-// --- Target Chain Definition (for viem clients) ---
-// This can be used by a shared publicClient instance.
-// RPC_URL will need to be sourced from environment variables where this is used.
-export const getTargetChain = (rpcUrl: string) => ({
-    id: CHAIN_ID,
-    name: CHAIN_NAME,
-    nativeCurrency: {
-        name: NATIVE_CURRENCY_NAME,
-        symbol: NATIVE_CURRENCY_SYMBOL,
-        decimals: NATIVE_CURRENCY_DECIMALS
-    },
-    rpcUrls: {
-        default: { http: [rpcUrl] },
-        public: { http: [rpcUrl] }
-    },
-} as const satisfies Chain);
-
 // --- V4 Position Manager Configuration ---
-// Now imported from pools-config.ts which reads from pools.json
+// Now imported from pools-config.ts which reads from pool config
 export const V4_POSITION_MANAGER_ADDRESS: Address = getPositionManagerAddress();
 export const V4_POSITION_MANAGER_ADDRESS_RAW = V4_POSITION_MANAGER_ADDRESS;
 

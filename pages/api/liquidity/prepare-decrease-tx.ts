@@ -8,31 +8,23 @@
  * @see pages/api/liquidity/prepare-increase-tx.ts
  */
 
-import { Token, Percent, Ether, CurrencyAmount } from '@uniswap/sdk-core';
-import { Pool as V4Pool, Position as V4Position, V4PositionManager, V4PositionPlanner, toHex } from "@uniswap/v4-sdk";
+import { Percent } from '@uniswap/sdk-core';
+import { Position as V4Position, V4PositionManager, V4PositionPlanner, toHex } from "@uniswap/v4-sdk";
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { V4_POSITION_MANAGER_ABI } from "@/lib/swap/swap-constants";
-import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getTokenSymbolByAddress } from "@/lib/pools-config";
+import { getPositionManagerAddress } from "@/lib/pools-config";
 import { resolveNetworkMode } from "@/lib/network-mode";
 import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
 import { createNetworkClient } from "@/lib/viemClient";
-import { getPositionDetails, getPoolState } from "@/lib/liquidity/liquidity-utils";
+import { buildPoolFromPosition } from "@/lib/liquidity/liquidity-utils";
 import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
 import {
   isAddress,
   getAddress,
-  parseAbi,
-  encodeAbiParameters,
-  keccak256,
-  formatUnits,
+  zeroAddress,
   type Hex
 } from "viem";
-
-const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
-const EMPTY_BYTES = "0x" as const;
 
 interface PrepareDecreaseTxRequest extends NextApiRequest {
   body: {
@@ -101,8 +93,6 @@ export default async function handler(
   const networkMode = resolveNetworkMode(req);
   const publicClient = createNetworkClient(networkMode);
   const POSITION_MANAGER_ADDRESS = getPositionManagerAddress(networkMode);
-  const STATE_VIEW_ADDRESS = getStateViewAddress(networkMode);
-  const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
 
   try {
     const {
@@ -132,58 +122,8 @@ export default async function handler(
 
     const nftTokenId = BigInt(tokenId);
 
-    // Fetch on-chain position details
-    const details = await getPositionDetails(nftTokenId, chainId);
-
-    // Get token symbols from pool key addresses
-    const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
-    const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
-    if (!symC0 || !symC1) {
-      return res.status(400).json({ message: 'Token symbols not found for pool currencies' });
-    }
-
-    const defC0 = getToken(symC0, networkMode);
-    const defC1 = getToken(symC1, networkMode);
-    if (!defC0 || !defC1) {
-      return res.status(400).json({ message: 'Token definitions not found' });
-    }
-
-    const isNativeC0 = getAddress(details.poolKey.currency0) === ETHERS_ADDRESS_ZERO;
-    const isNativeC1 = getAddress(details.poolKey.currency1) === ETHERS_ADDRESS_ZERO;
-    const currency0 = isNativeC0 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC0.address), defC0.decimals, defC0.symbol);
-    const currency1 = isNativeC1 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
-
-    // Get pool state
-    const keyTuple = [{
-      currency0: getAddress(details.poolKey.currency0),
-      currency1: getAddress(details.poolKey.currency1),
-      fee: Number(details.poolKey.fee),
-      tickSpacing: Number(details.poolKey.tickSpacing),
-      hooks: getAddress(details.poolKey.hooks),
-    }];
-    const encoded = encodeAbiParameters([
-      { type: 'tuple', components: [
-        { name: 'currency0', type: 'address' },
-        { name: 'currency1', type: 'address' },
-        { name: 'fee', type: 'uint24' },
-        { name: 'tickSpacing', type: 'int24' },
-        { name: 'hooks', type: 'address' },
-      ]}
-    ], keyTuple as any);
-    const poolId = keccak256(encoded) as Hex;
-    const state = await getPoolState(poolId, chainId);
-
-    // Build pool
-    const pool = new V4Pool(
-      currency0 as any,
-      currency1,
-      details.poolKey.fee,
-      details.poolKey.tickSpacing,
-      details.poolKey.hooks,
-      JSBI.BigInt(state.sqrtPriceX96.toString()),
-      JSBI.BigInt(state.liquidity.toString()),
-      state.tick,
-    );
+    // Build pool + token context from on-chain position
+    const { details, defC0, defC1, currency0, currency1, isNativeC0, isNativeC1, pool, poolState: state } = await buildPoolFromPosition(nftTokenId, chainId, networkMode);
 
     // Parse amounts
     const amountC0Raw = safeParseUnits(inputAmount0 || "0", defC0.decimals);
@@ -265,7 +205,7 @@ export default async function handler(
       liquidityToRemove,
       JSBI.BigInt(slippageAmounts.amount0.toString()),
       JSBI.BigInt(slippageAmounts.amount1.toString()),
-      EMPTY_BYTES, // hookData
+      "0x", // hookData
     );
 
     // Add take actions for each currency (using Currency objects, not addresses)
@@ -276,13 +216,20 @@ export default async function handler(
       getAddress(userAddress),
     );
 
+    // Sweep native ETH back to user (required for native currency positions)
+    if (isNativeC0) {
+      planner.addSweep(currency0, getAddress(userAddress));
+    } else if (isNativeC1) {
+      planner.addSweep(currency1, getAddress(userAddress));
+    }
+
     // If burning, add burn action
     if (shouldBurnNFT) {
       planner.addBurn(
         tokenIdHex,
         JSBI.BigInt(slippageAmounts.amount0.toString()),
         JSBI.BigInt(slippageAmounts.amount1.toString()),
-        EMPTY_BYTES, // hookData
+        "0x", // hookData
       );
     }
 
@@ -332,8 +279,8 @@ export default async function handler(
       deadline: deadlineBigInt.toString(),
       isFullBurn: shouldBurnNFT,
       details: {
-        token0: { address: isNativeC0 ? ETHERS_ADDRESS_ZERO : getAddress(defC0.address), symbol: defC0.symbol, amount: finalAmount0.toString() },
-        token1: { address: isNativeC1 ? ETHERS_ADDRESS_ZERO : getAddress(defC1.address), symbol: defC1.symbol, amount: finalAmount1.toString() },
+        token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: finalAmount0.toString() },
+        token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: finalAmount1.toString() },
         liquidityToRemove: liquidityToRemove.toString(),
         tickLower: details.tickLower,
         tickUpper: details.tickUpper,

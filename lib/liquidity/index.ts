@@ -6,12 +6,11 @@
  * - hooks/        Custom React hooks
  * - utils/        Pure utility functions
  * - transaction/  Transaction builders and steps
- * - state/        State management
  */
 
 // TYPES - Selective exports (matching Uniswap pattern, no export *)
 export { PositionField, type FeeData, DEFAULT_FEE_DATA, PositionFlowStep, RangeAmountInputPriceMode, type InitialPosition, type PositionState, DEFAULT_POSITION_STATE, type PriceRangeState, DEFAULT_PRICE_RANGE_STATE, type CreatePositionInfo, type PriceRangeInfo, type DepositState, DEFAULT_DEPOSIT_STATE, type DepositInfo, type V4PositionInfo, type WarningSeverity, type PriceDifference, type DynamicFeeTierSpeedbumpData } from './types/position';
-export { TransactionStepType, LiquidityTransactionType, type ValidatedTransactionRequest, type OnChainTransactionFields, type OnChainTransactionFieldsBatched, type SignTypedDataStepFields, type TokenInfo, type TokenApprovalTransactionStep, type TokenRevocationTransactionStep, type Permit2SignatureStep, type Permit2TransactionStep, type IncreasePositionTransactionStep, type IncreasePositionTransactionStepAsync, type IncreasePositionTransactionStepBatched, type DecreasePositionTransactionStep, type CollectFeesTransactionStep, type IncreaseLiquiditySteps, type DecreaseLiquiditySteps, type CollectFeesSteps, type TransactionStep, type LiquidityAction, type IncreasePositionTxAndGasInfo, type CreatePositionTxAndGasInfo, type DecreasePositionTxAndGasInfo, type CollectFeesTxAndGasInfo, type LiquidityTxAndGasInfo, type ValidatedIncreasePositionTxAndGasInfo, type ValidatedCreatePositionTxAndGasInfo, type ValidatedDecreasePositionTxAndGasInfo, type ValidatedCollectFeesTxAndGasInfo, type ValidatedLiquidityTxContext, isValidLiquidityTxContext, type FlowStatus, type StepState, type LiquidityFlowState, type TokenApprovalStatus, type ApprovalCheckResult, type StepperStep } from './types/transaction';
+export { TransactionStepType, LiquidityTransactionType, type ValidatedTransactionRequest, type OnChainTransactionFields, type OnChainTransactionFieldsBatched, type SignTypedDataStepFields, type TokenInfo, type TokenApprovalTransactionStep, type TokenRevocationTransactionStep, type Permit2SignatureStep, type Permit2TransactionStep, type IncreasePositionTransactionStep, type IncreasePositionTransactionStepAsync, type IncreasePositionTransactionStepBatched, type DecreasePositionTransactionStep, type CollectFeesTransactionStep, type IncreaseLiquiditySteps, type DecreaseLiquiditySteps, type CollectFeesSteps, type TransactionStep, type LiquidityAction, type IncreasePositionTxAndGasInfo, type CreatePositionTxAndGasInfo, type DecreasePositionTxAndGasInfo, type CollectFeesTxAndGasInfo, type LiquidityTxAndGasInfo, type ValidatedLiquidityTxContext, isValidLiquidityTxContext, type FlowStatus, type StepState, type LiquidityFlowState, type TokenApprovalStatus, type ApprovalCheckResult, type StepperStep } from './types/transaction';
 
 // =============================================================================
 // HOOKS - Custom React hooks for liquidity operations
@@ -23,19 +22,6 @@ export {
   useDerivedPositionInfoFromState,
   getFeeDataFromPool,
   type UseDerivedPositionInfoParams,
-  useDepositInfo,
-  checkBalanceInsufficiency,
-  getMaxSpendableAmount,
-  type UseDepositInfoParams,
-  type BalanceCheckResult,
-  type DependentAmountFallbackParams,
-  type UpdatedAmounts,
-  useCreatePositionDependentAmountFallback,
-  useIncreasePositionDependentAmountFallback,
-  useUpdatedAmountsFromDependentAmount,
-  mergeDepositInfoWithFallback,
-  needsDependentAmountCalculation,
-  getExactFieldFromAmounts,
 } from './hooks/position';
 
 // Approval hooks
@@ -58,8 +44,7 @@ export {
   type ModeAwareApprovalResult,
 } from './hooks/approval';
 
-// Range hooks - Minimal SDK-based utilities
-// TODO: Replace with direct Uniswap SDK imports when full SDK integration is done
+// Range hooks - SDK-based tick limit and range utilities
 export {
   Bound,
   getIsTickAtLimit,
@@ -113,7 +98,6 @@ export {
   comparePrices,
   isPriceWithinRange,
   getPricePositionInRange,
-  // Price conversion utilities - DELETED, use Uniswap SDK's tickToPrice instead
 } from './utils/calculations';
 
 // Validation utilities (fee tiers, error handling)
@@ -121,28 +105,6 @@ export {
   DYNAMIC_FEE_AMOUNT,
   DEFAULT_TICK_SPACING,
   DYNAMIC_FEE_DATA,
-  MAX_FEE_TIER_DECIMALS,
-  BIPS_BASE,
-  type FeeTierData,
-  type DynamicFeeVisualization,
-  type PoolTypeInfo,
-  validateFeeTier,
-  calculateTickSpacingFromFeeAmount,
-  formatFeePercent,
-  formatFeeForDisplay,
-  getFeeTierKey,
-  isDynamicFeeTier,
-  getFeeTierTitle,
-  getPoolTypeInfo,
-  getDynamicFeeVisualization,
-  formatDynamicFee,
-  getDynamicFeeColor,
-  compareFeeTiers,
-  sortFeeTiersByTvl,
-  sortFeeTiersByFee,
-  getAlphixFeeData,
-  isAlphixDynamicFee,
-  createFeeDataFromPoolConfig,
   // Error handling utilities
   extractErrorMessage,
   isUserRejectionError,
@@ -169,10 +131,8 @@ export {
 // Transaction builders
 export {
   buildIncreaseLiquidityTx,
-  prepareIncreasePermit,
   parseTokenIdFromPosition,
   type IncreasePositionData,
-  type IncreasePositionParams,
   type BuildIncreaseOptions,
   type BuildIncreaseTxResult,
   type BuildIncreaseTxContext,
@@ -180,7 +140,6 @@ export {
   buildDecreaseLiquidityTx,
   buildCollectFeesTx,
   type DecreasePositionData,
-  type DecreasePositionParams,
   type BuildDecreaseOptions,
   type BuildDecreaseTxResult,
   type BuildDecreaseTxContext,
@@ -211,24 +170,6 @@ export {
   type CollectFeesFlow,
   type ValidatedPermit,
 } from './transaction/steps';
-
-// =============================================================================
-// STATE - State management for position creation
-// =============================================================================
-
-export {
-  type MintState,
-  type MintAction,
-  MintActionType,
-  initialMintState,
-  mintActions,
-  mintReducer,
-  MintStateProvider,
-  useMintStore,
-  useMintState,
-  useMintActionHandlers,
-  useMintDispatch,
-} from './state';
 
 // =============================================================================
 // UNIFIED YIELD - Alternative liquidity provision through Hook + ERC-4626 vault

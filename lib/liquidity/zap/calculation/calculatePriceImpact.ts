@@ -100,8 +100,6 @@ export interface PriceImpactAnalysis {
   absoluteImpact: number;
   /** Whether the fallback route should be used (PSM for stablecoins, Kyberswap for volatile) */
   shouldUseFallback: boolean;
-  /** @deprecated Use shouldUseFallback instead */
-  shouldUsePSM: boolean;
   /** Whether to show warning to user */
   showWarning: boolean;
   /** Whether to block the transaction */
@@ -162,7 +160,6 @@ export function analyzePriceImpact(
     impact: priceImpact,
     absoluteImpact,
     shouldUseFallback,
-    shouldUsePSM: shouldUseFallback,
     showWarning,
     shouldBlock,
     severity,

@@ -26,17 +26,11 @@ export {
   type PercentNumberDecimals,
 } from './formatters';
 
-// Types
-export type {
-  PositionPointsData,
-  PointsEarningsResult,
-  PointsTooltipProps,
-} from './types';
+// Types - PositionPointsData canonical definition is in @/types
+export type { PositionPointsData } from '@/types';
 
 // Tooltip Components
 export { PointsTooltip, TooltipSize } from './PointsTooltip';
 
 // Display Components
-export { PointsRewardBadge } from './PointsRewardBadge';
-export { PointsCampaignDisplay } from './PointsCampaignDisplay';
 export { PointsFeeStat } from './PointsFeeStat';

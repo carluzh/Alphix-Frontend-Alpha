@@ -1,7 +1,7 @@
 'use client'
 
-import { ReactElement } from 'react'
-import { Icons } from '@/lib/icons/unicon-svgs'
+import { ReactElement, useMemo } from 'react'
+import { GlitchIcon, type GlitchIconName } from '@/components/Landing/GlitchIcon'
 
 interface AnimatedEmblemProps {
   children: ReactElement
@@ -34,26 +34,36 @@ function AnimatedEmblem({
   )
 }
 
-// Match pattern.svg stroke color (#282828)
-const PATTERN_COLOR = '#282828'
+const ALL_ICON_NAMES: GlitchIconName[] = [
+  'SlidersVertical', 'Handshake', 'Repeat', 'BetweenVerticalStart',
+  'FileStack', 'ScanEye', 'ToyBrick', 'Layers', 'Lock',
+]
 
-// Unicon icon component with solid background to prevent pattern showing through
-function UniconIcon({ iconKey, size }: { iconKey: string; size: number }) {
-  const paths = Icons[iconKey]
-  if (!paths) return null
+function pickRandomIcons(count: number): { name: GlitchIconName; shade: string }[] {
+  const shuffled = [...ALL_ICON_NAMES].sort(() => Math.random() - 0.5)
+  return shuffled.slice(0, count).map((name) => {
+    // Random grey between #606060 and #a0a0a0
+    const value = Math.floor(96 + Math.random() * 64)
+    const hex = value.toString(16)
+    return { name, shade: `#${hex}${hex}${hex}` }
+  })
+}
 
+function EmblemIcon({ iconName, glitchIndex, size, shade }: { iconName: GlitchIconName; glitchIndex: number; size: number; shade: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {paths.map((d, i) => (
-        <path key={i} d={d} fill={PATTERN_COLOR} />
-      ))}
-    </svg>
+    <div className="flex items-center justify-center" style={{ width: size, height: size, color: shade }}>
+      <GlitchIcon
+        iconName={iconName}
+        className="w-12 h-12"
+        glitchIndex={glitchIndex}
+        pixelScale={2}
+      />
+    </div>
   )
 }
 
-const ICON_KEYS = ['0', '3', '20', '26', '15', '21', '12', '17']
-
 export function AnimatedEmblems() {
+  const icons = useMemo(() => pickRandomIcons(8), [])
   const animationDuration = '300ms'
   const delays = ['50ms', '100ms', '150ms', '200ms', '250ms', '300ms', '350ms', '400ms']
 
@@ -86,49 +96,49 @@ export function AnimatedEmblems() {
 
       <div className="absolute top-[20px] -left-[15px] rotate-90 z-[1]">
         <AnimatedEmblem duration={animationDuration} delay={delays[0]} rotationDirection="clockwise">
-          <UniconIcon iconKey={ICON_KEYS[0]} size={71} />
+          <EmblemIcon iconName={icons[0].name} glitchIndex={1} size={71} shade={icons[0].shade} />
         </AnimatedEmblem>
       </div>
 
       <div className="absolute bottom-[20px] left-[180px] z-[1]">
         <AnimatedEmblem duration={animationDuration} delay={delays[1]} rotationDirection="counterclockwise">
-          <UniconIcon iconKey={ICON_KEYS[1]} size={71} />
+          <EmblemIcon iconName={icons[1].name} glitchIndex={2} size={71} shade={icons[1].shade} />
         </AnimatedEmblem>
       </div>
 
       <div className="absolute top-[30px] left-[120px] z-[1]">
         <AnimatedEmblem duration={animationDuration} delay={delays[2]} rotationDirection="clockwise">
-          <UniconIcon iconKey={ICON_KEYS[2]} size={71} />
+          <EmblemIcon iconName={icons[2].name} glitchIndex={3} size={71} shade={icons[2].shade} />
         </AnimatedEmblem>
       </div>
 
       <div className="absolute bottom-[30px] left-[50px] z-[1]">
         <AnimatedEmblem duration={animationDuration} delay={delays[3]} rotationDirection="counterclockwise">
-          <UniconIcon iconKey={ICON_KEYS[3]} size={65} />
+          <EmblemIcon iconName={icons[3].name} glitchIndex={4} size={65} shade={icons[3].shade} />
         </AnimatedEmblem>
       </div>
 
       <div className="absolute top-[20px] -right-[15px] -rotate-90 z-[1]">
         <AnimatedEmblem duration={animationDuration} delay={delays[4]} rotationDirection="counterclockwise">
-          <UniconIcon iconKey={ICON_KEYS[4]} size={71} />
+          <EmblemIcon iconName={icons[4].name} glitchIndex={5} size={71} shade={icons[4].shade} />
         </AnimatedEmblem>
       </div>
 
       <div className="absolute bottom-[20px] right-[180px] z-[1]">
         <AnimatedEmblem duration={animationDuration} delay={delays[5]} rotationDirection="clockwise">
-          <UniconIcon iconKey={ICON_KEYS[5]} size={71} />
+          <EmblemIcon iconName={icons[5].name} glitchIndex={6} size={71} shade={icons[5].shade} />
         </AnimatedEmblem>
       </div>
 
       <div className="absolute top-[30px] right-[120px] z-[1]">
         <AnimatedEmblem duration={animationDuration} delay={delays[6]} rotationDirection="counterclockwise">
-          <UniconIcon iconKey={ICON_KEYS[6]} size={71} />
+          <EmblemIcon iconName={icons[6].name} glitchIndex={7} size={71} shade={icons[6].shade} />
         </AnimatedEmblem>
       </div>
 
       <div className="absolute bottom-[30px] right-[50px] z-[1]">
         <AnimatedEmblem duration={animationDuration} delay={delays[7]} rotationDirection="clockwise">
-          <UniconIcon iconKey={ICON_KEYS[7]} size={65} />
+          <EmblemIcon iconName={icons[7].name} glitchIndex={8} size={65} shade={icons[7].shade} />
         </AnimatedEmblem>
       </div>
     </>

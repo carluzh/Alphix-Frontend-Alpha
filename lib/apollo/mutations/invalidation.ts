@@ -9,15 +9,8 @@
  */
 
 import { apolloClient } from '../client'
-import { gql } from '@apollo/client'
 import { modeForChainId, apolloChainForMode } from '@/lib/network-mode'
-
-// Query document for cache operations
-const USER_POSITIONS_QUERY = gql`
-  query UserPositions($owner: String!, $chain: String!) {
-    userPositions(owner: $owner, chain: $chain) @client
-  }
-`
+import { GetUserPositionsDocument } from '../__generated__/react-hooks'
 
 // Matches Uniswap's REFETCH_DELAY = ONE_SECOND_MS * 3
 const REFETCH_DELAY = 3000
@@ -61,7 +54,7 @@ type Params = {
  * Layer 1: Update cache immediately with optimistic data
  * Layer 2: After 3s delay, refetch all active queries
  */
-export async function invalidateAfterTx(_qc: any, params: Params) {
+export async function invalidateAfterTx(params: Params) {
   const client = apolloClient
   const ownerLc = (params.owner || '').toLowerCase()
   const networkMode = modeForChainId(params.chainId) ?? 'base'
@@ -117,7 +110,7 @@ function updateCacheImmediately(
   // Position updates
   if (updates.positionUpdates?.length) {
     const existingData = client.cache.readQuery({
-      query: USER_POSITIONS_QUERY,
+      query: GetUserPositionsDocument,
       variables: { owner: ownerLc, chain },
     }) as any
 
@@ -141,7 +134,7 @@ function updateCacheImmediately(
       })
 
       client.cache.writeQuery({
-        query: USER_POSITIONS_QUERY,
+        query: GetUserPositionsDocument,
         variables: { owner: ownerLc, chain },
         data: { userPositions: updatedPositions },
       })
@@ -151,7 +144,7 @@ function updateCacheImmediately(
   // Add pending position
   if (updates.addPendingPosition) {
     const existingData = client.cache.readQuery({
-      query: USER_POSITIONS_QUERY,
+      query: GetUserPositionsDocument,
       variables: { owner: ownerLc, chain },
     }) as any
 
@@ -176,7 +169,7 @@ function updateCacheImmediately(
     }
 
     client.cache.writeQuery({
-      query: USER_POSITIONS_QUERY,
+      query: GetUserPositionsDocument,
       variables: { owner: ownerLc, chain },
       data: {
         userPositions: [skeleton, ...(existingData?.userPositions || [])],
@@ -187,7 +180,7 @@ function updateCacheImmediately(
   // Remove position
   if (updates.removePosition) {
     const existingData = client.cache.readQuery({
-      query: USER_POSITIONS_QUERY,
+      query: GetUserPositionsDocument,
       variables: { owner: ownerLc, chain },
     }) as any
 
@@ -199,7 +192,7 @@ function updateCacheImmediately(
       )
 
       client.cache.writeQuery({
-        query: USER_POSITIONS_QUERY,
+        query: GetUserPositionsDocument,
         variables: { owner: ownerLc, chain },
         data: { userPositions: updatedPositions },
       })

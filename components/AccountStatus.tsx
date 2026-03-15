@@ -4,16 +4,15 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
 import { Button } from '@/components/ui/button'
 import { MoreVerticalIcon, XIcon } from "lucide-react"
-import { IconClone2, IconCheck, IconPowerOff, IconHouse3 } from "nucleo-micro-bold-essential"
+import { IconClone2, IconCheck, IconPowerOff } from "nucleo-micro-bold-essential"
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
-import { Input } from "@/components/ui/input"
 import { motion, AnimatePresence } from "framer-motion"
 import { DeterministicAvatar } from "@/lib/icons/avatar"
 import { cn } from "@/lib/utils"
 
 // Account Status component
 export function AccountStatus() {
-  const { address, isConnected, connector } = useAccount()
+  const { address, isConnected } = useAccount()
   const { disconnect } = useDisconnect()
   const { isMobile } = useSidebar() 
 
@@ -72,8 +71,6 @@ export function AccountStatus() {
   if (!isConnected) {
     return null // Connect button is now handled by ConnectWalletButton component
   }
-
-  const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : ''
 
 
   // Use wagmi state for render decision

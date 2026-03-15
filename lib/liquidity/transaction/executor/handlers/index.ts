@@ -12,9 +12,6 @@
 export {
   handleApprovalTransactionStep,
   handlePermitTransactionStep,
-  getApprovalTransactionInfo,
-  getPermitTransactionInfo,
-  checkApprovalAmount,
   type HandleApprovalStepParams,
   type HandlePermitTransactionParams,
   type ApproveTransactionInfo,
@@ -31,7 +28,6 @@ export {
 export {
   handlePositionTransactionStep,
   handlePositionTransactionBatchedStep,
-  getLiquidityTransactionInfo,
   getLiquidityTxRequest,
   type HandlePositionStepParams,
   type HandleBatchedPositionStepParams,
@@ -48,16 +44,10 @@ export {
   handleUnifiedYieldApprovalStep,
   handleUnifiedYieldDepositStep,
   handleUnifiedYieldWithdrawStep,
-  getUnifiedYieldApprovalInfo,
-  getUnifiedYieldDepositInfo,
-  getUnifiedYieldWithdrawInfo,
   type HandleUnifiedYieldApprovalParams,
   type HandleUnifiedYieldDepositParams,
   type HandleUnifiedYieldWithdrawParams,
   type UnifiedYieldStep,
-  type UnifiedYieldApprovalInfo,
-  type UnifiedYieldDepositInfo,
-  type UnifiedYieldWithdrawInfo,
   type UnifiedYieldTransactionInfo,
 } from './unifiedYieldHandler';
 

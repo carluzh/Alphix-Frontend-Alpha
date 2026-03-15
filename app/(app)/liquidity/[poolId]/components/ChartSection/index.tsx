@@ -25,11 +25,54 @@ import {
   formatTickForPeriod,
   type ChartPeriodPool,
 } from "@/lib/chart-time-utils";
+import { useUnifiedYieldChartData, type ChartPeriod } from "@/app/(app)/liquidity/position/[tokenId]/hooks/useUnifiedYieldChartData";
+import { getTokenProtocol } from "@/lib/aave-rates";
+import type { NetworkMode, YieldSource } from "@/lib/pools-config";
+import dynamic from "next/dynamic";
+
+function YieldChartSkeleton() {
+  const dotPattern = `radial-gradient(circle, #333333 1px, transparent 1px)`;
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="relative" style={{ height: 300 }}>
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ backgroundImage: dotPattern, backgroundSize: "24px 24px" }}
+        />
+        <div className="flex flex-col gap-1 p-3 bg-background rounded-xl absolute z-10">
+          <div className="h-9 w-20 bg-muted/20 animate-pulse rounded" />
+          <div className="h-4 w-32 bg-muted/10 animate-pulse rounded" />
+        </div>
+      </div>
+      <div className="flex flex-row items-center gap-1 opacity-50">
+        {["1W", "1M"].map((opt) => (
+          <div key={opt} className="h-7 px-2.5 text-xs rounded-md bg-muted/20 text-muted-foreground">{opt}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const YieldChartSection = dynamic(
+  () => import("@/app/(app)/liquidity/position/[tokenId]/components/YieldChartSection").then(mod => mod.YieldChartSection),
+  { ssr: false, loading: () => <YieldChartSkeleton /> }
+);
 
 interface ChartSectionProps {
   chartData: ChartDataPoint[];
   isLoading: boolean;
   windowWidth: number;
+  /** Controlled chart type — when provided, ChartSection uses this instead of internal state */
+  chartType?: ChartType;
+  /** Callback when chart type changes — required when chartType is controlled */
+  onChartTypeChange?: (type: ChartType) => void;
+  /** Pool config for yield chart */
+  poolId?: string;
+  token0Symbol?: string;
+  token1Symbol?: string;
+  yieldSources?: Array<'aave' | 'spark'>;
+  currentSwapApr?: number;
+  networkMode?: string;
 }
 
 const PDP_CHART_HEIGHT_PX = 300; // Match PortfolioChart height
@@ -90,10 +133,62 @@ export const ChartSection = memo(function ChartSection({
   chartData,
   isLoading,
   windowWidth,
+  chartType: controlledChartType,
+  onChartTypeChange,
+  poolId,
+  token0Symbol,
+  token1Symbol,
+  yieldSources,
+  currentSwapApr,
+  networkMode,
 }: ChartSectionProps) {
-  const { chartType, setChartType } = usePDPChartState();
+  const internal = usePDPChartState();
+  const chartType = controlledChartType ?? internal.chartType;
+  const setChartType = onChartTypeChange ?? internal.setChartType;
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("1M");
   const [hoverData, setHoverData] = useState<HoverData | null>(null);
+
+  // Yield chart data — only fetched when Yield tab is active
+  const {
+    data: yieldChartRaw,
+    isLoading: isLoadingYield,
+  } = useUnifiedYieldChartData({
+    poolId,
+    period: timePeriod as ChartPeriod,
+    yieldSources: yieldSources as YieldSource[] | undefined,
+    token0Symbol,
+    token1Symbol,
+    currentSwapApr,
+    enabled: chartType === ChartType.YIELD && !!poolId,
+    networkModeOverride: networkMode as NetworkMode | undefined,
+  });
+
+  // Transform yield data for YieldChartSection (pool-level: 50/50 weighting)
+  const yieldChartData = useMemo(() => {
+    if (!yieldChartRaw) return [];
+    return yieldChartRaw.map((p) => ({
+      timestamp: p.timestamp,
+      apr: p.swapApr,
+      currency0Apy: p.currency0Apy,
+      currency1Apy: p.currency1Apy,
+      feesUsd: 0,
+      accumulatedFeesUsd: 0,
+      totalApr: p.swapApr + 0.5 * (p.currency0Apy ?? 0) + 0.5 * (p.currency1Apy ?? 0),
+    }));
+  }, [yieldChartRaw]);
+
+  // Yield chart labels and colors — derived from token protocols
+  const { c0YieldLabel, c1YieldLabel, c0YieldColor, c1YieldColor } = useMemo(() => {
+    const protocolName = (p?: 'aave' | 'spark') => p === 'spark' ? 'Spark' : 'Aave';
+    const c0Proto = token0Symbol ? getTokenProtocol(token0Symbol)?.protocol : undefined;
+    const c1Proto = token1Symbol ? getTokenProtocol(token1Symbol)?.protocol : undefined;
+    const c0Label = c0Proto ? `${protocolName(c0Proto)} ${token0Symbol}` : `Yield ${token0Symbol ?? ''}`;
+    const c1Label = c1Proto ? `${protocolName(c1Proto)} ${token1Symbol}` : `Yield ${token1Symbol ?? ''}`;
+    const bothAave = c0Proto === 'aave' && c1Proto === 'aave';
+    const c0Color = c0Proto === 'spark' ? "#F5AC37" : "#9896FF";
+    const c1Color = c1Proto === 'spark' ? "#F5AC37" : (bothAave ? "#C4C2FF" : "#9896FF");
+    return { c0YieldLabel: c0Label, c1YieldLabel: c1Label, c0YieldColor: c0Color, c1YieldColor: c1Color };
+  }, [token0Symbol, token1Symbol]);
 
   // Calculate period range for x-axis domain
   const [periodFrom, periodTo] = useMemo(() => calculatePeriodRange(timePeriod as ChartPeriodPool), [timePeriod]);
@@ -219,8 +314,8 @@ export const ChartSection = memo(function ChartSection({
   // Dot pattern background - positioned to avoid axes (like PatternOverlay.tsx)
   const dotPattern = `radial-gradient(circle, ${DOT_PATTERN.color} ${DOT_PATTERN.size}, transparent ${DOT_PATTERN.size})`;
 
-  // Loading skeleton
-  if (isLoading || chartData.length === 0) {
+  // Loading skeleton — only for non-yield tabs (yield has its own loading in YieldChartSection)
+  if (chartType !== ChartType.YIELD && (isLoading || chartData.length === 0)) {
     return (
       <div className="flex flex-col gap-4">
         <ChartTypeTabs chartType={chartType} onChartTypeChange={setChartType} disabled />
@@ -417,68 +512,85 @@ export const ChartSection = memo(function ChartSection({
       {/* Chart type tabs at top */}
       <ChartTypeTabs chartType={chartType} onChartTypeChange={setChartType} />
 
-      {/* Chart area with pattern overlay and header callout */}
-      <div className="relative" style={{ height: PDP_CHART_HEIGHT_PX }}>
-        {/* Pattern overlay - positioned to avoid axes (like PatternOverlay.tsx) */}
-        <div
-          className="absolute pointer-events-none"
-          style={{
-            top: 0,
-            left: 0,
-            right: PRICE_SCALE_WIDTH,
-            bottom: TIME_SCALE_HEIGHT,
-            backgroundImage: dotPattern,
-            backgroundSize: `${DOT_PATTERN.spacing} ${DOT_PATTERN.spacing}`,
-            backgroundPosition: "0 0",
-            zIndex: 0,
-          }}
+      {/* Yield tab — render the full YieldChartSection (identical to position page) */}
+      {chartType === ChartType.YIELD ? (
+        <YieldChartSection
+          chartData={yieldChartData}
+          isLoading={isLoadingYield}
+          windowWidth={windowWidth}
+          timePeriod={timePeriod as "1W" | "1M" | "1Y"}
+          onTimePeriodChange={(p) => setTimePeriod(p as TimePeriod)}
+          isUnifiedYield
+          currency0YieldLabel={c0YieldLabel}
+          currency1YieldLabel={c1YieldLabel}
+          currency0YieldColor={c0YieldColor}
+          currency1YieldColor={c1YieldColor}
         />
+      ) : (
+        <>
+          {/* Chart area with pattern overlay and header callout */}
+          <div className="relative" style={{ height: PDP_CHART_HEIGHT_PX }}>
+            {/* Pattern overlay */}
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: 0,
+                left: 0,
+                right: PRICE_SCALE_WIDTH,
+                bottom: TIME_SCALE_HEIGHT,
+                backgroundImage: dotPattern,
+                backgroundSize: `${DOT_PATTERN.spacing} ${DOT_PATTERN.spacing}`,
+                backgroundPosition: "0 0",
+                zIndex: 0,
+              }}
+            />
 
-        {/* Chart header callout (matches ChartHeader.tsx pattern) */}
-        <div className="flex flex-row absolute w-full gap-2 items-start z-10">
-          <div className="flex flex-col gap-1 p-3 pointer-events-none bg-background rounded-xl">
-            <span className="text-3xl font-semibold text-foreground tabular-nums truncate">
-              {mainDisplay.value}
-            </span>
-            <div className="flex flex-row gap-2 truncate items-center text-xs">
-              {/* Fee chart: show delta by default, Target/Activity on hover */}
-              {chartType === ChartType.FEE && (
-                isHovering && displayValues ? (
-                  <>
-                    <span className="text-muted-foreground">
-                      Target: <span className="text-foreground tabular-nums">{formatFeeValue(displayValues.target ?? 0)}</span>
-                    </span>
-                    <span className="text-muted-foreground">
-                      Activity: <span className="text-foreground tabular-nums">{formatFeeValue(displayValues.activity ?? 0)}</span>
-                    </span>
-                    <span className="text-muted-foreground">
-                      {new Date(hoverData.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                    </span>
-                  </>
-                ) : currentValues && (
-                  <FeeChangeDisplay change={currentValues.feeDailyChange} delta={currentValues.feeDailyDelta} />
-                )
-              )}
-              {/* Volume/TVL: show delta by default, date on hover */}
-              {(chartType === ChartType.VOLUME || chartType === ChartType.TVL) && (
-                isHovering ? (
-                  <span className="text-muted-foreground">
-                    {new Date(hoverData.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                  </span>
-                ) : (
-                  <DeltaDisplay delta={mainDisplay.delta} />
-                )
-              )}
+            {/* Chart header callout */}
+            <div className="flex flex-row absolute w-full gap-2 items-start z-10">
+              <div className="flex flex-col gap-1 p-3 pointer-events-none bg-background rounded-xl">
+                <span className="text-3xl font-semibold text-foreground tabular-nums truncate">
+                  {mainDisplay.value}
+                </span>
+                <div className="flex flex-row gap-2 truncate items-center text-xs">
+                  {chartType === ChartType.FEE && (
+                    isHovering && displayValues ? (
+                      <>
+                        <span className="text-muted-foreground">
+                          Target: <span className="text-foreground tabular-nums">{formatFeeValue(displayValues.target ?? 0)}</span>
+                        </span>
+                        <span className="text-muted-foreground">
+                          Activity: <span className="text-foreground tabular-nums">{formatFeeValue(displayValues.activity ?? 0)}</span>
+                        </span>
+                        <span className="text-muted-foreground">
+                          {new Date(hoverData.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                        </span>
+                      </>
+                    ) : currentValues && (
+                      <FeeChangeDisplay change={currentValues.feeDailyChange} delta={currentValues.feeDailyDelta} />
+                    )
+                  )}
+                  {(chartType === ChartType.VOLUME || chartType === ChartType.TVL) && (
+                    isHovering ? (
+                      <span className="text-muted-foreground">
+                        {new Date(hoverData.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </span>
+                    ) : (
+                      <DeltaDisplay delta={mainDisplay.delta} />
+                    )
+                  )}
+                </div>
+              </div>
             </div>
+
+            {/* Chart */}
+            {renderChart()}
           </div>
-        </div>
 
-        {/* Chart */}
-        {renderChart()}
-      </div>
+          {/* Time period selector at bottom */}
+          <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} />
+        </>
+      )}
 
-      {/* Time period selector at bottom */}
-      <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} />
     </div>
   );
 });
@@ -609,7 +721,8 @@ interface ChartTypeTabsProps {
 
 const ChartTypeTabs = memo(function ChartTypeTabs({ chartType, onChartTypeChange, disabled }: ChartTypeTabsProps) {
   const tabs = [
-    { type: ChartType.FEE, label: "Fee" },
+    { type: ChartType.FEE, label: "Dynamic Fee" },
+    { type: ChartType.YIELD, label: "Yield" },
     { type: ChartType.VOLUME, label: "Volume" },
     { type: ChartType.TVL, label: "TVL" },
   ];

@@ -220,10 +220,10 @@ export function usePoolChartData({
       hasFetchedForPoolRef.current = null;
       console.error('Failed to fetch chart data:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      toast.error('Chart Data Failed', {
+      toast.error('Chart data failed', {
         description: errorMessage,
         action: {
-          label: "Copy Error",
+          label: "Copy error",
           onClick: () => navigator.clipboard.writeText(errorMessage),
         },
       });

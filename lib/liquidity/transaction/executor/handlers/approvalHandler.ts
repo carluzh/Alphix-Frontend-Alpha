@@ -9,7 +9,6 @@
  */
 
 import { type Hex } from 'viem';
-import type { Config } from 'wagmi';
 import type {
   TokenApprovalTransactionStep,
   TokenRevocationTransactionStep,

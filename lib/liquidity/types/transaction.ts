@@ -193,7 +193,7 @@ export interface TokenApprovalTransactionStep extends OnChainTransactionFields {
   token: Token;
   spender: string;
   pair?: [Currency, Currency];
-  // TODO(WEB-5083): this is used to distinguish a revoke from an approve. It can likely be replaced by a boolean because for LP stuff the amount isn't straight forward.
+  // Distinguishes revoke (amount='0') from approve; see TokenRevocationTransactionStep.
   amount: string;
 }
 
@@ -564,7 +564,7 @@ export type LiquidityTxAndGasInfo =
 // VALIDATED LIQUIDITY TX CONTEXT - Matches Uniswap's ValidatedLiquidityTxContext
 // =============================================================================
 
-export type ValidatedIncreasePositionTxAndGasInfo = Required<IncreasePositionTxAndGasInfo> &
+type ValidatedIncreasePositionTxAndGasInfo = Required<IncreasePositionTxAndGasInfo> &
   (
     | {
         unsigned: true;
@@ -579,7 +579,7 @@ export type ValidatedIncreasePositionTxAndGasInfo = Required<IncreasePositionTxA
       }
   );
 
-export type ValidatedCreatePositionTxAndGasInfo = Required<CreatePositionTxAndGasInfo> &
+type ValidatedCreatePositionTxAndGasInfo = Required<CreatePositionTxAndGasInfo> &
   (
     | {
         unsigned: true;
@@ -594,11 +594,11 @@ export type ValidatedCreatePositionTxAndGasInfo = Required<CreatePositionTxAndGa
       }
   );
 
-export type ValidatedDecreasePositionTxAndGasInfo = Required<DecreasePositionTxAndGasInfo> & {
+type ValidatedDecreasePositionTxAndGasInfo = Required<DecreasePositionTxAndGasInfo> & {
   txRequest: ValidatedTransactionRequest;
 };
 
-export type ValidatedCollectFeesTxAndGasInfo = CollectFeesTxAndGasInfo & {
+type ValidatedCollectFeesTxAndGasInfo = CollectFeesTxAndGasInfo & {
   txRequest: ValidatedTransactionRequest;
 };
 

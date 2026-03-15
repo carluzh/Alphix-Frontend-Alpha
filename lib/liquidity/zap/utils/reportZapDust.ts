@@ -6,8 +6,6 @@
  */
 
 import { toast } from 'sonner';
-import { createElement } from 'react';
-import { IconCircleInfo } from 'nucleo-micro-bold-essential';
 import { formatUnits } from 'viem';
 
 // =============================================================================
@@ -66,8 +64,7 @@ export function reportZapDust(dust: DustReport): void {
   }
   const tokenList = parts.length > 0 ? parts.join(' + ') : '< 0.0001';
 
-  toast('Zap completed with remainder', {
-    icon: createElement(IconCircleInfo, { className: 'h-4 w-4' }),
+  toast.info('Zap completed with remainder', {
     description: `${tokenList} (~$${totalDustUSD.toFixed(2)}, ${dustPercent.toFixed(2)}%) remains in wallet`,
   });
 }

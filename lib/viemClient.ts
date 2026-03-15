@@ -31,12 +31,6 @@ export function createNetworkClient(networkMode: NetworkMode): PublicClient {
   return client;
 }
 
-/** @deprecated Use createNetworkClient(mode) instead */
-export const publicClient = createNetworkClient('base');
-
-/** @deprecated Use getChainForMode(mode) instead */
-export const targetChain = getChainForMode('base');
-
 export function getChainForNetwork(networkMode: NetworkMode): Chain {
   return getChainForMode(networkMode);
 }

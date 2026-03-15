@@ -26,18 +26,6 @@ import {
 } from '@/lib/chart/types'
 import { removeOutliers } from '@/lib/chart/utils'
 
-/**
- * Create a simple hash from chart entries to detect data changes.
- * Used to prevent unnecessary re-renders when data hasn't changed.
- */
-function hashEntries(entries: PriceChartData[]): string {
-  if (entries.length === 0) return ''
-  // Simple hash based on first, last, and length
-  const first = entries[0]
-  const last = entries[entries.length - 1]
-  return `${entries.length}-${first.time}-${first.value}-${last.time}-${last.value}`
-}
-
 interface PoolPriceChartVars {
   poolId?: string
   token0?: string
@@ -124,7 +112,6 @@ export function usePoolPriceChartData({
       entries: filteredEntries,
       loading,
       dataQuality,
-      dataHash: hashEntries(filteredEntries),
     }
   }, [data?.poolPriceHistory, loading, priceInverted])
 }

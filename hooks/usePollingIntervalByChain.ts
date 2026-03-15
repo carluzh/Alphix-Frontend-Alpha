@@ -18,25 +18,11 @@ const ONE_SECOND_MS = 1000
 export const POLLING_INTERVAL_L1_MS = 12 * ONE_SECOND_MS
 export const POLLING_INTERVAL_L2_MS = 3 * ONE_SECOND_MS
 
-// Re-export with old names for backwards compatibility (deprecated)
-/** @deprecated Use POLLING_INTERVAL_L1_MS or import from lib/swap-constants.ts */
-export const AVERAGE_L1_BLOCK_TIME_MS = POLLING_INTERVAL_L1_MS
-/** @deprecated Use POLLING_INTERVAL_L2_MS or import from lib/swap-constants.ts */
-export const AVERAGE_L2_BLOCK_TIME_MS = POLLING_INTERVAL_L2_MS
-
 /**
  * Returns the appropriate polling interval for a given network mode.
  * All supported chains (Base, Arbitrum) are L2 — returns L2 interval.
  */
 export function usePollingIntervalByChain(networkMode?: NetworkMode): number {
   const isL2 = networkMode ? CHAIN_REGISTRY[networkMode].isL2 : true
-  return isL2 ? POLLING_INTERVAL_L2_MS : POLLING_INTERVAL_L1_MS
-}
-
-/**
- * Non-hook version for use outside React components
- * Assumes L2 since we're only on Base
- */
-export function getPollingIntervalByChain(isL2: boolean = true): number {
   return isL2 ? POLLING_INTERVAL_L2_MS : POLLING_INTERVAL_L1_MS
 }

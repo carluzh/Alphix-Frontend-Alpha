@@ -4,7 +4,7 @@ export function hashKey(queryKey: QueryKey | MutationKey): string {
   return originalHashKey(normalizeArrays(queryKey))
 }
 
-export function normalizeArrays<T>(value: T): T {
+function normalizeArrays<T>(value: T): T {
   if (value === null || value === undefined) return value
   if (Array.isArray(value)) {
     const normalized = value.map((item: T) => normalizeArrays(item))

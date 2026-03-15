@@ -23,7 +23,7 @@ interface SlippageToleranceResponse {
  * Fetch auto-slippage from backend API
  * Returns slippage in percentage (e.g., 0.5 for 0.5%)
  */
-export async function fetchAutoSlippage(params: SlippageToleranceRequest): Promise<number | null> {
+async function fetchAutoSlippage(params: SlippageToleranceRequest): Promise<number | null> {
   // If no API URL configured, return null to use fallback calculation
   if (!SLIPPAGE_API_BASE_URL) {
     return null;
@@ -91,7 +91,7 @@ export async function fetchAutoSlippage(params: SlippageToleranceRequest): Promi
  * Fallback calculation when API is unavailable
  * Simplified version based on trade characteristics
  */
-export function calculateFallbackSlippage(params: {
+function calculateFallbackSlippage(params: {
   fromAmount: string;
   toAmount: string;
   fromTokenSymbol: string;
@@ -143,7 +143,7 @@ export function calculateFallbackSlippage(params: {
 /**
  * Check if token pair is likely a stablecoin pair
  */
-export function isStablecoinPair(token0: string, token1: string): boolean {
+function isStablecoinPair(token0: string, token1: string): boolean {
   const stablecoins = ['USDC', 'USDS', 'DAI', 'FRAX', 'LUSD', 'USDbC'];
 
   const token0Upper = token0.toUpperCase();

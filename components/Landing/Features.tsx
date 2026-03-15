@@ -49,12 +49,19 @@ const BaseCard = () => (
 
       {/* Content */}
       <div className="relative z-10 flex h-full flex-col gap-y-6">
-        <div style={{ height: 28 }} className="flex items-center">
+        <div style={{ height: 28 }} className="relative flex items-center">
           <img
             src="/landing/base-lockup-white.svg"
             alt="Base"
-            style={{ width: 85, height: 'auto', filter: BASE_LOGO_FILTER, transition: 'filter 0.3s' }}
-            className="group-hover:[filter:none!important]"
+            style={{ width: 85, height: 'auto', filter: BASE_LOGO_FILTER }}
+            className="transition-opacity duration-300 group-hover:opacity-0"
+          />
+          <img
+            src="/landing/base-lockup-white.svg"
+            alt=""
+            aria-hidden
+            style={{ width: 85, height: 'auto' }}
+            className="absolute left-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
           />
         </div>
 
@@ -115,12 +122,19 @@ const ArbitrumCard = () => (
 
       {/* Content */}
       <div className="relative z-10 flex h-full flex-col gap-y-6">
-        <div style={{ height: 28 }} className="flex items-center">
+        <div style={{ height: 28 }} className="relative flex items-center">
           <img
             src="/landing/arbitrum-lockup-white.svg"
             alt="Arbitrum"
-            style={{ width: 120, height: 'auto', filter: ARBITRUM_LOGO_FILTER, transition: 'filter 0.3s' }}
-            className="group-hover:[filter:none!important]"
+            style={{ width: 120, height: 'auto', filter: ARBITRUM_LOGO_FILTER }}
+            className="transition-opacity duration-300 group-hover:opacity-0"
+          />
+          <img
+            src="/landing/arbitrum-lockup-white.svg"
+            alt=""
+            aria-hidden
+            style={{ width: 120, height: 'auto' }}
+            className="absolute left-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
           />
         </div>
 

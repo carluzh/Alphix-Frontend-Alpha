@@ -1,4 +1,4 @@
-export type IconPaths = string[]
+type IconPaths = string[]
 interface Icons {
   [key: string]: IconPaths
 }

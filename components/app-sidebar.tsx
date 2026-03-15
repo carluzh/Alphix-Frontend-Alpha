@@ -1,17 +1,13 @@
 "use client"
 
 import type * as React from "react"
-import { useEffect, useState, useRef, useMemo } from "react"
+import { useMemo } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import {
-  HelpCircleIcon,
-} from "lucide-react"
 import { IconHouse6Fill, IconStorage, IconArrowsBoldOppositeDirection, IconSavedItems } from "nucleo-micro-bold-essential"
 import { NavMain, type NavMainItem } from "./nav-main"
 import { AccountStatus } from "./AccountStatus"
 import { ConnectWalletButton } from "./ConnectWalletButton"
-import { CustomLockIcon } from "./CustomLockIcon"
 import { PointsIcon } from "./PointsIcons"
 import {
   Sidebar,
@@ -22,16 +18,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupAction,
-  SidebarGroupContent,
 } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { getLatestVersion } from "@/lib/version-log"
 
 // Base navigation items (always shown)
 const baseNavItems: NavMainItem[] = [
@@ -57,54 +49,10 @@ const baseNavItems: NavMainItem[] = [
   },
 ];
 
-const data = {
-  user: {
-    name: "Wallet 1",
-    address: "0x1234...5678",
-    avatar: "/avatars/shadcn.jpg",
-  },
-  navSecondary: [
-    {
-      title: "Documentation",
-      url: "#",
-      icon: HelpCircleIcon,
-      disabled: true,
-    },
-  ],
-}
-
-interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
-  onBetaClick?: () => void;
-}
-
-export function AppSidebar({ variant = "floating", ...props }: AppSidebarProps) {
+export function AppSidebar({ variant = "floating", ...props }: React.ComponentProps<typeof Sidebar>) {
   const isMobile = useIsMobile()
   const router = useRouter();
-  const [lockedItem, setLockedItem] = useState<string | null>(null)
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-
   const navMain = useMemo(() => [...baseNavItems], []);
-
-  const handleLockedClick = (itemName: string) => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
-    setLockedItem(itemName)
-    timeoutRef.current = setTimeout(() => {
-      setLockedItem(null)
-    }, 1000)
-  }
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
-    }
-  }, [])
-
-  // Get latest version info (for display only, changelog disabled)
-  const latestVersion = getLatestVersion();
 
   return (
     <Sidebar variant={variant} collapsible="offcanvas" {...props}>
@@ -206,7 +154,7 @@ export function AppSidebar({ variant = "floating", ...props }: AppSidebarProps) 
                 {/* Version info - shown below links */}
                 <div className="px-1.5 pt-3 sm:hidden">
                   <div className="text-xs text-muted-foreground/50 font-mono select-none">
-                    v{latestVersion.version} <span className="opacity-60">+{process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev'}</span>
+                    v{process.env.NEXT_PUBLIC_APP_VERSION || '0.0.0'} <span className="opacity-60">+{process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev'}</span>
                   </div>
                 </div>
               </SidebarMenu>

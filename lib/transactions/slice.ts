@@ -26,7 +26,7 @@ function assert(condition: unknown, message: string): asserts condition {
 
 export type TransactionsState = Partial<Record<Address, ChainIdToTxIdToDetails>>
 
-export const initialTransactionsState: TransactionsState = {}
+const initialTransactionsState: TransactionsState = {}
 
 interface TransactionId {
   chainId: number
@@ -153,12 +153,8 @@ const slice = createSlice({
 
 export const {
   addTransaction,
-  updateTransaction,
-  finalizeTransaction,
   deleteTransaction,
-  checkedTransaction,
   interfaceCancelTransaction,
-  clearAllTransactions,
 } = slice.actions
 
 export const transactionReducer = slice.reducer

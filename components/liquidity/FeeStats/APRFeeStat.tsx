@@ -45,11 +45,6 @@ export function APRFeeStat({
   token0Symbol,
   token1Symbol,
 }: APRFeeStatProps) {
-  // Show loader when loading
-  if (isLoading) {
-    return <FeeStatLoader />;
-  }
-
   // Calculate total APR for display (Swap + Lending Yield)
   // Points are shown in tooltip but not included in main display
   const displayApr = useMemo(() => {
@@ -64,6 +59,11 @@ export function APRFeeStat({
 
     return formatAprPercent(total);
   }, [swapApr, unifiedYieldApr, formattedApr]);
+
+  // Show loader when loading (placed after hooks to comply with Rules of Hooks)
+  if (isLoading) {
+    return <FeeStatLoader />;
+  }
 
   const content = (
     <FeeStat>

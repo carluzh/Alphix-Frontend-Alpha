@@ -4,7 +4,6 @@
  * TypeScript interfaces for the D3 chart components.
  */
 
-import * as d3 from 'd3';
 
 // Re-export ChartEntry from existing types (or define inline if needed)
 export interface ChartEntry {
@@ -52,15 +51,6 @@ export interface Renderer {
   draw(): void;
 }
 
-// Rendering context passed to renderers
-export interface RenderingContext {
-  dimensions: ChartDimensions;
-  priceData: PriceDataPoint[];
-  liquidityData: ChartEntry[];
-  tickScale: TickScale;
-  priceToY: PriceToYFn;
-  yToPrice: YToPriceFn;
-}
 
 // Chart state
 export interface ChartState {
@@ -101,40 +91,9 @@ export interface ChartActions {
   drawAll: () => void;
 }
 
-// Props for the main D3LiquidityRangeChart component
-export interface D3LiquidityRangeChartProps {
-  poolId: string;
-  token0Symbol: string;
-  token1Symbol: string;
-  tickSpacing: number;
-  currentPrice: number;
-  currentTick: number;
-  minPrice?: number;
-  maxPrice?: number;
-  isFullRange?: boolean;
-  onRangeChange: (minPrice: number, maxPrice: number) => void;
-  className?: string;
-}
 
-// Renderer factory config
-export interface RendererConfig<T = unknown> {
-  g: d3.Selection<SVGGElement, unknown, null, undefined>;
-  getState: () => ChartState;
-  getActions: () => ChartActions;
-  context: RenderingContext;
-  extraConfig?: T;
-}
 
 // Drag behavior types
 export type HandleType = 'min' | 'max' | 'center';
 
-export interface DragBehaviorConfig {
-  handleType: HandleType;
-  getState: () => ChartState;
-  getActions: () => ChartActions;
-  priceToY: PriceToYFn;
-  yToPrice: YToPriceFn;
-  dimensions: ChartDimensions;
-  liquidityData: ChartEntry[];
-  onRangeChange: (minPrice: number, maxPrice: number) => void;
-}
+

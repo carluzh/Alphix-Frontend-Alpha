@@ -21,12 +21,3 @@ export {
   type UseZapApprovalsReturn,
 } from './useZapApprovals';
 
-// =============================================================================
-// MAIN DEPOSIT HOOK
-// =============================================================================
-
-export {
-  useZapDeposit,
-  estimateZapGas,
-  formatZapPreviewForDisplay,
-} from './useZapDeposit';

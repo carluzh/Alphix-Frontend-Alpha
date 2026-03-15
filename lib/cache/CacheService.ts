@@ -10,7 +10,7 @@
  * This does NOT rebuild the caching system - it wraps existing proven code.
  */
 
-import { redis, getCachedDataWithStale, setCachedData, deleteCachedData, invalidateCachedData, CachedDataWrapper } from '@/lib/cache/redis'
+import { getCachedDataWithStale, setCachedData, invalidateCachedData } from '@/lib/cache/redis'
 import type { TTLConfig, CacheOptions, CacheResult, CacheApiResult } from './types'
 
 /**
@@ -79,42 +79,11 @@ export class CacheService {
   }
 
   /**
-   * Get cached data (simple get, no staleness check)
-   * Wraps existing Redis client
-   */
-  async get<T>(key: string): Promise<T | null> {
-    if (!redis) return null
-
-    try {
-      const wrapper = await redis.get<CachedDataWrapper<T>>(key)
-      return wrapper?.data || null
-    } catch (error) {
-      console.error('[CacheService] Get failed:', error)
-      return null
-    }
-  }
-
-  /**
-   * Delete cached data
-   * Wraps deleteCachedData() from redis.ts
-   */
-  async delete(key: string): Promise<void> {
-    return deleteCachedData(key)
-  }
-
-  /**
    * Invalidate cached data (marks as stale without deleting)
    * Wraps invalidateCachedData() from redis.ts
    */
   async invalidate(key: string): Promise<void> {
     return invalidateCachedData(key)
-  }
-
-  /**
-   * Batch invalidate multiple keys
-   */
-  async invalidateMany(keys: string[]): Promise<void> {
-    await Promise.all(keys.map(key => this.invalidate(key)))
   }
 
   /**
@@ -183,27 +152,6 @@ export class CacheService {
     return { data: freshData, isStale: false }
   }
 
-  /**
-   * WEB3-SPECIFIC: Cached user data with enforced per-user keying
-   * Prevents accidentally returning user A's data to user B
-   *
-   * Example:
-   *   const positions = await cacheService.cachedUserData(
-   *     userAddress,
-   *     'positions',
-   *     { fresh: 120, stale: 600 },
-   *     () => fetchUserPositions(userAddress)
-   *   )
-   */
-  async cachedUserData<T>(
-    userId: string,
-    dataType: string,
-    ttl: TTLConfig,
-    fetchFn: () => Promise<T>
-  ): Promise<CacheApiResult<T>> {
-    const userKey = `${dataType}:${userId.toLowerCase()}`
-    return this.cachedApiCall(userKey, ttl, fetchFn)
-  }
 }
 
 export const cacheService = new CacheService()

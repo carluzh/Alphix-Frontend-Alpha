@@ -16,12 +16,6 @@
 
 export type SSEConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
-export interface SSEConfig {
-  baseUrl: string;
-  reconnectInterval?: number;
-  maxReconnectAttempts?: number;
-}
-
 // ============================================================================
 // Event Types - Add new event types here as they're implemented
 // ============================================================================

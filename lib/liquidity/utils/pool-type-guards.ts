@@ -4,7 +4,7 @@
  * Utility functions for identifying pool types.
  * Centralizes pool type checking logic for consistency across the codebase.
  *
- * Pool types are defined in config/pools.json and config/arbitrum_pools.json
+ * Pool types are defined in config/base_pools.json and config/arbitrum_pools.json
  * under the `type` field: "Standard" | "Stable" | "Unified Yield"
  */
 

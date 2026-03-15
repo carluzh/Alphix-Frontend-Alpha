@@ -1,76 +1,86 @@
 /**
- * Shared error classification for all transaction flows (swap, zap, liquidity).
+ * Shared swap error classification.
  *
- * Single source of truth — imported by both useSwapStepExecutor and useSwapExecution.
- * Handles wallet rejections, Kyberswap API errors, permit errors, and on-chain reverts.
+ * Maps raw RPC / contract error messages to user-friendly strings.
+ * Used by both get-quote and build-tx API routes.
  */
+export function classifySwapError(
+  errorMessage: string,
+  swapType?: string
+): string {
+  const s = errorMessage.toLowerCase();
 
-export interface ClassifiedError {
-  kind: 'rejected' | 'backend' | 'revert' | 'unknown';
-  title: string;
-  description: string;
-}
-
-/** Check if a wallet/signing error is a user rejection. */
-export function isUserRejected(err: any): boolean {
-  const name = err?.name || err?.cause?.name;
-  if (name === 'UserRejectedRequestError') return true;
-  const code = err?.code || err?.cause?.code;
-  if (code === 4001 || code === 5750 || code === 'ACTION_REJECTED') return true;
-  const msg = String(err?.shortMessage || err?.message || err?.cause?.message || '');
-  return (
-    (/request/i.test(msg) && /reject/i.test(msg)) ||
-    /declined/i.test(msg) ||
-    /cancell?ed by user/i.test(msg) ||
-    /user cancell?ed/i.test(msg) ||
-    /user denied/i.test(msg) ||
-    /user rejected/i.test(msg) ||
-    /closed modal/i.test(msg) ||
-    /connection rejected/i.test(msg) ||
-    /transaction cancelled/i.test(msg) ||
-    /denied transaction signature/i.test(msg)
-  );
-}
-
-/** Classify a raw error into a user-friendly { kind, title, description }. */
-export function classifySwapError(err: any): ClassifiedError {
-  if (isUserRejected(err)) {
-    return { kind: 'rejected', title: 'Cancelled', description: 'You cancelled the request in your wallet.' };
+  // Smart contract call exceptions (common in ExactOut multihop)
+  if (
+    s.includes('call_exception') ||
+    s.includes('call revert exception') ||
+    s.includes('0x6190b2b0') ||
+    s.includes('0x486aa307')
+  ) {
+    return swapType === 'ExactOut'
+      ? 'Amount exceeds available liquidity'
+      : 'Not enough liquidity';
   }
 
-  const msg = String(err?.shortMessage || err?.message || err?.cause?.message || '');
-  const msgLc = msg.toLowerCase();
-
-  // Kyberswap-specific errors (cause carries the error kind from build-tx)
-  const causeKind = typeof err?.cause === 'string' ? err.cause : err?.cause?.kind;
-  if (causeKind === 'stale_route') {
-    return { kind: 'backend', title: 'Route Expired', description: 'Swap prices changed. Please try again for a fresh route.' };
-  }
-  if (causeKind === 'rate_limit') {
-    return { kind: 'backend', title: 'Rate Limited', description: 'Too many requests. Please wait a moment and try again.' };
-  }
-  if (causeKind === 'gas_estimation') {
-    return { kind: 'backend', title: 'Gas Estimation Failed', description: 'The swap simulation failed. Try adjusting your slippage or amount.' };
-  }
-  if (causeKind === 'token_not_found') {
-    return { kind: 'backend', title: 'Token Not Found', description: 'This token is not supported on the selected chain.' };
+  // Liquidity depth errors
+  if (
+    s.includes('insufficient liquidity') ||
+    s.includes('not enough liquidity') ||
+    s.includes('pool has no liquidity')
+  ) {
+    return 'Not enough liquidity';
   }
 
-  if (msgLc.includes('permit nonce') || msgLc.includes('nonce changed') || msgLc.includes('nonce stale')) {
-    return { kind: 'backend', title: 'Permit Expired', description: msg || 'Your permit was already used. Please sign again.' };
-  }
-  if (msgLc.includes('signature invalid') || msgLc.includes('invalid signature') || msgLc.includes('signature expired')) {
-    return { kind: 'backend', title: 'Signature Invalid', description: msg || 'Your signature is invalid or expired. Please sign again.' };
-  }
-  if (msgLc.includes('timed out') || msgLc.includes('timeout') || msgLc.includes('aborted')) {
-    return { kind: 'backend', title: 'Request Timed Out', description: 'The route request timed out. Please try again.' };
-  }
-  if (msgLc.includes('failed to fetch permit data') || msgLc.includes('failed to build transaction') || msgLc.includes('backend')) {
-    return { kind: 'backend', title: 'Backend Error', description: msg || 'Something went wrong on our end.' };
-  }
-  if (msgLc.includes('revert') || msgLc.includes('executionfailed') || msgLc.includes('call revert exception')) {
-    return { kind: 'revert', title: 'Transaction Reverted', description: msg || 'The transaction reverted on-chain.' };
+  // Slippage / price-impact errors
+  if (
+    s.includes('price impact too high') ||
+    s.includes('slippage') ||
+    s.includes('price moved too much')
+  ) {
+    return 'Price impact too high';
   }
 
-  return { kind: 'unknown', title: 'Transaction Error', description: msg || 'The transaction failed.' };
+  // Permit nonce / signature errors (build-tx specific, but harmless to check everywhere)
+  if (s.includes('nonce') || s.includes('invalid signature')) {
+    return 'Permit signature invalid or expired. Please try again.';
+  }
+
+  // Generic revert
+  if (s.includes('revert') || s.includes('execution reverted')) {
+    return swapType === 'ExactOut'
+      ? 'Cannot fulfill exact output amount'
+      : 'Transaction would revert';
+  }
+
+  // Balance / amount errors
+  if (
+    s.includes('exceeds balance') ||
+    s.includes('insufficient balance') ||
+    s.includes('amount too large')
+  ) {
+    return 'Amount exceeds available liquidity';
+  }
+
+  // Kyberswap transient / API errors
+  if (s.includes('kyberswap')) {
+    if (s.includes('stale_route') || s.includes('unprocessable') || s.includes('422')) {
+      return 'Swap route expired. Please try again.';
+    }
+    if (s.includes('rate_limit') || s.includes('429')) {
+      return 'Rate limited — please wait a moment and retry.';
+    }
+    if (s.includes('gas_estimation')) {
+      return 'Gas estimation failed. Try increasing slippage.';
+    }
+    if (s.includes('server_error') || s.includes('500')) {
+      return 'Swap provider is temporarily unavailable. Please try again.';
+    }
+    if (s.includes('bad_request')) {
+      return 'Could not build swap. Please try again.';
+    }
+    // Generic kyberswap fallback
+    return 'Swap routing failed. Please try again.';
+  }
+
+  return ''; // no match — caller uses its own default
 }

@@ -26,7 +26,7 @@ interface UseSSEReturn {
  * Core SSE hook for managing EventSource connection
  *
  * Handles connection lifecycle, reconnection, and event routing.
- * Used internally by specific hooks (usePositionSnapshots, usePoints, etc.)
+ * Used internally by SSEProvider for managing the EventSource connection.
  */
 export function useSSE({
   address,

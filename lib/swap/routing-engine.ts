@@ -213,31 +213,6 @@ export function findBestRoute(fromToken: string, toToken: string, networkMode?: 
 }
 
 /**
- * Get a direct route if one exists (for simple validation)
- */
-export function getDirectRoute(fromToken: string, toToken: string, networkMode?: NetworkMode): SwapRoute | null {
-  const result = findBestRoute(fromToken, toToken, networkMode);
-  return result.hasDirectRoute ? result.allRoutes.find(route => route.isDirectRoute) || null : null;
-}
-
-/**
- * Check if a direct route exists between two tokens
- */
-export function hasDirectRoute(fromToken: string, toToken: string, networkMode?: NetworkMode): boolean {
-  return getDirectRoute(fromToken, toToken, networkMode) !== null;
-}
-
-/**
- * Get all intermediate tokens in a route (excluding start and end)
- */
-export function getIntermediateTokens(route: SwapRoute): string[] {
-  if (route.path.length <= 2) {
-    return []; // No intermediate tokens
-  }
-  return route.path.slice(1, -1); // Remove first and last
-}
-
-/**
  * Convert route to readable string representation
  */
 export function routeToString(route: SwapRoute): string {

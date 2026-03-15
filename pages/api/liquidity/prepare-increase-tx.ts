@@ -7,40 +7,35 @@
  * 3. Builds transaction calldata using V4PositionManager.addCallParameters
  *
  * @see pages/api/liquidity/prepare-mint-tx.ts
- * @see interface/apps/web/src/pages/IncreaseLiquidity/IncreaseLiquidityTxContext.tsx
  */
 
-import { Token, Percent, Ether, CurrencyAmount } from '@uniswap/sdk-core';
-import { Pool as V4Pool, Position as V4Position, V4PositionManager } from "@uniswap/v4-sdk";
-import type { AddLiquidityOptions, AllowanceTransferPermitBatch } from "@uniswap/v4-sdk";
+import { CurrencyAmount, Percent, Ether } from '@uniswap/sdk-core';
+import { Position as V4Position, V4PositionManager } from "@uniswap/v4-sdk";
+import type { AddLiquidityOptions } from "@uniswap/v4-sdk";
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getTokenSymbolByAddress } from "@/lib/pools-config";
+import { getPositionManagerAddress } from "@/lib/pools-config";
 import { resolveNetworkMode } from "@/lib/network-mode";
 import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
-import { iallowance_transfer_abi } from "@/lib/abis/IAllowanceTransfer_abi";
 import { createNetworkClient } from "@/lib/viemClient";
-import { getPositionDetails, getPoolState } from "@/lib/liquidity/liquidity-utils";
+import { buildPoolFromPosition } from "@/lib/liquidity/liquidity-utils";
 import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
+import {
+  checkERC20Allowances,
+  buildPermitBatchData,
+  buildPermitBatchForSDK,
+  type TokenForPermitCheck,
+} from "@/lib/liquidity/transaction/permit2-checks";
 import {
   isAddress,
   getAddress,
-  parseAbi,
   maxUint256,
-  encodeAbiParameters,
-  keccak256,
+  zeroAddress,
   type Hex
 } from "viem";
 
-import {
-  PERMIT_EXPIRATION_DURATION_SECONDS,
-  PERMIT_SIG_DEADLINE_DURATION_SECONDS,
-} from "@/lib/swap/swap-constants";
-import { AllowanceTransfer, permit2Address, PERMIT2_ADDRESS, PermitBatch } from '@uniswap/permit2-sdk';
-
-const ETHERS_ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
+import { PERMIT2_ADDRESS } from '@uniswap/permit2-sdk';
 
 interface PrepareIncreaseTxRequest extends NextApiRequest {
   body: {
@@ -159,8 +154,6 @@ export default async function handler(
   const networkMode = resolveNetworkMode(req);
   const publicClient = createNetworkClient(networkMode);
   const POSITION_MANAGER_ADDRESS = getPositionManagerAddress(networkMode);
-  const STATE_VIEW_ADDRESS = getStateViewAddress(networkMode);
-  const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
 
   try {
     const {
@@ -189,58 +182,11 @@ export default async function handler(
 
     const nftTokenId = BigInt(tokenId);
 
-    // Fetch on-chain position details
-    const details = await getPositionDetails(nftTokenId, chainId);
-
-    // Get token symbols from pool key addresses
-    const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
-    const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
-    if (!symC0 || !symC1) {
-      return res.status(400).json({ message: 'Token symbols not found for pool currencies' });
-    }
-
-    const defC0 = getToken(symC0, networkMode);
-    const defC1 = getToken(symC1, networkMode);
-    if (!defC0 || !defC1) {
-      return res.status(400).json({ message: 'Token definitions not found' });
-    }
-
-    const isNativeC0 = getAddress(details.poolKey.currency0) === ETHERS_ADDRESS_ZERO;
-    const isNativeC1 = getAddress(details.poolKey.currency1) === ETHERS_ADDRESS_ZERO;
-    const currency0 = isNativeC0 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC0.address), defC0.decimals, defC0.symbol);
-    const currency1 = isNativeC1 ? Ether.onChain(chainId) : new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
-
-    // Get pool state
-    const keyTuple = [{
-      currency0: getAddress(details.poolKey.currency0),
-      currency1: getAddress(details.poolKey.currency1),
-      fee: Number(details.poolKey.fee),
-      tickSpacing: Number(details.poolKey.tickSpacing),
-      hooks: getAddress(details.poolKey.hooks),
-    }];
-    const encoded = encodeAbiParameters([
-      { type: 'tuple', components: [
-        { name: 'currency0', type: 'address' },
-        { name: 'currency1', type: 'address' },
-        { name: 'fee', type: 'uint24' },
-        { name: 'tickSpacing', type: 'int24' },
-        { name: 'hooks', type: 'address' },
-      ]}
-    ], keyTuple as any);
-    const poolId = keccak256(encoded) as Hex;
-    const state = await getPoolState(poolId, chainId);
-
-    // Build pool
-    const pool = new V4Pool(
-      currency0 as any,
-      currency1,
-      details.poolKey.fee,
-      details.poolKey.tickSpacing,
-      details.poolKey.hooks,
-      JSBI.BigInt(state.sqrtPriceX96.toString()),
-      JSBI.BigInt(state.liquidity.toString()),
-      state.tick,
-    );
+    // Build pool + token context from on-chain position
+    const {
+      details, defC0, defC1, currency0, currency1,
+      isNativeC0, isNativeC1, pool, poolState: state,
+    } = await buildPoolFromPosition(nftTokenId, chainId, networkMode);
 
     // Parse amounts (amounts are already in pool key order from UI)
     let amountC0Raw = safeParseUnits(inputAmount0 || "0", defC0.decimals);
@@ -305,214 +251,49 @@ export default async function handler(
     const amount0ForPermit = BigInt(slippageAmounts.amount0.toString());
     const amount1ForPermit = BigInt(slippageAmounts.amount1.toString());
 
-    // Debug logging for permit amounts
-    console.log('[prepare-increase-tx] Permit amounts:', {
-      token0: { symbol: defC0.symbol, inputAmount: amountC0Raw.toString(), permitAmount: amount0ForPermit.toString(), isNative: isNativeC0 },
-      token1: { symbol: defC1.symbol, inputAmount: amountC1Raw.toString(), permitAmount: amount1ForPermit.toString(), isNative: isNativeC1 },
-    });
-
     // Extract permit data
     const { permitSignature: batchPermitSignature, permitBatchData } = req.body;
     const hasBatchPermit = batchPermitSignature && permitBatchData;
 
-    // Tokens to check
-    const tokensToCheck = [
-      { address: isNativeC0 ? ETHERS_ADDRESS_ZERO : getAddress(defC0.address), requiredAmount: amountC0Raw, permitAmount: amount0ForPermit, symbol: defC0.symbol, isNative: isNativeC0, decimals: defC0.decimals },
-      { address: isNativeC1 ? ETHERS_ADDRESS_ZERO : getAddress(defC1.address), requiredAmount: amountC1Raw, permitAmount: amount1ForPermit, symbol: defC1.symbol, isNative: isNativeC1, decimals: defC1.decimals }
+    // Build tokens for permit checking
+    const token0Address = getAddress(details.poolKey.currency0);
+    const tokensForCheck: [TokenForPermitCheck, TokenForPermitCheck] = [
+      { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), requiredAmount: amountC0Raw, permitAmount: amount0ForPermit, symbol: defC0.symbol, isNative: isNativeC0 },
+      { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), requiredAmount: amountC1Raw, permitAmount: amount1ForPermit, symbol: defC1.symbol, isNative: isNativeC1 },
     ];
 
-    // Filter to ERC20 tokens that need checking
-    const erc20TokensToCheck = tokensToCheck.filter(t => !t.isNative && t.requiredAmount > 0n);
-
-    // Track which tokens need ERC20 approval to Permit2
-    // Fix: Track BOTH tokens separately to handle cases where both need approval
-    let erc20ApprovalNeeded: { address: string; symbol: string } | null = null;
-    let needsToken0Approval = false;
-    let needsToken1Approval = false;
-
-    // Token0 address from pool key for comparison (used in both ERC20 and Permit2 checks)
-    const token0Address = getAddress(details.poolKey.currency0);
-
-    // Check ERC20 allowances to Permit2
-    if (erc20TokensToCheck.length > 0) {
-      const erc20AllowanceAbi = parseAbi(['function allowance(address,address) view returns (uint256)']);
-      const erc20AllowanceResults = await publicClient.multicall({
-        contracts: erc20TokensToCheck.map(t => ({
-          address: t.address as `0x${string}`,
-          abi: erc20AllowanceAbi,
-          functionName: 'allowance',
-          args: [getAddress(userAddress), PERMIT2_ADDRESS]
-        })),
-        allowFailure: false,
-        blockTag: 'latest',
-      });
-
-      // Use permitAmount (slippage-adjusted) for the check to ensure approval covers actual transfer
-      for (let i = 0; i < erc20TokensToCheck.length; i++) {
-        const t = erc20TokensToCheck[i];
-        const allowance = erc20AllowanceResults[i] as bigint;
-
-        if (allowance < t.permitAmount) {
-          // Track which specific token needs approval
-          const isToken0 = getAddress(t.address).toLowerCase() === token0Address.toLowerCase();
-          if (isToken0) {
-            needsToken0Approval = true;
-          } else {
-            needsToken1Approval = true;
-          }
-
-          // Keep backwards compatibility: store first token info for legacy clients
-          if (!erc20ApprovalNeeded) {
-            erc20ApprovalNeeded = { address: t.address, symbol: t.symbol };
-          }
-          // Continue checking all tokens - don't break
-        }
-      }
-    }
-
-    // Generate permit data (needed for both ERC20_TO_PERMIT2 and PERMIT2_BATCH_SIGNATURE flows)
-    // This ensures frontend can build complete step list upfront
-    let permitBatchDataResponse: any = null;
-    let signatureDetailsResponse: any = null;
+    const { erc20ApprovalNeeded, needsToken0Approval, needsToken1Approval } =
+      await checkERC20Allowances(publicClient, userAddress, tokensForCheck, token0Address);
 
     if (!hasBatchPermit) {
-      const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
-      if (!latestBlock) throw new Error("Failed to get latest block");
+      const permitResult = await buildPermitBatchData(
+        publicClient, userAddress, tokensForCheck, token0Address,
+        POSITION_MANAGER_ADDRESS, chainId, needsToken0Approval, needsToken1Approval,
+      );
 
-      const PERMIT_EXPIRATION_MS = PERMIT_EXPIRATION_DURATION_SECONDS * 1000;
-      const PERMIT_SIG_EXPIRATION_MS = PERMIT_SIG_DEADLINE_DURATION_SECONDS * 1000;
-      const currentTimestamp = Number(latestBlock.timestamp);
-      const toDeadline = (expiration: number): number => currentTimestamp + Math.floor(expiration / 1000);
-
-      const permitsNeeded: Array<{
-        token: string;
-        amount: string;
-        expiration: string;
-        nonce: string;
-      }> = [];
-
-      const permit2TokensToCheck = tokensToCheck.filter(t => !t.isNative && t.permitAmount > 0n);
-
-      if (permit2TokensToCheck.length > 0) {
-        const permit2AllowanceResults = await publicClient.multicall({
-          contracts: permit2TokensToCheck.map(t => ({
-            address: PERMIT2_ADDRESS as `0x${string}`,
-            abi: iallowance_transfer_abi as any,
-            functionName: 'allowance' as const,
-            args: [getAddress(userAddress), t.address, POSITION_MANAGER_ADDRESS] as const
-          })),
-          allowFailure: false,
-          blockTag: 'latest',
-        });
-
-        permit2TokensToCheck.forEach((t, i) => {
-          const [permitAmt, permitExp, permitNonce] = permit2AllowanceResults[i] as readonly [bigint, number, number];
-          const hasValidPermit = permitAmt >= t.permitAmount && permitExp > currentTimestamp;
-
-          // If ERC20 approval is needed for this token, always include permit data regardless of existing Permit2 allowance.
-          // This ensures the frontend step flow works correctly: [approval] -> [permit] -> [tx]
-          // Fix: Use the new per-token flags instead of legacy single-token check
-          const isToken0 = getAddress(t.address).toLowerCase() === token0Address.toLowerCase();
-          const isTokenNeedingApproval = isToken0 ? needsToken0Approval : needsToken1Approval;
-
-          if (hasValidPermit && !isTokenNeedingApproval) return;
-
-          permitsNeeded.push({
-            token: t.address,
-            amount: t.permitAmount.toString(),
-            expiration: toDeadline(PERMIT_EXPIRATION_MS).toString(),
-            nonce: permitNonce.toString(),
-          });
+      if (erc20ApprovalNeeded) {
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'ERC20_TO_PERMIT2' as const,
+          approvalTokenAddress: erc20ApprovalNeeded.address,
+          approvalTokenSymbol: erc20ApprovalNeeded.symbol,
+          approveToAddress: PERMIT2_ADDRESS,
+          approvalAmount: maxUint256.toString(),
+          needsToken0Approval,
+          needsToken1Approval,
+          permitBatchData: permitResult?.permitBatchData,
+          signatureDetails: permitResult?.signatureDetails,
         });
       }
 
-      if (permitsNeeded.length > 0) {
-        // Debug logging for permits being requested
-        console.log('[prepare-increase-tx] Building permit batch with individual amounts:', {
-          permitsNeeded: permitsNeeded.map(p => ({
-            token: p.token,
-            amount: p.amount,
-          })),
+      if (permitResult) {
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'PERMIT2_BATCH_SIGNATURE' as const,
+          permitBatchData: permitResult.permitBatchData,
+          signatureDetails: permitResult.signatureDetails,
         });
-
-        const permit = {
-          details: permitsNeeded,
-          spender: POSITION_MANAGER_ADDRESS,
-          sigDeadline: toDeadline(PERMIT_SIG_EXPIRATION_MS).toString(),
-        };
-
-        const permitData = AllowanceTransfer.getPermitData(permit, permit2Address(chainId), chainId);
-
-        // Debug logging for permit data from SDK
-        console.log('[prepare-increase-tx] SDK permitData.values.details:',
-          (permitData.values as any).details?.map((d: any) => ({ token: d.token, amount: d.amount?.toString() }))
-        );
-
-        if (!('details' in permitData.values) || !Array.isArray(permitData.values.details)) {
-          throw new Error('Expected PermitBatch data structure');
-        }
-
-        const { domain, types, values } = permitData as {
-          domain: typeof permitData.domain;
-          types: typeof permitData.types;
-          values: PermitBatch;
-        };
-
-        permitBatchDataResponse = {
-          domain,
-          types,
-          valuesRaw: values,
-          values: {
-            details: values.details.map((detail: any) => ({
-              token: detail.token,
-              amount: detail.amount.toString(),
-              expiration: detail.expiration.toString(),
-              nonce: detail.nonce.toString(),
-            })),
-            spender: values.spender,
-            sigDeadline: values.sigDeadline.toString(),
-          },
-        };
-
-        signatureDetailsResponse = {
-          domain: {
-            name: domain.name || 'Permit2',
-            chainId: Number(domain.chainId || chainId),
-            verifyingContract: (domain.verifyingContract || PERMIT2_ADDRESS) as `0x${string}`,
-          },
-          types,
-          primaryType: 'PermitBatch',
-        };
       }
-    }
-
-    // Return ERC20 approval needed response (now includes permit data for complete step generation)
-    // Skip this check if we already have a permit signature - the permit will handle the allowance
-    if (erc20ApprovalNeeded && !hasBatchPermit) {
-      return res.status(200).json({
-        needsApproval: true,
-        approvalType: 'ERC20_TO_PERMIT2' as const,
-        approvalTokenAddress: erc20ApprovalNeeded.address,
-        approvalTokenSymbol: erc20ApprovalNeeded.symbol,
-        approveToAddress: PERMIT2_ADDRESS,
-        approvalAmount: maxUint256.toString(),
-        // New flags: explicitly indicate which tokens need approval
-        needsToken0Approval,
-        needsToken1Approval,
-        // Include permit data so frontend can build complete step list
-        permitBatchData: permitBatchDataResponse,
-        signatureDetails: signatureDetailsResponse,
-      });
-    }
-
-    // Return Permit2 signature needed response
-    if (permitBatchDataResponse && !hasBatchPermit) {
-      return res.status(200).json({
-        needsApproval: true,
-        approvalType: 'PERMIT2_BATCH_SIGNATURE' as const,
-        permitBatchData: permitBatchDataResponse,
-        signatureDetails: signatureDetailsResponse,
-      });
     }
 
     // Build transaction
@@ -537,16 +318,7 @@ export default async function handler(
     };
 
     if (permitBatchValues) {
-      const permitBatchForSDK: AllowanceTransferPermitBatch = {
-        details: permitBatchValues.details.map((detail: any) => ({
-          token: getAddress(detail.token),
-          amount: String(detail.amount),
-          expiration: String(detail.expiration),
-          nonce: String(detail.nonce),
-        })),
-        spender: getAddress(permitBatchValues.spender),
-        sigDeadline: String(permitBatchValues.sigDeadline),
-      };
+      const permitBatchForSDK = buildPermitBatchForSDK(permitBatchValues);
 
       addOptions = {
         ...addOptions,
@@ -604,8 +376,8 @@ export default async function handler(
       poolLiquidity: state.liquidity.toString(),
       deadline: deadlineBigInt.toString(),
       details: {
-        token0: { address: isNativeC0 ? ETHERS_ADDRESS_ZERO : getAddress(defC0.address), symbol: defC0.symbol, amount: finalAmount0.toString() },
-        token1: { address: isNativeC1 ? ETHERS_ADDRESS_ZERO : getAddress(defC1.address), symbol: defC1.symbol, amount: finalAmount1.toString() },
+        token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: finalAmount0.toString() },
+        token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: finalAmount1.toString() },
         liquidity: position.liquidity.toString(),
         tickLower: details.tickLower,
         tickUpper: details.tickUpper,

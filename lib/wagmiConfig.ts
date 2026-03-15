@@ -41,13 +41,6 @@ export const wagmiAdapter = new WagmiAdapter({
 
 export const config = wagmiAdapter.wagmiConfig
 
-/** @deprecated Use chainIdForMode(mode) or getActiveChain(mode) instead */
-export const activeChain = getActiveChain();
-/** @deprecated Use chainIdForMode(mode) instead */
-export const activeChainId = activeChain.id;
-/** @deprecated Derive from data's networkMode instead */
-export const isBase = getStoredNetworkMode() === 'base';
-
 export function getExplorerUrl(mode?: NetworkMode): string {
   if (mode) return CHAIN_REGISTRY[mode].explorerUrl;
   const chain = getActiveChain();

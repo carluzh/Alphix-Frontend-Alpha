@@ -20,18 +20,6 @@ export interface CachedDataWrapper<T> {
   };
 }
 
-export async function getCachedData<T>(key: string): Promise<T | null> {
-  if (!redis) return null;
-
-  try {
-    const data = await redis.get<T>(key);
-    return data;
-  } catch (error) {
-    console.error('[Redis] Get failed:', error);
-    return null;
-  }
-}
-
 export async function setCachedData<T>(key: string, data: T, ttlSeconds: number = 300): Promise<void> {
   if (!redis) return;
 

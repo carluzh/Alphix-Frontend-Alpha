@@ -16,7 +16,7 @@ const DEFAULT_CLIENT_ID = 'alphix';
 const REQUEST_TIMEOUT_MS = 5000;
 
 /** Kyberswap chain path slug per network */
-export function getKyberChainPath(mode?: NetworkMode): string {
+function getKyberChainPath(mode?: NetworkMode): string {
   switch (mode) {
     case 'arbitrum': return 'arbitrum';
     default: return 'base';
@@ -74,6 +74,9 @@ function classifyHttpError(status: number, statusText: string): KyberswapError {
   if (status === 404) {
     return { code: 404, message: `Chain not found: ${statusText}`, retryable: false, kind: 'bad_request' };
   }
+  if (status === 422) {
+    return { code: 422, message: 'Route expired — please try again', retryable: true, kind: 'stale_route' };
+  }
   if (status >= 500) {
     return { code: status, message: statusText || 'Server error', retryable: true, kind: 'server_error' };
   }
@@ -83,12 +86,12 @@ function classifyHttpError(status: number, statusText: string): KyberswapError {
 /**
  * Extract route path for display (token symbols from route)
  */
-function extractRoutePath(routeSummary: KyberswapRouteResponse['data']['routeSummary']): string[] {
+function extractRoutePath(routeSummary: KyberswapRouteResponse['data']['routeSummary'], mode?: NetworkMode): string[] {
   const path: string[] = [];
 
   if (!routeSummary.route || routeSummary.route.length === 0) {
     if (routeSummary.tokenIn && routeSummary.tokenOut) {
-      return [getTokenSymbol(routeSummary.tokenIn), getTokenSymbol(routeSummary.tokenOut)];
+      return [getTokenSymbol(routeSummary.tokenIn, mode), getTokenSymbol(routeSummary.tokenOut, mode)];
     }
     return path;
   }
@@ -98,9 +101,9 @@ function extractRoutePath(routeSummary: KyberswapRouteResponse['data']['routeSum
     return path;
   }
 
-  path.push(getTokenSymbol(firstRoute[0].tokenIn));
+  path.push(getTokenSymbol(firstRoute[0].tokenIn, mode));
   for (const step of firstRoute) {
-    path.push(getTokenSymbol(step.tokenOut));
+    path.push(getTokenSymbol(step.tokenOut, mode));
   }
 
   return path;
@@ -251,7 +254,7 @@ export async function getKyberswapQuote(
     gasEstimate: BigInt(routeSummary.gas || '0'),
     routerAddress,
     routeSummary,
-    routeDisplay: extractRoutePath(routeSummary),
+    routeDisplay: extractRoutePath(routeSummary, request.networkMode),
   };
 }
 

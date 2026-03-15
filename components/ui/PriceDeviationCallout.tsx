@@ -15,7 +15,7 @@
 
 import { cn } from '@/lib/utils';
 import { IconTriangleWarningFilled } from 'nucleo-micro-bold-essential';
-import type { DeviationSeverity, PriceDeviationResult } from '@/hooks/usePriceDeviation';
+import type { PriceDeviationResult } from '@/hooks/usePriceDeviation';
 
 interface PriceDeviationCalloutProps {
   /** Price deviation data from usePriceDeviation hook */

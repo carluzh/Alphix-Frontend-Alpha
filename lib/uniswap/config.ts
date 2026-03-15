@@ -1,24 +1,29 @@
 // Uniswap SDK Configuration for Alphix
 
 import { Token } from '@uniswap/sdk-core'
+import { getAddress } from 'viem'
 
 import { BASE_CHAIN_ID, ARBITRUM_CHAIN_ID } from '@/lib/network-mode'
+import { getToken } from '@/lib/pools-config'
 
-// Stablecoins for USD pricing
-export const USDC_BASE = new Token(
+// Stablecoins for USD pricing — derived from pool config (single source of truth)
+const _usdcBase = getToken('USDC', 'base')!;
+const _usdcArb = getToken('USDC', 'arbitrum')!;
+
+const USDC_BASE = new Token(
   BASE_CHAIN_ID,
-  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-  6,
-  'USDC',
-  'USD Coin'
+  getAddress(_usdcBase.address),
+  _usdcBase.decimals,
+  _usdcBase.symbol,
+  _usdcBase.name
 )
 
-export const USDC_ARBITRUM = new Token(
+const USDC_ARBITRUM = new Token(
   ARBITRUM_CHAIN_ID,
-  '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
-  6,
-  'USDC',
-  'USD Coin'
+  getAddress(_usdcArb.address),
+  _usdcArb.decimals,
+  _usdcArb.symbol,
+  _usdcArb.name
 )
 
 export function getStablecoin(chainId: number): Token | undefined {

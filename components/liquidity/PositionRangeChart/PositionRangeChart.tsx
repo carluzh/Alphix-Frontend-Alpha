@@ -140,20 +140,6 @@ export function PositionRangeChart({
   const hasError = dataQuality === DataQuality.INVALID
   const hasData = entries.length > 0
 
-  // Debug logging for chart issues
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[PositionRangeChart]', {
-      poolId,
-      entriesCount: entries.length,
-      loading,
-      hasError,
-      dataQuality,
-      priceLower,
-      priceUpper,
-      priceInverted,
-      sampleEntry: entries[0],
-    })
-  }
 
   // Chart color based on position status
   const lineColor = getPriceLineColor(positionStatus)

@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react"
 
 type Listener = () => void
 
-export type SwapIndependentField = "from" | "to"
+type SwapIndependentField = "from" | "to"
 
 type SwapStoreState = {
   independentField: SwapIndependentField

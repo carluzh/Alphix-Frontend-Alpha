@@ -40,7 +40,7 @@ import {
 import { getWebSocketUrl } from '@/lib/backend-client';
 
 /** Network mode for WebSocket filtering */
-export type WSNetworkMode = 'base' | 'arbitrum';
+type WSNetworkMode = 'base' | 'arbitrum';
 
 // Default configuration (without url - resolved at runtime)
 const DEFAULT_CONFIG_BASE = {
@@ -445,29 +445,3 @@ export class WebSocketManager {
   }
 }
 
-/**
- * Create a singleton WebSocket manager instance
- *
- * Use this in contexts where you need a shared connection across the app.
- * Optionally provide a network mode to filter events by network.
- *
- * @param networkMode - Optional network mode ('base' | 'arbitrum')
- */
-let sharedInstance: WebSocketManager | null = null;
-
-export function getSharedWebSocketManager(networkMode?: WSNetworkMode): WebSocketManager {
-  if (!sharedInstance) {
-    sharedInstance = new WebSocketManager({}, {}, networkMode);
-  } else if (networkMode && sharedInstance.getNetworkMode() !== networkMode) {
-    // Switch network on existing instance
-    sharedInstance.switchNetwork(networkMode);
-  }
-  return sharedInstance;
-}
-
-export function resetSharedWebSocketManager(): void {
-  if (sharedInstance) {
-    sharedInstance.disconnect();
-    sharedInstance = null;
-  }
-}

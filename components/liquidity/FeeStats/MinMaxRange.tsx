@@ -17,20 +17,6 @@ const MIN_PRICE_THRESHOLD = 1e-20;
 const MAX_PRICE_THRESHOLD = 1e30;
 
 interface MinMaxRangeProps {
-  /** Pool tick spacing */
-  tickSpacing?: number;
-  /** Position lower tick */
-  tickLower?: number;
-  /** Position upper tick */
-  tickUpper?: number;
-  /** Whether prices are inverted */
-  pricesInverted: boolean;
-  /** Setter for price inversion toggle */
-  setPricesInverted: React.Dispatch<React.SetStateAction<boolean>>;
-  /** Pool type for decimal formatting */
-  poolType?: string;
-  /** Denomination base token */
-  denominationBase?: string;
   /** Pre-formatted min price (from useGetRangeDisplay with significant digits) */
   formattedMinPrice?: string;
   /** Pre-formatted max price (from useGetRangeDisplay with significant digits) */

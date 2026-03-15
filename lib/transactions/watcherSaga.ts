@@ -12,7 +12,7 @@
  */
 
 import { QueryClient } from '@tanstack/react-query'
-import { useCallback, useRef } from 'react'
+import { useCallback } from 'react'
 import type { PendingTransactionDetails } from './types-local'
 import { TransactionType } from './transactionDetails'
 import { apolloClient } from '@/lib/apollo/client'

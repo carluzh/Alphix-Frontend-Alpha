@@ -8,13 +8,17 @@
  */
 
 import { Currency, CurrencyAmount, NativeCurrency, Token } from '@uniswap/sdk-core'
+import { zeroAddress } from 'viem'
 import { PositionStatus, ProtocolVersion } from '../pool-types'
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk'
-import { V3PositionInfo, type PositionInfo } from '../types'
-import { DYNAMIC_FEE_DATA, FeeData } from '../Create/types'
+import { type PositionInfo } from '../types'
 
-// Constants
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+/** Fee tier configuration (inlined from deleted Create/types.ts) */
+type FeeData = {
+  isDynamic: boolean
+  feeAmount: number
+  tickSpacing: number
+}
 
 /**
  * Subgraph position token structure
@@ -118,7 +122,7 @@ function parseSubgraphToken(
 ): Currency {
   const decimals = token.decimals ?? defaultDecimals
 
-  if (token.address === ZERO_ADDRESS || token.address.toLowerCase() === ZERO_ADDRESS) {
+  if (token.address === zeroAddress || token.address.toLowerCase() === zeroAddress) {
     return nativeOnChain(chainId)
   }
 
@@ -194,7 +198,7 @@ export function parseSubgraphPosition(
     let feeTier: FeeData | undefined
 
     if (poolState) {
-      const hooks = poolState.hooks || ZERO_ADDRESS
+      const hooks = poolState.hooks || zeroAddress
       feeTier = {
         feeAmount: poolState.fee,
         tickSpacing: poolState.tickSpacing,
@@ -280,20 +284,3 @@ function parseAmountToRaw(amount: string, decimals: number): string {
   }
 }
 
-/**
- * Batch parse multiple positions
- */
-export function parseSubgraphPositions(
-  positions: SubgraphPosition[],
-  config: Omit<ParseSubgraphPositionConfig, 'poolState'>,
-  poolStates?: Record<string, PoolState>
-): PositionInfo[] {
-  return positions
-    .map((pos) =>
-      parseSubgraphPosition(pos, {
-        ...config,
-        poolState: poolStates?.[pos.poolId],
-      })
-    )
-    .filter((p): p is PositionInfo => p !== undefined)
-}

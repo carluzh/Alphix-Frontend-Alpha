@@ -19,7 +19,7 @@
 /**
  * Subscribe to a channel
  */
-export interface WSSubscribeMessage {
+interface WSSubscribeMessage {
   type: 'subscribe';
   channel: string;
 }
@@ -27,7 +27,7 @@ export interface WSSubscribeMessage {
 /**
  * Unsubscribe from a channel
  */
-export interface WSUnsubscribeMessage {
+interface WSUnsubscribeMessage {
   type: 'unsubscribe';
   channel: string;
 }
@@ -44,7 +44,7 @@ export type WSClientMessage = WSSubscribeMessage | WSUnsubscribeMessage;
 /**
  * Data message containing channel updates
  */
-export interface WSDataMessage<T = unknown> {
+interface WSDataMessage<T = unknown> {
   type: 'data';
   channel: string;
   data: T;
@@ -55,7 +55,7 @@ export interface WSDataMessage<T = unknown> {
  * Subscription confirmation
  * Server may send either 'channel' (singular) or 'channels' (array)
  */
-export interface WSSubscribedMessage {
+interface WSSubscribedMessage {
   type: 'subscribed';
   channel?: string;
   channels?: string[];
@@ -66,7 +66,7 @@ export interface WSSubscribedMessage {
  * Unsubscription confirmation
  * Server may send either 'channel' (singular) or 'channels' (array)
  */
-export interface WSUnsubscribedMessage {
+interface WSUnsubscribedMessage {
   type: 'unsubscribed';
   channel?: string;
   channels?: string[];
@@ -76,7 +76,7 @@ export interface WSUnsubscribedMessage {
 /**
  * Error message
  */
-export interface WSErrorMessage {
+interface WSErrorMessage {
   type: 'error';
   error: string;
   timestamp: number;
@@ -85,7 +85,7 @@ export interface WSErrorMessage {
 /**
  * System message (e.g., welcome message on connect)
  */
-export interface WSSystemMessage {
+interface WSSystemMessage {
   type: 'data';
   channel: 'system';
   data: {
@@ -111,7 +111,7 @@ export type WSServerMessage =
 /**
  * Position event types
  */
-export type PositionEventType = 'position_insert' | 'position_update' | 'position_delete';
+type PositionEventType = 'position_insert' | 'position_update' | 'position_delete';
 
 /**
  * Position update payload from WebSocket
@@ -185,6 +185,12 @@ export interface WSPoolData {
   totalFees24hUsd?: number;
   /** LP fee in basis points */
   lpFee: number;
+  /** USD value of token0 reserves (CL + UY combined) */
+  tvlToken0Usd?: number;
+  /** USD value of token1 reserves (CL + UY combined) */
+  tvlToken1Usd?: number;
+  /** Total lifetime fees earned by LPs in this pool (swap + lending) */
+  cumulativeFeesUsd?: number;
   /** Token0 USD price */
   token0Price: number;
   /** Token1 USD price */
@@ -200,7 +206,7 @@ export interface WSPoolData {
 /**
  * Pool event types (non-swap)
  */
-export type PoolEventType = 'pool_insert' | 'pool_update';
+type PoolEventType = 'pool_insert' | 'pool_update';
 
 /**
  * Swap event payload from WebSocket
@@ -235,7 +241,7 @@ export interface WSSwapData {
 /**
  * Combined pool channel data (can be pool update or swap)
  */
-export type WSPoolChannelData = WSPoolData | WSSwapData;
+type WSPoolChannelData = WSPoolData | WSSwapData;
 
 // =============================================================================
 // PRICE DATA
@@ -270,19 +276,19 @@ export interface WSPriceData {
 /**
  * Channel type identifiers
  */
-export type ChannelType = 'positions' | 'pools' | 'prices' | 'system';
+type ChannelType = 'positions' | 'pools' | 'prices' | 'system';
 
 /**
  * Create a position channel for an address
  */
-export function createPositionChannel(address: string): string {
+function createPositionChannel(address: string): string {
   return `positions:${address.toLowerCase()}`;
 }
 
 /**
  * Create a pool channel for a pool ID
  */
-export function createPoolChannel(poolId: string): string {
+function createPoolChannel(poolId: string): string {
   return `pools:${poolId.toLowerCase()}`;
 }
 

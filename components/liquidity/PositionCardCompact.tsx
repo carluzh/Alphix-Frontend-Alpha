@@ -148,9 +148,8 @@ export function PositionCardCompact({
         if (denominationBaseOverride && (denominationBaseOverride === token0Symbol || denominationBaseOverride === token1Symbol)) {
             return denominationBaseOverride;
         }
-        const priceNum = currentPrice ? parseFloat(currentPrice) : undefined;
-        return getOptimalBaseToken(token0Symbol, token1Symbol, priceNum);
-    }, [denominationBaseOverride, token0Symbol, token1Symbol, currentPrice]);
+        return getOptimalBaseToken(token0Symbol, token1Symbol);
+    }, [denominationBaseOverride, token0Symbol, token1Symbol]);
 
     const shouldInvert = denominationBase === token0Symbol;
 

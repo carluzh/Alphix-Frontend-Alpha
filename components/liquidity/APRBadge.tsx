@@ -21,7 +21,7 @@ interface APRBadgeProps {
 
 export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, token1Symbol }: APRBadgeProps) {
   if (isLoading) {
-    return <div className={cn("h-7 w-[72px] bg-muted/60 rounded animate-pulse", className)} />;
+    return <div className={cn("h-7 min-w-[72px] px-3 bg-muted/60 rounded animate-pulse", className)} />;
   }
 
   // Use consolidated APR calculation
@@ -35,7 +35,7 @@ export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, t
 
   if (totalApr === null) {
     return (
-      <div className={cn("inline-flex items-center justify-center h-7 w-[72px] rounded text-sm font-semibold font-mono bg-muted/40 text-muted-foreground", className)}>
+      <div className={cn("inline-flex items-center justify-center h-7 min-w-[72px] px-3 rounded text-sm font-semibold font-mono bg-muted/40 text-muted-foreground", className)}>
         -
       </div>
     );
@@ -54,7 +54,7 @@ export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, t
 
   const badge = (
     <div className={cn(
-      "inline-flex items-center justify-center h-7 w-[72px] rounded text-sm font-semibold font-mono",
+      "inline-flex items-center justify-center h-7 min-w-[72px] px-3 rounded text-sm font-semibold font-mono",
       isZeroApr ? "bg-muted/40 text-muted-foreground" : "bg-green-500/15 text-green-500",
       className
     )}>

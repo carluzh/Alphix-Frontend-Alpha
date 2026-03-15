@@ -379,22 +379,6 @@ export interface UnifiedYieldWithdrawPreview {
   amount1Formatted: string;
 }
 
-/**
- * Withdrawal percentage options for UI
- */
-export type WithdrawPercentage = 25 | 50 | 75 | 100;
-
-/**
- * Calculate shares for a given withdrawal percentage
- */
-export function calculateWithdrawShares(
-  totalShares: bigint,
-  percentage: WithdrawPercentage
-): bigint {
-  if (percentage === 100) return totalShares;
-  return (totalShares * BigInt(percentage)) / 100n;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // POSITION ID UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════

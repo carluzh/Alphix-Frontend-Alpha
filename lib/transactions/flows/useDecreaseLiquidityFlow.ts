@@ -5,15 +5,13 @@
  * No approvals or permits needed (user is withdrawing, not depositing).
  * Supports both V4 and Unified Yield positions.
  *
- * @see TRANSACTION_STEPPER_PLAN.md — Layer 3
+ * @see ../EXECUTION_REFACTOR_BRIEF.md — Layer 3
  */
 
 import { useCallback, useMemo } from 'react';
 import { useSendTransaction } from 'wagmi';
 import { useConfig } from 'wagmi';
 import { waitForTransactionReceipt } from 'wagmi/actions';
-import type { Hex } from 'viem';
-
 import { TransactionStepType } from '@/lib/transactions/types';
 import type { TransactionStep } from '@/lib/transactions/types';
 import type { StepGenerationResult, StepExecutorFn } from '@/lib/transactions/useStepExecutor';

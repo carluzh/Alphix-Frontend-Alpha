@@ -15,7 +15,7 @@ export type FeeDetail = {
   type: "percentage" | "usd"
 }
 
-export type CalculatedValues = {
+type CalculatedValues = {
   fromTokenAmount: string
   fromTokenValue: string
   toTokenAmount: string
@@ -25,7 +25,7 @@ export type CalculatedValues = {
   minimumReceived: string
 }
 
-export type PriceImpactWarning = { severity: "medium" | "high"; message: string } | null
+type PriceImpactWarning = { severity: "medium" | "high"; message: string } | null
 
 export type ExecutionTradeParams = {
   swapType: "ExactIn" | "ExactOut"
@@ -35,7 +35,7 @@ export type ExecutionTradeParams = {
   route: SwapRoute | null
 }
 
-export type TradeState = "idle" | "loading" | "no_route" | "error" | "ready"
+type TradeState = "idle" | "loading" | "no_route" | "error" | "ready"
 
 // Uniswap-style: pass a single derived trade model through the component tree.
 export type SwapTradeModel = ReturnType<typeof useSwapTrade>

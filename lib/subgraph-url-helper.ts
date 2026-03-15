@@ -21,10 +21,6 @@ export function getAlphixSubgraphUrl(networkMode: NetworkMode): string {
   return resolveSubgraphUrl(networkMode);
 }
 
-export function getUniswapV4SubgraphUrl(networkMode: NetworkMode): string {
-  return resolveSubgraphUrl(networkMode);
-}
-
 export function isBaseSubgraphMode(networkMode: NetworkMode): boolean {
   return networkMode === 'base';
 }

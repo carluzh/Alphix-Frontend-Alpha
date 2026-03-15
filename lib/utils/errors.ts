@@ -9,11 +9,3 @@ export class FetchError extends Error {
     this.cause = cause
   }
 }
-
-export function isRateLimitFetchError(error: unknown): boolean {
-  return error instanceof FetchError && !!error.response.status && error.response.status >= 412 && error.response.status <= 429
-}
-
-export function is404Error(error: unknown): boolean {
-  return error instanceof FetchError && !!error.response.status && error.response.status === 404
-}

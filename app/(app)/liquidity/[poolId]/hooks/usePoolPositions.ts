@@ -171,7 +171,7 @@ export function usePoolPositions({
         return [...newPositions, ...updated];
       });
 
-      await invalidateAfterTx(null, {
+      await invalidateAfterTx({
         owner: accountAddress,
         chainId,
         poolId,
@@ -188,7 +188,7 @@ export function usePoolPositions({
   const refreshAfterMutation = useCallback(async (info?: MutationInfo) => {
     if (!poolId || !isConnected || !accountAddress || !chainId) return;
 
-    await invalidateAfterTx(null, {
+    await invalidateAfterTx({
       owner: accountAddress,
       chainId,
       poolId,

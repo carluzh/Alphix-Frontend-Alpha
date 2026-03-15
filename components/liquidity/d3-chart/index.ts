@@ -8,10 +8,6 @@
 export { D3LiquidityRangeChart } from './D3LiquidityRangeChart';
 export type { D3LiquidityRangeChartProps, D3LiquidityRangeChartHandle } from './D3LiquidityRangeChart';
 
-// Action buttons (Uniswap pattern)
-export { LiquidityRangeActionButtons } from './components/LiquidityRangeActionButtons';
-export type { LiquidityRangeActionButtonsProps } from './components/LiquidityRangeActionButtons';
-
 // Constants
 export { CHART_DIMENSIONS, CHART_BEHAVIOR, CHART_COLORS, CHART_CLASSES } from './constants';
 
@@ -25,13 +21,9 @@ export type {
   PriceToYFn,
   YToPriceFn,
   Renderer,
-  RenderingContext,
   ChartState,
   ChartActions,
-  D3LiquidityRangeChartProps as ChartProps,
-  RendererConfig,
   HandleType,
-  DragBehaviorConfig,
 } from './types';
 
 // Utilities

@@ -8,7 +8,7 @@ import { parseNetworkMode, type NetworkMode } from '@/lib/network-mode';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
 import { poolKeys } from '@/lib/cache/redis-keys';
 import { fetchPoolHistory } from '@/lib/backend-client';
-import { getUniswapV4SubgraphUrl } from '@/lib/subgraph-url-helper';
+import { getAlphixSubgraphUrl } from '@/lib/subgraph-url-helper';
 
 interface ChartDataPoint {
   date: string;
@@ -66,7 +66,7 @@ const FEE_EVENTS_QUERY = `
  */
 async function fetchFeeEvents(subgraphId: string, networkMode: NetworkMode): Promise<DynamicFeeEvent[]> {
   try {
-    const subgraphUrl = getUniswapV4SubgraphUrl(networkMode);
+    const subgraphUrl = getAlphixSubgraphUrl(networkMode);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 

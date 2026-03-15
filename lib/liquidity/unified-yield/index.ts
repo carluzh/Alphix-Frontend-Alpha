@@ -16,8 +16,6 @@
 
 // ABI
 export { UNIFIED_YIELD_HOOK_ABI } from './abi/unifiedYieldHookABI';
-export type { UnifiedYieldHookABI } from './abi/unifiedYieldHookABI';
-
 // Types
 export type {
   UnifiedYieldPosition,
@@ -29,12 +27,10 @@ export type {
   UnifiedYieldWithdrawParams,
   UnifiedYieldWithdrawTxResult,
   UnifiedYieldWithdrawPreview,
-  WithdrawPercentage,
 } from './types';
 
 export {
   isUnifiedYieldPosition,
-  calculateWithdrawShares,
   parseUnifiedYieldPositionId,
   isUnifiedYieldPositionId,
   createUnifiedYieldPositionId,

@@ -1,5 +1,7 @@
-import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
+import type { TypedDataDomain } from 'abitype'
 import type { PublicClient, Address } from 'viem'
+
+type TypedDataField = { name: string; type: string }
 
 const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as const
 

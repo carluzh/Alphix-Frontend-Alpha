@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import Image from "next/image";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getAllTokens, type TokenConfig } from "@/lib/pools-config";
+import { getAllTokens, getMultiChainTokens, type TokenConfig } from "@/lib/pools-config";
 import type { NetworkMode } from "@/lib/network-mode";
 
 interface TokenSearchBarProps {
@@ -20,6 +20,8 @@ interface TokenSearchBarProps {
   className?: string;
   /** Network mode for token list — caller provides, no context fallback */
   networkMode?: NetworkMode;
+  /** When true, show tokens from all chains (overrides networkMode) */
+  multiChain?: boolean;
 }
 
 /**
@@ -38,6 +40,7 @@ export const TokenSearchBar = memo(function TokenSearchBar({
   placeholder = "Search tokens...",
   className,
   networkMode,
+  multiChain,
 }: TokenSearchBarProps) {
   const [localValue, setLocalValue] = useState(value);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -46,9 +49,9 @@ export const TokenSearchBar = memo(function TokenSearchBar({
 
   // Get all tokens for autocomplete
   const allTokens = useMemo(() => {
-    const tokens = getAllTokens(networkMode);
+    const tokens = multiChain ? getMultiChainTokens() : getAllTokens(networkMode);
     return Object.values(tokens);
-  }, [networkMode]);
+  }, [networkMode, multiChain]);
 
   // Filter tokens based on search input
   const filteredTokens = useMemo(() => {

@@ -47,7 +47,17 @@ export interface PoolData {
   tvlUsd: number;
   volume24hUsd: number;
   fees24hUsd: number;
+  /** 24h lending yield in USD (from Aave/Spark for UY pools) */
+  lendingYield24hUsd?: number;
+  /** 24h total fees in USD (swap fees + lending yield) */
+  totalFees24hUsd?: number;
   lpFee: number;
+  /** USD value of token0 reserves (CL + UY combined) */
+  tvlToken0Usd?: number;
+  /** USD value of token1 reserves (CL + UY combined) */
+  tvlToken1Usd?: number;
+  /** Total lifetime fees earned by LPs in this pool */
+  cumulativeFeesUsd?: number;
   token0Price: number;
   token1Price: number;
   /** Calculated: (fees24hUsd / tvlUsd) * 365 * 100 */
@@ -94,7 +104,12 @@ function toPoolData(metrics: PoolMetrics): PoolData {
     tvlUsd: metrics.tvlUsd,
     volume24hUsd: metrics.volume24hUsd,
     fees24hUsd: metrics.fees24hUsd,
+    lendingYield24hUsd: metrics.lendingYield24hUsd,
+    totalFees24hUsd: metrics.totalFees24hUsd,
     lpFee: metrics.lpFee,
+    tvlToken0Usd: metrics.tvlToken0Usd,
+    tvlToken1Usd: metrics.tvlToken1Usd,
+    cumulativeFeesUsd: metrics.cumulativeFeesUsd,
     token0Price: metrics.token0Price,
     token1Price: metrics.token1Price,
     apr24h: calculateApr(metrics.fees24hUsd, metrics.tvlUsd),
@@ -194,7 +209,12 @@ export function useWSPool(poolId: string, networkModeOverride?: NetworkMode): Us
         tvlUsd: wsPool.tvlUsd,
         volume24hUsd: wsPool.volume24hUsd,
         fees24hUsd: wsPool.fees24hUsd,
+        lendingYield24hUsd: wsPool.lendingYield24hUsd,
+        totalFees24hUsd: wsPool.totalFees24hUsd,
         lpFee: wsPool.lpFee,
+        tvlToken0Usd: wsPool.tvlToken0Usd,
+        tvlToken1Usd: wsPool.tvlToken1Usd,
+        cumulativeFeesUsd: wsPool.cumulativeFeesUsd,
         token0Price: wsPool.token0Price,
         token1Price: wsPool.token1Price,
         apr24h: calculateApr(wsPool.fees24hUsd, wsPool.tvlUsd),

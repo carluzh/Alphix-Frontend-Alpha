@@ -5,7 +5,7 @@
  * Each domain hook (swap, liquidity) uses this factory with its own
  * set of step types.
  *
- * @see TRANSACTION_STEPPER_PLAN.md — Layer 2/3
+ * @see ../EXECUTION_REFACTOR_BRIEF.md — Layer 2/3
  */
 
 import { useCallback, useMemo, type RefObject } from 'react';

@@ -107,7 +107,7 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
         const response = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${poolIdForFeeHistory}&days=30${networkParam}`)
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}))
-          throw new Error(errorData.message || `Failed to fetch historical fee data: ${response.statusText}`)
+          throw new Error(errorData.error || `Failed to fetch historical fee data: ${response.statusText}`)
         }
         const rawEvents: any[] = await response.json()
 

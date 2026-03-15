@@ -21,23 +21,11 @@ export {
   type TransactionStep,
 
   // Props interfaces
-  type StepRowProps,
   type CurrentStepState,
-
-  // Config interfaces
-  type AddLiquidityStepsConfig,
-  type IncreaseLiquidityStepsConfig,
-  type DecreaseLiquidityStepsConfig,
 
   // Factory functions
   createTokenApprovalStep,
   createPermit2SignatureStep,
-  createLiquidityStep,
-
-  // Step builders
-  buildAddLiquiditySteps,
-  buildIncreaseLiquiditySteps,
-  buildDecreaseLiquiditySteps,
 } from './types'
 
 // Transaction state management (Redux)
@@ -47,15 +35,7 @@ export { TransactionWatcherProvider, TokenBalancesProvider } from './TokenBalanc
 // Transaction hooks
 export {
   useTransactionAdder,
-  useTransactionRemover,
-  useTransactionCanceller,
-  useTransaction,
-  useIsTransactionPending,
-  useIsTransactionConfirmed,
   usePendingTransactions,
-  useHasPendingApproval,
-  useHasPendingRevocation,
-  usePendingLPTransactionsChangeListener,
 } from './hooks'
 
 // Re-export TradeType from @uniswap/sdk-core for swap transaction info
@@ -77,24 +57,6 @@ export {
   type ApproveTransactionInfo,
   type Permit2ApproveTransactionInfo,
 } from './transactionDetails'
-
-// Execution primitives (Layer 1)
-export {
-  executeApproval,
-  executePermitSign,
-  sendAndConfirmTransaction,
-  checkAllowanceSufficient,
-  fetchPermitData,
-  type SendTransactionFn,
-  type WaitForReceiptFn,
-  type SignTypedDataFn,
-  type ExecuteApprovalParams,
-  type ExecutePermitSignParams,
-  type SendAndConfirmParams,
-  type CheckAllowanceParams,
-  type FetchPermitDataParams,
-  type PermitDataResponse,
-} from './primitives'
 
 // Step orchestrator (Layer 2)
 export {

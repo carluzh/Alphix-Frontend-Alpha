@@ -64,6 +64,8 @@ export interface PoolConfig {
 
 export interface PoolStats {
   tvlUSD: number;
+  tvlToken0Usd?: number;
+  tvlToken1Usd?: number;
   volume24hUSD: number;
   fees24hUSD: number;
   apr: string;
@@ -136,7 +138,7 @@ export interface UsePoolDetailPageDataReturn {
 }
 
 /**
- * Get pool configuration from pools.json
+ * Get pool configuration from pool config
  */
 function getPoolConfiguration(poolId: string, networkModeOverride?: NetworkMode): PoolConfig | null {
   const poolConfig = networkModeOverride
@@ -379,6 +381,8 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
 
       setPoolStats({
         tvlUSD,
+        tvlToken0Usd: wsPool.tvlToken0Usd,
+        tvlToken1Usd: wsPool.tvlToken1Usd,
         volume24hUSD,
         fees24hUSD,
         apr: aprFormatted,
@@ -429,6 +433,8 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
 
         setPoolStats({
           tvlUSD,
+          tvlToken0Usd: pool.tvlToken0Usd,
+          tvlToken1Usd: pool.tvlToken1Usd,
           volume24hUSD,
           fees24hUSD,
           apr: aprFormatted,

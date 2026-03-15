@@ -15,7 +15,6 @@ import type { Address } from "viem"
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSwapPercentageInput } from "@/hooks/usePercentageInput";
 import { useUserSlippageTolerance } from "@/hooks/useSlippage";
-import { getAutoSlippage } from "@/lib/slippage/slippage-api";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { usePriceDeviation, requiresDeviationAcknowledgment } from "@/hooks/usePriceDeviation";
 import {
@@ -37,7 +36,7 @@ import {
 import { useNetwork } from "@/lib/network-context"
 import { useChainMismatch } from "@/hooks/useChainMismatch"
 import { useSwapTrade } from "./useSwapTrade"
-import { useFeeHistory, type FeeHistoryPoint } from "./useFeeHistory"
+import { useFeeHistory } from "./useFeeHistory"
 import { swapStore, useSwapStore } from "./swapStore"
 
 import { Card, CardContent } from "@/components/ui/card"
@@ -239,12 +238,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   // Dynamic fee + route fees managed by hooks
   // REMOVED: const [selectedPoolIndexForChart, setSelectedPoolIndexForChart] = useState<number>(0); // Track which pool's chart to show
 
-  // REMOVED: Handler for selecting which pool's fee chart to display (now passed as prop)
-  // const handleSelectPoolForChart = useCallback((poolIndex: number) => {
-  //   if (currentRoute && poolIndex >= 0 && poolIndex < currentRoute.pools.length) {
-  //     setSelectedPoolIndexForChart(poolIndex);
-  //   }
-  // }, [currentRoute]);
 
   // Trade model (Uniswap-style single source of truth for quote+route+fees+derived amounts)
 
@@ -689,15 +682,12 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const strokeWidth = 2; // Define strokeWidth for the SVG rect elements
 
   // For Alphix routes, segment 0 is the route preview, 1+ are fee charts.
-  // Fee history needs the actual pool index (offset by -1).
-  const isAlphixWithRouteEarly = trade.source === "alphix" && !!currentRoute && currentRoute.pools.length >= 1 && !!trade.routeInfo;
-  const feeChartPoolIndexEarly = isAlphixWithRouteEarly ? Math.max(0, selectedPoolIndexForChart - 1) : selectedPoolIndexForChart;
-
+  // Fee history uses the selected pool index directly (no offset needed).
   const { feeHistoryData, isFeeHistoryLoading, poolInfo, fallbackPoolInfo } = useFeeHistory({
     isMounted,
     isConnected,
     currentRoute,
-    selectedPoolIndexForChart: feeChartPoolIndexEarly,
+    selectedPoolIndexForChart,
     networkMode: swapNetworkMode,
   });
 
@@ -866,19 +856,17 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     trade.calculatedValues,
   ])
   
-  // For ALL Alphix routes (single-hop and multi-hop), the preview area has N+1 segments:
-  // segment 0 = Route preview (Sankey), segments 1..N = Dynamic Fee Chart per pool.
-  // Kyberswap routes always show just the route preview (no fee charts).
+  // Route is always shown. For Alphix routes, fee chart is shown underneath.
+  // For multi-hop Alphix routes, chevrons navigate between fee charts (one per pool).
   const isAlphixWithRoute = trade.source === "alphix" && !!currentRoute && currentRoute.pools.length >= 1 && !!trade.routeInfo;
-  const totalPreviewSegments = isAlphixWithRoute ? 1 + currentRoute!.pools.length : (currentRoute?.pools?.length || 1);
-  // For fee history, offset by -1 (segment 0 is route, not a pool)
-  const feeChartPoolIndex = isAlphixWithRoute ? Math.max(0, selectedPoolIndexForChart - 1) : selectedPoolIndexForChart;
+  const totalFeeChartSegments = isAlphixWithRoute ? currentRoute!.pools.length : 0;
+  const feeChartPoolIndex = selectedPoolIndexForChart;
 
   const handleNextPool = useCallback(() => {
-    if (selectedPoolIndexForChart < totalPreviewSegments - 1) {
+    if (selectedPoolIndexForChart < totalFeeChartSegments - 1) {
       setSelectedPoolIndexForChart(prevIndex => prevIndex + 1);
     }
-  }, [totalPreviewSegments, selectedPoolIndexForChart]);
+  }, [totalFeeChartSegments, selectedPoolIndexForChart]);
 
   const handlePreviousPool = useCallback(() => {
     if (selectedPoolIndexForChart > 0) {
@@ -890,14 +878,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
   const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null)
   const handlePreviewTouchStart = (e: React.TouchEvent) => {
     if (!isMobile) return
-    if (totalPreviewSegments <= 1) return
+    if (totalFeeChartSegments <= 1) return
     const t = e.touches?.[0]
     if (!t) return
     swipeStartRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
   }
   const handlePreviewTouchEnd = (e: React.TouchEvent) => {
     if (!isMobile) return
-    if (totalPreviewSegments <= 1) return
+    if (totalFeeChartSegments <= 1) return
     const start = swipeStartRef.current
     swipeStartRef.current = null
     if (!start) return
@@ -917,16 +905,14 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     else handlePreviousPool()
   }
 
-  // Show chart preview for Alphix routes when selected segment >= 1 (fee chart view)
-  const showChartPreview = isAlphixWithRoute && selectedPoolIndexForChart >= 1;
-
-  // Show route preview for:
-  // - Kyberswap routes (always show Sankey)
-  // - Alphix routes when viewing segment 0 (the route overview)
+  // Route preview always shows when we have route data
   const showRoutePreview = (
     (trade.source === "kyberswap" && !!trade.kyberswapData?.routeSummary) ||
-    (isAlphixWithRoute && selectedPoolIndexForChart === 0)
+    isAlphixWithRoute
   );
+
+  // Fee chart shows underneath the route for Alphix routes
+  const showChartPreview = isAlphixWithRoute;
 
   return (
     <div className="flex flex-col">
@@ -1032,28 +1018,9 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               <div className="w-full relative group overflow-x-hidden overflow-y-visible sm:overflow-visible">
                 <div className="absolute inset-y-0 left-0 right-0 sm:left-[-2.75rem] sm:right-[-2.75rem]"></div>
                 <div className="relative touch-pan-y" onTouchStart={handlePreviewTouchStart} onTouchEnd={handlePreviewTouchEnd}>
+                  {/* Route preview — always shown when available */}
                   <AnimatePresence mode="wait">
-                    {showChartPreview && (
-                      <motion.div
-                        key={`dynamic-fee-preview-${feeChartPoolIndex}`}
-                        className="w-full"
-                        initial={{ opacity: 0, height: 'auto', marginTop: '16px' }}
-                        animate={{ opacity: 1, height: 'auto', marginTop: '16px' }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.15, ease: "easeInOut" }}
-                        onAnimationComplete={() => { setCombinedRect(getContainerRect()); }}
-                      >
-                        <DynamicFeeChartPreview
-                          data={isFeeHistoryLoading ? [] : feeHistoryData}
-                          poolInfo={poolInfo || fallbackPoolInfo}
-                          isLoading={isFeeHistoryLoading}
-                          alwaysShowSkeleton={false}
-                          totalPools={currentRoute?.pools?.length}
-                          activePoolIndex={isAlphixWithRoute ? feeChartPoolIndex : selectedPoolIndexForChart}
-                        />
-                      </motion.div>
-                    )}
-                    {showRoutePreview && (
+                    {showRoutePreview ? (
                       <motion.div
                         key="route-preview"
                         className="w-full"
@@ -1074,8 +1041,7 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                           networkMode={swapNetworkMode}
                         />
                       </motion.div>
-                    )}
-                    {!showChartPreview && !showRoutePreview && (
+                    ) : (
                       <motion.div
                         key="skeleton-preview"
                         className="w-full"
@@ -1093,33 +1059,57 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                     )}
                   </AnimatePresence>
 
-                  {(showChartPreview || showRoutePreview) && totalPreviewSegments > 1 && (
-                    <>
-                      {selectedPoolIndexForChart > 0 && (
-                        <button
-                          type="button"
-                          aria-label="Previous segment"
-                          onClick={handlePreviousPool}
-                          className="absolute left-0 sm:left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
-                        >
-                          <ChevronLeftIcon className="h-4 w-4" />
-                        </button>
-                      )}
-                      {selectedPoolIndexForChart < totalPreviewSegments - 1 && (
-                        <button
-                          type="button"
-                          aria-label="Next segment"
-                          onClick={handleNextPool}
-                          className="absolute right-0 sm:right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
-                        >
-                          <ChevronRightIcon className="h-4 w-4" />
-                        </button>
-                      )}
-                    </>
-                  )}
-                  {(showChartPreview || showRoutePreview) && totalPreviewSegments > 1 && (
+                  {/* Fee chart — shown underneath the route for Alphix pools */}
+                  <AnimatePresence mode="wait">
+                    {showChartPreview && (
+                      <motion.div
+                        key={`dynamic-fee-preview-${feeChartPoolIndex}`}
+                        className="w-full relative"
+                        initial={{ opacity: 0, height: 'auto', marginTop: '12px' }}
+                        animate={{ opacity: 1, height: 'auto', marginTop: '12px' }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.15, ease: "easeInOut" }}
+                        onAnimationComplete={() => { setCombinedRect(getContainerRect()); }}
+                      >
+                        <DynamicFeeChartPreview
+                          data={isFeeHistoryLoading ? [] : feeHistoryData}
+                          poolInfo={poolInfo || fallbackPoolInfo}
+                          isLoading={isFeeHistoryLoading}
+                          alwaysShowSkeleton={false}
+                        />
+                        {/* Multi-hop chevrons for navigating between fee charts */}
+                        {totalFeeChartSegments > 1 && (
+                          <>
+                            {selectedPoolIndexForChart > 0 && (
+                              <button
+                                type="button"
+                                aria-label="Previous pool fee chart"
+                                onClick={handlePreviousPool}
+                                className="absolute left-0 sm:left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
+                              >
+                                <ChevronLeftIcon className="h-4 w-4" />
+                              </button>
+                            )}
+                            {selectedPoolIndexForChart < totalFeeChartSegments - 1 && (
+                              <button
+                                type="button"
+                                aria-label="Next pool fee chart"
+                                onClick={handleNextPool}
+                                className="absolute right-0 sm:right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
+                              >
+                                <ChevronRightIcon className="h-4 w-4" />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Dot indicators for multi-hop fee chart navigation */}
+                  {showChartPreview && totalFeeChartSegments > 1 && (
                     <div className="w-full flex justify-center gap-1.5 mt-2">
-                      {Array.from({ length: totalPreviewSegments }, (_, i) => (
+                      {Array.from({ length: totalFeeChartSegments }, (_, i) => (
                         <span
                           key={i}
                           className={`h-[5px] w-[5px] rounded-full ${i === selectedPoolIndexForChart ? 'bg-muted-foreground/60' : 'bg-[var(--sidebar-border)]'}`}
@@ -1140,7 +1130,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
         onClose={() => setShowSwapModal(false)}
         fromToken={fromToken}
         toToken={toToken}
-        queryClient={null}
         fromAmount={fromAmount}
         toAmount={toAmount}
         lastEditedSideRef={lastEditedSideRef}

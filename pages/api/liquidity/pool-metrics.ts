@@ -1,18 +1,12 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getPoolSubgraphId, getStateViewAddress, getPoolById } from '../../../lib/pools-config';
 import { resolveNetworkMode } from '../../../lib/network-mode';
-import { isBaseSubgraphMode, getUniswapV4SubgraphUrl } from '../../../lib/subgraph-url-helper';
+import { getAlphixSubgraphUrl } from '../../../lib/subgraph-url-helper';
 import { cacheService } from '@/lib/cache/CacheService';
 import { poolKeys } from '@/lib/cache/redis-keys';
 import { createNetworkClient } from '../../../lib/viemClient';
 import { parseAbi, type Hex } from 'viem';
-
-interface PoolDayData {
-  date: number;
-  volumeToken0: string;
-  volumeToken1: string;
-  tvlUSD: string;
-}
+import { fetchFeeEvents } from '@/lib/liquidity/fetchFeeEvents';
 
 // Cache TTL configuration (in seconds)
 const CACHE_TTL = { fresh: 300, stale: 3600 }; // 5min fresh, 1hr stale
@@ -43,19 +37,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const apiId = getPoolSubgraphId(poolId, networkMode) || poolId;
-  const isBase = isBaseSubgraphMode(networkMode);
   const daysNum = Number(days) || 7;
-
-  console.log('[pool-metrics] Request:', { poolId, apiId: apiId.toLowerCase(), days: daysNum, isBase, networkMode });
-
-  // Construct base URL from request headers (fail-fast, no localhost fallback)
-  const protocol = req.headers['x-forwarded-proto'] || 'http';
-  const host = req.headers.host;
-  if (!host) {
-    console.error('[pool-metrics] Missing host header');
-    return res.status(500).json({ error: 'Missing host header' });
-  }
-  const baseUrl = `${protocol}://${host}`;
 
   // Unified query: Works for both base and arbitrum
   const poolQuery = `
@@ -89,18 +71,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       CACHE_TTL,
       async () => {
         // Use unified subgraph URL for both networks
-        const poolDataUrl = getUniswapV4SubgraphUrl(networkMode);
+        const poolDataUrl = getAlphixSubgraphUrl(networkMode);
         if (!poolDataUrl) {
           console.error('[pool-metrics] No subgraph URL available');
           return EMPTY_METRICS;
         }
 
-        // Promise.allSettled pattern (identical to Uniswap getPool.ts)
-        // AbortController timeout pattern for fetch calls
+        // Fetch pool data from subgraph and fee events in parallel
         const poolController = new AbortController();
-        const poolTimeoutId = setTimeout(() => poolController.abort(), 10000); // 10s for subgraph
-        const feeController = new AbortController();
-        const feeTimeoutId = setTimeout(() => feeController.abort(), 10000); // 10s for internal API
+        const poolTimeoutId = setTimeout(() => poolController.abort(), 10000);
 
         const [poolResult, feeResult] = await Promise.allSettled([
           fetch(poolDataUrl, {
@@ -112,36 +91,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }),
             signal: poolController.signal
           }),
-          fetch(`${baseUrl}/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(poolId)}&network=${networkMode}`, {
-            signal: feeController.signal
-          })
+          fetchFeeEvents(poolId, networkMode)
         ]);
 
         clearTimeout(poolTimeoutId);
-        clearTimeout(feeTimeoutId);
 
-        // Extract results - pool data required, fee data optional
+        // Extract pool response - required
         const poolResponse = poolResult.status === 'fulfilled' ? poolResult.value : null;
-        const feeResponse = feeResult.status === 'fulfilled' ? feeResult.value : null;
-
-        // Check response status first
         if (!poolResponse || !poolResponse.ok) {
           console.error('[pool-metrics] Pool subgraph error:', poolResponse?.status, poolResponse?.statusText);
           return EMPTY_METRICS;
         }
 
-        if (!feeResponse || !feeResponse.ok) {
-          console.error('[pool-metrics] Fee subgraph error:', feeResponse?.status, feeResponse?.statusText);
+        // Extract fee events - optional
+        const feeEvents = feeResult.status === 'fulfilled' ? feeResult.value : [];
+        if (feeResult.status === 'rejected') {
+          console.warn('[pool-metrics] Fee events fetch failed:', feeResult.reason);
         }
 
-        // Handle empty/malformed responses gracefully
+        // Handle empty/malformed pool response gracefully
         let poolData: any;
-        let feeData: any;
-
         try {
           const poolText = await poolResponse.text();
           if (!poolText || poolText.trim() === '') {
-            console.log('[pool-metrics] Empty pool response');
             poolData = { data: { pool: null, poolDayDatas: [] } };
           } else {
             poolData = JSON.parse(poolText);
@@ -151,21 +123,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           poolData = { data: { pool: null, poolDayDatas: [] } };
         }
 
-        try {
-          // Fee events come from unified endpoint, already in array format
-          feeData = feeResponse ? await feeResponse.json() : [];
-        } catch (e) {
-          console.error('[pool-metrics] Failed to parse fee response:', e);
-          feeData = [];
-        }
-
         if (poolData?.errors) {
           console.error('[pool-metrics] Pool query errors:', JSON.stringify(poolData.errors, null, 2));
           return EMPTY_METRICS;
         }
 
         const { data } = poolData;
-        const feeEvents = Array.isArray(feeData) ? feeData : [];
         const pool = data?.pool;
 
         if (!data?.poolDayDatas || data.poolDayDatas.length === 0) {
@@ -173,20 +136,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           return { ...EMPTY_METRICS, pool: pool || null };
         }
 
-        const poolTvlFallback = 0;
-
-        const dayDatas = data.poolDayDatas.map((day: any) => {
-          let tvlUSD = day.tvlUSD || '0';
-          if (parseFloat(tvlUSD) === 0 && poolTvlFallback > 0) {
-            tvlUSD = poolTvlFallback.toString();
-          }
-          return {
-            date: day.date,
-            volumeToken0: day.volumeToken0,
-            volumeToken1: day.volumeToken1,
-            tvlUSD
-          };
-        });
+        const dayDatas = data.poolDayDatas.map((day: any) => ({
+          date: day.date,
+          volumeToken0: day.volumeToken0,
+          volumeToken1: day.volumeToken1,
+          tvlUSD: day.tvlUSD || '0'
+        }));
 
         if (dayDatas.length === 0) {
           return { ...EMPTY_METRICS, pool };
@@ -214,7 +169,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const [, , , lpFeeMillionths] = slot0Data;
           // Convert millionths to bps: bps = (lpFee / 1_000_000) * 10_000
           actualFeeBps = Math.round((Number(lpFeeMillionths) / 1_000_000) * 10_000 * 100) / 100;
-          console.log(`[pool-metrics] Fetched actual LP fee from StateView: ${actualFeeBps} bps`);
         } catch (error) {
           console.error('[pool-metrics] Failed to fetch LP fee from StateView:', error);
           // Fall back to fee events if available

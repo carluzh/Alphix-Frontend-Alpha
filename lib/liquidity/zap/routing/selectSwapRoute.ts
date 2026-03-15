@@ -49,8 +49,6 @@ export interface RouteSelectionResult {
   priceImpact: number;
   /** Whether a fallback route was selected (PSM or Kyberswap) */
   usedFallback: boolean;
-  /** @deprecated Use usedFallback instead */
-  usedPSM: boolean;
   /** Reason for route selection */
   reason: string;
   /** Pool quote (if fetched) */
@@ -204,7 +202,6 @@ export async function selectSwapRoute(
       outputAmount: 0n,
       priceImpact: 0,
       usedFallback: true,
-      usedPSM: true,
       reason: 'Zero swap amount',
       psmQuote,
     };
@@ -225,7 +222,6 @@ export async function selectSwapRoute(
       outputAmount: psmQuote.outputAmount,
       priceImpact: 0,
       usedFallback: true,
-      usedPSM: true,
       reason: 'Force PSM flag set',
       psmQuote,
     };
@@ -247,7 +243,6 @@ export async function selectSwapRoute(
       outputAmount: psmQuote.outputAmount,
       priceImpact: 0,
       usedFallback: true,
-      usedPSM: true,
       reason: 'Pool quote failed',
       psmQuote,
     };
@@ -274,7 +269,6 @@ export async function selectSwapRoute(
       outputAmount: psmQuote.outputAmount,
       priceImpact: poolPriceImpact,
       usedFallback: true,
-      usedPSM: true,
       reason: analysis.message,
       psmQuote,
       poolQuote,
@@ -292,7 +286,6 @@ export async function selectSwapRoute(
     outputAmount: poolQuote.amountOut,
     priceImpact: poolPriceImpact,
     usedFallback: false,
-    usedPSM: false,
     reason: 'Low price impact, using pool',
     psmQuote,
     poolQuote,
@@ -342,8 +335,7 @@ async function selectSwapRouteNonPegged(
       outputAmount: 0n,
       priceImpact: 0,
       usedFallback: false,
-      usedPSM: false,
-      reason: 'Zero swap amount',
+        reason: 'Zero swap amount',
     };
   }
 
@@ -396,7 +388,6 @@ async function selectSwapRouteNonPegged(
     outputAmount: poolQuote.amountOut,
     priceImpact: poolPriceImpact,
     usedFallback: false,
-    usedPSM: false,
     reason: 'Low price impact, using pool',
     poolQuote,
   };
@@ -446,8 +437,7 @@ async function selectKyberswapRoute(
         outputAmount: poolQuote.amountOut,
         priceImpact: actualImpact,
         usedFallback: false,
-        usedPSM: false,
-        reason: `Kyberswap unavailable, using pool (impact: ${actualImpact.toFixed(2)}%)`,
+            reason: `Kyberswap unavailable, using pool (impact: ${actualImpact.toFixed(2)}%)`,
         poolQuote,
       };
     }
@@ -465,7 +455,6 @@ async function selectKyberswapRoute(
     outputAmount: kyberQuote.outputAmountWei,
     priceImpact: kyberQuote.priceImpact ?? 0,
     usedFallback: true,
-    usedPSM: false,
     reason: reason ?? 'Using Kyberswap aggregator',
     poolQuote,
     kyberswapQuote: kyberQuote,
@@ -501,7 +490,6 @@ async function selectPoolRoute(
     outputAmount: poolQuote.amountOut,
     priceImpact,
     usedFallback: false,
-    usedPSM: false,
     reason,
     poolQuote,
   };

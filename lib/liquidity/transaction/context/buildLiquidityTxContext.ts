@@ -447,39 +447,3 @@ export function buildLiquidityTxContext(
   }
 }
 
-/**
- * Validates and returns a validated context, or undefined if invalid
- */
-export function validateLiquidityContext(
-  context: LiquidityTxAndGasInfo,
-): ValidatedLiquidityTxContext | undefined {
-  // For Collect, just needs txRequest
-  if (context.type === LiquidityTransactionType.Collect) {
-    if (context.txRequest) {
-      return context as ValidatedLiquidityTxContext;
-    }
-    return undefined;
-  }
-
-  // For Create/Increase, needs either permit (unsigned) or txRequest (signed)
-  if (context.type === LiquidityTransactionType.Create || context.type === LiquidityTransactionType.Increase) {
-    const ctx = context as CreatePositionTxAndGasInfo | IncreasePositionTxAndGasInfo;
-    if (ctx.unsigned && ctx.permit) {
-      return ctx as ValidatedLiquidityTxContext;
-    }
-    if (!ctx.unsigned && ctx.txRequest) {
-      return ctx as ValidatedLiquidityTxContext;
-    }
-    return undefined;
-  }
-
-  // For Decrease, needs txRequest
-  if (context.type === LiquidityTransactionType.Decrease) {
-    if (context.txRequest) {
-      return context as ValidatedLiquidityTxContext;
-    }
-    return undefined;
-  }
-
-  return undefined;
-}

@@ -4,10 +4,10 @@
  * Provides generateSteps + executors + mapStepsToUI for TransactionModal.
  * Handles Alphix pool swaps and Kyberswap aggregator swaps.
  *
- * @see TRANSACTION_STEPPER_PLAN.md — Layer 3
+ * @see ../EXECUTION_REFACTOR_BRIEF.md — Layer 3
  */
 
-import { createElement, useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { useAccount, usePublicClient, useSignTypedData, useWriteContract, useSendTransaction } from "wagmi"
 import { getAddress, formatUnits, maxUint256, parseUnits, type Address, type Hex } from "viem"
 import {
@@ -20,7 +20,6 @@ import {
   buildSwapTransactionInfo,
 } from "@/lib/swap/swap-execution-common"
 import { toast } from "sonner"
-import { IconBadgeCheck2, IconCircleInfo } from "nucleo-micro-bold-essential"
 
 import { isInfiniteApprovalEnabled } from "@/hooks/useUserSettings"
 import { PERMIT2_ADDRESS, Erc20AbiDefinition } from "@/lib/swap/swap-constants"
@@ -343,7 +342,7 @@ export function useSwapFlow({
         ? (getKyberswapRouterAddress() as Address)
         : PERMIT2_ADDRESS
 
-      toast("Confirm in Wallet", { icon: createElement(IconCircleInfo, { className: "h-4 w-4" }) })
+      toast.info("Confirm in wallet")
 
       const approveTxHash = await sendApprovalTx({
         address: fromToken.address,
@@ -368,12 +367,11 @@ export function useSwapFlow({
       const receipt = await publicClient!.waitForTransactionReceipt({ hash: approveTxHash as Hex })
       if (!receipt || receipt.status !== "success") throw new Error("Approval transaction failed on-chain")
 
-      toast.success(`${fromToken.symbol} Approved`, {
-        icon: createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
+      toast.success(`${fromToken.symbol} approved`, {
         description: isInfinite
           ? `Approved infinite ${fromToken.symbol} for swapping`
           : `Approved ${fromAmount} ${fromToken.symbol} for this swap`,
-        action: { label: "View Transaction", onClick: () => window.open(getExplorerTxUrl(approveTxHash), "_blank") },
+        action: { label: "View transaction", onClick: () => window.open(getExplorerTxUrl(approveTxHash), "_blank") },
       })
 
       if (source !== "kyberswap") {
@@ -406,7 +404,7 @@ export function useSwapFlow({
         sigDeadline: BigInt(permitMessage.sigDeadline),
       }
 
-      toast("Sign in Wallet", { icon: createElement(IconCircleInfo, { className: "h-4 w-4" }) })
+      toast.info("Sign in wallet")
 
       const sig = await signTypedDataAsync({
         domain: permitData.permitData.domain,
@@ -418,8 +416,7 @@ export function useSwapFlow({
 
       signatureRef.current = sig
 
-      toast.success("Signature Complete", {
-        icon: createElement(IconBadgeCheck2, { className: "h-4 w-4 text-green-500" }),
+      toast.success("Signature complete", {
         description: `${fromToken.symbol} permit signed`,
       })
 

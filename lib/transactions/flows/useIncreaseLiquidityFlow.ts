@@ -4,15 +4,13 @@
  * Multi-step flow: approvals → permit → increase position.
  * Supports both V4 (Permit2) and Unified Yield (direct ERC20 approval) paths.
  *
- * @see TRANSACTION_STEPPER_PLAN.md — Layer 3
+ * @see ../EXECUTION_REFACTOR_BRIEF.md — Layer 3
  */
 
 import { useCallback, useMemo } from 'react';
 import { useSendTransaction, useSignTypedData } from 'wagmi';
 import { useConfig } from 'wagmi';
 import { waitForTransactionReceipt } from 'wagmi/actions';
-import type { Hex } from 'viem';
-
 import { TransactionStepType as UIStepType } from '@/lib/transactions/types';
 import type { TransactionStep as UITransactionStep } from '@/lib/transactions/types';
 import type { StepGenerationResult, StepExecutorFn } from '@/lib/transactions/useStepExecutor';

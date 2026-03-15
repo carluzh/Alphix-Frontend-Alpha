@@ -9,7 +9,6 @@
  * Pool-related cache keys
  */
 import type { NetworkMode } from '@/lib/network-mode'
-import { ALL_MODES } from '@/lib/chain-registry'
 
 function networkSuffix(networkMode?: NetworkMode): string {
   return networkMode ? `:${networkMode}` : ''
@@ -27,19 +26,6 @@ export const poolKeys = {
    * TTL: 1h
    */
   chart: (poolId: string, days: number, networkMode?: NetworkMode) => `pool:chart:${poolId.toLowerCase()}:${days}d${networkSuffix(networkMode)}`,
-
-  /**
-   * @deprecated Individual pool stats - NOT USED, all data comes from pools-batch
-   * Kept for backward compatibility only
-   */
-  stats: (poolId: string) => `pool:stats:${poolId.toLowerCase()}`,
-
-  /**
-   * @deprecated Individual pool state - NOT CACHED
-   * Pool state (sqrtPriceX96, tick, liquidity) must always be fresh for accurate quotes.
-   * Stale sqrtPriceX96 would cause swap transactions to fail.
-   */
-  state: (poolId: string) => `pool:state:${poolId.toLowerCase()}`,
 
   /**
    * Pool tick data (liquidityGross, liquidityNet per tick)
@@ -71,59 +57,3 @@ export const priceKeys = {
   token: (symbol: string, networkMode?: NetworkMode) => `price:${symbol.toUpperCase()}${networkSuffix(networkMode)}`,
 } as const;
 
-/**
- * Helper to get pool-related cache keys for invalidation
- * Used for bulk invalidation after pool-affecting transactions
- *
- * Invalidates:
- * - pools-batch: All pool stats (TVL, volume, APY) - always
- * - pool:metrics: Pool APY/volume metrics for specific pool - when poolId provided
- * - pool:ticks: Tick data (liquidity distribution) - only for LP operations (separate function)
- *
- * Does NOT invalidate (acceptable staleness / auto-refresh):
- * - pool:state: 30s TTL, contains sqrtPriceX96/tick/liquidity only - auto-refreshes fast
- * - pool:chart: CoinGecko price data - not affected by our transactions
- * - dynamic-fees: Historical fee events - only changes on hook triggers
- */
-export function getPoolCacheKeys(poolId?: string): string[] {
-  return getPoolCacheKeysByNetwork(poolId)
-}
-
-export function getPoolCacheKeysByNetwork(poolId?: string, networkMode?: NetworkMode): string[] {
-  const modes: NetworkMode[] = networkMode ? [networkMode] : ALL_MODES
-  const keys: string[] = []
-
-  for (const mode of modes) {
-    keys.push(poolKeys.batch('v1', mode))
-    if (poolId) {
-      keys.push(poolKeys.metrics(poolId, 1, mode))
-      keys.push(poolKeys.metrics(poolId, 7, mode))
-      keys.push(poolKeys.metrics(poolId, 30, mode))
-      keys.push(poolKeys.metrics(poolId, 60, mode))
-    }
-  }
-
-  return keys
-}
-
-/**
- * Get tick cache key for a specific pool
- * Use this for LP operations (mint/burn) that change liquidity distribution
- */
-export function getPoolTicksCacheKey(poolId: string): string {
-  return poolKeys.ticks(poolId);
-}
-
-export function getPoolTicksCacheKeyByNetwork(poolId: string, networkMode?: NetworkMode): string[] {
-  const modes: NetworkMode[] = networkMode ? [networkMode] : ALL_MODES
-  return modes.map(mode => poolKeys.ticks(poolId, mode))
-}
-
-/**
- * Pattern matchers for bulk operations
- * Use these with Redis SCAN command for finding keys
- */
-export const patterns = {
-  allPools: 'pool:*',
-  allPrices: 'price*',
-} as const;

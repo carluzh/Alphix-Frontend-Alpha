@@ -1,16 +1,17 @@
 /**
  * Shared logic for swap execution hooks.
  *
- * Both useSwapExecution (state-based) and useSwapStepExecutor (step-based)
- * use the same types, helpers, body construction, and transaction tracking.
- * This module is the single source of truth for all of it.
+ * Shared types, helpers, body construction, and transaction tracking
+ * for swap execution hooks. This module is the single source of truth.
  */
 
-import { formatUnits, getAddress, parseUnits, type Address, type Hex } from "viem"
-import { invalidateAfterTx } from "@/lib/invalidation"
+import { getAddress, type Address, type Hex } from "viem"
+import { invalidateAfterTx } from "@/lib/apollo/mutations"
 import { getKyberswapRouterAddress } from "@/lib/aggregators/kyberswap"
+import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing"
 import { PERMIT2_ADDRESS } from "@/lib/swap/swap-constants"
 import { TransactionType, TradeType, type ExactInputSwapTransactionInfo, type ExactOutputSwapTransactionInfo } from "@/lib/transactions"
+import { classifySwapError } from "@/lib/swap/error-classification"
 import type { AggregatorSource } from "@/lib/aggregators/types"
 import type { Token } from "@/components/swap/swap-interface"
 
@@ -46,18 +47,8 @@ export type PreparePermitResponse =
 // HELPERS
 // =============================================================================
 
-export const safeParseUnits = (amount: string, decimals: number): bigint => {
-  if (!amount || amount === "0" || amount === "0.0") return 0n
-  const numericAmount = parseFloat(amount)
-  if (isNaN(numericAmount)) throw new Error("Invalid number format")
-  if (amount.toLowerCase().includes("e")) {
-    const fullDecimalString = numericAmount.toFixed(decimals)
-    const trimmedString = fullDecimalString.replace(/\.?0+$/, "")
-    const finalString = trimmedString === "." ? "0" : trimmedString
-    return parseUnits(finalString, decimals)
-  }
-  return parseUnits(amount, decimals)
-}
+// Re-export for consumers (e.g. useSwapFlow.ts)
+export { safeParseUnits }
 
 export const invalidateSwapCache = async (
   accountAddress: string,
@@ -68,7 +59,7 @@ export const invalidateSwapCache = async (
   if (!touchedPools?.length) return
   const volumePerPool = swapVolumeUSD / touchedPools.length
   for (const pool of touchedPools) {
-    invalidateAfterTx(null, {
+    invalidateAfterTx({
       owner: accountAddress,
       chainId,
       poolId: pool.poolId,
@@ -211,10 +202,12 @@ export async function fetchBuildTx(body: Record<string, unknown>): Promise<Build
   const data = await response.json()
   if (!response.ok) {
     const kyberErr = data.kyberswapError
-    const errorInfo = kyberErr
+    const rawMessage = kyberErr
       ? `${data.message} (${kyberErr.kind})`
       : data.message || "Failed to build transaction"
-    throw new Error(errorInfo, { cause: data.errorDetails || kyberErr?.kind || data.error })
+    // Classify into a user-friendly message; fall back to a generic one
+    const userMessage = classifySwapError(rawMessage) || rawMessage
+    throw new Error(userMessage, { cause: data.errorDetails || kyberErr?.kind || data.error })
   }
   return { data }
 }

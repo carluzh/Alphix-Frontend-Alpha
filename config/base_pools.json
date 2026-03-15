@@ -1,0 +1,94 @@
+{
+  "meta": {
+    "chainId": 8453,
+    "chainName": "Base"
+  },
+  "contracts": {
+    "poolManager": "0x498581ff718922c3f8e6a244956af099b2652b2b",
+    "universalRouter": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+    "quoter": "0x0d5e0f971ed27fbff6c2837bf31316121532048d",
+    "positionManager": "0x7c5f5a4bbd8fd63184577525326123b519429bdc",
+    "stateView": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71"
+  },
+  "hooks": {
+    "alphixHookId": "0x831CfDf7c0E194f5369f204b3DD2481B843d60c0"
+  },
+  "tokens": {
+    "ETH": {
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "address": "0x0000000000000000000000000000000000000000",
+      "decimals": 18,
+      "icon": "/tokens/ETH.png",
+      "color": "#627EEA"
+    },
+    "USDC": {
+      "symbol": "USDC",
+      "name": "USD Coin",
+      "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "decimals": 6,
+      "icon": "/tokens/USDC.png",
+      "color": "#2775CA"
+    },
+    "USDS": {
+      "symbol": "USDS",
+      "name": "USDS",
+      "address": "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc",
+      "decimals": 18,
+      "icon": "/tokens/USDS.png",
+      "color": "#F5AC37"
+    }
+  },
+  "pools": [
+    {
+      "id": "usds-usdc",
+      "name": "USDS/USDC",
+      "subgraphId": "0xaf9168a5026bd5e398863dc1d0a0513fe21417792f9df4889571fd68d2d8cd71",
+      "currency0": {
+        "symbol": "USDS",
+        "address": "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc"
+      },
+      "currency1": {
+        "symbol": "USDC",
+        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+      },
+      "fee": 8388608,
+      "tickSpacing": 1,
+      "hooks": "0x0e4b892Df7C5Bcf5010FAF4AA106074e555660C0",
+      "enabled": true,
+      "featured": true,
+      "type": "Stable",
+      "yieldSources": ["spark", "aave"],
+      "rehypoRange": {
+        "min": "-276325",
+        "max": "-276323",
+        "isFullRange": false
+      }
+    },
+    {
+      "id": "eth-usdc",
+      "name": "ETH/USDC",
+      "subgraphId": "0x71c06960eee8003ebf3f869caa480d7032c7088850d951f04de5b46d86ada017",
+      "currency0": {
+        "symbol": "ETH",
+        "address": "0x0000000000000000000000000000000000000000"
+      },
+      "currency1": {
+        "symbol": "USDC",
+        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0x831CfDf7c0E194f5369f204b3DD2481B843d60c0",
+      "enabled": true,
+      "featured": true,
+      "type": "Volatile",
+      "yieldSources": ["aave"],
+      "rehypoRange": {
+        "min": "-887220",
+        "max": "887220",
+        "isFullRange": true
+      }
+    }
+  ]
+}

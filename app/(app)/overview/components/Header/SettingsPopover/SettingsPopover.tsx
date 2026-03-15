@@ -175,13 +175,13 @@ function SettingsPanel({
 
     if (isNaN(newSlippage) || newSlippage <= 0 || newSlippage > 50) {
       toast.error("Invalid slippage", {
-        description: "Slippage must be between 0.01% and 50%",
+        description: "Must be between 0.01% and 50%",
       });
       return;
     }
     if (isNaN(newDeadline) || newDeadline < 1 || newDeadline > 60) {
       toast.error("Invalid deadline", {
-        description: "Deadline must be between 1 and 60 minutes",
+        description: "Must be between 1 and 60 minutes",
       });
       return;
     }

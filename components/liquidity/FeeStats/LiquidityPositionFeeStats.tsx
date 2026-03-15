@@ -145,13 +145,6 @@ export function LiquidityPositionFeeStats({
       {/* Range - uses pre-formatted prices (hidden on mobile & for Unified Yield positions) */}
       {!hideFees && !hideRangeContent && (
         <MinMaxRange
-          tickSpacing={tickSpacing}
-          tickLower={tickLower}
-          tickUpper={tickUpper}
-          pricesInverted={pricesInverted}
-          setPricesInverted={setPricesInverted}
-          poolType={poolType}
-          denominationBase={denominationBase}
           formattedMinPrice={formattedMinPrice}
           formattedMaxPrice={formattedMaxPrice}
           isFullRange={isFullRange}

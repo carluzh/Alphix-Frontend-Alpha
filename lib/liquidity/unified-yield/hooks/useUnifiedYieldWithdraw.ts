@@ -27,11 +27,12 @@ import {
   previewWithdraw,
   calculateSharesFromPercentage,
 } from '../buildUnifiedYieldWithdrawTx';
-import type { UnifiedYieldWithdrawParams, UnifiedYieldWithdrawPreview, WithdrawPercentage } from '../types';
+import type { UnifiedYieldWithdrawParams, UnifiedYieldWithdrawPreview } from '../types';
+
+type WithdrawPercentage = 25 | 50 | 75 | 100;
 import { BUILDER_CODE_SUFFIX } from '@/lib/builder-code';
 import { useNetwork } from '@/lib/network-context';
 import { chainIdForMode } from '@/lib/network-mode';
-import { calculateWithdrawShares } from '../types';
 
 export interface UseUnifiedYieldWithdrawParams {
   /** Hook contract address */
@@ -288,7 +289,7 @@ export function useUnifiedYieldWithdraw(
 
   const withdrawPercentage = useCallback(
     async (totalShares: bigint, percentage: WithdrawPercentage): Promise<Hash | undefined> => {
-      const sharesToWithdraw = calculateWithdrawShares(totalShares, percentage);
+      const sharesToWithdraw = calculateSharesFromPercentage(totalShares, percentage);
       return withdraw(sharesToWithdraw);
     },
     [withdraw]

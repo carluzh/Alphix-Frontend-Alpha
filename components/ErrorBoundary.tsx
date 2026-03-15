@@ -82,28 +82,6 @@ function DefaultErrorFallback({ error, resetError }: { error?: Error; resetError
   );
 }
 
-// Hook for manual error reporting
-export function useErrorReporting() {
-  const reportError = React.useCallback((error: Error, context?: Record<string, any>) => {
-    logger.error('Manual error report', error, context);
-  }, []);
-
-  const reportMessage = React.useCallback((message: string, level: 'info' | 'warning' | 'error' = 'error', context?: Record<string, any>) => {
-    switch (level) {
-      case 'info':
-        logger.info(message, context);
-        break;
-      case 'warning':
-        logger.warn(message, context);
-        break;
-      case 'error':
-        logger.error(message, undefined, context);
-        break;
-    }
-  }, []);
-
-  return { reportError, reportMessage };
-}
 
 export default ErrorBoundary;
 

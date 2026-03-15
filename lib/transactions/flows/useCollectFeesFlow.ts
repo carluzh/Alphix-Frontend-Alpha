@@ -4,7 +4,7 @@
  * Simplest flow: single step, no approvals, no permits.
  * Calls API to get tx data, then sends and confirms.
  *
- * @see TRANSACTION_STEPPER_PLAN.md — Layer 3
+ * @see ../EXECUTION_REFACTOR_BRIEF.md — Layer 3
  */
 
 import { useCallback, useMemo } from 'react';

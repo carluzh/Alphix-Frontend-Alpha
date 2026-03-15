@@ -275,32 +275,6 @@ export function priceNumberToTick(
   }
 }
 
-/**
- * Convert a human-readable price to the nearest usable tick (handles decimals properly)
- *
- * Combines priceNumberToTick with tick spacing alignment.
- *
- * @param price - Human-readable price as number
- * @param baseCurrency - Base currency
- * @param quoteCurrency - Quote currency
- * @param tickSpacing - Tick spacing for the pool
- * @returns Nearest usable tick value or undefined if conversion fails
- */
-export function priceNumberToNearestUsableTick(
-  price: number,
-  baseCurrency?: Currency,
-  quoteCurrency?: Currency,
-  tickSpacing?: number
-): number | undefined {
-  const rawTick = priceNumberToTick(price, baseCurrency, quoteCurrency);
-  if (rawTick === undefined) return undefined;
-
-  if (tickSpacing) {
-    return nearestUsableTick(rawTick, tickSpacing);
-  }
-  return rawTick;
-}
-
 // =============================================================================
 // TICK UTILITIES
 // =============================================================================

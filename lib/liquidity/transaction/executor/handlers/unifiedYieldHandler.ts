@@ -20,7 +20,6 @@ import type {
   UnifiedYieldDepositStep,
   UnifiedYieldWithdrawStep,
 } from '../../../types';
-import { TransactionStepType } from '../../../types';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 
 // =============================================================================

@@ -14,7 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { WizardProgressSidebar, WizardProgressHeader } from './shared/WizardProgress';
-import { Container, AnimatedContainer } from './shared/Container';
+import { Container } from './shared/Container';
 import { WizardStep } from './types';
 
 const WIDTH = {

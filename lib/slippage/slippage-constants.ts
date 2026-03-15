@@ -7,6 +7,10 @@
 export const MIN_AUTO_SLIPPAGE_TOLERANCE = 0.5;       // 0.5%
 export const MAX_AUTO_SLIPPAGE_TOLERANCE = 5.5;       // 5.5%
 
+// Safe auto-slippage cap (tighter than MAX_AUTO_SLIPPAGE_TOLERANCE)
+// Used in useSlippage hook to cap auto-calculated values for zap & swap safety
+export const MAX_AUTO_SLIPPAGE_SAFE = 5.0;            // 5.0%
+
 // Custom slippage bounds
 export const MAX_CUSTOM_SLIPPAGE_TOLERANCE = 100;     // 100%
 
@@ -17,13 +21,9 @@ export const SLIPPAGE_CRITICAL_TOLERANCE = 20;        // 20%
 export const MINIMUM_RECOMMENDED_SLIPPAGE = 0.05;     // 0.05%
 export const MAXIMUM_RECOMMENDED_SLIPPAGE = 1;        // 1%
 
-// Slippage increment for +/- buttons
-export const SLIPPAGE_INCREMENT = 0.1;                // 0.1%
-
 // Default slippage for different contexts
 export const DEFAULT_SWAP_SLIPPAGE = 0.5;             // 0.5%
 export const DEFAULT_LP_SLIPPAGE = 2.5;               // 2.5%
-export const DEFAULT_V4_NATIVE_LP_SLIPPAGE = 0.05;    // 0.05%
 
 // Minimum slippage to prevent MEV sandwich attacks (in basis points)
 // Zero-slippage transactions are vulnerable to MEV - enforce minimum

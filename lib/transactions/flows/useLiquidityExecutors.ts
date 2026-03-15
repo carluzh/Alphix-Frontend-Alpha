@@ -6,14 +6,7 @@
  * components that need full coverage (e.g., zap flows that compose
  * swap steps + liquidity deposit steps).
  *
- * For domain-specific usage:
- * - Swap-only flows: useSwapDomainExecutors
- * - Liquidity-only flows: useLiquidityDomainExecutors
- * - Zap / mixed flows: useLiquidityExecutors (this file)
- *
  * @see useExecutorBridge.ts — shared factory
- * @see useSwapDomainExecutors.ts — swap domain
- * @see useLiquidityDomainExecutors.ts — liquidity domain
  */
 
 import type { RefObject } from 'react';

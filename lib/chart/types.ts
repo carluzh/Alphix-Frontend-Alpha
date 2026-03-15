@@ -28,15 +28,6 @@ export enum ChartType {
 }
 
 /**
- * Price chart display type
- * @see interface/apps/web/src/components/Charts/utils.tsx:4-7
- */
-export enum PriceChartType {
-  LINE = 'Line chart',
-  CANDLESTICK = 'Candlestick',
-}
-
-/**
  * Data quality enum for chart data validation
  * @see interface/apps/web/src/components/Tokens/TokenDetails/ChartSection/util.ts:14-18
  */
@@ -67,7 +58,6 @@ export type ChartQueryResult<TDataType, TChartType extends ChartType> = {
   entries: TDataType[]
   loading: boolean
   dataQuality: DataQuality
-  dataHash?: string
 }
 
 /**
@@ -80,11 +70,3 @@ export interface TimestampedPoolPrice {
   token1Price: number
 }
 
-/**
- * Variables for pool price chart queries
- */
-export interface PoolPriceChartVars {
-  poolId: string
-  duration: HistoryDuration
-  chain?: string
-}

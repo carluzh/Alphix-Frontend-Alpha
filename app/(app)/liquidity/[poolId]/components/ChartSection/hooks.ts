@@ -9,6 +9,7 @@ import { useState, useMemo } from "react";
  */
 export enum ChartType {
   FEE = "fee",
+  YIELD = "yield",
   VOLUME = "volume",
   TVL = "tvl",
 }

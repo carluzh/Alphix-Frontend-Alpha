@@ -13,6 +13,7 @@ import {
   getPopularTokens,
   type TokenInfo,
 } from '@/lib/aggregators';
+import { resolveNetworkMode } from '@/lib/network-mode';
 
 interface SearchResponse {
   success: boolean;
@@ -32,10 +33,11 @@ export default async function handler(
     const { q, limit = '50' } = req.query;
     const query = typeof q === 'string' ? q : '';
     const limitNum = Math.min(parseInt(limit as string) || 50, 100);
+    const networkMode = resolveNetworkMode(req);
 
     // If no query, return popular tokens
     if (!query.trim()) {
-      const popularTokens = getPopularTokens();
+      const popularTokens = getPopularTokens(networkMode);
       return res.status(200).json({
         success: true,
         tokens: popularTokens,
@@ -43,7 +45,7 @@ export default async function handler(
     }
 
     // Search tokens (synchronous - static token list)
-    const tokens = searchTokens(query, limitNum);
+    const tokens = searchTokens(query, limitNum, networkMode);
 
     return res.status(200).json({
       success: true,

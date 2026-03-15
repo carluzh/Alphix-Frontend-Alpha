@@ -17,7 +17,6 @@ interface FeeHistoryPoint {
 
 interface DynamicFeeChartPreviewProps {
   data: FeeHistoryPoint[];
-  onClick?: () => void; // To handle click for opening the modal
   poolInfo?: {
     token0Symbol: string;
     token1Symbol: string;
@@ -26,13 +25,11 @@ interface DynamicFeeChartPreviewProps {
   isLoading?: boolean; // Show loading state during pool switches
   onContentStableChange?: (stable: boolean) => void; // New callback prop
   alwaysShowSkeleton?: boolean; // Force skeleton even with no data (e.g., homepage preview)
-  totalPools?: number; // multihop: number of pools (kept for compatibility, not rendered here)
-  activePoolIndex?: number; // which pool is currently selected (kept for compatibility)
 }
 
 
 
-function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = false, onContentStableChange, alwaysShowSkeleton = false }: DynamicFeeChartPreviewProps) {
+function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, onContentStableChange, alwaysShowSkeleton = false }: DynamicFeeChartPreviewProps) {
   const router = useRouter();
   const isMobile = useIsMobile();
 
@@ -41,9 +38,6 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
 
   // Loading state for chart data fetching
   const [isChartDataLoading, setIsChartDataLoading] = useState(false);
-
-  // Loading skeleton flag (follows actual loading state)
-  const [showLoadingSkeleton, setShowLoadingSkeleton] = useState(false);
 
   // Use refs for animation tracking to avoid re-renders during animation
   const hasAnimatedRef = useRef(false);
@@ -101,7 +95,6 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
         }
 
         setIsChartDataLoading(true);
-        setShowLoadingSkeleton(true);
 
         const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
         if (!resp.ok) return;
@@ -157,17 +150,11 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
       } catch {}
       finally {
         setIsChartDataLoading(false);
-        setShowLoadingSkeleton(false);
       }
     })();
   }, [poolInfo?.token0Symbol, poolInfo?.token1Symbol, isParentDataUsable]);
 
   // No diffing. Keep this preview dead simple and render as soon as we have data
-
-  // Keep skeleton visible exactly while loading (or when forced)
-  useEffect(() => {
-    setShowLoadingSkeleton(Boolean(alwaysShowSkeleton || isActuallyLoading));
-  }, [isActuallyLoading, alwaysShowSkeleton]);
 
   // Handle click to navigate to pool page
   const handleClick = () => {
@@ -314,7 +301,6 @@ function DynamicFeeChartPreviewComponent({ data, onClick, poolInfo, isLoading = 
   // Removed change-point dots per design preference; keep normalization only
 
     const hasData = Array.isArray(effectiveData) && effectiveCount > 0;
-    const dataPointsCount = hasData ? effectiveCount : 0;
 
   // Render different Card structures based on data availability
   if (alwaysShowSkeleton) {

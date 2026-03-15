@@ -1,4 +1,4 @@
-export type ColorStrings = string[]
+type ColorStrings = string[]
 
 // Brand colors - greys with warm vibrant accents
 export const UNICON_COLORS: ColorStrings[] = [

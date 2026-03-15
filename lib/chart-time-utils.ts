@@ -105,7 +105,7 @@ export function calculateEffectiveRange(
  * @param tickCount - Desired number of ticks (default: 5)
  * @returns Array of tick timestamps in seconds
  */
-export function generateTimeTicks(from: number, to: number, tickCount: number = 5): number[] {
+function generateTimeTicks(from: number, to: number, tickCount: number = 5): number[] {
   if (tickCount < 2) return [from, to];
 
   const ticks: number[] = [];
@@ -211,15 +211,3 @@ export function toUTCTimestampRange(
   };
 }
 
-/**
- * Calculate domain for Recharts XAxis.
- * Returns [min, max] as milliseconds for date-based domain.
- *
- * @param from - Start timestamp in seconds
- * @param to - End timestamp in seconds
- * @returns Tuple of [minMs, maxMs] for XAxis domain
- */
-export function calculateXAxisDomain(from: number, to: number): [number, number] {
-  // Recharts typically works with milliseconds for dates
-  return [from * 1000, to * 1000];
-}

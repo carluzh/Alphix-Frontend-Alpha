@@ -12,7 +12,7 @@ const QUOTE_TOKEN_PRIORITY: Record<string, number> = {
   'atUSDC': 10, 'atDAI': 9, 'atETH': 4,
 };
 
-export function getOptimalBaseToken(token0: string, token1: string, currentPrice?: number): string {
+export function getOptimalBaseToken(token0: string, token1: string): string {
   const p0 = QUOTE_TOKEN_PRIORITY[token0] || 0;
   const p1 = QUOTE_TOKEN_PRIORITY[token1] || 0;
   // Choose token with higher priority as base

@@ -1,7 +1,5 @@
 {
   "meta": {
-    "version": "1.0.0",
-    "description": "Pool configuration for Alphix V4 pools on Arbitrum One",
     "chainId": 42161,
     "chainName": "Arbitrum"
   },
@@ -30,7 +28,6 @@
       "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
       "decimals": 6,
       "icon": "/tokens/USDC.png",
-      "usdPrice": "1.0",
       "color": "#2775CA"
     },
     "USDT": {
@@ -39,7 +36,6 @@
       "address": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
       "decimals": 6,
       "icon": "/tokens/USDT.png",
-      "usdPrice": "1.0",
       "color": "#26A17B"
     }
   },
@@ -47,7 +43,6 @@
     {
       "id": "usdc-usdt",
       "name": "USDC/USDT",
-      "description": "Stablecoin pair with dynamic fees and rehypothecated liquidity on Arbitrum",
       "subgraphId": "0xe2c28a234aadc40f115dcc56b70a759d02a372db90dfeed19048392d942ee286",
       "currency0": {
         "symbol": "USDC",
@@ -70,26 +65,5 @@
         "isFullRange": false
       }
     }
-  ],
-  "fees": {
-    "initialFee": 10,
-    "initialTargetRatio": "1000000000000000000",
-    "currentRatio": "1000000000000000000"
-  },
-  "arbitrumContracts": {
-    "accessManager": "0x56Ec52a214de51ad7DbbEb990a88b9625257Ed9D",
-    "hookOwner": "0xe231a6e1E18aC6A123cd0EaEA8C4Ca07E50E8800",
-    "yieldManager": "0x1F3f02cE8Cd8D97F1caB75429eaDCb1571bdAe35",
-    "yieldTreasury": "0x240B7e8FcfdB38C94c0b8733A4A50F28A4C99fa8",
-    "wrapperUSDC": {
-      "address": "0x968eD10776AC144308ae4160E2F5017A6999126C",
-      "aToken": "0x724dc807b04555b71ed48a6896b6F41593b8C637",
-      "symbol": "awaUSDC"
-    },
-    "wrapperUSDT": {
-      "address": "0x7d1613B33e0d0E5c5707287b148CAdb3590e702a",
-      "aToken": "0x6ab707Aca953eDAeFBc4fD23bA73294241490620",
-      "symbol": "awaUSDT"
-    }
-  }
+  ]
 }

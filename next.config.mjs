@@ -12,10 +12,9 @@ const withBundleAnalyzer = bundleAnalyzer({
   enabled: process.env.ANALYZE === 'true',
 });
 
-// Get version from version-log.ts (single source of truth) and git commit hash at build time
-const versionLogContent = readFileSync('./lib/version-log.ts', 'utf8');
-const versionMatch = versionLogContent.match(/version:\s*["']([^"']+)["']/);
-const appVersion = versionMatch ? versionMatch[1] : '0.0.0';
+// Get version from package.json and git commit hash at build time
+const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
+const appVersion = pkg.version || '0.0.0';
 
 let gitCommitHash = 'dev';
 try {

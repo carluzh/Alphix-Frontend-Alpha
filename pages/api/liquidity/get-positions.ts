@@ -1,10 +1,9 @@
 import { ethers } from "ethers";
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getAddress } from "viem";
-import { getChainId, type NetworkMode } from "../../../lib/pools-config";
+import { type NetworkMode } from "../../../lib/pools-config";
 import { resolveNetworkMode } from "../../../lib/network-mode";
 import { getAlphixSubgraphUrl } from "../../../lib/subgraph-url-helper";
-import { fetchUserPositions, type V4ProcessedPosition as SharedV4ProcessedPosition, type Position as SharedPosition } from "@/lib/positions/fetchPositions";
+import { fetchUserPositions } from "@/lib/positions/fetchPositions";
 
 /**
  * Recursively convert BigInt values to strings for JSON serialization.
@@ -54,11 +53,6 @@ const GET_USER_HOOK_POSITIONS_QUERY = `
     }
   }
 `;
-
-// Helper to get the pool ID from position
-function getPoolIdFromPosition(pos: SubgraphPosition): string {
-  return pos.poolId || '';
-}
 
 // --- Interface for Processed Position Data ---
 interface ProcessedPositionToken {
@@ -132,8 +126,6 @@ export function isV4Position(position: Position): position is V4ProcessedPositio
     return position.type === 'v4';
 }
 
-// duplicate types/query removed
-
 // Helper to parse tokenId from composite subgraph id (last dash component hex)
 function parseTokenIdFromHexId(idHex: string): bigint | null {
     try {
@@ -142,20 +134,13 @@ function parseTokenIdFromHexId(idHex: string): bigint | null {
     } catch { return null; }
 }
 
-// Removed tokenURI parsing fallback (subgraph-only discovery now; details are on-chain)
-
-// Delegate to shared module (avoids duplication between REST handler and GraphQL resolver)
-// Import for local use, re-export for external consumers
-import { fetchUserPositions as fetchAndProcessUserPositionsForApi } from "@/lib/positions/fetchPositions";
-export { fetchAndProcessUserPositionsForApi };
-
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<Position[] | { message: string; count?: number; error?: any }>
+  res: NextApiResponse<Position[] | { error: string }>
 ) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
+    return res.status(405).json({ error: `Method ${req.method} Not Allowed` });
   }
 
   const networkMode = resolveNetworkMode(req);
@@ -163,7 +148,7 @@ export default async function handler(
   const { ownerAddress, countOnly, idsOnly, withCreatedAt } = req.query as { ownerAddress?: string; countOnly?: string; idsOnly?: string; withCreatedAt?: string };
 
   if (!ownerAddress || typeof ownerAddress !== 'string' || !ethers.utils.isAddress(ownerAddress)) {
-    return res.status(400).json({ message: 'Valid ownerAddress query parameter is required.' });
+    return res.status(400).json({ error: 'Valid ownerAddress query parameter is required.' });
   }
 
   try {
@@ -175,7 +160,7 @@ export default async function handler(
 
     // Fetch positions directly - user-specific data doesn't benefit from server-side Redis caching
     // React Query on the client handles caching for user-specific requests
-    const positions = await fetchAndProcessUserPositionsForApi(ownerAddress, networkMode);
+    const positions = await fetchUserPositions(ownerAddress, networkMode);
 
     // Ensure all BigInt values are converted to strings before JSON serialization
     return res.status(200).json(serializeBigInts(positions));
@@ -183,7 +168,7 @@ export default async function handler(
     // Safely log error (console.error handles BigInts, but we sanitize anyway)
     const errorMessage = error instanceof Error ? error.message : "An unknown error occurred while fetching positions.";
     console.error(`API Error in /api/liquidity/get-positions for ${ownerAddress}:`, errorMessage);
-    return res.status(500).json({ message: errorMessage });
+    return res.status(500).json({ error: errorMessage });
   }
 }
 
@@ -230,7 +215,7 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
     // This API only handles V4 positions for clean architectural separation
 
     if (!idsOnly) {
-        return { message: 'ok', count: raw.length };
+        return { count: raw.length };
     }
 
     if (withCreatedAt) {
@@ -248,6 +233,6 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
       return ids;
     }
   } catch {
-    return idsOnly ? [] : { message: 'ok', count: 0 };
+    return idsOnly ? [] : { count: 0 };
   }
 } 

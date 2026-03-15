@@ -1,11 +1,15 @@
 import { PositionStatus, ProtocolVersion } from './pool-types'
-import { Currency, CurrencyAmount, Percent, Price, Token } from '@uniswap/sdk-core'
+import { Currency, CurrencyAmount, Price, Token } from '@uniswap/sdk-core'
 import { Pair } from '@uniswap/v2-sdk'
 import { Pool as V3Pool, Position as V3Position } from '@uniswap/v3-sdk'
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk'
-import { FeeData } from './Create/types'
-import { ReactNode } from 'react'
-import { PositionField } from '@/lib/liquidity/types/position'
+
+/** Fee tier configuration (inlined from deleted Create/types.ts) */
+type FeeData = {
+  isDynamic: boolean
+  feeAmount: number
+  tickSpacing: number
+}
 
 // Chain ID type (replaces Uniswap's EVMUniverseChainId)
 type EVMUniverseChainId = number
@@ -15,21 +19,6 @@ export interface PriceOrdering {
   priceUpper?: Price<Currency, Currency>
   quote?: Currency
   base?: Currency
-}
-
-export interface DepositState {
-  exactField: PositionField
-  exactAmounts: {
-    [field in PositionField]?: string
-  }
-}
-
-export interface DepositInfo {
-  formattedAmounts?: { [field in PositionField]?: string }
-  currencyBalances?: { [field in PositionField]?: CurrencyAmount<Currency> }
-  currencyAmounts?: { [field in PositionField]?: Maybe<CurrencyAmount<Currency>> }
-  currencyAmountsUSDValue?: { [field in PositionField]?: Maybe<CurrencyAmount<Currency>> }
-  error?: ReactNode
 }
 
 interface BasePositionInfo {
@@ -55,7 +44,7 @@ interface BasePositionInfo {
   isHidden?: boolean
 }
 
-export type V2PairInfo = BasePositionInfo & {
+type V2PairInfo = BasePositionInfo & {
   version: ProtocolVersion.V2
   poolOrPair?: Pair
   liquidityToken: Token
@@ -64,7 +53,7 @@ export type V2PairInfo = BasePositionInfo & {
   owner: undefined
 }
 
-export type V3PositionInfo = BasePositionInfo & {
+type V3PositionInfo = BasePositionInfo & {
   version: ProtocolVersion.V3
   tokenId: string
   poolOrPair?: V3Pool
@@ -88,14 +77,3 @@ type V4PositionInfo = BasePositionInfo & {
 }
 
 export type PositionInfo = V2PairInfo | V3PositionInfo | V4PositionInfo
-
-export type FeeTierData = {
-  id?: string
-  fee: FeeData
-  formattedFee: string
-  totalLiquidityUsd: number
-  percentage: Percent
-  tvl: string
-  created: boolean
-  boostedApr?: number
-}

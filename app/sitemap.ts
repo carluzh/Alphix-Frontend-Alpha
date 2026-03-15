@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next'
-import basePools from '../config/pools.json'
+import basePools from '../config/base_pools.json'
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://alphix.fi'

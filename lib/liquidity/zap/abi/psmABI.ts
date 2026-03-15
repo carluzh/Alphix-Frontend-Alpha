@@ -120,5 +120,3 @@ export const PSM3_ABI = [
  */
 export type PSM3Abi = typeof PSM3_ABI;
 
-// Legacy export for backwards compatibility
-export const PSM_ABI = PSM3_ABI;

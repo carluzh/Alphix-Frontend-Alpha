@@ -378,14 +378,14 @@ function IncreaseLiquidityInner({
       if (result.txHash) hash = result.txHash;
     }
     if (hash) {
-      toast.success("Liquidity added successfully!", {
+      toast.success("Liquidity added", {
         action: {
-          label: "View",
+          label: "View transaction",
           onClick: () => window.open(getExplorerTxUrl(hash!), "_blank"),
         },
       });
     } else {
-      toast.success("Liquidity added successfully!");
+      toast.success("Liquidity added");
     }
     onSuccess?.();
   }, [onSuccess, address, chainId, position.token0.symbol, position.token1.symbol, setExecuting]);

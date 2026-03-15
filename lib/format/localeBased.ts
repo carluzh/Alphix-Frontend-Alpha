@@ -1,8 +1,6 @@
 import { Currency, CurrencyAmount } from '@uniswap/sdk-core'
 import {
   FormatterRule,
-  StandardCurrency,
-  TwoDecimalsCurrency,
   TYPE_TO_FORMATTER_RULES,
 } from './localeBasedFormats'
 import { NumberType, PercentNumberDecimals, PercentNumberType } from './types'
@@ -97,7 +95,7 @@ export function formatNumberOrString({
   return formatNumber({ input: price, locale, currencyCode, type, placeholder })
 }
 
-export function getPercentNumberType(maxDecimals: PercentNumberDecimals): PercentNumberType {
+function getPercentNumberType(maxDecimals: PercentNumberDecimals): PercentNumberType {
   switch (maxDecimals) {
     case 1:
       return NumberType.PercentageOneDecimal
@@ -135,77 +133,3 @@ export function formatPercent({
   return formatNumber({ input: percentage / 100, type, locale })
 }
 
-export function addFiatSymbolToNumber({
-  value,
-  locale,
-  currencyCode,
-  currencySymbol,
-}: {
-  value: Maybe<number | string>
-  locale: string
-  currencyCode: string
-  currencySymbol: string
-}): string {
-  const format = StandardCurrency.createFormat(locale, currencyCode)
-  const parts = format.formatToParts(0)
-  const isSymbolAtFront = parts[0]?.type === 'currency'
-  const extra = isSymbolAtFront // Some locales have something like an extra space after symbol
-    ? parts[1]?.type === 'literal'
-      ? parts[1]?.value
-      : ''
-    : parts[parts.length - 2]?.type === 'literal'
-      ? parts[parts.length - 2]?.value
-      : ''
-
-  return isSymbolAtFront ? `${currencySymbol}${extra}${value}` : `${value}${extra}${currencySymbol}`
-}
-
-export type FiatCurrencyComponents = {
-  groupingSeparator: string
-  decimalSeparator: string
-  symbol: string
-  fullSymbol: string // Some currencies have whitespace in between number and currency
-  symbolAtFront: boolean // All currencies are at front or back except CVE, which we won't ever support
-}
-/**
- * Helper function to return components of a currency value for a specific locale
- * E.g. comma, period, or space for separating thousands
- */
-export function getFiatCurrencyComponents(locale: string, currencyCode: string): FiatCurrencyComponents {
-  const format = TwoDecimalsCurrency.createFormat(locale, currencyCode)
-
-  // See MDN for official docs https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/NumberFormat/formatToParts
-  // Returns something like [{"type":"currency","value":"$"},{"type":"integer","value":"1"}]
-  const parts = format.formatToParts(1000000.0) // This number should provide both types of separators
-  let groupingSeparator = ','
-  let decimalSeparator = '.'
-  let symbol = ''
-  let fullSymbol = ''
-  let symbolAtFront = true
-
-  parts.forEach((part, index) => {
-    if (part.type === 'group') {
-      groupingSeparator = part.value
-    } else if (part.type === 'decimal') {
-      decimalSeparator = part.value
-    } else if (part.type === 'currency') {
-      symbol = part.value
-      fullSymbol = symbol
-
-      symbolAtFront = index === 0
-      const nextPart = symbolAtFront ? parts[index + 1] : parts[index - 1]
-      // Check for additional characters between symbol and number, like whitespace
-      if (nextPart?.type === 'literal') {
-        fullSymbol = symbolAtFront ? symbol + nextPart.value : nextPart.value + symbol
-      }
-    }
-  })
-
-  return {
-    groupingSeparator,
-    decimalSeparator,
-    symbol,
-    fullSymbol,
-    symbolAtFront,
-  }
-}

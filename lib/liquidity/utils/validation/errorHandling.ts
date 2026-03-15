@@ -124,7 +124,7 @@ export function isNetworkError(error: unknown): boolean {
  * @param error - Error to check
  * @returns true if user has insufficient funds
  */
-export function isInsufficientFundsError(error: unknown): boolean {
+function isInsufficientFundsError(error: unknown): boolean {
   const message = extractErrorMessage(error).toLowerCase();
 
   return (
@@ -141,7 +141,7 @@ export function isInsufficientFundsError(error: unknown): boolean {
  * @param error - Error to check
  * @returns true if transaction failed due to price movement
  */
-export function isSlippageError(error: unknown): boolean {
+function isSlippageError(error: unknown): boolean {
   const message = extractErrorMessage(error).toLowerCase();
 
   return (
@@ -189,26 +189,3 @@ export function categorizeError(error: unknown): ErrorCategory {
   return 'unknown';
 }
 
-/**
- * Get a user-friendly message for an error category.
- *
- * @param category - Error category
- * @returns User-friendly message
- */
-export function getErrorCategoryMessage(category: ErrorCategory): string {
-  switch (category) {
-    case 'user_rejection':
-      return 'Transaction was rejected in your wallet';
-    case 'network':
-      return 'Network error. Please check your connection and try again';
-    case 'insufficient_funds':
-      return 'Insufficient funds for this transaction';
-    case 'slippage':
-      return 'Price changed during transaction. Try increasing slippage tolerance';
-    case 'contract':
-      return 'Transaction would fail on-chain. Please check your inputs';
-    case 'unknown':
-    default:
-      return 'An unexpected error occurred';
-  }
-}

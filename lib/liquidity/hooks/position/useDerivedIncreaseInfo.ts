@@ -10,8 +10,8 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { formatUnits } from 'viem';
-import { TokenSymbol, getTokenDefinitions } from '@/lib/pools-config';
-import { formatTokenDisplayAmount, getTokenSymbolByAddress } from '@/lib/utils';
+import { TokenSymbol, getTokenDefinitions, getTokenSymbolByAddress } from '@/lib/pools-config';
+import { formatTokenDisplayAmount } from '@/lib/utils';
 import type { ProcessedPosition } from '@/pages/api/liquidity/get-positions';
 import type { NetworkMode } from '@/lib/network-mode';
 

@@ -12,7 +12,7 @@ import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 import { usePoolPriceChartData } from "@/lib/chart/hooks/usePoolPriceChartData";
 import { HistoryDuration } from "@/lib/chart/types";
-import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
+import { fetchAaveRates, getLendingAprForPair, getLendingAprBySource } from "@/lib/aave-rates";
 import { fetchPositionApr, fetchPoolsMetrics } from "@/lib/backend-client";
 import {
   fetchSingleUnifiedYieldPosition,
@@ -96,6 +96,7 @@ export interface PositionPageData {
   // APR data
   poolApr: number | null;
   aaveApr: number | null;
+  aprBySource?: Record<'aave' | 'spark', number>;
   totalApr: number | null;
   // LP Type
   lpType: LPType;
@@ -590,6 +591,11 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
     return getLendingAprForPair(aaveRatesData, poolConfig.currency0.symbol, poolConfig.currency1.symbol);
   }, [lpType, aaveRatesData, poolConfig]);
 
+  const aprBySource = useMemo(() => {
+    if (lpType !== "rehypo" || !poolConfig) return undefined;
+    return getLendingAprBySource(aaveRatesData, poolConfig.currency0.symbol, poolConfig.currency1.symbol);
+  }, [lpType, aaveRatesData, poolConfig]);
+
   const totalApr = useMemo(() => {
     if (poolApr === null) return null;
     return poolApr + (aaveApr || 0);
@@ -680,6 +686,7 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
     // APR data
     poolApr,
     aaveApr,
+    aprBySource,
     totalApr,
     // LP Type
     lpType,

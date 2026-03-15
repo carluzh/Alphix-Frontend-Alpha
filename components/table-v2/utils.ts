@@ -31,25 +31,6 @@ export const getDefaultColors = (): TableColors => ({
 })
 
 /**
- * Displays the time as a human-readable string.
- */
-export function formatAbbreviatedTime(timestamp: number): string {
-  const now = Date.now()
-  const timeSince = now - timestamp
-  const secondsPassed = Math.floor(timeSince / 1000)
-  const minutesPassed = Math.floor(secondsPassed / 60)
-  const hoursPassed = Math.floor(minutesPassed / 60)
-  const daysPassed = Math.floor(hoursPassed / 24)
-  const monthsPassed = Math.floor(daysPassed / 30)
-
-  if (monthsPassed > 0) return `${monthsPassed}mo`
-  if (daysPassed > 0) return `${daysPassed}d`
-  if (hoursPassed > 0) return `${hoursPassed}h`
-  if (minutesPassed > 0) return `${minutesPassed}m`
-  return `${secondsPassed}s`
-}
-
-/**
  * Returns sizing styles for table columns (width and flexGrow).
  */
 export function getColumnSizingStyles<Data extends RowData>(column: Column<Data, unknown>): CSSProperties {

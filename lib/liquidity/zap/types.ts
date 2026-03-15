@@ -277,40 +277,6 @@ export type ZapStep = ZapSwapApprovalStep | ZapPSMSwapStep | ZapPoolSwapStep;
 // =============================================================================
 
 /**
- * Parameters for useZapDeposit hook
- */
-export interface UseZapDepositParams {
-  /** Pool ID */
-  poolId: string;
-  /** Hook contract address */
-  hookAddress: Address;
-  /** Token0 address (USDS) */
-  token0Address: Address;
-  /** Token1 address (USDC) */
-  token1Address: Address;
-}
-
-/**
- * Return type for useZapDeposit hook
- */
-export interface UseZapDepositReturn {
-  /** Get preview for zap deposit */
-  getPreview: (inputToken: ZapToken, inputAmount: string) => Promise<ZapPreviewResult | null>;
-  /** Execute zap deposit */
-  executeZap: (preview: ZapPreviewResult) => Promise<void>;
-  /** Current preview result */
-  preview: ZapPreviewResult | null;
-  /** Loading state */
-  isLoading: boolean;
-  /** Error state */
-  error: Error | null;
-  /** Transaction hash (after execution) */
-  txHash: string | null;
-  /** Reset state */
-  reset: () => void;
-}
-
-/**
  * Parameters for useZapPreview hook
  */
 export interface UseZapPreviewParams {

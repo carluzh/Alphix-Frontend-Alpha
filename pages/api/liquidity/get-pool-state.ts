@@ -34,7 +34,7 @@ const formatFixed = (value: bigint, decimals: number): string => {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
-    return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
+    return res.status(405).json({ error: `Method ${req.method} Not Allowed` });
   }
 
   const networkMode = resolveNetworkMode(req);
@@ -42,7 +42,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Input validation (Uniswap safeParse pattern)
   const inputValidation = validateApiInput(GetPoolStateInputSchema, req.query, 'get-pool-state');
   if (!inputValidation.success) {
-    return res.status(400).json({ message: inputValidation.error });
+    return res.status(400).json({ error: inputValidation.error });
   }
   const raw = inputValidation.data.poolId;
 
@@ -60,10 +60,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!subgraphId || !/^0x[a-fA-F0-9]{64}$/.test(subgraphId)) {
     console.error('[get-pool-state] Pool not found:', raw, 'networkMode:', networkMode, 'available pools:', all.map(p => p.id));
     return res.status(404).json({
-      message: 'Pool not found',
-      poolId: raw,
-      networkMode,
-      hint: 'Check that the pool exists in the current network configuration'
+      error: 'Pool not found',
+      details: `poolId=${raw}, networkMode=${networkMode}`
     });
   }
 
@@ -83,7 +81,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (slot0Result.status !== 'fulfilled' || liquidityResult.status !== 'fulfilled') {
       const error = slot0Result.status === 'rejected' ? slot0Result.reason : liquidityResult.status === 'rejected' ? liquidityResult.reason : 'Unknown error';
       console.error('[get-pool-state] RPC call failed:', error);
-      return res.status(500).json({ message: 'Failed to read pool state', error: String(error?.message || error) });
+      return res.status(500).json({ error: 'Failed to read pool state', details: String(error?.message || error) });
     }
 
     const slot0 = slot0Result.value;
@@ -141,6 +139,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json(validated);
   } catch (error: any) {
     console.error('[get-pool-state] Error for poolId:', raw, 'networkMode:', networkMode, 'error:', error);
-    return res.status(500).json({ message: 'Failed to read pool state', error: String(error?.message || error) });
+    return res.status(500).json({ error: 'Failed to read pool state', details: String(error?.message || error) });
   }
 } 

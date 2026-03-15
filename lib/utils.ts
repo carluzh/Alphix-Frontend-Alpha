@@ -7,20 +7,6 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-// Format token amounts to max decimals (default 6) without abbreviation
-export function formatTokenAmount(amount: string | number, maxDecimals: number = 6): string {
-  if (!amount || amount === '0' || amount === 0) return '0';
-
-  const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
-  if (!Number.isFinite(numAmount)) return '0';
-
-  // Use toFixed to limit decimals
-  const formatted = numAmount.toFixed(maxDecimals);
-
-  // Remove trailing zeros after decimal point
-  return formatted.replace(/\.?0+$/, '') || "0";
-}
-
 export function shortenAddress(address: string, chars = 4): string {
   if (!address) return "";
   const parsed = getAddress(address);
@@ -84,15 +70,4 @@ export const debounce = <T extends (...args: any[]) => any>(func: T, waitFor: nu
   };
 };
 
-// Token symbol mapping utility
-export const getTokenSymbolByAddress = (address: string, networkMode: NetworkMode = 'base'): TokenSymbol | null => {
-  const normalizedAddress = address.toLowerCase();
-  const tokenDefinitions = getTokenDefinitions(networkMode);
-  for (const [symbol, tokenConfig] of Object.entries(tokenDefinitions)) {
-    if (tokenConfig.address.toLowerCase() === normalizedAddress) {
-      return symbol as TokenSymbol;
-    }
-  }
-  return null;
-};
 

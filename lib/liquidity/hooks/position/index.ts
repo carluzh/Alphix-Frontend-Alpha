@@ -12,55 +12,11 @@ export {
 } from './useDerivedPositionInfo';
 
 export {
-  useDepositInfo,
-  checkBalanceInsufficiency,
-  getMaxSpendableAmount,
-  type UseDepositInfoParams,
-  type BalanceCheckResult,
-} from './useDepositInfo';
-
-export {
-  // Types
-  type DependentAmountFallbackParams,
-  type UpdatedAmounts,
-  // Hooks
-  useCreatePositionDependentAmountFallback,
-  useIncreasePositionDependentAmountFallback,
-  useUpdatedAmountsFromDependentAmount,
-  // Utilities
-  mergeDepositInfoWithFallback,
-  needsDependentAmountCalculation,
-  getExactFieldFromAmounts,
-} from './useDependentAmountFallback';
-
-export {
-  useIncreaseLiquidity,
-  providePreSignedIncreaseBatchPermit,
-  buildIncreaseLiquidityTx,
-  parseTokenIdFromPosition,
-  type IncreasePositionData,
-} from './useIncreaseLiquidity';
-
-export {
-  useDecreaseLiquidity,
-  buildDecreaseLiquidityTx,
-  buildCollectFeesTx,
-  type DecreasePositionData,
-} from './useDecreaseLiquidity';
-
-export {
   useDerivedIncreaseInfo,
   type UseDerivedIncreaseInfoParams,
   type DerivedIncreaseInfo,
   type UseDerivedIncreaseInfoResult,
 } from './useDerivedIncreaseInfo';
-
-export {
-  usePositionAPR,
-  type UsePositionAPRParams,
-  type UsePositionAPRResult,
-  type CachedPoolMetrics,
-} from './usePositionAPR';
 
 // Step-based liquidity hooks removed — execution now handled by
 // useStepExecutor + useLiquidityExecutors (lib/transactions/flows/)

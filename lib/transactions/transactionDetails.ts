@@ -125,7 +125,6 @@ export interface WalletTransactionExtensions {
   // in attempt to cancel the current transaction
   // it should contain all the appropriate gas details in order
   // to be mined first
-  // TODO(MOB-3679): cancelRequest does not need to be persisted; remove from state
   cancelRequest?: providers.TransactionRequest
 }
 
@@ -341,7 +340,6 @@ export interface ApproveTransactionInfo extends BaseTransactionInfo {
 export interface Permit2ApproveTransactionInfo extends BaseTransactionInfo {
   type: TransactionType.Permit2Approve
   spender: string
-  // TODO(WEB-8090): add display for Permit2Approve in TransactionDetails and remove optionality from tokenAddress and amount
   tokenAddress?: string // interface only
   amount?: string // interface only
   dappInfo?: DappInfoTransactionDetails

@@ -17,14 +17,14 @@ const ongoingRequests = new Map<string, Promise<any>>();
 /**
  * Get an ongoing request to prevent duplicate fetches
  */
-export function getOngoingRequest<T>(key: string): Promise<T> | null {
+function getOngoingRequest<T>(key: string): Promise<T> | null {
   return ongoingRequests.get(key) || null;
 }
 
 /**
  * Register an ongoing request for deduplication
  */
-export function setOngoingRequest<T>(key: string, promise: Promise<T>): Promise<T> {
+function setOngoingRequest<T>(key: string, promise: Promise<T>): Promise<T> {
   ongoingRequests.set(key, promise);
   promise.finally(() => {
     if (ongoingRequests.get(key) === promise) {
@@ -127,7 +127,7 @@ export function getCachedPositionTimestamps(ownerAddress: string, networkMode: N
 /**
  * Options for loadUserPositionIds
  */
-export interface LoadPositionIdsOptions {
+interface LoadPositionIdsOptions {
   /** Callback when background refresh completes with fresh data */
   onRefreshed?: (ids: string[]) => void;
   /** Skip background refresh (for internal use during barriers) */

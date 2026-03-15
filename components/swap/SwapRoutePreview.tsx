@@ -17,7 +17,7 @@ import {
   resolveTokenIcon,
   parseSplitRoutes,
   type ParsedSplitRoute,
-} from "./SwapRouteDisplay"
+} from "./swapRouteHelpers"
 import type { NetworkMode } from "@/lib/network-mode"
 import type { KyberswapRouteSummary } from "@/lib/aggregators/types"
 import type { AggregatorSource } from "@/lib/aggregators/types"

@@ -45,6 +45,8 @@ interface PositionYieldChartProps {
   className?: string
   /** Override network mode for cross-chain display */
   networkModeOverride?: NetworkMode
+  /** Override line/dot color (defaults to green) */
+  lineColor?: string
 }
 
 export function PositionYieldChart({
@@ -56,6 +58,7 @@ export function PositionYieldChart({
   height = CHART_HEIGHT,
   className,
   networkModeOverride,
+  lineColor,
 }: PositionYieldChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -120,11 +123,12 @@ export function PositionYieldChart({
     chartRef.current = chart
 
     // Main yield series
+    const effectiveColor = lineColor || COLORS.yieldLine
     const series = chart.addAreaSeries({
       lineWidth: 2,
       lineType: LineType.Curved,
-      lineColor: COLORS.yieldLine,
-      topColor: 'rgba(34, 197, 94, 0.1)',
+      lineColor: effectiveColor,
+      topColor: lineColor ? `${lineColor}1a` : 'rgba(34, 197, 94, 0.1)',
       bottomColor: 'transparent',
       crosshairMarkerRadius: 0,
       priceLineVisible: false,
@@ -220,9 +224,9 @@ export function PositionYieldChart({
           fill="none"
         >
           {/* Outer circle - 40% opacity */}
-          <circle cx="4" cy="4" r="4" fill={COLORS.yieldDot} fillOpacity="0.4" />
+          <circle cx="4" cy="4" r="4" fill={lineColor || COLORS.yieldDot} fillOpacity="0.4" />
           {/* Inner circle - solid */}
-          <circle cx="4" cy="4" r="2" fill={COLORS.yieldDot} />
+          <circle cx="4" cy="4" r="2" fill={lineColor || COLORS.yieldDot} />
         </svg>
       )}
     </div>

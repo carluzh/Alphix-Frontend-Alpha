@@ -39,7 +39,6 @@ interface PreparePermitRequest extends NextApiRequest {
         userAddress: string;
         fromTokenSymbol: TokenSymbol;
         fromTokenAddress: string;
-        toTokenSymbol: TokenSymbol;
         chainId: number;
         amountIn: string;
         approvalMode?: 'exact' | 'infinite';

@@ -34,15 +34,6 @@ export function applyPoolYieldFactor(rawYield: number, token0Symbol: string, tok
   return rawYield * getPoolYieldFactor(token0Symbol, token1Symbol);
 }
 
-export function applyPoolYieldFactorToHistory<T extends { apy: number }>(
-  points: T[],
-  token0Symbol: string,
-  token1Symbol: string
-): T[] {
-  const factor = getPoolYieldFactor(token0Symbol, token1Symbol);
-  return factor === 1.0 ? points : points.map(p => ({ ...p, apy: p.apy * factor }));
-}
-
 // ============================================================================
 
 type ProtocolSource = 'aave' | 'spark';
@@ -74,7 +65,7 @@ const TOKEN_TO_PROTOCOL: Record<string, TokenMapping> = {
 /**
  * Single token rate data
  */
-export interface AaveTokenRate {
+interface AaveTokenRate {
   apy: number;
   utilization: number;
   timestamp: number;
@@ -83,7 +74,7 @@ export interface AaveTokenRate {
 /**
  * Current rates response
  */
-export interface AaveRatesResponse {
+interface AaveRatesResponse {
   success: boolean;
   source?: 'cached' | 'live';
   data: Record<string, AaveTokenRate>;
@@ -93,7 +84,7 @@ export interface AaveRatesResponse {
 /**
  * Historical rate point
  */
-export interface AaveHistoryPoint {
+interface AaveHistoryPoint {
   timestamp: number;
   apy: number;
   utilization: number;
@@ -102,7 +93,7 @@ export interface AaveHistoryPoint {
 /**
  * Historical rates response
  */
-export interface AaveHistoryResponse {
+interface AaveHistoryResponse {
   success: boolean;
   token: string;
   period: 'DAY' | 'WEEK' | 'MONTH';
@@ -263,50 +254,6 @@ export async function fetchAaveRates(networkMode?: NetworkMode): Promise<AaveRat
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
-}
-
-/**
- * Get current Aave APY for a specific token
- * Returns null if token not supported or fetch fails
- */
-export async function getAaveApy(tokenSymbol: string, networkMode?: NetworkMode): Promise<number | null> {
-  const aaveKey = getAaveKey(tokenSymbol);
-  if (!aaveKey) return null;
-
-  const rates = await fetchAaveRates(networkMode);
-  if (!rates.success || !rates.data[aaveKey]) return null;
-
-  return rates.data[aaveKey].apy;
-}
-
-/**
- * Get current Aave APY for a position's tokens
- * Returns the average APY if both tokens are supported, otherwise the single supported token's APY
- */
-export async function getPositionAaveApy(
-  token0Symbol: string,
-  token1Symbol: string,
-  networkMode?: NetworkMode
-): Promise<number | null> {
-  const rates = await fetchAaveRates(networkMode);
-  if (!rates.success) return null;
-
-  const key0 = getAaveKey(token0Symbol);
-  const key1 = getAaveKey(token1Symbol);
-
-  const apy0 = key0 && rates.data[key0] ? rates.data[key0].apy : null;
-  const apy1 = key1 && rates.data[key1] ? rates.data[key1].apy : null;
-
-  if (apy0 !== null && apy1 !== null) {
-    // Both tokens supported - return average
-    return (apy0 + apy1) / 2;
-  } else if (apy0 !== null) {
-    return apy0;
-  } else if (apy1 !== null) {
-    return apy1;
-  }
-
-  return null;
 }
 
 /**
@@ -481,10 +428,44 @@ export function getLendingAprForPair(
 }
 
 /**
+ * Per-source lending APR breakdown for a token pair.
+ * Groups tokens by their yield source (aave vs spark) and returns the average APR per source.
+ * Applies pool-level yield factor to each source's average.
+ *
+ * Example: USDS/USDC → { spark: sparkApy(USDS), aave: aaveApy(USDC) }
+ * Example: WETH/USDC → { aave: avg(aaveApy(WETH), aaveApy(USDC)) }
+ */
+export function getLendingAprBySource(
+  ratesData: AaveRatesResponse | undefined,
+  token0Symbol: string,
+  token1Symbol: string
+): Record<'aave' | 'spark', number> {
+  const result: Record<'aave' | 'spark', number> = { aave: 0, spark: 0 };
+  if (!ratesData?.success) return result;
+
+  const tokens = [token0Symbol, token1Symbol];
+  const bySource: Record<string, number[]> = {};
+
+  for (const sym of tokens) {
+    const mapping = getTokenProtocol(sym);
+    if (!mapping) continue;
+    const rate = ratesData.data[mapping.key];
+    if (!rate) continue;
+    if (!bySource[mapping.protocol]) bySource[mapping.protocol] = [];
+    bySource[mapping.protocol].push(rate.apy);
+  }
+
+  for (const [source, apys] of Object.entries(bySource)) {
+    const avg = apys.reduce((a, b) => a + b, 0) / apys.length;
+    result[source as 'aave' | 'spark'] = applyPoolYieldFactor(avg, token0Symbol, token1Symbol);
+  }
+
+  return result;
+}
+
+/**
  * Hook-friendly wrapper that includes loading/error state
  * For use with React Query or SWR
  */
 export const aaveRatesQueryKey = (networkMode?: NetworkMode) =>
   ['aave', 'rates', networkMode ?? 'default'] as const;
-export const aaveHistoryQueryKey = (token: string, period: string, networkMode?: NetworkMode) =>
-  ['aave', 'history', token, period, networkMode ?? 'default'] as const;

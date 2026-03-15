@@ -1,5 +1,5 @@
-import { getAllTokens as getPoolTokens, resolveTokenIcon } from '../pools-config';
-import { getStoredNetworkMode, chainIdForMode, type NetworkMode } from '../network-mode';
+import { getAllTokens as getPoolTokens, resolveTokenIcon, type NetworkMode } from '../pools-config';
+import { getStoredNetworkMode, chainIdForMode } from '../network-mode';
 
 export interface TokenInfo {
   chainId: number;
@@ -65,9 +65,6 @@ function getTokenMapForChain(mode?: NetworkMode): Map<string, TokenInfo> {
   chainTokenMaps.set(networkMode, map);
   return map;
 }
-
-// Legacy alias: default tokenMap points at stored mode
-const tokenMap = getTokenMapForChain();
 
 const COINGECKO_LIST_URLS: Record<string, string> = {
   base: 'https://tokens.coingecko.com/base/all.json',
@@ -138,31 +135,31 @@ export async function ensureTokenListLoaded(mode?: NetworkMode): Promise<void> {
 /**
  * Initialize the token registry (no-op, kept for API compatibility)
  */
-export function initTokenRegistry(): void {
+function initTokenRegistry(): void {
   // No-op
 }
 
 /**
  * Get full token info by address
  */
-export async function getTokenInfo(address: string): Promise<TokenInfo | null> {
-  return getTokenInfoSync(address);
+async function getTokenInfo(address: string, mode?: NetworkMode): Promise<TokenInfo | null> {
+  return getTokenInfoSync(address, mode);
 }
 
 /**
  * Get token info synchronously
  * Returns null for unknown tokens (caller should handle gracefully)
  */
-export function getTokenInfoSync(address: string): TokenInfo | null {
-  return tokenMap.get(normalizeAddress(address)) || null;
+export function getTokenInfoSync(address: string, mode?: NetworkMode): TokenInfo | null {
+  return getTokenMapForChain(mode).get(normalizeAddress(address)) || null;
 }
 
 /**
  * Get token symbol by address
  * Returns shortened address if not found
  */
-export function getTokenSymbol(address: string): string {
-  const info = getTokenInfoSync(address);
+export function getTokenSymbol(address: string, mode?: NetworkMode): string {
+  const info = getTokenInfoSync(address, mode);
   if (info) {
     return info.symbol;
   }
@@ -174,8 +171,8 @@ export function getTokenSymbol(address: string): string {
 /**
  * Get token logo URL by address
  */
-export function getTokenLogoURI(address: string): string | undefined {
-  const info = getTokenInfoSync(address);
+function getTokenLogoURI(address: string, mode?: NetworkMode): string | undefined {
+  const info = getTokenInfoSync(address, mode);
   return info?.logoURI;
 }
 
@@ -183,55 +180,58 @@ export function getTokenLogoURI(address: string): string | undefined {
  * Get token decimals by address
  * Returns null for unknown tokens (caller should default to 18)
  */
-export function getTokenDecimals(address: string): number | null {
-  const info = getTokenInfoSync(address);
+function getTokenDecimals(address: string, mode?: NetworkMode): number | null {
+  const info = getTokenInfoSync(address, mode);
   return info?.decimals ?? null;
 }
 
 /**
  * Convert route addresses to symbols for display
  */
-export function routeAddressesToSymbols(addresses: string[]): string[] {
-  return addresses.map(getTokenSymbol);
+function routeAddressesToSymbols(addresses: string[], mode?: NetworkMode): string[] {
+  return addresses.map(addr => getTokenSymbol(addr, mode));
 }
 
 /**
  * Check if we have metadata for a token
  */
-export function hasTokenInfo(address: string): boolean {
-  return getTokenInfoSync(address) !== null;
+function hasTokenInfo(address: string, mode?: NetworkMode): boolean {
+  return getTokenInfoSync(address, mode) !== null;
 }
 
 /**
  * Get the token count
  */
-export function getTokenCacheSize(): number {
-  return tokenMap.size;
+function getTokenCacheSize(mode?: NetworkMode): number {
+  return getTokenMapForChain(mode).size;
+}
+
+/**
+ * Popular token addresses per chain — derived from pool config + WETH.
+ * Pool tokens come from config, WETH is chain-specific and not a pool token.
+ */
+function buildPopularAddresses(mode: NetworkMode): string[] {
+  const tokens = getPoolTokens(mode);
+  const addresses = Object.values(tokens).map(t => t.address.toLowerCase());
+  // Add WETH (not a pool token but commonly swapped)
+  const weth = WETH_ADDRESSES[mode];
+  if (weth) addresses.push(weth.address.toLowerCase());
+  return addresses;
 }
 
 const POPULAR_ADDRESSES_BY_CHAIN: Record<string, string[]> = {
-  base: [
-    '0x0000000000000000000000000000000000000000', // ETH
-    '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
-    '0x820c137fa70c8691f0e44dc420a5e53c168921dc', // USDS
-    '0x4200000000000000000000000000000000000006', // WETH
-  ],
-  arbitrum: [
-    '0x0000000000000000000000000000000000000000', // ETH
-    '0xaf88d065e77c8cc2239327c5edb3a432268e5831', // USDC
-    '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9', // USDT
-    '0x82af49447d8a07e3bd95bd0d56f35241523fbab1', // WETH
-  ],
+  base: buildPopularAddresses('base'),
+  arbitrum: buildPopularAddresses('arbitrum'),
 };
 
 // Legacy export
-export const POPULAR_TOKEN_ADDRESSES = POPULAR_ADDRESSES_BY_CHAIN.base;
+const POPULAR_TOKEN_ADDRESSES = POPULAR_ADDRESSES_BY_CHAIN.base;
 
 export function getPopularTokens(mode?: NetworkMode): TokenInfo[] {
   const networkMode = mode ?? getStoredNetworkMode();
   const addresses = POPULAR_ADDRESSES_BY_CHAIN[networkMode] ?? POPULAR_ADDRESSES_BY_CHAIN.base;
   return addresses
-    .map(addr => getTokenInfoSync(addr))
+    .map(addr => getTokenInfoSync(addr, networkMode))
     .filter((t): t is TokenInfo => t !== null);
 }
 
@@ -239,16 +239,17 @@ export function getPopularTokens(mode?: NetworkMode): TokenInfo[] {
  * Search tokens - returns only pool tokens now
  * For full token search, use Alchemy API
  */
-export function searchTokens(query: string, limit = 50): TokenInfo[] {
+export function searchTokens(query: string, limit = 50, mode?: NetworkMode): TokenInfo[] {
   const q = query.toLowerCase().trim();
   if (!q) return [];
 
+  const map = getTokenMapForChain(mode);
   const results: TokenInfo[] = [];
 
   // Check if it's an address search
   if (q.startsWith('0x')) {
     const normalized = normalizeAddress(q);
-    const exactMatch = tokenMap.get(normalized);
+    const exactMatch = map.get(normalized);
     if (exactMatch) {
       return [exactMatch];
     }
@@ -256,7 +257,7 @@ export function searchTokens(query: string, limit = 50): TokenInfo[] {
   }
 
   // Symbol/name search
-  for (const token of tokenMap.values()) {
+  for (const token of map.values()) {
     const symbol = token.symbol.toLowerCase();
     const name = token.name.toLowerCase();
 
@@ -274,11 +275,12 @@ export function searchTokens(query: string, limit = 50): TokenInfo[] {
  * Get all tokens from the registry (pool tokens only)
  * For full token list, use Alchemy API
  */
-export function getAllTokens(): TokenInfo[] {
+export function getAllTokens(mode?: NetworkMode): TokenInfo[] {
+  const map = getTokenMapForChain(mode);
   const seen = new Set<string>();
   const tokens: TokenInfo[] = [];
 
-  for (const token of tokenMap.values()) {
+  for (const token of map.values()) {
     const key = `${token.symbol}-${token.address.toLowerCase()}`;
     if (!seen.has(key)) {
       seen.add(key);
@@ -292,6 +294,6 @@ export function getAllTokens(): TokenInfo[] {
 /**
  * Get token count
  */
-export async function getTokenCount(): Promise<number> {
-  return tokenMap.size;
+async function getTokenCount(mode?: NetworkMode): Promise<number> {
+  return getTokenMapForChain(mode).size;
 }

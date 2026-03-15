@@ -3,10 +3,38 @@
  *
  * Configuration for the Zap feature including PSM addresses,
  * thresholds, and safety parameters.
+ *
+ * Pool-specific data (addresses, decimals, tick spacing, fees) is derived
+ * from the canonical pool config JSONs via lib/pools-config.ts.
  */
 
 import { type Address, getAddress } from 'viem';
 import type { ZapToken } from './types';
+import { getPoolById, getToken, type NetworkMode } from '@/lib/pools-config';
+
+// =============================================================================
+// POOL CONFIG DERIVATION (single source of truth: config/*.json)
+// =============================================================================
+
+/**
+ * Derive a zap pool base config from the canonical pool config.
+ * All addresses, decimals, tick spacing, and fees come from the JSON.
+ */
+function deriveZapPoolBase(poolId: string, mode: NetworkMode) {
+  const pool = getPoolById(poolId, mode);
+  if (!pool) throw new Error(`[zap/constants] Pool "${poolId}" not found in ${mode} config`);
+  const t0 = getToken(pool.currency0.symbol, mode);
+  const t1 = getToken(pool.currency1.symbol, mode);
+  if (!t0 || !t1) throw new Error(`[zap/constants] Tokens for pool "${poolId}" not found`);
+  return {
+    poolId: pool.id,
+    hookAddress: getAddress(pool.hooks) as Address,
+    token0: { symbol: t0.symbol as ZapToken, address: getAddress(t0.address) as Address, decimals: t0.decimals },
+    token1: { symbol: t1.symbol as ZapToken, address: getAddress(t1.address) as Address, decimals: t1.decimals },
+    tickSpacing: pool.tickSpacing,
+    fee: pool.fee,
+  };
+}
 
 // =============================================================================
 // PSM (PEG STABILITY MODULE) CONFIGURATION
@@ -19,121 +47,34 @@ import type { ZapToken } from './types';
  * with ZERO fees. This is used as a fallback when pool price impact exceeds
  * our threshold.
  *
- * Contract: Spark PSM3
- * Source: Spark Protocol (SparkDAO)
- *
  * Key function: swapExactIn(assetIn, assetOut, amountIn, minAmountOut, receiver, referralCode)
  */
+const _baseUsds = getToken('USDS', 'base')!;
+const _baseUsdc = getToken('USDC', 'base')!;
+
 export const PSM_CONFIG = {
-  /** PSM3 contract address on Base mainnet */
+  /** PSM3 contract address on Base mainnet (not in pool config — external contract) */
   address: getAddress('0x1601843c5E9bC251A3272907010AFa41Fa18347E'),
-
-  /** USDS token address (18 decimals) */
-  usdsAddress: getAddress('0x820C137fa70C8691f0e44Dc420a5e53c168921Dc'),
-
-  /** USDC token address (6 decimals) */
-  usdcAddress: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
-
+  /** USDS token address — derived from pool config */
+  usdsAddress: getAddress(_baseUsds.address),
+  /** USDC token address — derived from pool config */
+  usdcAddress: getAddress(_baseUsdc.address),
   /** Referral code for tracking (0 = no referral) */
   referralCode: 0,
 };
 
 // =============================================================================
-// POOL CONFIGURATION
+// POOL CONFIGURATIONS (derived from config JSONs)
 // =============================================================================
 
-/**
- * USDS/USDC Unified Yield pool configuration
- */
-export const USDS_USDC_POOL_CONFIG = {
-  /** Pool ID */
-  poolId: 'usds-usdc',
+/** USDS/USDC Unified Yield pool (Base) */
+export const USDS_USDC_POOL_CONFIG = deriveZapPoolBase('usds-usdc', 'base');
 
-  /** Hook contract address (also the share token) - checksummed */
-  hookAddress: getAddress('0x0e4b892Df7C5Bcf5010FAF4AA106074e555660C0'),
+/** ETH/USDC Unified Yield pool (Base) */
+export const ETH_USDC_POOL_CONFIG = deriveZapPoolBase('eth-usdc', 'base');
 
-  /** Token0 is USDS (18 decimals) */
-  token0: {
-    symbol: 'USDS' as const,
-    address: getAddress('0x820C137fa70C8691f0e44Dc420a5e53c168921Dc'),
-    decimals: 18,
-  },
-
-  /** Token1 is USDC (6 decimals) */
-  token1: {
-    symbol: 'USDC' as const,
-    address: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
-    decimals: 6,
-  },
-
-  /** Pool tick spacing */
-  tickSpacing: 1,
-
-  /** Pool fee (dynamic fee flag) */
-  fee: 8388608,
-};
-
-/**
- * ETH/USDC Unified Yield pool configuration
- */
-export const ETH_USDC_POOL_CONFIG = {
-  /** Pool ID */
-  poolId: 'eth-usdc',
-
-  /** Hook contract address (also the share token) - checksummed */
-  hookAddress: getAddress('0x831CfDf7c0E194f5369f204b3DD2481B843d60c0'),
-
-  /** Token0 is ETH (native, 18 decimals) */
-  token0: {
-    symbol: 'ETH' as const,
-    address: '0x0000000000000000000000000000000000000000' as Address,
-    decimals: 18,
-  },
-
-  /** Token1 is USDC (6 decimals) */
-  token1: {
-    symbol: 'USDC' as const,
-    address: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
-    decimals: 6,
-  },
-
-  /** Pool tick spacing */
-  tickSpacing: 60,
-
-  /** Pool fee (dynamic fee flag) */
-  fee: 8388608,
-};
-
-/**
- * USDC/USDT Unified Yield pool configuration (Arbitrum)
- */
-export const USDC_USDT_ARB_POOL_CONFIG = {
-  /** Pool ID */
-  poolId: 'usdc-usdt',
-
-  /** Hook contract address (also the share token) - checksummed */
-  hookAddress: getAddress('0x5e645C3D580976Ca9e3fe77525D954E73a0Ce0C0'),
-
-  /** Token0 is USDC (6 decimals) */
-  token0: {
-    symbol: 'USDC' as const,
-    address: getAddress('0xaf88d065e77c8cC2239327C5EDb3A432268e5831'),
-    decimals: 6,
-  },
-
-  /** Token1 is USDT (6 decimals) */
-  token1: {
-    symbol: 'USDT' as const,
-    address: getAddress('0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9'),
-    decimals: 6,
-  },
-
-  /** Pool tick spacing */
-  tickSpacing: 1,
-
-  /** Pool fee (dynamic fee flag) */
-  fee: 8388608,
-};
+/** USDC/USDT Unified Yield pool (Arbitrum) */
+export const USDC_USDT_ARB_POOL_CONFIG = deriveZapPoolBase('usdc-usdt', 'arbitrum');
 
 // =============================================================================
 // ZAP POOL CONFIG INTERFACE

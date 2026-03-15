@@ -39,4 +39,3 @@ export async function checkRateLimit(request: Request): Promise<NextResponse | n
   return null
 }
 
-export { ratelimit }
