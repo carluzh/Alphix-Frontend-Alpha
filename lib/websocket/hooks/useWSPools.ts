@@ -50,9 +50,10 @@ function setCachedPools(pools: Map<string, PoolData>): void {
 // UTILS
 // =============================================================================
 
-function calculateApr(fees24hUsd: number, tvlUsd: number): number {
+function calculateApy(fees24hUsd: number, tvlUsd: number): number {
   if (tvlUsd <= 0) return 0;
-  return (fees24hUsd / tvlUsd) * 365 * 100;
+  const dailyRate = fees24hUsd / tvlUsd;
+  return ((1 + dailyRate) ** 365 - 1) * 100;
 }
 
 function toPoolData(metrics: PoolMetrics): PoolData {
@@ -72,7 +73,10 @@ function toPoolData(metrics: PoolMetrics): PoolData {
     cumulativeFeesUsd: metrics.cumulativeFeesUsd,
     token0Price: metrics.token0Price,
     token1Price: metrics.token1Price,
-    apr24h: calculateApr(metrics.fees24hUsd, metrics.tvlUsd),
+    swapApy: metrics.swapApy,
+    lendingApy: metrics.lendingApy,
+    totalApy: metrics.totalApy,
+    apy24h: metrics.totalApy ?? 0,
     lastUpdated: metrics.timestamp,
   };
 }
@@ -177,7 +181,10 @@ export function useWSPools(): UseWSPoolsReturn {
           cumulativeFeesUsd: wsPool.cumulativeFeesUsd,
           token0Price: wsPool.token0Price,
           token1Price: wsPool.token1Price,
-          apr24h: calculateApr(wsPool.fees24hUsd, wsPool.tvlUsd),
+          swapApy: wsPool.swapApy,
+          lendingApy: wsPool.lendingApy,
+          totalApy: wsPool.totalApy,
+          apy24h: wsPool.totalApy ?? 0,
           lastUpdated: wsPool.timestamp,
         });
       });

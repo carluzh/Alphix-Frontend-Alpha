@@ -268,7 +268,8 @@ export function useOverview(
         const response = result.value;
         if (!response.success || !Array.isArray(response.pools)) continue;
         for (const pool of response.pools) {
-          const aprValue = pool.tvlUsd > 0 ? (pool.fees24hUsd / pool.tvlUsd) * 365 * 100 : 0;
+          // Use swap-only APY — lending APY is added separately by position cards
+          const aprValue = pool.swapApy ?? 0;
           const apr = isFinite(aprValue) && aprValue > 0
             ? `${aprValue.toFixed(2)}%`
             : "N/A";

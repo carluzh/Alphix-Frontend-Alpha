@@ -891,31 +891,20 @@ export const PositionDetail = memo(function PositionDetail({
   });
 
   // Transform UY chart data to format expected by YieldChartSection
-  // Calculate weighted totalApr based on position's token value ratios
+  // totalApr is already correctly computed in the hook (swapApr + currency0Apy + currency1Apy)
   const transformedUyChartData = useMemo(() => {
     if (!uyChartData) return [];
 
-    // Calculate token weights from current position USD values
-    const totalValue = (fiatValue0 ?? 0) + (fiatValue1 ?? 0);
-    const token0Weight = totalValue > 0 ? (fiatValue0 ?? 0) / totalValue : 0.5;
-    const token1Weight = totalValue > 0 ? (fiatValue1 ?? 0) / totalValue : 0.5;
-
-    return uyChartData.map((point) => {
-      // Per-token yield is already separated in the data model
-      const weightedYield = (token0Weight * (point.currency0Apy ?? 0)) + (token1Weight * (point.currency1Apy ?? 0));
-      const weightedTotalApr = point.swapApr + weightedYield;
-
-      return {
-        timestamp: point.timestamp,
-        apr: point.swapApr,
-        currency0Apy: point.currency0Apy,
-        currency1Apy: point.currency1Apy,
-        feesUsd: 0, // UY positions don't show individual fees
-        accumulatedFeesUsd: 0,
-        totalApr: weightedTotalApr,
-      };
-    });
-  }, [uyChartData, fiatValue0, fiatValue1]);
+    return uyChartData.map((point) => ({
+      timestamp: point.timestamp,
+      apr: point.swapApr,
+      currency0Apy: point.currency0Apy,
+      currency1Apy: point.currency1Apy,
+      feesUsd: 0, // UY positions don't show individual fees
+      accumulatedFeesUsd: 0,
+      totalApr: point.totalApr ?? (point.swapApr + (point.currency0Apy ?? 0) + (point.currency1Apy ?? 0)),
+    }));
+  }, [uyChartData]);
 
   // Compute yield source labels and colors for chart legend
   const { c0YieldLabel, c1YieldLabel, c0YieldColor, c1YieldColor } = useMemo(() => {

@@ -798,6 +798,12 @@ export interface PoolMetrics {
   cumulativeFeesUsd?: number;
   token0Price: number;
   token1Price: number;
+  /** Swap APY — compound daily: ((1 + fees24h/tvl)^365 - 1) * 100 */
+  swapApy?: number;
+  /** Lending APY — weighted by rehypothecated amounts, with yield factor applied */
+  lendingApy?: number;
+  /** Total APY — swapApy + lendingApy */
+  totalApy?: number;
   timestamp: number;
 }
 

@@ -294,7 +294,7 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
     const daysAgo = Math.floor((today.getTime() - pointDate.getTime()) / (1000 * 60 * 60 * 24));
     const daysAgoLabel = daysAgo === 0 ? "Today" : `${daysAgo}d ago`;
     const feeValue = Number(point.fee || 0);
-    const pct = `${(feeValue < 0.1 ? feeValue.toFixed(3) : feeValue.toFixed(2))}%`;
+    const pct = `${feeValue >= 0.1 ? feeValue.toFixed(2) : feeValue >= 0.01 ? feeValue.toFixed(3) : feeValue >= 0.001 ? feeValue.toFixed(4) : feeValue.toFixed(5)}%`;
     return { daysAgoLabel, pct };
   }, [chartData, hoveredIndex]);
 

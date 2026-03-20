@@ -118,7 +118,8 @@ function formatFeeValue(value: number): string {
   const absValue = Math.abs(value);
   if (absValue >= 0.3) return value.toFixed(2);
   if (absValue >= 0.05) return value.toFixed(3);
-  return value.toFixed(4);
+  if (absValue >= 0.0005) return value.toFixed(4);
+  return value.toFixed(5);
 }
 
 /**

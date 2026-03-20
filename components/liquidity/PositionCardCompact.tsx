@@ -257,14 +257,14 @@ export function PositionCardCompact({
 
         const result = calculateRealizedApr(feesUSD, valueUSD, durationDays, fallbackApr);
 
-        // Extract raw APR value for tooltip breakdown
+        // Extract raw APY value for tooltip breakdown
         let aprValue: number | undefined = undefined;
-        if (result.apr) {
-            aprValue = parseFloat(result.apr.toFixed(2));
+        if (result.apy) {
+            aprValue = parseFloat(result.apy.toFixed(2));
         }
 
         return {
-            formattedAPR: formatApr(result.apr),
+            formattedAPR: formatApr(result.apy),
             rawSwapApr: aprValue,
             isFallback: result.isFallback,
             isLoading: false,

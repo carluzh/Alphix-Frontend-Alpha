@@ -239,7 +239,7 @@ const ChartLegend = memo(function ChartLegend({
       }
     } else {
       // For V4 positions: show APR and fees
-      base.push({ key: "apr", label: "Swap APR", color: CHART_COLORS.apr });
+      base.push({ key: "apr", label: "Swap APY", color: CHART_COLORS.apr });
       if (hasCurrency0Data) {
         base.push({ key: "currency0Apy", label: currency0Label, color: currency0Color });
       }

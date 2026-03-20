@@ -17,7 +17,7 @@
  *     <div>
  *       <h1>TVL: ${pool?.tvlUsd.toLocaleString()}</h1>
  *       <p>24h Volume: ${pool?.volume24hUsd.toLocaleString()}</p>
- *       <p>APR: {pool?.apr24h.toFixed(2)}%</p>
+ *       <p>APY: {pool?.apy24h.toFixed(2)}%</p>
  *     </div>
  *   );
  * }
@@ -60,8 +60,14 @@ export interface PoolData {
   cumulativeFeesUsd?: number;
   token0Price: number;
   token1Price: number;
-  /** Calculated: (fees24hUsd / tvlUsd) * 365 * 100 */
-  apr24h: number;
+  /** Swap APY from backend (compound daily) */
+  swapApy?: number;
+  /** Lending APY from backend (weighted, with yield factor) */
+  lendingApy?: number;
+  /** Total APY from backend (swap + lending) */
+  totalApy?: number;
+  /** Fallback: frontend-calculated swap APY from fees24h/tvl */
+  apy24h: number;
   lastUpdated: number;
 }
 
@@ -85,11 +91,12 @@ interface UseWSPoolReturn {
 // =============================================================================
 
 /**
- * Calculate annualized APR from 24h fees and TVL
+ * Calculate annualized APY from 24h fees and TVL (compound daily)
  */
-function calculateApr(fees24hUsd: number, tvlUsd: number): number {
+function calculateApy(fees24hUsd: number, tvlUsd: number): number {
   if (tvlUsd <= 0) return 0;
-  return (fees24hUsd / tvlUsd) * 365 * 100;
+  const dailyRate = fees24hUsd / tvlUsd;
+  return ((1 + dailyRate) ** 365 - 1) * 100;
 }
 
 /**
@@ -112,7 +119,10 @@ function toPoolData(metrics: PoolMetrics): PoolData {
     cumulativeFeesUsd: metrics.cumulativeFeesUsd,
     token0Price: metrics.token0Price,
     token1Price: metrics.token1Price,
-    apr24h: calculateApr(metrics.fees24hUsd, metrics.tvlUsd),
+    swapApy: metrics.swapApy,
+    lendingApy: metrics.lendingApy,
+    totalApy: metrics.totalApy,
+    apy24h: metrics.totalApy ?? 0,
     lastUpdated: metrics.timestamp,
   };
 }
@@ -217,7 +227,10 @@ export function useWSPool(poolId: string, networkModeOverride?: NetworkMode): Us
         cumulativeFeesUsd: wsPool.cumulativeFeesUsd,
         token0Price: wsPool.token0Price,
         token1Price: wsPool.token1Price,
-        apr24h: calculateApr(wsPool.fees24hUsd, wsPool.tvlUsd),
+        swapApy: wsPool.swapApy,
+        lendingApy: wsPool.lendingApy,
+        totalApy: wsPool.totalApy,
+        apy24h: wsPool.totalApy ?? 0,
         lastUpdated: wsPool.timestamp,
       };
     }

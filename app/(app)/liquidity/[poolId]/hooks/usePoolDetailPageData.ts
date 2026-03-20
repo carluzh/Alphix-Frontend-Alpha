@@ -69,7 +69,12 @@ export interface PoolStats {
   volume24hUSD: number;
   fees24hUSD: number;
   apr: string;
+  /** Total APY (swap + lending) — use for headline display */
   aprRaw: number;
+  /** Swap-only APY — use when passing to components that add lending separately */
+  swapApyRaw: number;
+  /** Lending-only APY — from Aave/Spark via backend */
+  lendingApyRaw: number;
   dynamicFeeBps: number | null;
   // Formatted strings for display
   tvlFormatted: string;
@@ -278,6 +283,8 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
     fees24hUSD: 0,
     apr: 'Loading...',
     aprRaw: 0,
+    swapApyRaw: 0,
+    lendingApyRaw: 0,
     dynamicFeeBps: null,
     tvlFormatted: 'Loading...',
     volume24hFormatted: 'Loading...',
@@ -371,8 +378,10 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
       const tvlUSD = wsPool.tvlUsd || 0;
       const volume24hUSD = wsPool.volume24hUsd || 0;
       const fees24hUSD = wsPool.fees24hUsd || 0;
-      // apr24h is calculated in useWSPool from fees24hUsd/tvlUsd
-      const aprRaw = wsPool.apr24h || 0;
+      // Backend provides separate swap/lending/total APY
+      const swapApyRaw = wsPool.swapApy ?? 0;
+      const lendingApyRaw = wsPool.lendingApy ?? 0;
+      const aprRaw = wsPool.totalApy ?? (wsPool.apy24h || 0);
       const dynamicFeeBps = wsPool.lpFee || null;
 
       const aprFormatted = Number.isFinite(aprRaw) && aprRaw > 0
@@ -387,6 +396,8 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
         fees24hUSD,
         apr: aprFormatted,
         aprRaw,
+        swapApyRaw,
+        lendingApyRaw,
         dynamicFeeBps,
         tvlFormatted: formatUSD(tvlUSD),
         volume24hFormatted: formatUSD(volume24hUSD),
@@ -423,8 +434,10 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
         const tvlUSD = pool.tvlUsd || 0;
         const volume24hUSD = pool.volume24hUsd || 0;
         const fees24hUSD = pool.fees24hUsd || 0;
-        // Calculate APR same as WebSocket: (fees24h / tvl) * 365 * 100
-        const aprRaw = tvlUSD > 0 ? (fees24hUSD / tvlUSD) * 365 * 100 : 0;
+        // Backend provides separate swap/lending/total APY
+        const swapApyRaw = pool.swapApy ?? 0;
+        const lendingApyRaw = pool.lendingApy ?? 0;
+        const aprRaw = pool.totalApy ?? 0;
         const dynamicFeeBps = pool.lpFee || null;
 
         const aprFormatted = Number.isFinite(aprRaw) && aprRaw > 0
@@ -439,6 +452,8 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
           fees24hUSD,
           apr: aprFormatted,
           aprRaw,
+          swapApyRaw,
+          lendingApyRaw,
           dynamicFeeBps,
           tvlFormatted: formatUSD(tvlUSD),
           volume24hFormatted: formatUSD(volume24hUSD),

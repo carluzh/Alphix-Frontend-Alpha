@@ -77,7 +77,7 @@ function PoolCard({ pool, selected, onSelect, apr, lendingApr, aprLoading }: {
         {pool.currency0.symbol} / {pool.currency1.symbol}
       </span>
       <APRBadge
-        breakdown={{ poolApr: apr, lendingApr }}
+        breakdown={{ poolApy: apr, lendingApy: lendingApr }}
         token0Symbol={pool.currency0.symbol}
         token1Symbol={pool.currency1.symbol}
         isLoading={aprLoading}
@@ -337,7 +337,7 @@ export function PoolAndModeStep() {
             const apiPoolId = getPoolSubgraphId(pool.id, pool.networkMode) || pool.id;
             const poolData = result.value.pools.find((p) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
             if (poolData) {
-              const apr = poolData.tvlUsd > 0 ? (poolData.fees24hUsd / poolData.tvlUsd) * 365 * 100 : 0;
+              const apr = poolData.swapApy ?? 0;
               aprs[pool.id] = apr;
             }
           }

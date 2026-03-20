@@ -70,7 +70,7 @@ export function PointsFeeStat({
       </span>
       {/* Label */}
       <span className="text-xs text-muted-foreground">
-        APR
+        APY
       </span>
     </div>
   );
@@ -80,9 +80,9 @@ export function PointsFeeStat({
     <PointsTooltip
       content={
         <APRBreakdownTooltip
-          swapApr={poolApr}
-          unifiedYieldApr={unifiedYieldApr}
-          pointsApr={pointsApr}
+          swapApy={poolApr}
+          unifiedYieldApy={unifiedYieldApr}
+          pointsApy={pointsApr}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
         />

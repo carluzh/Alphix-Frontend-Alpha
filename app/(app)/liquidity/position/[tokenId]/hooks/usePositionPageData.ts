@@ -551,9 +551,8 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
       if (!response.success || !response.pools) return null;
       const pool = response.pools.find(p => p.poolId.toLowerCase() === poolId.toLowerCase());
       if (!pool) return null;
-      // Calculate APR same as WebSocket: (fees24h / tvl) * 365 * 100
-      const apr = pool.tvlUsd > 0 ? (pool.fees24hUsd / pool.tvlUsd) * 365 * 100 : 0;
-      return { apr };
+      // Use swap-only APY — lending is added separately via aaveApr
+      return { apr: pool.swapApy ?? 0 };
     },
     enabled: !!poolConfig?.subgraphId,
     staleTime: 60_000, // Cache for 1 minute

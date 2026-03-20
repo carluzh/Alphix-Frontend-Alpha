@@ -1,5 +1,9 @@
 /**
- * APR Calculator - Uniswap V4 Liquidity Positions
+ * APY Calculator - Uniswap V4 Liquidity Positions
+ *
+ * All yields are expressed as APY (compound daily) since rehypo pools
+ * auto-compound fees via lending. Lending rates from Aave/Spark are
+ * already APY, so swap-fee APY + lending APY = total APY.
  */
 
 import { Percent } from '@uniswap/sdk-core'
@@ -30,16 +34,25 @@ async function resolveTokenPrices(
   } catch { return null }
 }
 
-function clampAprBps(bps: number): number {
+function clampBps(bps: number): number {
   if (!isFinite(bps) || isNaN(bps)) return 0
   return Math.min(Math.max(Math.round(bps), 0), 999900)
 }
 
 function numberToPercent(value: number): Percent {
-  return new Percent(clampAprBps(value * 100), BIPS_BASE)
+  return new Percent(clampBps(value * 100), BIPS_BASE)
 }
 
-export async function calculatePositionApr(
+/**
+ * Convert a simple APR (linear annualization) to APY (daily compounding).
+ * APY = (1 + APR/365)^365 - 1
+ */
+function aprToApy(aprPercent: number): number {
+  const dailyRate = aprPercent / 100 / DAYS_PER_YEAR
+  return ((1 + dailyRate) ** DAYS_PER_YEAR - 1) * 100
+}
+
+export async function calculatePositionApy(
   pool: V4Pool, tickLower: number, tickUpper: number, metrics: PoolMetrics,
   investmentUSD: number = 100, userAmounts?: { amount0: string; amount1: string; liquidity?: string }
 ): Promise<Percent> {
@@ -55,7 +68,7 @@ export async function calculatePositionApr(
     const tokenPrices = await resolveTokenPrices(pool, pool.token0.symbol || '', pool.token1.symbol || '')
     if (!tokenPrices) return ZERO
 
-    const annualFees = (metrics.totalFeesToken0 / metrics.days) * DAYS_PER_YEAR
+    const dailyFees = metrics.totalFeesToken0 / metrics.days
     let positionLiquidity: number, positionValueUSD: number
 
     if (userAmounts?.liquidity) {
@@ -84,35 +97,40 @@ export async function calculatePositionApr(
       } catch {
         const avgTVLUSD = metrics.avgTVLToken0 * tokenPrices.token0
         if (avgTVLUSD === 0) return ZERO
-        return numberToPercent((annualFees * tokenPrices.token0 / avgTVLUSD) * 100)
+        // Fallback: simple fee/TVL ratio → convert to APY
+        const simpleApr = (dailyFees * DAYS_PER_YEAR * tokenPrices.token0 / avgTVLUSD) * 100
+        return numberToPercent(aprToApy(simpleApr))
       }
     }
     if (!isFinite(positionLiquidity) || positionLiquidity <= 0) return ZERO
     // Fee share: position's share of total liquidity in range
-    const apr = (annualFees * (positionLiquidity / (poolLiquidity + positionLiquidity)) * tokenPrices.token0 / positionValueUSD) * 100
-    return numberToPercent(apr)
+    const dailyReturn = (dailyFees * (positionLiquidity / (poolLiquidity + positionLiquidity)) * tokenPrices.token0) / positionValueUSD
+    const apy = ((1 + dailyReturn) ** DAYS_PER_YEAR - 1) * 100
+    return numberToPercent(apy)
   } catch { return new Percent(0, BIPS_BASE) }
 }
 
-export function calculateRealizedApr(
+export function calculateRealizedApy(
   feesUSD: number,
   valueUSD: number,
   durationDays: number,
-  fallbackApr?: Percent | null
-): { apr: Percent | null; isFallback: boolean } {
+  fallbackApy?: Percent | null
+): { apy: Percent | null; isFallback: boolean } {
   if (durationDays < 0.25 || valueUSD <= 0 || feesUSD <= 0) {
-    return fallbackApr ? { apr: fallbackApr, isFallback: true } : { apr: null, isFallback: false }
+    return fallbackApy ? { apy: fallbackApy, isFallback: true } : { apy: null, isFallback: false }
   }
-  const apr = (feesUSD / valueUSD) * (DAYS_PER_YEAR / durationDays) * 100
-  if (!isFinite(apr)) {
-    return fallbackApr ? { apr: fallbackApr, isFallback: true } : { apr: null, isFallback: false }
+  // Daily rate from realized fees, then compound
+  const dailyRate = (feesUSD / valueUSD) / durationDays
+  const apy = ((1 + dailyRate) ** DAYS_PER_YEAR - 1) * 100
+  if (!isFinite(apy)) {
+    return fallbackApy ? { apy: fallbackApy, isFallback: true } : { apy: null, isFallback: false }
   }
-  return { apr: numberToPercent(apr), isFallback: false }
+  return { apy: numberToPercent(apy), isFallback: false }
 }
 
-function formatAprCore(apr: Percent | null | undefined, includePercent: boolean): string {
-  if (!apr) return '-'
-  const value = parseFloat(apr.toFixed(2))
+function formatApyCore(apy: Percent | null | undefined, includePercent: boolean): string {
+  if (!apy) return '-'
+  const value = parseFloat(apy.toFixed(2))
   if (!isFinite(value)) return '-'
   if (value === 0) return includePercent ? '0%' : '0.00'
   const suffix = includePercent ? '%' : ''
@@ -122,42 +140,42 @@ function formatAprCore(apr: Percent | null | undefined, includePercent: boolean)
   return `${value.toFixed(2)}${suffix}`
 }
 
-export function formatApr(apr: Percent | null | undefined): string {
-  return formatAprCore(apr, true)
+export function formatApy(apy: Percent | null | undefined): string {
+  return formatApyCore(apy, true)
 }
 
-export function formatAprValue(apr: Percent | null | undefined): string {
-  return formatAprCore(apr, false)
+export function formatApyValue(apy: Percent | null | undefined): string {
+  return formatApyCore(apy, false)
 }
 
 // =============================================================================
-// CONSOLIDATED APR BREAKDOWN UTILITIES
+// CONSOLIDATED APY BREAKDOWN UTILITIES
 // =============================================================================
 
-export interface APRBreakdownInput {
-  /** Swap/Pool APR from trading fees */
-  swapApr?: number | null;
-  /** Unified Yield APR (Aave lending) - only for rehypo pools */
-  unifiedYieldApr?: number | null;
-  /** Points APR bonus */
-  pointsApr?: number | null;
+export interface APYBreakdownInput {
+  /** Swap/Pool APY from trading fees (daily compounded) */
+  swapApy?: number | null;
+  /** Unified Yield APY (Aave/Spark lending) - only for rehypo pools */
+  unifiedYieldApy?: number | null;
+  /** Points APY bonus */
+  pointsApy?: number | null;
 }
 
 /**
- * Calculate total APR from breakdown components.
+ * Calculate total APY from breakdown components.
  * Unified Yield is only added if it exists (rehypo pools only).
  *
- * @param breakdown - APR components
- * @returns Total APR as number, or null if no valid data
+ * @param breakdown - APY components
+ * @returns Total APY as number, or null if no valid data
  */
-export function calculateTotalApr(breakdown: APRBreakdownInput): number | null {
-  const swap = breakdown.swapApr ?? 0;
-  const unified = breakdown.unifiedYieldApr ?? 0;
-  const points = breakdown.pointsApr ?? 0;
+export function calculateTotalApy(breakdown: APYBreakdownInput): number | null {
+  const swap = breakdown.swapApy ?? 0;
+  const unified = breakdown.unifiedYieldApy ?? 0;
+  const points = breakdown.pointsApy ?? 0;
 
   // If all are 0 or null, return null to indicate no data
   if (swap === 0 && unified === 0 && points === 0) {
-    if (breakdown.swapApr === null && breakdown.unifiedYieldApr === null && breakdown.pointsApr === null) {
+    if (breakdown.swapApy === null && breakdown.unifiedYieldApy === null && breakdown.pointsApy === null) {
       return null;
     }
   }
@@ -166,13 +184,13 @@ export function calculateTotalApr(breakdown: APRBreakdownInput): number | null {
 }
 
 /**
- * Format total APR from breakdown for display.
+ * Format total APY from breakdown for display.
  *
- * @param breakdown - APR components
- * @returns Formatted APR string (e.g., "12.50%")
+ * @param breakdown - APY components
+ * @returns Formatted APY string (e.g., "12.50%")
  */
-export function formatTotalApr(breakdown: APRBreakdownInput): string {
-  const total = calculateTotalApr(breakdown);
+export function formatTotalApy(breakdown: APYBreakdownInput): string {
+  const total = calculateTotalApy(breakdown);
   if (total === null) return '-';
   if (total === 0) return '0.00%';
   if (total >= 1000) return `${(total / 1000).toFixed(2)}K%`;
@@ -180,3 +198,21 @@ export function formatTotalApr(breakdown: APRBreakdownInput): string {
   if (total >= 10) return `${total.toFixed(1)}%`;
   return `${total.toFixed(2)}%`;
 }
+
+// =============================================================================
+// BACKWARDS COMPAT — old names re-exported for gradual migration
+// =============================================================================
+/** @deprecated Use APYBreakdownInput */
+export type APRBreakdownInput = APYBreakdownInput;
+/** @deprecated Use calculateTotalApy */
+export const calculateTotalApr = calculateTotalApy;
+/** @deprecated Use formatTotalApy */
+export const formatTotalApr = formatTotalApy;
+/** @deprecated Use calculatePositionApy */
+export const calculatePositionApr = calculatePositionApy;
+/** @deprecated Use calculateRealizedApy */
+export const calculateRealizedApr = calculateRealizedApy;
+/** @deprecated Use formatApy */
+export const formatApr = formatApy;
+/** @deprecated Use formatApyValue */
+export const formatAprValue = formatApyValue;

@@ -105,10 +105,10 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
           </div>
         </div>
 
-        {/* New Position Button */}
+        {/* New Position Button — hidden on mobile */}
         <Button
           asChild
-          className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
+          className="hidden sm:flex h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
         >
           <Link href={`/liquidity/add?pool=${poolConfig.id}&from=pool`}>
             <Plus className="h-4 w-4" strokeWidth={2.5} />

@@ -180,7 +180,7 @@ function TvlSparkline() {
 
 function StatsCard({ stats }: { stats: ProtocolStats }) {
   return (
-    <div className="flex flex-1 flex-col justify-between gap-y-4 rounded-lg bg-muted/50 surface-depth p-5 md:p-6">
+    <div className="order-2 xl:order-1 flex flex-1 flex-col justify-between gap-y-4 rounded-lg bg-muted/50 surface-depth p-5 md:p-6">
       <div className="flex flex-col gap-y-1">
         <h2 className="text-xl font-semibold text-foreground">Unified Pools</h2>
         <p className="text-sm text-muted-foreground">
@@ -301,7 +301,7 @@ function AnnouncementsCard() {
   if (!current) return null;
 
   return (
-    <div className="flex flex-1 flex-col rounded-lg overflow-hidden relative">
+    <div className="order-1 xl:order-2 flex flex-1 flex-col rounded-lg overflow-hidden relative">
       {announcements.map((ann, i) => (
         <Link
           key={i}
@@ -341,6 +341,7 @@ interface ProtocolStatsHeroProps {
 export function ProtocolStatsHero({ stats }: ProtocolStatsHeroProps) {
   return (
     <div className="flex w-full flex-col gap-3 md:gap-3 xl:flex-row">
+      {/* On mobile/tablet: ANN first, stats second (via CSS order). On xl+: stats left, ANN right */}
       <StatsCard stats={stats} />
       <AnnouncementsCard />
     </div>

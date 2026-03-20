@@ -94,52 +94,58 @@ export function AnimatedEmblems() {
         `}
       </style>
 
-      <div className="absolute top-[20px] -left-[15px] rotate-90 z-[1]">
-        <AnimatedEmblem duration={animationDuration} delay={delays[0]} rotationDirection="clockwise">
-          <EmblemIcon iconName={icons[0].name} glitchIndex={1} size={71} shade={icons[0].shade} />
-        </AnimatedEmblem>
+      {/* Left icons — scale from left edge on mobile, spread vertically */}
+      <div className="absolute inset-0 [transform:scale(0.5,1.4)] md:[transform:scale(1)] origin-left">
+        <div className="absolute top-[20px] -left-[15px] rotate-90 z-[1]">
+          <AnimatedEmblem duration={animationDuration} delay={delays[0]} rotationDirection="clockwise">
+            <EmblemIcon iconName={icons[0].name} glitchIndex={1} size={71} shade={icons[0].shade} />
+          </AnimatedEmblem>
+        </div>
+
+        <div className="absolute bottom-[20px] left-[180px] z-[1]">
+          <AnimatedEmblem duration={animationDuration} delay={delays[1]} rotationDirection="counterclockwise">
+            <EmblemIcon iconName={icons[1].name} glitchIndex={2} size={71} shade={icons[1].shade} />
+          </AnimatedEmblem>
+        </div>
+
+        <div className="absolute top-[30px] left-[120px] z-[1]">
+          <AnimatedEmblem duration={animationDuration} delay={delays[2]} rotationDirection="clockwise">
+            <EmblemIcon iconName={icons[2].name} glitchIndex={3} size={71} shade={icons[2].shade} />
+          </AnimatedEmblem>
+        </div>
+
+        <div className="absolute bottom-[30px] left-[50px] z-[1]">
+          <AnimatedEmblem duration={animationDuration} delay={delays[3]} rotationDirection="counterclockwise">
+            <EmblemIcon iconName={icons[3].name} glitchIndex={4} size={65} shade={icons[3].shade} />
+          </AnimatedEmblem>
+        </div>
       </div>
 
-      <div className="absolute bottom-[20px] left-[180px] z-[1]">
-        <AnimatedEmblem duration={animationDuration} delay={delays[1]} rotationDirection="counterclockwise">
-          <EmblemIcon iconName={icons[1].name} glitchIndex={2} size={71} shade={icons[1].shade} />
-        </AnimatedEmblem>
-      </div>
+      {/* Right icons — scale from right edge on mobile, spread vertically */}
+      <div className="absolute inset-0 [transform:scale(0.5,1.4)] md:[transform:scale(1)] origin-right">
+        <div className="absolute top-[20px] -right-[15px] -rotate-90 z-[1]">
+          <AnimatedEmblem duration={animationDuration} delay={delays[4]} rotationDirection="counterclockwise">
+            <EmblemIcon iconName={icons[4].name} glitchIndex={5} size={71} shade={icons[4].shade} />
+          </AnimatedEmblem>
+        </div>
 
-      <div className="absolute top-[30px] left-[120px] z-[1]">
-        <AnimatedEmblem duration={animationDuration} delay={delays[2]} rotationDirection="clockwise">
-          <EmblemIcon iconName={icons[2].name} glitchIndex={3} size={71} shade={icons[2].shade} />
-        </AnimatedEmblem>
-      </div>
+        <div className="absolute bottom-[20px] right-[180px] z-[1]">
+          <AnimatedEmblem duration={animationDuration} delay={delays[5]} rotationDirection="clockwise">
+            <EmblemIcon iconName={icons[5].name} glitchIndex={6} size={71} shade={icons[5].shade} />
+          </AnimatedEmblem>
+        </div>
 
-      <div className="absolute bottom-[30px] left-[50px] z-[1]">
-        <AnimatedEmblem duration={animationDuration} delay={delays[3]} rotationDirection="counterclockwise">
-          <EmblemIcon iconName={icons[3].name} glitchIndex={4} size={65} shade={icons[3].shade} />
-        </AnimatedEmblem>
-      </div>
+        <div className="absolute top-[30px] right-[120px] z-[1]">
+          <AnimatedEmblem duration={animationDuration} delay={delays[6]} rotationDirection="counterclockwise">
+            <EmblemIcon iconName={icons[6].name} glitchIndex={7} size={71} shade={icons[6].shade} />
+          </AnimatedEmblem>
+        </div>
 
-      <div className="absolute top-[20px] -right-[15px] -rotate-90 z-[1]">
-        <AnimatedEmblem duration={animationDuration} delay={delays[4]} rotationDirection="counterclockwise">
-          <EmblemIcon iconName={icons[4].name} glitchIndex={5} size={71} shade={icons[4].shade} />
-        </AnimatedEmblem>
-      </div>
-
-      <div className="absolute bottom-[20px] right-[180px] z-[1]">
-        <AnimatedEmblem duration={animationDuration} delay={delays[5]} rotationDirection="clockwise">
-          <EmblemIcon iconName={icons[5].name} glitchIndex={6} size={71} shade={icons[5].shade} />
-        </AnimatedEmblem>
-      </div>
-
-      <div className="absolute top-[30px] right-[120px] z-[1]">
-        <AnimatedEmblem duration={animationDuration} delay={delays[6]} rotationDirection="counterclockwise">
-          <EmblemIcon iconName={icons[6].name} glitchIndex={7} size={71} shade={icons[6].shade} />
-        </AnimatedEmblem>
-      </div>
-
-      <div className="absolute bottom-[30px] right-[50px] z-[1]">
-        <AnimatedEmblem duration={animationDuration} delay={delays[7]} rotationDirection="clockwise">
-          <EmblemIcon iconName={icons[7].name} glitchIndex={8} size={65} shade={icons[7].shade} />
-        </AnimatedEmblem>
+        <div className="absolute bottom-[30px] right-[50px] z-[1]">
+          <AnimatedEmblem duration={animationDuration} delay={delays[7]} rotationDirection="clockwise">
+            <EmblemIcon iconName={icons[7].name} glitchIndex={8} size={65} shade={icons[7].shade} />
+          </AnimatedEmblem>
+        </div>
       </div>
     </>
   )

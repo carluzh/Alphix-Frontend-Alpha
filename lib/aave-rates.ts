@@ -398,11 +398,11 @@ export async function fetchPositionAaveHistory(
 }
 
 /**
- * Calculate lending APR for a token pair from rates data.
+ * Calculate lending APY for a token pair from rates data.
  * Automatically applies pool-level yield factor.
  * Returns average if both tokens supported, single token's APY if only one supported, null otherwise.
  */
-export function getLendingAprForPair(
+export function getLendingApyForPair(
   ratesData: AaveRatesResponse | undefined,
   token0Symbol: string,
   token1Symbol: string
@@ -428,14 +428,14 @@ export function getLendingAprForPair(
 }
 
 /**
- * Per-source lending APR breakdown for a token pair.
- * Groups tokens by their yield source (aave vs spark) and returns the average APR per source.
+ * Per-source lending APY breakdown for a token pair.
+ * Groups tokens by their yield source (aave vs spark) and returns the average APY per source.
  * Applies pool-level yield factor to each source's average.
  *
  * Example: USDS/USDC → { spark: sparkApy(USDS), aave: aaveApy(USDC) }
  * Example: WETH/USDC → { aave: avg(aaveApy(WETH), aaveApy(USDC)) }
  */
-export function getLendingAprBySource(
+export function getLendingApyBySource(
   ratesData: AaveRatesResponse | undefined,
   token0Symbol: string,
   token1Symbol: string
@@ -469,3 +469,9 @@ export function getLendingAprBySource(
  */
 export const aaveRatesQueryKey = (networkMode?: NetworkMode) =>
   ['aave', 'rates', networkMode ?? 'default'] as const;
+
+// Backwards compat
+/** @deprecated Use getLendingApyForPair */
+export const getLendingAprForPair = getLendingApyForPair;
+/** @deprecated Use getLendingApyBySource */
+export const getLendingAprBySource = getLendingApyBySource;

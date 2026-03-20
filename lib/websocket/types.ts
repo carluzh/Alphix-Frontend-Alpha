@@ -195,6 +195,12 @@ export interface WSPoolData {
   token0Price: number;
   /** Token1 USD price */
   token1Price: number;
+  /** Swap APY (compound daily) — from backend */
+  swapApy?: number;
+  /** Lending APY (weighted, with yield factor) — from backend */
+  lendingApy?: number;
+  /** Total APY (swap + lending) — from backend */
+  totalApy?: number;
   /** Event timestamp (ms) */
   timestamp: number;
 }

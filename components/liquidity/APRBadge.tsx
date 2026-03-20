@@ -1,39 +1,42 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { calculateTotalApr, formatTotalApr } from "@/lib/apr";
+import { calculateTotalApy, formatTotalApy } from "@/lib/apr";
 import { PointsTooltip, TooltipSize } from "./PointsCampaign/PointsTooltip";
-import { APRBreakdownTooltip } from "./APRBreakdownTooltip";
-export interface APRBreakdown {
-  poolApr?: number;
-  pointsApr?: number;
-  lendingApr?: number;
+import { APYBreakdownTooltip } from "./APYBreakdownTooltip";
+
+export interface APYBreakdown {
+  poolApy?: number;
+  pointsApy?: number;
+  lendingApy?: number;
 }
 
-interface APRBadgeProps {
-  apr?: number;
+/** @deprecated Use APYBreakdown */
+export type APRBreakdown = APYBreakdown;
+
+interface APYBadgeProps {
+  apy?: number;
   isLoading?: boolean;
   className?: string;
-  breakdown?: APRBreakdown;
+  breakdown?: APYBreakdown;
   token0Symbol?: string;
   token1Symbol?: string;
 }
 
-export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, token1Symbol }: APRBadgeProps) {
+export function APYBadge({ apy, isLoading, className, breakdown, token0Symbol, token1Symbol }: APYBadgeProps) {
   if (isLoading) {
     return <div className={cn("h-7 min-w-[72px] px-3 bg-muted/60 rounded animate-pulse", className)} />;
   }
 
-  // Use consolidated APR calculation
-  const totalApr = breakdown
-    ? calculateTotalApr({
-        swapApr: breakdown.poolApr,
-        unifiedYieldApr: breakdown.lendingApr,
-        pointsApr: breakdown.pointsApr,
+  const totalApy = breakdown
+    ? calculateTotalApy({
+        swapApy: breakdown.poolApy,
+        unifiedYieldApy: breakdown.lendingApy,
+        pointsApy: breakdown.pointsApy,
       })
-    : apr ?? null;
+    : apy ?? null;
 
-  if (totalApr === null) {
+  if (totalApy === null) {
     return (
       <div className={cn("inline-flex items-center justify-center h-7 min-w-[72px] px-3 rounded text-sm font-semibold font-mono bg-muted/40 text-muted-foreground", className)}>
         -
@@ -41,35 +44,32 @@ export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, t
     );
   }
 
-  const isZeroApr = totalApr === 0;
-  // Use the same breakdown values for formatting — never substitute totalApr for swapApr
-  // as totalApr already includes lending, which would cause double-counting
-  const formattedApr = breakdown
-    ? formatTotalApr({
-        swapApr: breakdown.poolApr,
-        unifiedYieldApr: breakdown.lendingApr,
-        pointsApr: breakdown.pointsApr,
+  const isZero = totalApy === 0;
+  const formattedApy = breakdown
+    ? formatTotalApy({
+        swapApy: breakdown.poolApy,
+        unifiedYieldApy: breakdown.lendingApy,
+        pointsApy: breakdown.pointsApy,
       })
-    : formatTotalApr({ swapApr: totalApr });
+    : formatTotalApy({ swapApy: totalApy });
 
   const badge = (
     <div className={cn(
       "inline-flex items-center justify-center h-7 min-w-[72px] px-3 rounded text-sm font-semibold font-mono",
-      isZeroApr ? "bg-muted/40 text-muted-foreground" : "bg-green-500/15 text-green-500",
+      isZero ? "bg-muted/40 text-muted-foreground" : "bg-green-500/15 text-green-500",
       className
     )}>
-      {formattedApr}
+      {formattedApy}
     </div>
   );
 
-  // Always show tooltip with unified breakdown (maps old props to new naming)
   return (
     <PointsTooltip
       content={
-        <APRBreakdownTooltip
-          swapApr={breakdown?.poolApr}
-          unifiedYieldApr={breakdown?.lendingApr}
-          pointsApr={breakdown?.pointsApr}
+        <APYBreakdownTooltip
+          swapApy={breakdown?.poolApy}
+          unifiedYieldApy={breakdown?.lendingApy}
+          pointsApy={breakdown?.pointsApy}
           token0Symbol={token0Symbol}
           token1Symbol={token1Symbol}
         />
@@ -82,3 +82,6 @@ export function APRBadge({ apr, isLoading, className, breakdown, token0Symbol, t
     </PointsTooltip>
   );
 }
+
+/** @deprecated Use APYBadge */
+export const APRBadge = APYBadge;

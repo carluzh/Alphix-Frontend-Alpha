@@ -12,7 +12,6 @@ import { motion, useReducedMotion } from "framer-motion";
 
 import * as React from "react";
 import { ColumnDef, RowData, Row } from "@tanstack/react-table";
-import { useQuery } from "@tanstack/react-query";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefetchOnHover } from "@/hooks/usePrefetchOnHover";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
@@ -21,7 +20,6 @@ import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 import { Pool } from "@/types";
 import { prefetchService } from "@/lib/prefetch-service";
 import { APRBadge } from "@/components/liquidity/APRBadge";
-import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { useWSPools } from "@/lib/websocket";
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 import { ProtocolStatsHero } from "./components/ProtocolStatsHero";
@@ -137,8 +135,8 @@ export default function LiquidityPage() {
       const wsPool = wsPoolsMap.get(subgraphId);
 
       if (wsPool) {
-        // Format APR string
-        const aprValue = wsPool.apr24h;
+        // Format APY string
+        const aprValue = wsPool.apy24h;
         const aprStr = Number.isFinite(aprValue) && aprValue > 0
           ? (aprValue < 1000 ? `${aprValue.toFixed(2)}%` : `${(aprValue / 1000).toFixed(2)}K%`)
           : '0.00%';
@@ -147,38 +145,15 @@ export default function LiquidityPage() {
           ...poolConfig,
           tvlUSD: wsPool.tvlUsd,
           volume24hUSD: wsPool.volume24hUsd,
-          // Use totalFees24hUsd (swap fees + lending yield) if available, fallback to swap fees only
           fees24hUSD: wsPool.totalFees24hUsd ?? wsPool.fees24hUsd,
           apr: aprStr,
+          swapApy: wsPool.swapApy,
+          lendingApy: wsPool.lendingApy,
         };
       }
       return poolConfig;
     });
   }, [poolConfigs, wsPoolsMap]);
-
-  // Fetch Aave rates for Unified Yield display — both networks for multi-chain list
-  const { data: aaveRatesBase } = useQuery({
-    queryKey: ['aaveRates', 'base'],
-    queryFn: () => fetchAaveRates('base'),
-    staleTime: 5 * 60_000,
-  });
-  const { data: aaveRatesArbitrum } = useQuery({
-    queryKey: ['aaveRates', 'arbitrum'],
-    queryFn: () => fetchAaveRates('arbitrum'),
-    staleTime: 5 * 60_000,
-  });
-
-  // Map network mode to fetched aave rates for easy lookup
-  const aaveRatesByMode: Record<string, typeof aaveRatesBase> = useMemo(() => ({
-    base: aaveRatesBase,
-    arbitrum: aaveRatesArbitrum,
-  }), [aaveRatesBase, aaveRatesArbitrum]);
-
-  // Calculate lending yield APR for a pool (network-aware, with pool-level factor applied)
-  const getPoolAaveApy = useCallback((token0Symbol: string, token1Symbol: string, networkMode?: NetworkMode): number | undefined => {
-    const ratesData = aaveRatesByMode[networkMode ?? 'base'];
-    return getLendingAprForPair(ratesData, token0Symbol, token1Symbol) ?? undefined;
-  }, [aaveRatesByMode]);
 
   const isMobile = useIsMobile();
 
@@ -256,13 +231,11 @@ export default function LiquidityPage() {
         case 'volume24h': return pool.volume24hUSD || 0;
         case 'fees24h': return pool.fees24hUSD || 0;
         case 'apr': {
+          // Use backend totalApy directly (swap + lending, already computed)
           const aprStr = pool.apr || '0';
           const isK = aprStr.includes('K%');
-          const poolApr = parseFloat(aprStr.replace(/[~%K]/g, '')) || 0;
-          const normalizedPoolApr = isK ? poolApr * 1000 : poolApr;
-          const tokens = pool.tokens || [];
-          const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '', pool.networkMode) || 0;
-          return normalizedPoolApr + lendingApr;
+          const parsed = parseFloat(aprStr.replace(/[~%K]/g, '')) || 0;
+          return isK ? parsed * 1000 : parsed;
         }
         default: return 0;
       }
@@ -273,7 +246,7 @@ export default function LiquidityPage() {
       const bVal = getSortValue(b);
       return sortAscending ? aVal - bVal : bVal - aVal;
     });
-  }, [poolsWithPositionCounts, sortMethod, sortAscending, activeChains, activePoolType, getPoolAaveApy, tokenSearch]);
+  }, [poolsWithPositionCounts, sortMethod, sortAscending, activeChains, activePoolType, tokenSearch]);
 
 
   const columns: ColumnDef<Pool & { link: string }>[] = useMemo(() => {
@@ -375,7 +348,7 @@ export default function LiquidityPage() {
       {
         id: "apr",
         accessorKey: "apr",
-        header: () => <SortableHeader field="apr" label="APR" />,
+        header: () => <SortableHeader field="apr" label="APY" />,
         size: 120,
         cell: ({ row }) => {
           const pool = row?.original;
@@ -383,14 +356,12 @@ export default function LiquidityPage() {
             return <Cell loading justifyContent="flex-end" />;
           }
           const isAprCalculated = pool.apr !== undefined && pool.apr !== "Loading..." && pool.apr !== "N/A";
-          const aprValue = isAprCalculated ? parseFloat(pool.apr.replace(/[~%K]/g, '')) : undefined;
           const tokens = pool.tokens || [];
-          const lendingApr = getPoolAaveApy(tokens[0]?.symbol || '', tokens[1]?.symbol || '', pool.networkMode);
 
           return (
             <Cell justifyContent="flex-end">
               <APRBadge
-                breakdown={{ poolApr: aprValue, lendingApr }}
+                breakdown={{ poolApy: (pool as any).swapApy, lendingApy: (pool as any).lendingApy }}
                 token0Symbol={tokens[0]?.symbol}
                 token1Symbol={tokens[1]?.symbol}
                 isLoading={!isAprCalculated}
@@ -408,7 +379,7 @@ export default function LiquidityPage() {
       if (col.id === 'volume24h' && tableWidth < 940) return false;
       return true;
     });
-  }, [sortMethod, sortAscending, getPoolAaveApy, tableWidth]);
+  }, [sortMethod, sortAscending, tableWidth]);
 
   // Split filtered pools by chain for separate table sections
   const { basePools, arbitrumPools } = useMemo(() => {
@@ -445,7 +416,7 @@ export default function LiquidityPage() {
       <ProtocolStatsHero stats={protocolStats} />
 
       {/* Toolbar: All Pools label (left) + Search + New Position (right) */}
-      <div className="flex items-center justify-between mt-4">
+      <div className="hidden sm:flex items-center justify-between mt-6">
         {/* Pool type filter */}
         <div className="flex items-center gap-1">
           {([
@@ -469,8 +440,8 @@ export default function LiquidityPage() {
           ))}
         </div>
 
-        {/* Search + New Position (desktop) */}
-        <div className="hidden sm:flex items-center gap-3">
+        {/* Search + New Position */}
+        <div className="flex items-center gap-3">
           <TokenSearchBar
             value={tokenSearch}
             onValueChange={handleTokenSearchChange}
@@ -489,11 +460,11 @@ export default function LiquidityPage() {
         </div>
       </div>
 
-      <hr className="border-sidebar-border my-0" />
+      <hr className="border-sidebar-border my-0 hidden sm:block" />
 
       {/* Pool Tables */}
       {isMobile ? (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-5 mt-4">
           {activeChains.has('base') && basePools.length > 0 && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 px-1">
@@ -512,17 +483,6 @@ export default function LiquidityPage() {
               <MobileLiquidityList pools={arbitrumPools} />
             </div>
           )}
-          <div className="flex justify-end">
-            <Button
-              asChild
-              className="h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
-            >
-              <Link href="/liquidity/add?from=pools">
-                <Plus className="h-4 w-4" strokeWidth={2.5} />
-                New position
-              </Link>
-            </Button>
-          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
