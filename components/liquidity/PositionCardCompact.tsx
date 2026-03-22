@@ -19,6 +19,7 @@ import { ArrowUpRight } from 'lucide-react';
 import { type PositionPointsData } from '@/types';
 import { useQuery } from '@tanstack/react-query';
 import { fetchPositionApr } from '@/lib/backend-client';
+import { fetchAaveRates, getLendingAprForPair } from '@/lib/aave-rates';
 import {
     StatusIndicatorCircle,
     getPositionStatusLabel,
@@ -113,6 +114,17 @@ export function PositionCardCompact({
         enabled: !!positionId && position.status !== PositionStatus.CLOSED,
         staleTime: 5 * 60_000, // 5 minutes
     });
+
+    // Fetch Aave rates for lending yield display (with pool yield factor applied)
+    const { data: aaveRatesData } = useQuery({
+        queryKey: ['aaveRates', networkMode ?? 'default'],
+        queryFn: () => fetchAaveRates(networkMode),
+        staleTime: 5 * 60_000,
+    });
+
+    const unifiedYieldApr = useMemo(() => {
+        return getLendingAprForPair(aaveRatesData, token0Symbol, token1Symbol) ?? undefined;
+    }, [aaveRatesData, token0Symbol, token1Symbol]);
 
     // Get USD values for fees using Uniswap's routing-based pricing
     // This fixes the bug where tokens not in priceMap returned $0
@@ -371,6 +383,7 @@ export function PositionCardCompact({
                 apr={rawSwapApr}
                 formattedApr={formattedAPR}
                 isAprFallback={isAPRFallback}
+                unifiedYieldApr={unifiedYieldApr}
                 pointsData={pointsData}
                 token0Symbol={token0Symbol}
                 token1Symbol={token1Symbol}

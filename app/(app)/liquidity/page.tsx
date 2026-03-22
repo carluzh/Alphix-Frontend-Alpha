@@ -21,6 +21,7 @@ import { Pool } from "@/types";
 import { prefetchService } from "@/lib/prefetch-service";
 import { APRBadge } from "@/components/liquidity/APRBadge";
 import { useWSPools } from "@/lib/websocket";
+import { applyPoolYieldFactor } from "@/lib/aave-rates";
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 import { ProtocolStatsHero } from "./components/ProtocolStatsHero";
 import { useProtocolStats } from "./hooks/useProtocolStats";
@@ -148,7 +149,9 @@ export default function LiquidityPage() {
           fees24hUSD: wsPool.totalFees24hUsd ?? wsPool.fees24hUsd,
           apr: aprStr,
           swapApy: wsPool.swapApy,
-          lendingApy: wsPool.lendingApy,
+          lendingApy: wsPool.lendingApy !== undefined
+            ? applyPoolYieldFactor(wsPool.lendingApy, poolConfig.tokens[0].symbol, poolConfig.tokens[1].symbol)
+            : undefined,
         };
       }
       return poolConfig;
