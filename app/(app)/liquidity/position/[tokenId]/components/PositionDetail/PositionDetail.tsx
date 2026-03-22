@@ -891,7 +891,6 @@ export const PositionDetail = memo(function PositionDetail({
   });
 
   // Transform UY chart data to format expected by YieldChartSection
-  // totalApr is already correctly computed in the hook (swapApr + currency0Apy + currency1Apy)
   const transformedUyChartData = useMemo(() => {
     if (!uyChartData) return [];
 
@@ -900,9 +899,9 @@ export const PositionDetail = memo(function PositionDetail({
       apr: point.swapApr,
       currency0Apy: point.currency0Apy,
       currency1Apy: point.currency1Apy,
-      feesUsd: 0, // UY positions don't show individual fees
+      feesUsd: 0,
       accumulatedFeesUsd: 0,
-      totalApr: point.totalApr ?? (point.swapApr + (point.currency0Apy ?? 0) + (point.currency1Apy ?? 0)),
+      totalApr: point.totalApr ?? (point.swapApr + (point.currency0Apy ?? 0) * 0.5 + (point.currency1Apy ?? 0) * 0.5),
     }));
   }, [uyChartData]);
 

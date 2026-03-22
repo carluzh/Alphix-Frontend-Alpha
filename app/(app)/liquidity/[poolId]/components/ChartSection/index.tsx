@@ -174,7 +174,7 @@ export const ChartSection = memo(function ChartSection({
       currency1Apy: p.currency1Apy,
       feesUsd: 0,
       accumulatedFeesUsd: 0,
-      totalApr: p.swapApr + 0.5 * (p.currency0Apy ?? 0) + 0.5 * (p.currency1Apy ?? 0),
+      totalApr: p.totalApr,
     }));
   }, [yieldChartRaw]);
 

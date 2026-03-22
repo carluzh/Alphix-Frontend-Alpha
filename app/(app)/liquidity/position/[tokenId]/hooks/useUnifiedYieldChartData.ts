@@ -257,7 +257,7 @@ export function useUnifiedYieldChartData({
       const currency0Apy = rawCurrency0Apy !== undefined ? rawCurrency0Apy * yieldFactor : undefined;
       const currency1Apy = rawCurrency1Apy !== undefined ? rawCurrency1Apy * yieldFactor : undefined;
 
-      const totalApr = swapApr + (currency0Apy ?? 0) + (currency1Apy ?? 0);
+      const totalApr = swapApr + (currency0Apy ?? 0) * 0.5 + (currency1Apy ?? 0) * 0.5;
 
       return {
         timestamp,
@@ -287,7 +287,7 @@ export function useUnifiedYieldChartData({
         swapApr: currentSwapApr,
         currency0Apy: lastPoint.currency0Apy,
         currency1Apy: lastPoint.currency1Apy,
-        totalApr: currentSwapApr + (lastPoint.currency0Apy ?? 0) + (lastPoint.currency1Apy ?? 0),
+        totalApr: currentSwapApr + (lastPoint.currency0Apy ?? 0) * 0.5 + (lastPoint.currency1Apy ?? 0) * 0.5,
       },
     ];
   }, [mergedData, currentSwapApr]);
