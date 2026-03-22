@@ -18,8 +18,8 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localh
 
 /** Pool yield factors: key = sorted symbols joined by '/', value = multiplier (0.70 = 30% fee) */
 const POOL_YIELD_FACTORS: Record<string, number> = {
-  'USDC/USDS': 0.70,
-  'ATDAI/ATUSDC': 0.70,
+  // 'USDC/USDS': 0.70,
+  // 'ATDAI/ATUSDC': 0.70,
 };
 
 function makePoolKey(token0: string, token1: string): string {
