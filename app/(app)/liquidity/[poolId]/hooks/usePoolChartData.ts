@@ -18,6 +18,7 @@ interface UsePoolChartDataOptions {
   subgraphId: string;
   networkMode: string;
   windowWidth: number;
+  currentFeeBps?: number | null;
 }
 
 interface UsePoolChartDataReturn {
@@ -27,10 +28,6 @@ interface UsePoolChartDataReturn {
   updateTodayTvl: (tvl: number) => void;
 }
 
-/**
- * Process chart data for screen size - determines how many days to show
- * and fills in gaps with interpolated/zero values.
- */
 const processChartDataForScreenSize = (data: ChartDataPoint[], windowWidth: number): ChartDataPoint[] => {
   if (!data?.length) return [];
 
@@ -44,9 +41,8 @@ const processChartDataForScreenSize = (data: ChartDataPoint[], windowWidth: numb
   if (!recentData.length) return sortedData;
 
   const filledData: ChartDataPoint[] = [];
-  const startDate = new Date(recentData[0].date);
   const endDate = new Date(recentData[recentData.length - 1].date);
-  let currentDate = new Date(startDate);
+  let currentDate = new Date(recentData[0].date);
   let lastTvl = 0;
 
   while (currentDate <= endDate) {
@@ -57,24 +53,18 @@ const processChartDataForScreenSize = (data: ChartDataPoint[], windowWidth: numb
       filledData.push(existingData);
       lastTvl = existingData.tvlUSD;
     } else {
-      let dynamicFeeValue = 0;
-      if (lastTvl > 0) {
-        const lastDataPoint = filledData[filledData.length - 1];
-        if (lastDataPoint?.dynamicFee > 0) dynamicFeeValue = lastDataPoint.dynamicFee;
-      }
       filledData.push({
         date: dateStr,
         volumeUSD: 0,
         tvlUSD: lastTvl,
         volumeTvlRatio: 0,
         emaRatio: 0,
-        dynamicFee: dynamicFeeValue,
+        dynamicFee: filledData[filledData.length - 1]?.dynamicFee ?? 0,
       });
     }
     currentDate.setDate(currentDate.getDate() + 1);
   }
 
-  // Pad at the beginning if we don't have enough days
   if (filledData.length > 0 && filledData.length < daysBack) {
     const daysToAdd = daysBack - filledData.length;
     const oldestDate = new Date(filledData[0].date);
@@ -99,9 +89,6 @@ const processChartDataForScreenSize = (data: ChartDataPoint[], windowWidth: numb
   return filledData;
 };
 
-/**
- * Scale ratio values that come in various formats from the API.
- */
 const scaleRatio = (val: unknown): number => {
   const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
   if (!Number.isFinite(n)) return 0;
@@ -116,152 +103,180 @@ export function usePoolChartData({
   subgraphId,
   networkMode,
   windowWidth,
+  currentFeeBps,
 }: UsePoolChartDataOptions): UsePoolChartDataReturn {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
 
-  // Refs to prevent redundant fetches and avoid useCallback identity changes
   const hasFetchedForPoolRef = useRef<string | null>(null);
   const windowWidthRef = useRef(windowWidth);
+  const currentFeeBpsRef = useRef(currentFeeBps);
   useEffect(() => { windowWidthRef.current = windowWidth; }, [windowWidth]);
+  useEffect(() => { currentFeeBpsRef.current = currentFeeBps; }, [currentFeeBps]);
 
   const fetchChartData = useCallback(async (force?: boolean) => {
     if (!poolId || !subgraphId) return;
 
-    // Guard against redundant fetches - poolKey auto-resets when pool or network changes
     const poolKey = `${poolId}-${subgraphId}-${networkMode}`;
     if (hasFetchedForPoolRef.current === poolKey && !force) return;
 
     hasFetchedForPoolRef.current = poolKey;
     setIsLoadingChartData(true);
 
-    try {
-      const targetDays = 60;
-      const todayKey = new Date().toISOString().split('T')[0];
+    let lastError: unknown = null;
 
-      const chartResult = await RetryUtility.fetchJson<{
-        success: boolean;
-        message?: string;
-        data?: any[];
-        feeEvents?: any[];
-      }>(
-        `/api/liquidity/pool-chart-data?poolId=${encodeURIComponent(poolId)}&days=${targetDays}&network=${networkMode}`,
-        {
-          attempts: 2,
-          baseDelay: 300,
-          // Only validate response structure, handle success/failure separately
-          validate: (j) => j && typeof j.success === 'boolean',
-          throwOnFailure: true,
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const todayKey = new Date().toISOString().split('T')[0];
+
+        const chartResult = await RetryUtility.fetchJson<{
+          success: boolean;
+          message?: string;
+          data?: any[];
+          feeEvents?: any[];
+        }>(
+          `/api/liquidity/pool-chart-data?poolId=${encodeURIComponent(poolId)}&days=60&network=${networkMode}`,
+          {
+            attempts: 2,
+            baseDelay: 300,
+            validate: (j) => j && typeof j.success === 'boolean',
+            throwOnFailure: true,
+          }
+        );
+
+        const rawData = chartResult.data!;
+        if (!rawData.success) throw new Error(rawData.message || 'Failed to fetch chart data');
+        if (!Array.isArray(rawData.data) || rawData.data.length === 0) throw new Error('No chart data available');
+
+        const dayData = rawData.data;
+        const feeEvents = Array.isArray(rawData.feeEvents) ? rawData.feeEvents : [];
+
+        const dataByDate = new Map<string, { tvlUSD: number; volumeUSD: number }>();
+        for (const d of dayData) {
+          dataByDate.set(d.date, { tvlUSD: d.tvlUSD || 0, volumeUSD: d.volumeUSD || 0 });
         }
-      );
 
-      const rawData = chartResult.data!;
+        const feeByDate = new Map<string, { ratio: number; ema: number; feePct: number }>();
+        const evAsc = [...feeEvents].sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
 
-      // Check if API returned an error
-      if (!rawData.success) {
-        throw new Error(rawData.message || 'Failed to fetch chart data from backend');
-      }
+        const allDates = Array.from(new Set([
+          ...dayData.map((d: { date: string }) => d.date),
+          todayKey,
+        ])).sort((a, b) => a.localeCompare(b));
 
-      // Check if we have data
-      if (!Array.isArray(rawData.data) || rawData.data.length === 0) {
-        throw new Error('No chart data available for this pool');
-      }
-      const dayData = Array.isArray(rawData.data) ? rawData.data : [];
-      const feeEvents = Array.isArray(rawData.feeEvents) ? rawData.feeEvents : [];
+        const liveFee = currentFeeBpsRef.current;
+        let ei = 0;
+        let curFeePct = (liveFee && Number.isFinite(liveFee) && evAsc.length === 0) ? liveFee / 10000 : 0;
+        let curRatio = 0, curEma = 0;
 
-      // Build date-indexed maps
-      const dataByDate = new Map<string, { tvlUSD: number; volumeUSD: number }>();
-      for (const d of dayData) {
-        dataByDate.set(d.date, { tvlUSD: d.tvlUSD || 0, volumeUSD: d.volumeUSD || 0 });
-      }
-
-      // Map fee events to per-day overlays
-      const feeByDate = new Map<string, { ratio: number; ema: number; feePct: number }>();
-      const evAsc = [...feeEvents].sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
-
-      // Get all dates
-      const allDates = Array.from(new Set([
-        ...dayData.map((d: { date: string }) => d.date),
-        todayKey,
-      ])).sort((a, b) => a.localeCompare(b));
-
-      // Process fee events for each date
-      let ei = 0, curFeePct = 0, curRatio = 0, curEma = 0;
-      for (const dateStr of allDates) {
-        const endTs = Math.floor(new Date(`${dateStr}T23:59:59Z`).getTime() / 1000);
-        while (ei < evAsc.length && Number(evAsc[ei]?.timestamp || 0) <= endTs) {
-          const e = evAsc[ei];
-          const bps = Number(e?.newFeeBps ?? 0);
-          curFeePct = Number.isFinite(bps) ? (bps / 10000) : curFeePct;
-          curRatio = scaleRatio(e?.currentRatio);
-          curEma = scaleRatio(e?.newTargetRatio);
-          ei++;
+        for (const dateStr of allDates) {
+          const endTs = Math.floor(new Date(`${dateStr}T23:59:59Z`).getTime() / 1000);
+          while (ei < evAsc.length && Number(evAsc[ei]?.timestamp || 0) <= endTs) {
+            const e = evAsc[ei];
+            const bps = Number(e?.newFeeBps ?? 0);
+            curFeePct = Number.isFinite(bps) ? (bps / 10000) : curFeePct;
+            curRatio = scaleRatio(e?.currentRatio);
+            curEma = scaleRatio(e?.newTargetRatio);
+            ei++;
+          }
+          feeByDate.set(dateStr, { ratio: curRatio, ema: curEma, feePct: curFeePct });
         }
-        feeByDate.set(dateStr, { ratio: curRatio, ema: curEma, feePct: curFeePct });
+
+        if (liveFee && Number.isFinite(liveFee)) {
+          const todayFee = feeByDate.get(todayKey);
+          if (todayFee) todayFee.feePct = liveFee / 10000;
+        }
+
+        const merged: ChartDataPoint[] = allDates.map((dateStr) => {
+          const dayInfo = dataByDate.get(dateStr);
+          const feeInfo = feeByDate.get(dateStr);
+          return {
+            date: dateStr,
+            volumeUSD: dayInfo?.volumeUSD || 0,
+            tvlUSD: dayInfo?.tvlUSD || 0,
+            volumeTvlRatio: feeInfo?.ratio ?? 0,
+            emaRatio: feeInfo?.ema ?? 0,
+            dynamicFee: feeInfo?.feePct ?? 0,
+          };
+        });
+
+        setChartData(processChartDataForScreenSize(merged, windowWidthRef.current));
+        setIsLoadingChartData(false);
+        return;
+      } catch (error: unknown) {
+        lastError = error;
+        console.error(`[usePoolChartData] Attempt ${attempt}/3 failed:`, error);
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 500 * 2 ** (attempt - 1)));
+        }
       }
-
-      // Build final merged chart data
-      const merged: ChartDataPoint[] = allDates.map((dateStr) => {
-        const dayInfo = dataByDate.get(dateStr);
-        const feeInfo = feeByDate.get(dateStr);
-
-        return {
-          date: dateStr,
-          volumeUSD: dayInfo?.volumeUSD || 0,
-          tvlUSD: dayInfo?.tvlUSD || 0,
-          volumeTvlRatio: feeInfo?.ratio ?? 0,
-          emaRatio: feeInfo?.ema ?? 0,
-          dynamicFee: feeInfo?.feePct ?? 0,
-        };
-      });
-
-      setChartData(processChartDataForScreenSize(merged, windowWidthRef.current));
-    } catch (error: unknown) {
-      hasFetchedForPoolRef.current = null;
-      console.error('Failed to fetch chart data:', error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      toast.error('Chart data failed', {
-        description: errorMessage,
-        action: {
-          label: "Copy error",
-          onClick: () => navigator.clipboard.writeText(errorMessage),
-        },
-      });
-    } finally {
-      setIsLoadingChartData(false);
     }
+
+    hasFetchedForPoolRef.current = null;
+    const errorMessage = lastError instanceof Error ? lastError.message : String(lastError);
+    console.error('[usePoolChartData] All retries exhausted:', errorMessage);
+
+    const liveFee = currentFeeBpsRef.current;
+    if (liveFee && Number.isFinite(liveFee)) {
+      setChartData([{
+        date: new Date().toISOString().split('T')[0],
+        volumeUSD: 0,
+        tvlUSD: 0,
+        volumeTvlRatio: 0,
+        emaRatio: 0,
+        dynamicFee: liveFee / 10000,
+      }]);
+    }
+
+    toast.error('Chart data failed', {
+      description: errorMessage,
+      action: {
+        label: "Copy error",
+        onClick: () => navigator.clipboard.writeText(errorMessage),
+      },
+    });
+    setIsLoadingChartData(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poolId, subgraphId, networkMode]);
 
   const updateTodayTvl = useCallback((tvl: number) => {
     if (!Number.isFinite(tvl)) return;
-
     const todayKey = new Date().toISOString().split('T')[0];
 
     setChartData(prev => {
-      if (!prev || prev.length === 0) return prev;
-
-      const todayIndex = prev.findIndex(d => d.date === todayKey);
-      if (todayIndex !== -1 && Math.abs(prev[todayIndex].tvlUSD - tvl) > 0.01) {
+      if (!prev?.length) return prev;
+      const idx = prev.findIndex(d => d.date === todayKey);
+      if (idx !== -1 && Math.abs(prev[idx].tvlUSD - tvl) > 0.01) {
         const updated = [...prev];
-        updated[todayIndex] = { ...updated[todayIndex], tvlUSD: tvl };
+        updated[idx] = { ...updated[idx], tvlUSD: tvl };
         return updated;
       }
       return prev;
     });
   }, []);
 
-  // Re-process chart data when window width changes
+  useEffect(() => {
+    if (!currentFeeBps || !Number.isFinite(currentFeeBps)) return;
+    const todayKey = new Date().toISOString().split('T')[0];
+    const feePct = currentFeeBps / 10000;
+
+    setChartData(prev => {
+      if (!prev?.length) return prev;
+      const idx = prev.findIndex(d => d.date === todayKey);
+      if (idx !== -1 && Math.abs(prev[idx].dynamicFee - feePct) > 0.0001) {
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], dynamicFee: feePct };
+        return updated;
+      }
+      return prev;
+    });
+  }, [currentFeeBps]);
+
   useEffect(() => {
     if (chartData.length > 0) {
       setChartData(prev => processChartDataForScreenSize(prev, windowWidth));
     }
   }, [windowWidth]);
 
-  return {
-    chartData,
-    isLoadingChartData,
-    fetchChartData,
-    updateTodayTvl,
-  };
+  return { chartData, isLoadingChartData, fetchChartData, updateTodayTvl };
 }

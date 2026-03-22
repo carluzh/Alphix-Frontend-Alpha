@@ -298,7 +298,17 @@ export const PoolDetail = memo(function PoolDetail({
         <div className="flex-1 flex flex-col gap-6 min-w-0 w-full">
           {/* Stats */}
           <PoolDetailStats
-            poolStats={poolStats}
+            poolStats={useMemo(() => {
+              // Override backend lendingApy/totalApy with frontend-fetched Aave rates
+              // Backend bakes in a yield factor; frontend is source of truth
+              if (aaveApr === undefined) return poolStats;
+              const lendingApyRaw = aaveApr;
+              const aprRaw = poolStats.swapApyRaw + lendingApyRaw;
+              const aprFormatted = Number.isFinite(aprRaw) && aprRaw > 0
+                ? (aprRaw < 1000 ? `${aprRaw.toFixed(2)}%` : `${(aprRaw / 1000).toFixed(2)}K%`)
+                : '0.00%';
+              return { ...poolStats, lendingApyRaw, aprRaw, apr: aprFormatted };
+            }, [poolStats, aaveApr])}
             onStatClick={handleStatClick}
           />
 

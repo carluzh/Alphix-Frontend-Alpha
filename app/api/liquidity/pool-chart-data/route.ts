@@ -61,35 +61,33 @@ const FEE_EVENTS_QUERY = `
   }
 `;
 
-/**
- * Fetch fee events directly from the subgraph (avoids serverless self-request anti-pattern)
- */
 async function fetchFeeEvents(subgraphId: string, networkMode: NetworkMode): Promise<DynamicFeeEvent[]> {
-  try {
-    const subgraphUrl = getAlphixSubgraphUrl(networkMode);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const resp = await fetch(subgraphUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: FEE_EVENTS_QUERY, variables: { poolId: subgraphId.toLowerCase() } }),
-      signal: controller.signal,
-    });
+      const resp = await fetch(getAlphixSubgraphUrl(networkMode), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: FEE_EVENTS_QUERY, variables: { poolId: subgraphId.toLowerCase() } }),
+        signal: controller.signal,
+      });
 
-    clearTimeout(timeoutId);
+      clearTimeout(timeoutId);
 
-    if (!resp.ok) return [];
-    const json = await resp.json() as { data?: { alphixHooks?: DynamicFeeEvent[] }; errors?: unknown[] };
-    if (json.errors) {
-      console.error('[pool-chart-data] Subgraph fee events errors:', json.errors);
-      return [];
+      if (!resp.ok) throw new Error(`Subgraph HTTP ${resp.status}`);
+      const json = await resp.json() as { data?: { alphixHooks?: DynamicFeeEvent[] }; errors?: unknown[] };
+      if (json.errors) throw new Error(`Subgraph errors: ${JSON.stringify(json.errors)}`);
+      return Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
+    } catch (error) {
+      console.error(`[pool-chart-data] Fee events attempt ${attempt}/3 failed:`, error);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 500 * 2 ** (attempt - 1)));
     }
-    return Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
-  } catch (error) {
-    console.error('[pool-chart-data] Fee events fetch failed:', error);
-    return [];
   }
+
+  console.error('[pool-chart-data] Fee events fetch exhausted all retries');
+  return [];
 }
 
 async function computeChartData(poolId: string, days: number, networkMode: NetworkMode): Promise<ChartDataResponse> {

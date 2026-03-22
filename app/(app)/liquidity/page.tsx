@@ -2,6 +2,7 @@
 
 import { formatUSD as formatUSDShared } from "@/lib/format";
 import { useState, useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Table, Cell, HeaderCell, ClickableHeaderRow, HeaderArrow, HeaderSortText } from "@/components/table-v2";
 import Image from "next/image";
 import Link from "next/link";
@@ -21,7 +22,7 @@ import { Pool } from "@/types";
 import { prefetchService } from "@/lib/prefetch-service";
 import { APRBadge } from "@/components/liquidity/APRBadge";
 import { useWSPools } from "@/lib/websocket";
-import { applyPoolYieldFactor } from "@/lib/aave-rates";
+import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
 import { ProtocolStatsHero } from "./components/ProtocolStatsHero";
 import { useProtocolStats } from "./hooks/useProtocolStats";
@@ -129,6 +130,18 @@ export default function LiquidityPage() {
   // Protocol-level aggregate stats for the hero section
   const protocolStats = useProtocolStats({ pools: wsPoolsData, isLoading: isLoadingPools });
 
+  // Fetch raw Aave rates per network (frontend source of truth for lending APY)
+  const { data: aaveRatesBase } = useQuery({
+    queryKey: ['aaveRates', 'base'],
+    queryFn: () => fetchAaveRates('base'),
+    staleTime: 5 * 60_000,
+  });
+  const { data: aaveRatesArbitrum } = useQuery({
+    queryKey: ['aaveRates', 'arbitrum'],
+    queryFn: () => fetchAaveRates('arbitrum'),
+    staleTime: 5 * 60_000,
+  });
+
   // Merge pool config with WebSocket metrics
   const poolsData = useMemo(() => {
     return poolConfigs.map(poolConfig => {
@@ -136,10 +149,15 @@ export default function LiquidityPage() {
       const wsPool = wsPoolsMap.get(subgraphId);
 
       if (wsPool) {
-        // Format APY string
-        const aprValue = wsPool.apy24h;
-        const aprStr = Number.isFinite(aprValue) && aprValue > 0
-          ? (aprValue < 1000 ? `${aprValue.toFixed(2)}%` : `${(aprValue / 1000).toFixed(2)}K%`)
+        // Use frontend-fetched Aave rates (raw, no backend yield factor)
+        const aaveRates = poolConfig.networkMode === 'arbitrum' ? aaveRatesArbitrum : aaveRatesBase;
+        const lendingApy = getLendingAprForPair(aaveRates, poolConfig.tokens[0].symbol, poolConfig.tokens[1].symbol) ?? undefined;
+
+        // Format APY string using swap + frontend lending
+        const swapApy = wsPool.swapApy ?? 0;
+        const totalApy = swapApy + (lendingApy ?? 0);
+        const aprStr = Number.isFinite(totalApy) && totalApy > 0
+          ? (totalApy < 1000 ? `${totalApy.toFixed(2)}%` : `${(totalApy / 1000).toFixed(2)}K%`)
           : '0.00%';
 
         return {
@@ -149,14 +167,12 @@ export default function LiquidityPage() {
           fees24hUSD: wsPool.totalFees24hUsd ?? wsPool.fees24hUsd,
           apr: aprStr,
           swapApy: wsPool.swapApy,
-          lendingApy: wsPool.lendingApy !== undefined
-            ? applyPoolYieldFactor(wsPool.lendingApy, poolConfig.tokens[0].symbol, poolConfig.tokens[1].symbol)
-            : undefined,
+          lendingApy,
         };
       }
       return poolConfig;
     });
-  }, [poolConfigs, wsPoolsMap]);
+  }, [poolConfigs, wsPoolsMap, aaveRatesBase, aaveRatesArbitrum]);
 
   const isMobile = useIsMobile();
 

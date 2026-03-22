@@ -302,6 +302,7 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
     subgraphId,
     networkMode,
     windowWidth,
+    currentFeeBps: wsPool?.lpFee,
   });
 
   // Positions hook
