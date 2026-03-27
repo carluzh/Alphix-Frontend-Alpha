@@ -68,6 +68,12 @@ export interface PoolData {
   totalApy?: number;
   /** Fallback: frontend-calculated swap APY from fees24h/tvl */
   apy24h: number;
+  /** Annualized realized volatility (%) — from LVRFee Blackbox engine */
+  volatility?: number | null;
+  /** LLM agent fee adjustment in bps — from LVRFee Blackbox engine */
+  agentAdjustment?: number | null;
+  /** Lifetime extra LP earnings from dynamic fee vs static base fee (USD) */
+  lvrSavedUsd?: number | null;
   lastUpdated: number;
 }
 
@@ -123,6 +129,9 @@ function toPoolData(metrics: PoolMetrics): PoolData {
     lendingApy: metrics.lendingApy,
     totalApy: metrics.totalApy,
     apy24h: metrics.totalApy ?? 0,
+    volatility: metrics.volatility,
+    agentAdjustment: metrics.agentAdjustment,
+    lvrSavedUsd: metrics.lvrSavedUsd,
     lastUpdated: metrics.timestamp,
   };
 }
@@ -231,6 +240,9 @@ export function useWSPool(poolId: string, networkModeOverride?: NetworkMode): Us
         lendingApy: wsPool.lendingApy,
         totalApy: wsPool.totalApy,
         apy24h: wsPool.totalApy ?? 0,
+        volatility: wsPool.volatility,
+        agentAdjustment: wsPool.agentAdjustment,
+        lvrSavedUsd: wsPool.lvrSavedUsd,
         lastUpdated: wsPool.timestamp,
       };
     }

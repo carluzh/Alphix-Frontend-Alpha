@@ -81,6 +81,7 @@ const CHART_COLORS = {
   activity: "hsl(var(--chart-3))",
   target: "hsl(var(--chart-2))",
   fee: "#e85102",
+  volatility: "#a0a0a0",
   bar: "#404040",
 };
 
@@ -107,6 +108,8 @@ interface HoverData {
   target?: number;
   volume?: number;
   tvl?: number;
+  volatility?: number;
+  agentAdjustment?: number;
 }
 
 /**
@@ -241,6 +244,8 @@ export const ChartSection = memo(function ChartSection({
           volumeTvlRatio: 0,
           emaRatio: 0,
           dynamicFee: Number.isFinite(bps) ? bps / 10000 : 0,
+          volatility: e.volatility,
+          agentAdjustment: e.agentAdjustment,
           timestamp: ts,
         };
       })
@@ -309,6 +314,8 @@ export const ChartSection = memo(function ChartSection({
         target: point.emaRatio,
         volume: point.volumeUSD,
         tvl: point.tvlUSD,
+        volatility: point.volatility,
+        agentAdjustment: point.agentAdjustment,
       });
     }
   }, []);
@@ -617,10 +624,10 @@ export const ChartSection = memo(function ChartSection({
                       hasPerEventFees ? (
                         <>
                           <span className="text-muted-foreground">
-                            Volatility: <span className="text-foreground tabular-nums">—</span>
+                            Volatility: <span className="text-foreground tabular-nums">{displayValues.volatility != null ? `${displayValues.volatility.toFixed(1)}%` : '-'}</span>
                           </span>
                           <span className="text-muted-foreground">
-                            Agent: <span className="text-foreground tabular-nums">—</span>
+                            Agent: <span className="text-foreground tabular-nums">{displayValues.agentAdjustment != null ? `${displayValues.agentAdjustment >= 0 ? '+' : ''}${displayValues.agentAdjustment.toFixed(1)} bps` : '-'}</span>
                           </span>
                           <span className="text-muted-foreground">
                             {new Date(hoverData.date).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}

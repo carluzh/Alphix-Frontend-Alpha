@@ -142,6 +142,9 @@ export interface UsePoolDetailPageDataReturn {
 
   // USD calculations
   calculatePositionUsd: (position: Position) => number;
+
+  // LVR data (V2 pools, from WebSocket)
+  lvrSavedUsd?: number | null;
 }
 
 /**
@@ -307,6 +310,8 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
     windowWidth,
     currentFeeBps: wsPool?.lpFee,
     isLvrFeePool: poolConfig ? isLvrFeePool(poolConfig as any) : false,
+    currentVolatility: wsPool?.volatility,
+    currentAgentAdjustment: wsPool?.agentAdjustment,
   });
 
   // Positions hook
@@ -505,5 +510,6 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
     clearOptimisticFees,
     clearAllOptimisticStates,
     calculatePositionUsd,
+    lvrSavedUsd: wsPool?.lvrSavedUsd,
   };
 }

@@ -125,6 +125,9 @@ export interface PoolDetailProps {
 
   // USD calculations (handles both V4 and Unified Yield positions)
   calculatePositionUsd: (position: Position) => number;
+
+  // LVR data (V2 pools only, from WebSocket)
+  lvrSavedUsd?: number | null;
 }
 
 /**
@@ -149,6 +152,7 @@ export const PoolDetail = memo(function PoolDetail({
   windowWidth,
   convertTickToPrice,
   calculatePositionUsd,
+  lvrSavedUsd,
 }: PoolDetailProps) {
   const router = useRouter();
 
@@ -362,7 +366,7 @@ export const PoolDetail = memo(function PoolDetail({
               tvlToken0Usd={poolStats.tvlToken0Usd}
               tvlToken1Usd={poolStats.tvlToken1Usd}
               networkMode={networkMode ?? 'base'}
-              yieldSources={poolConfig.yieldSources ?? []}
+              lvrSavedUsd={lvrSavedUsd}
             />
           </div>
         </div>

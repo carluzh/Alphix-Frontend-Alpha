@@ -43,6 +43,7 @@ function PoolDetailContent({ poolId, networkMode }: { poolId: string; networkMod
     windowWidth,
     convertTickToPrice,
     calculatePositionUsd,
+    lvrSavedUsd,
   } = usePoolDetailPageData(poolId, networkMode);
 
   // Use pool's resolved networkMode (from pool config), not just the URL param override
@@ -67,6 +68,7 @@ function PoolDetailContent({ poolId, networkMode }: { poolId: string; networkMod
       windowWidth={windowWidth}
       convertTickToPrice={convertTickToPrice}
       calculatePositionUsd={calculatePositionUsd}
+      lvrSavedUsd={lvrSavedUsd}
     />
   );
 }

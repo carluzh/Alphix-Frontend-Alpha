@@ -11,6 +11,8 @@ export interface ChartDataPoint {
   volumeTvlRatio: number;
   emaRatio: number;
   dynamicFee: number;
+  volatility?: number;
+  agentAdjustment?: number;
 }
 
 /** Raw fee event from the API — per-event granularity */
@@ -19,6 +21,8 @@ export interface FeeEvent {
   newFeeBps?: string;
   currentRatio?: string;
   newTargetRatio?: string;
+  volatility?: number;
+  agentAdjustment?: number;
 }
 
 interface UsePoolChartDataOptions {
@@ -27,8 +31,12 @@ interface UsePoolChartDataOptions {
   networkMode: string;
   windowWidth: number;
   currentFeeBps?: number | null;
-  /** If true, fee events are always re-fetched (no caching) and current fee is appended */
+  /** If true, fee events are always re-fetched (no caching) */
   isLvrFeePool?: boolean;
+  /** Latest volatility from WebSocket pools:metrics */
+  currentVolatility?: number | null;
+  /** Latest agent adjustment from WebSocket pools:metrics */
+  currentAgentAdjustment?: number | null;
 }
 
 interface UsePoolChartDataReturn {
@@ -118,6 +126,8 @@ export function usePoolChartData({
   windowWidth,
   currentFeeBps,
   isLvrFeePool = false,
+  currentVolatility,
+  currentAgentAdjustment,
 }: UsePoolChartDataOptions): UsePoolChartDataReturn {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [feeEvents, setFeeEvents] = useState<FeeEvent[]>([]);
@@ -174,6 +184,8 @@ export function usePoolChartData({
           newFeeBps: String(e?.newFeeBps ?? e?.newFeeRateBps ?? '0'),
           currentRatio: e?.currentRatio != null ? String(e.currentRatio) : undefined,
           newTargetRatio: e?.newTargetRatio != null ? String(e.newTargetRatio) : undefined,
+          volatility: e?.volatility != null ? Number(e.volatility) : undefined,
+          agentAdjustment: e?.agentAdjustment != null ? Number(e.agentAdjustment) : undefined,
         })));
 
         // Build daily-bucketed chart data (used by all chart tabs)
@@ -304,18 +316,27 @@ export function usePoolChartData({
     }
   }, [windowWidth]);
 
-  // LVR pools: append live fee updates from WebSocket as new fee events
+  // LVR pools: append live fee events from WebSocket pools:metrics push
   useEffect(() => {
     if (!isLvrFeePool || !currentFeeBps || !Number.isFinite(currentFeeBps)) return;
     const nowTs = String(Math.floor(Date.now() / 1000));
     setFeeEvents(prev => {
       if (!prev.length) return prev;
       const last = prev[prev.length - 1];
-      // Skip if fee hasn't changed
-      if (last && String(currentFeeBps) === last.newFeeBps) return prev;
-      return [...prev, { timestamp: nowTs, newFeeBps: String(currentFeeBps), currentRatio: undefined, newTargetRatio: undefined }];
+      // Skip if fee and volatility haven't changed
+      if (last && String(currentFeeBps) === last.newFeeBps
+        && (currentVolatility ?? undefined) === last.volatility
+        && (currentAgentAdjustment ?? undefined) === last.agentAdjustment) return prev;
+      return [...prev, {
+        timestamp: nowTs,
+        newFeeBps: String(currentFeeBps),
+        currentRatio: undefined,
+        newTargetRatio: undefined,
+        volatility: currentVolatility ?? undefined,
+        agentAdjustment: currentAgentAdjustment ?? undefined,
+      }];
     });
-  }, [isLvrFeePool, currentFeeBps]);
+  }, [isLvrFeePool, currentFeeBps, currentVolatility, currentAgentAdjustment]);
 
   return { chartData, feeEvents, isLoadingChartData, fetchChartData, updateTodayTvl };
 }

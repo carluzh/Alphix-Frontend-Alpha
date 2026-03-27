@@ -10,6 +10,8 @@ export type HookEvent = {
   currentRatio?: string
   newTargetRatio?: string
   oldTargetRatio?: string
+  volatility?: number
+  agentAdjustment?: number
 }
 
 const SUBGRAPH_QUERY = `
@@ -85,5 +87,7 @@ async function fetchFromBackend(poolId: string, networkMode: NetworkMode): Promi
   return items.map((e: any) => ({
     timestamp: String(e.timestamp),
     newFeeBps: String(e.newFeeBps ?? e.newFeeRateBps ?? 0),
+    volatility: e.volatility != null ? Number(e.volatility) : undefined,
+    agentAdjustment: e.agentAdjustment ?? e.agent_adjustment != null ? Number(e.agentAdjustment ?? e.agent_adjustment) : undefined,
   }))
 }
