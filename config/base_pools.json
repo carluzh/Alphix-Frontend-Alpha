@@ -37,6 +37,14 @@
       "decimals": 18,
       "icon": "/tokens/USDS.png",
       "color": "#F5AC37"
+    },
+    "cbBTC": {
+      "symbol": "cbBTC",
+      "name": "Coinbase Wrapped BTC",
+      "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+      "decimals": 8,
+      "icon": "/tokens/cbBTC.png",
+      "color": "#0052FF"
     }
   },
   "pools": [
@@ -89,6 +97,44 @@
         "max": "887220",
         "isFullRange": true
       }
+    },
+    {
+      "id": "eth-usdc-v2",
+      "name": "ETH/USDC",
+      "subgraphId": "0xebb666a5c6449b83536950b975d74deb32aca1537a501b58161a896816b04da6",
+      "currency0": {
+        "symbol": "ETH",
+        "address": "0x0000000000000000000000000000000000000000"
+      },
+      "currency1": {
+        "symbol": "USDC",
+        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0x7cBbfF9C4fcd74B221C535F4fB4B1Db04F1B9044",
+      "enabled": true,
+      "featured": true,
+      "type": "Volatile"
+    },
+    {
+      "id": "eth-cbbtc",
+      "name": "ETH/cbBTC",
+      "subgraphId": "0x3860784278e9e481ffd0888430ab2af8f2bb1180069f31cde9e1066728bbe73b",
+      "currency0": {
+        "symbol": "ETH",
+        "address": "0x0000000000000000000000000000000000000000"
+      },
+      "currency1": {
+        "symbol": "cbBTC",
+        "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0x7cBbfF9C4fcd74B221C535F4fB4B1Db04F1B9044",
+      "enabled": true,
+      "featured": true,
+      "type": "Volatile"
     }
   ]
 }

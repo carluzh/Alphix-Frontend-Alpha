@@ -19,6 +19,8 @@ export interface Pool {
   positionsCount?: number;
   dynamicFeeBps?: number;
   type?: string;
+  hooks?: string;
+  yieldSources?: Array<'aave' | 'spark'>;
   networkMode?: NetworkMode;
 }
 

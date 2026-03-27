@@ -46,21 +46,18 @@ function AddLiquidityPageContent() {
     if (poolId) {
       const pool = getPoolByIdMultiChain(poolId);
       if (pool) {
+        const defaultMode = pool.yieldSources?.length ? 'rehypo' : 'concentrated';
         return {
           poolId,
           token0Symbol: pool.currency0.symbol,
           token1Symbol: pool.currency1.symbol,
-          mode: mode || 'rehypo',
-          // Pool is pre-selected but user still sees step 1 to choose LP strategy
+          mode: mode === 'rehypo' && !pool.yieldSources?.length ? 'concentrated' : (mode || defaultMode),
         };
       }
     }
 
-    // If mode is specified but no pool
     if (mode) {
-      return {
-        mode,
-      };
+      return { mode };
     }
 
     // Default: start from beginning

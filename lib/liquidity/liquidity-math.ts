@@ -5,10 +5,11 @@ import JSBI from 'jsbi';
 import { parseUnits, getAddress, parseAbi, type Hex } from "viem";
 import { createNetworkClient } from "@/lib/viemClient";
 import { STATE_VIEW_ABI } from "@/lib/abis/state_view_abi";
-import { getToken, TokenSymbol, getStateViewAddress, getPoolByTokens } from "@/lib/pools-config";
+import { getToken, TokenSymbol, getStateViewAddress, getPoolByTokens, getPoolByIdMultiChain } from "@/lib/pools-config";
 import { modeForChainId, type NetworkMode } from "@/lib/network-mode";
 
 interface CalculateLiquidityParams {
+  poolId?: string;
   token0Symbol: TokenSymbol;
   token1Symbol: TokenSymbol;
   inputAmount: string;
@@ -112,9 +113,11 @@ export async function calculateLiquidityParameters(
     throw new Error("Invalid token configuration");
   }
 
-  const poolConfig = getPoolByTokens(token0Symbol, token1Symbol, networkMode);
+  const poolConfig = params.poolId
+    ? getPoolByIdMultiChain(params.poolId)
+    : getPoolByTokens(token0Symbol, token1Symbol, networkMode);
   if (!poolConfig) {
-    throw new Error(`No pool found for ${token0Symbol}/${token1Symbol}`);
+    throw new Error(`No pool found for ${params.poolId || `${token0Symbol}/${token1Symbol}`}`);
   }
 
   const sdkToken0 = new Token(chainId, getAddress(token0Config.address), token0Config.decimals, token0Config.symbol);

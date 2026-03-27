@@ -94,6 +94,7 @@ export interface PoolDetailProps {
 
   // Chart data
   chartData: ChartDataPoint[];
+  feeEvents: import("../../hooks/usePoolChartData").FeeEvent[];
   isLoadingChartData: boolean;
 
   // Positions (discriminated union of V4 and Unified Yield)
@@ -136,6 +137,7 @@ export const PoolDetail = memo(function PoolDetail({
   poolStats,
   poolState,
   chartData,
+  feeEvents,
   isLoadingChartData,
   userPositions,
   isLoadingPositions,
@@ -167,18 +169,18 @@ export const PoolDetail = memo(function PoolDetail({
     staleTime: 5 * 60_000, // 5 minutes
   });
 
-  // Calculate lending yield APR (with pool-level factor applied)
+  // Calculate lending yield APR — only for pools with yield sources
   const aaveApr = useMemo(() => {
-    if (!poolConfig) return undefined;
+    if (!poolConfig?.yieldSources?.length) return undefined;
     const token0 = poolConfig.tokens[0]?.symbol;
     const token1 = poolConfig.tokens[1]?.symbol;
     if (!token0 || !token1) return undefined;
     return getLendingAprForPair(aaveRatesData, token0, token1) ?? undefined;
   }, [poolConfig, aaveRatesData]);
 
-  // Per-source lending APR breakdown (e.g. { aave: 3.2, spark: 5.1 })
+  // Per-source lending APR breakdown — only for pools with yield sources
   const aprBySource = useMemo(() => {
-    if (!poolConfig) return undefined;
+    if (!poolConfig?.yieldSources?.length) return undefined;
     const token0 = poolConfig.tokens[0]?.symbol;
     const token1 = poolConfig.tokens[1]?.symbol;
     if (!token0 || !token1) return undefined;
@@ -264,7 +266,8 @@ export const PoolDetail = memo(function PoolDetail({
     // Navigate to the new wizard flow with pool pre-selected
     // This skips Token Selection and LP Option steps (pool already known)
     if (poolConfig?.id) {
-      router.push(`/liquidity/add?pool=${poolConfig.id}&mode=rehypo&from=pool`);
+      const mode = poolConfig.yieldSources?.length ? 'rehypo' : 'concentrated';
+      router.push(`/liquidity/add?pool=${poolConfig.id}&mode=${mode}&from=pool`);
     }
   }, [poolConfig?.id, router]);
 
@@ -315,6 +318,7 @@ export const PoolDetail = memo(function PoolDetail({
           {/* Chart — Dynamic Fee, Yield, Volume, TVL */}
           <ChartSection
             chartData={chartData}
+            feeEvents={feeEvents}
             isLoading={isLoadingChartData}
             windowWidth={windowWidth}
             chartType={chartType}
@@ -358,6 +362,7 @@ export const PoolDetail = memo(function PoolDetail({
               tvlToken0Usd={poolStats.tvlToken0Usd}
               tvlToken1Usd={poolStats.tvlToken1Usd}
               networkMode={networkMode ?? 'base'}
+              yieldSources={poolConfig.yieldSources ?? []}
             />
           </div>
         </div>

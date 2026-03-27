@@ -185,6 +185,10 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
 
     const initialPoolId = urlPool || entryConfig?.poolId || null;
 
+    // Default mode: rehypo if pool has yield sources, concentrated otherwise
+    const poolConfig = initialPoolId ? (getPoolByIdMultiChain(initialPoolId) ?? getPoolById(initialPoolId)) : null;
+    const defaultMode: LPMode = poolConfig?.yieldSources?.length ? 'rehypo' : 'concentrated';
+
     // Default to balanced (dual token) mode; user can switch to zap (single token) via toggle
     const depositModeForPool = { depositMode: 'balanced' as const, zapInputToken: null };
 
@@ -194,7 +198,8 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
       poolId: initialPoolId,
       token0Symbol: urlT0 || entryConfig?.token0Symbol || null,
       token1Symbol: urlT1 || entryConfig?.token1Symbol || null,
-      mode: urlMode || entryConfig?.mode || 'rehypo',
+      mode: (urlMode === 'rehypo' && !poolConfig?.yieldSources?.length) ? 'concentrated'
+        : (urlMode || entryConfig?.mode || defaultMode),
       ...depositModeForPool,
     };
   }, [searchParams, entryConfig]);
@@ -327,9 +332,14 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   }, []);
 
   const setPoolIdFn = useCallback((newPoolId: string | null) => {
+    // Reset mode based on pool's yield sources
+    const newPoolConfig = newPoolId ? (getPoolByIdMultiChain(newPoolId) ?? getPoolById(newPoolId)) : null;
+    const defaultMode: LPMode = newPoolConfig?.yieldSources?.length ? 'rehypo' : 'concentrated';
+
     setState(prev => ({
       ...prev,
       poolId: newPoolId,
+      mode: defaultMode,
       // Set deposit mode based on zap eligibility:
       // - USDS/USDC: default to zap mode (Single Token)
       // - Other pools: use balanced mode (Dual Deposit)

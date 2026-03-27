@@ -374,7 +374,7 @@ export function ReviewExecuteModal() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userAddress: address, token0Symbol, token1Symbol,
+        userAddress: address, poolId: state.poolId, token0Symbol, token1Symbol,
         inputAmount, inputTokenSymbol,
         userTickLower: tl, userTickUpper: tu,
         chainId, slippageBps, deadlineMinutes,
@@ -422,7 +422,7 @@ export function ReviewExecuteModal() {
       approveToken0Request: v4Approvals.token0,
       approveToken1Request: v4Approvals.token1,
       createPositionRequestArgs: {
-        userAddress: address, token0Symbol, token1Symbol,
+        userAddress: address, poolId: state.poolId!, token0Symbol, token1Symbol,
         inputAmount, inputTokenSymbol,
         userTickLower: tl, userTickUpper: tu,
         chainId, slippageBps, deadlineMinutes,

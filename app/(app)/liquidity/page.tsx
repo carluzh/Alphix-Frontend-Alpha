@@ -19,8 +19,9 @@ import { MobileLiquidityList } from "@/components/MobileLiquidityList";
 import { getMultiChainEnabledPools, getToken, getPoolSubgraphId, resolveTokenIcon, type NetworkMode } from "@/lib/pools-config";
 import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 import { Pool } from "@/types";
+import { isLvrFeePool } from "@/lib/liquidity/utils/pool-type-guards";
 import { prefetchService } from "@/lib/prefetch-service";
-import { APRBadge } from "@/components/liquidity/APRBadge";
+import { APYBadge } from "@/components/liquidity/APRBadge";
 import { useWSPools } from "@/lib/websocket";
 import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
@@ -90,13 +91,15 @@ const generatePoolsFromConfig = (): Pool[] => {
         { symbol: token0.symbol, icon: resolveTokenIcon(token0.symbol) },
         { symbol: token1.symbol, icon: resolveTokenIcon(token1.symbol) }
       ],
-      pair: `${token0.symbol} / ${token1.symbol}`,
+      pair: poolConfig.name,
       volume24h: "Loading...",
       fees24h: "Loading...",
       liquidity: "Loading...",
       apr: "Loading...",
       highlighted: poolConfig.featured,
       type: poolConfig.type,
+      hooks: poolConfig.hooks,
+      yieldSources: poolConfig.yieldSources,
       networkMode: poolConfig.networkMode,
     } as Pool;
   }).filter(Boolean) as Pool[];
@@ -151,7 +154,9 @@ export default function LiquidityPage() {
       if (wsPool) {
         // Use frontend-fetched Aave rates (raw, no backend yield factor)
         const aaveRates = poolConfig.networkMode === 'arbitrum' ? aaveRatesArbitrum : aaveRatesBase;
-        const lendingApy = getLendingAprForPair(aaveRates, poolConfig.tokens[0].symbol, poolConfig.tokens[1].symbol) ?? undefined;
+        const lendingApy = poolConfig.yieldSources?.length
+          ? (getLendingAprForPair(aaveRates, poolConfig.tokens[0].symbol, poolConfig.tokens[1].symbol) ?? undefined)
+          : undefined;
 
         // Format APY string using swap + frontend lending
         const swapApy = wsPool.swapApy ?? 0;
@@ -311,6 +316,11 @@ export default function LiquidityPage() {
                 </div>
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-medium text-sm truncate">{pool.pair}</span>
+                  {pool.hooks && isLvrFeePool({ hooks: pool.hooks } as any) && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-orange-500/50 bg-orange-500/10 text-orange-400 flex-shrink-0">
+                      V2
+                    </span>
+                  )}
                   {pool.type && (
                     <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">
                       {pool.type}
@@ -379,7 +389,7 @@ export default function LiquidityPage() {
 
           return (
             <Cell justifyContent="flex-end">
-              <APRBadge
+              <APYBadge
                 breakdown={{ poolApy: (pool as any).swapApy, lendingApy: (pool as any).lendingApy }}
                 token0Symbol={tokens[0]?.symbol}
                 token1Symbol={tokens[1]?.symbol}

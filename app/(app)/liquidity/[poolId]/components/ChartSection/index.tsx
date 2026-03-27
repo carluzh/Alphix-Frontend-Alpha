@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState, useCallback } from "react";
+import { memo, useMemo, useState, useCallback, useRef, useEffect } from "react";
 import {
   Bar,
   BarChart,
@@ -60,13 +60,12 @@ const YieldChartSection = dynamic(
 
 interface ChartSectionProps {
   chartData: ChartDataPoint[];
+  /** Raw fee events — when present with per-event timestamps, enables granular fee chart */
+  feeEvents?: import("../../hooks/usePoolChartData").FeeEvent[];
   isLoading: boolean;
   windowWidth: number;
-  /** Controlled chart type — when provided, ChartSection uses this instead of internal state */
   chartType?: ChartType;
-  /** Callback when chart type changes — required when chartType is controlled */
   onChartTypeChange?: (type: ChartType) => void;
-  /** Pool config for yield chart */
   poolId?: string;
   token0Symbol?: string;
   token1Symbol?: string;
@@ -97,8 +96,8 @@ const TIME_SCALE_HEIGHT = 26; // Height of x-axis labels
 const PRICE_SCALE_WIDTH = 55; // Width of y-axis labels
 const CHART_DATA_PADDING = 10; // Padding between chart data and Y-axis (via XAxis padding)
 
-// Time period options (removed "All" - data is limited to 60 days anyway)
-type TimePeriod = "1W" | "1M";
+// Time period options
+type TimePeriod = "1D" | "1W" | "1M";
 
 // Hover state for chart values
 interface HoverData {
@@ -132,6 +131,7 @@ function formatFeeValue(value: number): string {
  */
 export const ChartSection = memo(function ChartSection({
   chartData,
+  feeEvents,
   isLoading,
   windowWidth,
   chartType: controlledChartType,
@@ -145,8 +145,36 @@ export const ChartSection = memo(function ChartSection({
 }: ChartSectionProps) {
   const internal = usePDPChartState();
   const chartType = controlledChartType ?? internal.chartType;
-  const setChartType = onChartTypeChange ?? internal.setChartType;
+  const rawSetChartType = onChartTypeChange ?? internal.setChartType;
+
+  // Derived flags from data shape
+  const hasYieldSources = !!(yieldSources && yieldSources.length > 0);
+  // Per-event fee data: multiple fee events within the same day
+  const hasPerEventFees = useMemo(() => {
+    if (!feeEvents || feeEvents.length < 2) return false;
+    const days = new Set(feeEvents.map(e => new Date(Number(e.timestamp) * 1000).toISOString().split('T')[0]));
+    return feeEvents.length > days.size;
+  }, [feeEvents]);
+
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("1M");
+  const hasSetInitialPeriod = useRef(false);
+  useEffect(() => {
+    if (hasPerEventFees && !hasSetInitialPeriod.current) {
+      hasSetInitialPeriod.current = true;
+      setTimePeriod("1D");
+    }
+  }, [hasPerEventFees]);
+
+  // When switching chart type, reset period if 1D is not applicable
+  const setChartType = useCallback((type: ChartType) => {
+    rawSetChartType(type);
+    if (hasPerEventFees && type !== ChartType.FEE && timePeriod === "1D") {
+      setTimePeriod("1M");
+    }
+    if (hasPerEventFees && type === ChartType.FEE && timePeriod !== "1D") {
+      setTimePeriod("1D");
+    }
+  }, [rawSetChartType, hasPerEventFees, timePeriod]);
   const [hoverData, setHoverData] = useState<HoverData | null>(null);
 
   // Yield chart data — only fetched when Yield tab is active
@@ -199,19 +227,46 @@ export const ChartSection = memo(function ChartSection({
     return generateTicksForPeriod(timePeriod as ChartPeriodPool, periodFrom, periodTo);
   }, [timePeriod, periodFrom, periodTo]);
 
+  // Build per-event fee chart data when applicable (Fee tab + per-event fee data)
+  const perEventFeeData = useMemo(() => {
+    if (!hasPerEventFees || chartType !== ChartType.FEE || !feeEvents?.length) return null;
+    return feeEvents
+      .map(e => {
+        const ts = Number(e.timestamp || 0);
+        const bps = Number(e.newFeeBps ?? 0);
+        return {
+          date: new Date(ts * 1000).toISOString(),
+          volumeUSD: 0,
+          tvlUSD: 0,
+          volumeTvlRatio: 0,
+          emaRatio: 0,
+          dynamicFee: Number.isFinite(bps) ? bps / 10000 : 0,
+          timestamp: ts,
+        };
+      })
+      .sort((a, b) => a.timestamp - b.timestamp);
+  }, [hasPerEventFees, chartType, feeEvents]);
+
   // Transform chart data to include timestamps and filter based on time period
   const filteredChartData = useMemo(() => {
+    // Per-event fee data takes precedence on Fee tab
+    if (perEventFeeData) {
+      if (timePeriod === "1D") {
+        const nowSec = Math.floor(Date.now() / 1000);
+        return perEventFeeData.filter(d => d.timestamp >= nowSec - 86400);
+      }
+      return perEventFeeData.filter(d => d.timestamp >= periodFrom && d.timestamp <= periodTo);
+    }
+
     if (chartData.length === 0) return [];
 
-    // Add timestamp to each data point for numeric x-axis
     const dataWithTimestamps = chartData.map(d => ({
       ...d,
       timestamp: Math.floor(new Date(d.date).getTime() / 1000),
     }));
 
-    // Filter data within the period range
     return dataWithTimestamps.filter(d => d.timestamp >= periodFrom && d.timestamp <= periodTo);
-  }, [chartData, timePeriod, periodFrom, periodTo]);
+  }, [perEventFeeData, chartData, timePeriod, periodFrom, periodTo]);
 
   // Get current (latest) values and daily change from the data
   const currentValues = useMemo(() => {
@@ -319,7 +374,7 @@ export const ChartSection = memo(function ChartSection({
   if (chartType !== ChartType.YIELD && (isLoading || chartData.length === 0)) {
     return (
       <div className="flex flex-col gap-4">
-        <ChartTypeTabs chartType={chartType} onChartTypeChange={setChartType} disabled />
+        <ChartTypeTabs chartType={chartType} onChartTypeChange={setChartType} disabled hideYield={!hasYieldSources} />
         <div className="relative" style={{ height: PDP_CHART_HEIGHT_PX }}>
           {/* Pattern overlay - avoid axes */}
           <div
@@ -341,7 +396,7 @@ export const ChartSection = memo(function ChartSection({
             </div>
           </div>
         </div>
-        <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} disabled />
+        <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} disabled show1D={hasPerEventFees && chartType === ChartType.FEE} />
       </div>
     );
   }
@@ -398,8 +453,12 @@ export const ChartSection = memo(function ChartSection({
               cursor={{ stroke: "hsl(var(--muted-foreground))", strokeWidth: 1, strokeDasharray: "4 4" }}
               content={() => null}
             />
-            <Line yAxisId="left" type="monotone" dataKey="volumeTvlRatio" strokeWidth={2} dot={false} stroke={CHART_COLORS.activity} isAnimationActive={false} />
-            <Line yAxisId="left" type="monotone" dataKey="emaRatio" strokeWidth={2} dot={false} stroke={CHART_COLORS.target} strokeDasharray="5 5" isAnimationActive={false} />
+            {!hasPerEventFees && (
+              <>
+                <Line yAxisId="left" type="monotone" dataKey="volumeTvlRatio" strokeWidth={2} dot={false} stroke={CHART_COLORS.activity} isAnimationActive={false} />
+                <Line yAxisId="left" type="monotone" dataKey="emaRatio" strokeWidth={2} dot={false} stroke={CHART_COLORS.target} strokeDasharray="5 5" isAnimationActive={false} />
+              </>
+            )}
             <Line
               yAxisId="right"
               type="stepAfter"
@@ -511,7 +570,7 @@ export const ChartSection = memo(function ChartSection({
   return (
     <div className="flex flex-col gap-4">
       {/* Chart type tabs at top */}
-      <ChartTypeTabs chartType={chartType} onChartTypeChange={setChartType} />
+      <ChartTypeTabs chartType={chartType} onChartTypeChange={setChartType} hideYield={!hasYieldSources} />
 
       {/* Yield tab — render the full YieldChartSection (identical to position page) */}
       {chartType === ChartType.YIELD ? (
@@ -555,17 +614,31 @@ export const ChartSection = memo(function ChartSection({
                 <div className="flex flex-row gap-2 truncate items-center text-xs">
                   {chartType === ChartType.FEE && (
                     isHovering && displayValues ? (
-                      <>
-                        <span className="text-muted-foreground">
-                          Target: <span className="text-foreground tabular-nums">{formatFeeValue(displayValues.target ?? 0)}</span>
-                        </span>
-                        <span className="text-muted-foreground">
-                          Activity: <span className="text-foreground tabular-nums">{formatFeeValue(displayValues.activity ?? 0)}</span>
-                        </span>
-                        <span className="text-muted-foreground">
-                          {new Date(hoverData.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                        </span>
-                      </>
+                      hasPerEventFees ? (
+                        <>
+                          <span className="text-muted-foreground">
+                            Volatility: <span className="text-foreground tabular-nums">—</span>
+                          </span>
+                          <span className="text-muted-foreground">
+                            Agent: <span className="text-foreground tabular-nums">—</span>
+                          </span>
+                          <span className="text-muted-foreground">
+                            {new Date(hoverData.date).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-muted-foreground">
+                            Target: <span className="text-foreground tabular-nums">{formatFeeValue(displayValues.target ?? 0)}</span>
+                          </span>
+                          <span className="text-muted-foreground">
+                            Activity: <span className="text-foreground tabular-nums">{formatFeeValue(displayValues.activity ?? 0)}</span>
+                          </span>
+                          <span className="text-muted-foreground">
+                            {new Date(hoverData.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                          </span>
+                        </>
+                      )
                     ) : currentValues && (
                       <FeeChangeDisplay change={currentValues.feeDailyChange} delta={currentValues.feeDailyDelta} />
                     )
@@ -588,7 +661,7 @@ export const ChartSection = memo(function ChartSection({
           </div>
 
           {/* Time period selector at bottom */}
-          <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} />
+          <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} show1D={hasPerEventFees && chartType === ChartType.FEE} />
         </>
       )}
 
@@ -718,12 +791,14 @@ interface ChartTypeTabsProps {
   chartType: ChartType;
   onChartTypeChange: (type: ChartType) => void;
   disabled?: boolean;
+  /** Hide Yield tab (LVR pools have no lending yield) */
+  hideYield?: boolean;
 }
 
-const ChartTypeTabs = memo(function ChartTypeTabs({ chartType, onChartTypeChange, disabled }: ChartTypeTabsProps) {
+const ChartTypeTabs = memo(function ChartTypeTabs({ chartType, onChartTypeChange, disabled, hideYield }: ChartTypeTabsProps) {
   const tabs = [
     { type: ChartType.FEE, label: "Dynamic Fee" },
-    { type: ChartType.YIELD, label: "Yield" },
+    ...(!hideYield ? [{ type: ChartType.YIELD, label: "Yield" }] : []),
     { type: ChartType.VOLUME, label: "Volume" },
     { type: ChartType.TVL, label: "TVL" },
   ];
@@ -756,10 +831,12 @@ interface TimePeriodSelectorProps {
   period: TimePeriod;
   onPeriodChange: (period: TimePeriod) => void;
   disabled?: boolean;
+  /** Show 1D option (only for LVRFee Fee chart) */
+  show1D?: boolean;
 }
 
-const TimePeriodSelector = memo(function TimePeriodSelector({ period, onPeriodChange, disabled }: TimePeriodSelectorProps) {
-  const options: TimePeriod[] = ["1W", "1M"];
+const TimePeriodSelector = memo(function TimePeriodSelector({ period, onPeriodChange, disabled, show1D }: TimePeriodSelectorProps) {
+  const options: TimePeriod[] = show1D ? ["1D", "1W", "1M"] : ["1W", "1M"];
 
   return (
     <div className={cn("flex flex-row items-center gap-1", disabled && "opacity-50 pointer-events-none")}>

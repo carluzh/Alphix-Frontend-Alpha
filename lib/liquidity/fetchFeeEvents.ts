@@ -1,7 +1,18 @@
 import { getAlphixSubgraphUrl } from '@/lib/subgraph-url-helper'
+import { buildBackendUrl } from '@/lib/backend-client'
+import { getPoolByIdMultiChain } from '@/lib/pools-config'
+import { isLvrFeePool } from '@/lib/liquidity/utils/pool-type-guards'
 import type { NetworkMode } from '@/lib/network-mode'
 
-const GET_LAST_HOOK_EVENTS = `
+export type HookEvent = {
+  timestamp: string
+  newFeeBps?: string
+  currentRatio?: string
+  newTargetRatio?: string
+  oldTargetRatio?: string
+}
+
+const SUBGRAPH_QUERY = `
   query GetLastHookEvents($poolId: Bytes!) {
     alphixHooks(
       where: { pool: $poolId }
@@ -18,50 +29,61 @@ const GET_LAST_HOOK_EVENTS = `
   }
 `
 
-export type HookEvent = {
-  timestamp: string
-  newFeeBps?: string
-  currentRatio?: string
-  newTargetRatio?: string
-  oldTargetRatio?: string
-}
-
-type HookResp = { data?: { alphixHooks?: HookEvent[] }; errors?: any[] }
+type SubgraphResp = { data?: { alphixHooks?: HookEvent[] }; errors?: any[] }
 
 /**
- * Fetch historical dynamic fee events from the Alphix subgraph.
- * Shared between the API route and pool-metrics (avoids HTTP self-call).
+ * Fetch historical dynamic fee events.
+ * Routes by pool type:
+ * - Alphix hook pools → subgraph (alphixHooks entity)
+ * - LVRFee pools → backend REST API
  */
 export async function fetchFeeEvents(
   poolId: string,
   networkMode: NetworkMode
 ): Promise<HookEvent[]> {
-  const SUBGRAPH_URL = getAlphixSubgraphUrl(networkMode)
+  const pool = getPoolByIdMultiChain(poolId)
 
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 10000)
+  try {
+    if (pool && isLvrFeePool(pool)) {
+      return await fetchFromBackend(poolId, networkMode)
+    }
+    return await fetchFromSubgraph(poolId, networkMode)
+  } catch (err) {
+    console.error(`[fetchFeeEvents] Failed for pool ${poolId}:`, err)
+    return []
+  }
+}
 
-  const resp = await fetch(SUBGRAPH_URL, {
+async function fetchFromSubgraph(poolId: string, networkMode: NetworkMode): Promise<HookEvent[]> {
+  const url = getAlphixSubgraphUrl(networkMode)
+  const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      query: GET_LAST_HOOK_EVENTS,
+      query: SUBGRAPH_QUERY,
       variables: { poolId: poolId.toLowerCase() },
     }),
-    signal: controller.signal,
+    signal: AbortSignal.timeout(10000),
   })
 
-  clearTimeout(timeoutId)
-
-  if (!resp.ok) {
-    const body = await resp.text()
-    throw new Error(`Subgraph error: ${body}`)
-  }
-
-  const json = (await resp.json()) as HookResp
-  if (json.errors) {
-    throw new Error(`Subgraph errors: ${JSON.stringify(json.errors)}`)
-  }
-
+  if (!resp.ok) throw new Error(`Subgraph HTTP ${resp.status}`)
+  const json = (await resp.json()) as SubgraphResp
+  if (json.errors) throw new Error(`Subgraph errors: ${JSON.stringify(json.errors)}`)
   return Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : []
+}
+
+async function fetchFromBackend(poolId: string, networkMode: NetworkMode): Promise<HookEvent[]> {
+  const url = buildBackendUrl('/api/liquidity/get-historical-dynamic-fees', networkMode, {
+    poolId: poolId.toLowerCase(),
+    limit: '500',
+  })
+  const resp = await fetch(url, { signal: AbortSignal.timeout(10000) })
+  if (!resp.ok) throw new Error(`Backend HTTP ${resp.status}`)
+
+  const json = await resp.json()
+  const items: any[] = Array.isArray(json) ? json : (json.data ?? [])
+  return items.map((e: any) => ({
+    timestamp: String(e.timestamp),
+    newFeeBps: String(e.newFeeBps ?? e.newFeeRateBps ?? 0),
+  }))
 }

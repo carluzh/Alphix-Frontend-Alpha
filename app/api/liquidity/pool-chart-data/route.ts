@@ -8,7 +8,7 @@ import { parseNetworkMode, type NetworkMode } from '@/lib/network-mode';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
 import { poolKeys } from '@/lib/cache/redis-keys';
 import { fetchPoolHistory } from '@/lib/backend-client';
-import { getAlphixSubgraphUrl } from '@/lib/subgraph-url-helper';
+import { fetchFeeEvents as fetchFeeEventsShared, type HookEvent } from '@/lib/liquidity/fetchFeeEvents';
 
 interface ChartDataPoint {
   date: string;
@@ -17,19 +17,11 @@ interface ChartDataPoint {
   feesUSD: number;
 }
 
-interface DynamicFeeEvent {
-  timestamp: string;
-  newFeeBps?: string;
-  currentRatio?: string;
-  newTargetRatio?: string;
-  oldTargetRatio?: string;
-}
-
 interface ChartDataResponse {
   success: boolean;
   poolId: string;
   data: ChartDataPoint[];
-  feeEvents: DynamicFeeEvent[];
+  feeEvents: HookEvent[];
   timestamp?: number;
   isStale?: boolean;
   message?: string;
@@ -42,52 +34,6 @@ function getPeriodForDays(days: number): 'DAY' | 'WEEK' | 'MONTH' {
   if (days <= 1) return 'DAY';
   if (days <= 7) return 'WEEK';
   return 'MONTH';
-}
-
-const FEE_EVENTS_QUERY = `
-  query GetLastHookEvents($poolId: Bytes!) {
-    alphixHooks(
-      where: { pool: $poolId }
-      orderBy: timestamp
-      orderDirection: desc
-      first: 500
-    ) {
-      timestamp
-      newFeeBps
-      currentRatio
-      newTargetRatio
-      oldTargetRatio
-    }
-  }
-`;
-
-async function fetchFeeEvents(subgraphId: string, networkMode: NetworkMode): Promise<DynamicFeeEvent[]> {
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const resp = await fetch(getAlphixSubgraphUrl(networkMode), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: FEE_EVENTS_QUERY, variables: { poolId: subgraphId.toLowerCase() } }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!resp.ok) throw new Error(`Subgraph HTTP ${resp.status}`);
-      const json = await resp.json() as { data?: { alphixHooks?: DynamicFeeEvent[] }; errors?: unknown[] };
-      if (json.errors) throw new Error(`Subgraph errors: ${JSON.stringify(json.errors)}`);
-      return Array.isArray(json.data?.alphixHooks) ? json.data!.alphixHooks! : [];
-    } catch (error) {
-      console.error(`[pool-chart-data] Fee events attempt ${attempt}/3 failed:`, error);
-      if (attempt < 3) await new Promise(r => setTimeout(r, 500 * 2 ** (attempt - 1)));
-    }
-  }
-
-  console.error('[pool-chart-data] Fee events fetch exhausted all retries');
-  return [];
 }
 
 async function computeChartData(poolId: string, days: number, networkMode: NetworkMode): Promise<ChartDataResponse> {
@@ -105,14 +51,24 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
     subgraphId = (subgraphId || poolId).toLowerCase();
     if (!/^0x[a-f0-9]+$/i.test(subgraphId)) throw new Error('Invalid pool ID format');
 
-    // Fetch historical data from backend + fee events from subgraph in parallel
+    // Fetch historical data from backend + fee events from backend in parallel
     const period = getPeriodForDays(days);
     const [historyResponse, feeEvents] = await Promise.all([
       fetchPoolHistory(subgraphId, period, effectiveNetworkMode),
-      fetchFeeEvents(subgraphId, effectiveNetworkMode),
+      fetchFeeEventsShared(subgraphId, effectiveNetworkMode),
     ]);
 
     if (!historyResponse.success || !historyResponse.snapshots) {
+      // No history snapshots — still return success if we have fee events
+      if (feeEvents.length > 0) {
+        return {
+          success: true,
+          poolId,
+          data: [],
+          feeEvents,
+          timestamp: Date.now(),
+        };
+      }
       const errorMsg = historyResponse.error || 'Backend history fetch failed';
       console.error('[pool-chart-data] Backend history fetch failed:', errorMsg);
       return {

@@ -2,7 +2,7 @@ import { ethers } from "ethers";
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { type NetworkMode } from "../../../lib/pools-config";
 import { resolveNetworkMode } from "../../../lib/network-mode";
-import { getAlphixSubgraphUrl } from "../../../lib/subgraph-url-helper";
+import { getAllAlphixSubgraphUrls } from "../../../lib/subgraph-url-helper";
 import { fetchUserPositions } from "@/lib/positions/fetchPositions";
 
 /**
@@ -177,9 +177,7 @@ async function fetchIdsOrCount(ownerAddress: string, idsOnly: boolean, withCreat
   const hookPositionsQuery = GET_USER_HOOK_POSITIONS_QUERY;
 
   // Build list of subgraph URLs to query
-  const subgraphUrls: string[] = [];
-  const primaryUrl = getAlphixSubgraphUrl(networkMode);
-  if (primaryUrl) subgraphUrls.push(primaryUrl);
+  const subgraphUrls = getAllAlphixSubgraphUrls(networkMode);
 
   // Fetch from all subgraphs in parallel (Promise.allSettled pattern identical to Uniswap getPool.ts)
   const subgraphResults = await Promise.allSettled(subgraphUrls.map(async (subgraphUrl) => {

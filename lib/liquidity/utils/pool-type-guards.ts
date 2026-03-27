@@ -67,6 +67,18 @@ export function hasHooks(pool: PoolConfig): boolean {
   return !!pool.hooks;
 }
 
+/** LVRFee hook address (Base). Pools using this hook have no subgraph alphixHooks entity. */
+const LVRFEE_HOOK = '0x7cBbfF9C4fcd74B221C535F4fB4B1Db04F1B9044'.toLowerCase();
+
+/**
+ * Check if a pool uses the AlphixLVRFee hook.
+ * These pools have dynamic fees but no rehypothecation / unified yield,
+ * and their fee history comes from the backend REST API, not the subgraph.
+ */
+export function isLvrFeePool(pool: PoolConfig): boolean {
+  return pool.hooks?.toLowerCase() === LVRFEE_HOOK;
+}
+
 /**
  * Get the pool type label for display
  *

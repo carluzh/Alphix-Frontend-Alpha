@@ -97,6 +97,7 @@ export interface UsePoolDetailPageDataReturn {
 
   // Chart data
   chartData: ChartDataPoint[];
+  feeEvents: import("./usePoolChartData").FeeEvent[];
   isLoadingChartData: boolean;
 
   // Positions (discriminated union of V4 and Unified Yield)
@@ -294,6 +295,7 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
   // Chart data hook
   const {
     chartData,
+    feeEvents,
     isLoadingChartData,
     fetchChartData,
     updateTodayTvl,
@@ -482,6 +484,7 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
     poolStats,
     poolState,
     chartData,
+    feeEvents,
     isLoadingChartData,
     userPositions: sortedPositions,
     isLoadingPositions,

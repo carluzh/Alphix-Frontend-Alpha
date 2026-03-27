@@ -31,6 +31,7 @@ function PoolDetailContent({ poolId, networkMode }: { poolId: string; networkMod
     poolStats,
     poolState,
     chartData,
+    feeEvents,
     isLoadingChartData,
     userPositions,
     isLoadingPositions,
@@ -54,6 +55,7 @@ function PoolDetailContent({ poolId, networkMode }: { poolId: string; networkMod
       poolStats={poolStats}
       poolState={poolState}
       chartData={chartData}
+      feeEvents={feeEvents}
       isLoadingChartData={isLoadingChartData}
       userPositions={userPositions}
       isLoadingPositions={isLoadingPositions}

@@ -13,6 +13,14 @@ export interface ChartDataPoint {
   dynamicFee: number;
 }
 
+/** Raw fee event from the API — per-event granularity */
+export interface FeeEvent {
+  timestamp: string;
+  newFeeBps?: string;
+  currentRatio?: string;
+  newTargetRatio?: string;
+}
+
 interface UsePoolChartDataOptions {
   poolId: string;
   subgraphId: string;
@@ -22,7 +30,10 @@ interface UsePoolChartDataOptions {
 }
 
 interface UsePoolChartDataReturn {
+  /** Daily-bucketed chart data (Volume/TVL/Fee for standard pools, Volume/TVL for all) */
   chartData: ChartDataPoint[];
+  /** Raw fee events — per-event granularity for pools with dynamic fees */
+  feeEvents: FeeEvent[];
   isLoadingChartData: boolean;
   fetchChartData: (force?: boolean) => Promise<void>;
   updateTodayTvl: (tvl: number) => void;
@@ -106,6 +117,7 @@ export function usePoolChartData({
   currentFeeBps,
 }: UsePoolChartDataOptions): UsePoolChartDataReturn {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
+  const [feeEvents, setFeeEvents] = useState<FeeEvent[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
 
   const hasFetchedForPoolRef = useRef<string | null>(null);
@@ -146,18 +158,28 @@ export function usePoolChartData({
 
         const rawData = chartResult.data!;
         if (!rawData.success) throw new Error(rawData.message || 'Failed to fetch chart data');
-        if (!Array.isArray(rawData.data) || rawData.data.length === 0) throw new Error('No chart data available');
 
-        const dayData = rawData.data;
-        const feeEvents = Array.isArray(rawData.feeEvents) ? rawData.feeEvents : [];
+        const dayData = Array.isArray(rawData.data) ? rawData.data : [];
+        const rawFeeEvents = Array.isArray(rawData.feeEvents) ? rawData.feeEvents : [];
 
+        if (dayData.length === 0 && rawFeeEvents.length === 0) throw new Error('No chart data available');
+
+        // Store raw fee events for per-event rendering
+        setFeeEvents(rawFeeEvents.map((e: any) => ({
+          timestamp: String(e?.timestamp ?? ''),
+          newFeeBps: String(e?.newFeeBps ?? e?.newFeeRateBps ?? '0'),
+          currentRatio: e?.currentRatio != null ? String(e.currentRatio) : undefined,
+          newTargetRatio: e?.newTargetRatio != null ? String(e.newTargetRatio) : undefined,
+        })));
+
+        // Build daily-bucketed chart data (used by all chart tabs)
         const dataByDate = new Map<string, { tvlUSD: number; volumeUSD: number }>();
         for (const d of dayData) {
           dataByDate.set(d.date, { tvlUSD: d.tvlUSD || 0, volumeUSD: d.volumeUSD || 0 });
         }
 
         const feeByDate = new Map<string, { ratio: number; ema: number; feePct: number }>();
-        const evAsc = [...feeEvents].sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
+        const evAsc = [...rawFeeEvents].sort((a: any, b: any) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
 
         const allDates = Array.from(new Set([
           ...dayData.map((d: { date: string }) => d.date),
@@ -278,5 +300,5 @@ export function usePoolChartData({
     }
   }, [windowWidth]);
 
-  return { chartData, isLoadingChartData, fetchChartData, updateTodayTvl };
+  return { chartData, feeEvents, isLoadingChartData, fetchChartData, updateTodayTvl };
 }

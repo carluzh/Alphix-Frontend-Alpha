@@ -13,6 +13,8 @@ interface PositionResponse {
     token0: string;
     token1: string;
     fee: number;
+    tickSpacing: number;
+    hooks: string;
     tickLower: number;
     tickUpper: number;
     liquidity: string;
@@ -152,6 +154,8 @@ export default async function handler(
         token0: details.poolKey.currency0,
         token1: details.poolKey.currency1,
         fee: details.poolKey.fee,
+        tickSpacing: details.poolKey.tickSpacing,
+        hooks: details.poolKey.hooks,
         tickLower: details.tickLower,
         tickUpper: details.tickUpper,
         liquidity: details.liquidity.toString(),

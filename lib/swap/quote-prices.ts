@@ -19,6 +19,7 @@ const STABLECOINS_USD = new Set(['USDC', 'USDS', 'USDT'])
 const COINGECKO_IDS: Record<string, string> = {
   'ETH': 'ethereum',
   'WETH': 'weth',
+  'cbBTC': 'coinbase-wrapped-btc',
 }
 
 function isStablecoinUSD(symbol: string | null | undefined): boolean {

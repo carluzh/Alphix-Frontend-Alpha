@@ -323,7 +323,7 @@ function ContractsSection({ poolConfig }: { poolConfig: PoolConfig }) {
         {token1 && (
           <CopyableRow label={token1.symbol} value={token1.address} />
         )}
-        {poolConfig.hooks && (
+        {poolConfig.hooks && poolConfig.yieldSources && poolConfig.yieldSources.length > 0 && (
           <CopyableRow label="Lending Vault" value={poolConfig.hooks} />
         )}
       </div>
@@ -449,7 +449,7 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
   networkMode,
   yieldSources,
 }: PoolDetailSidebarProps) {
-  const effectiveYieldSources = yieldSources ?? poolConfig.yieldSources ?? ['aave'];
+  const effectiveYieldSources = yieldSources ?? poolConfig.yieldSources ?? [];
 
   return (
     <div className="flex flex-col gap-6">

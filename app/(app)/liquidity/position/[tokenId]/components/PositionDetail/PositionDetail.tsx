@@ -87,6 +87,7 @@ import {
   adaptUnifiedYieldToProcessedPosition,
   type UnifiedYieldPosition,
 } from "@/lib/liquidity/unified-yield";
+import { isLvrFeePool } from "@/lib/liquidity/utils/pool-type-guards";
 import { usePriceDeviation, requiresDeviationAcknowledgment } from "@/hooks/usePriceDeviation";
 import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
 import { HighRiskConfirmModal, createPriceDeviationWarning } from "@/components/ui/HighRiskConfirmModal";
@@ -402,6 +403,11 @@ function PositionHeader({
               {poolConfig.currency0.symbol} / {poolConfig.currency1.symbol}
             </Link>
             <div className="flex items-center gap-2">
+              {poolConfig && isLvrFeePool(poolConfig) && (
+                <span className="w-fit px-2 py-0.5 text-xs font-medium rounded border border-orange-500/50 bg-orange-500/10 text-orange-400">
+                  V2
+                </span>
+              )}
               <StatusIndicator isInRange={isInRange} isUnifiedYield={lpType === "rehypo"} />
               {lpType === "rehypo" && <UnifiedYieldBadge />}
             </div>
@@ -753,7 +759,7 @@ function EarningPointsCard() {
 }
 
 function EarningSourcesSection({
-  yieldSources = ['aave'],
+  yieldSources = [],
   aprBySource,
 }: {
   yieldSources?: Array<'aave' | 'spark'>;

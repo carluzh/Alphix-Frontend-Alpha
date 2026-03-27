@@ -6,7 +6,7 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress } from "@/lib/pools-config";
+import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getPoolByIdMultiChain } from "@/lib/pools-config";
 import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
 import { resolveNetworkMode } from "@/lib/network-mode";
 import { createNetworkClient } from "@/lib/viemClient";
@@ -26,6 +26,7 @@ import { checkERC20Allowances, buildPermitBatchData, buildPermitBatchForSDK, typ
 interface PrepareMintTxRequest extends NextApiRequest {
     body: {
         userAddress: string;
+        poolId?: string;
         token0Symbol: TokenSymbol;
         token1Symbol: TokenSymbol;
         inputAmount: string;
@@ -267,12 +268,15 @@ export default async function handler(
         const parsedInputAmount_BigInt = parseUnits(normalizedInput, sdkInputToken.decimals); 
         const parsedInputAmount_JSBI = JSBI.BigInt(parsedInputAmount_BigInt.toString()); 
 
-        // Use configured pool ID from pool config instead of deriving
+        // Use pool ID from request body (required for disambiguation when multiple pools share tokens)
+        const requestPoolId = req.body.poolId;
         const { getPoolByTokens } = await import('@/lib/pools-config');
-        const poolConfig = getPoolByTokens(token0Symbol, token1Symbol, networkMode);
-        
+        const poolConfig = requestPoolId
+            ? getPoolByIdMultiChain(requestPoolId)
+            : getPoolByTokens(token0Symbol, token1Symbol, networkMode);
+
         if (!poolConfig) {
-            return res.status(400).json({ message: `No pool configuration found for ${token0Symbol}/${token1Symbol}` });
+            return res.status(400).json({ message: `No pool configuration found for ${requestPoolId || `${token0Symbol}/${token1Symbol}`}` });
         }
 
         const clampedUserTickLower = Math.max(userTickLower, TickMath.MIN_TICK);

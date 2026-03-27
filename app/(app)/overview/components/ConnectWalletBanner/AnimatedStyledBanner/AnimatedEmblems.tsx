@@ -94,8 +94,8 @@ export function AnimatedEmblems() {
         `}
       </style>
 
-      {/* Left icons — scale from left edge on mobile, spread vertically */}
-      <div className="absolute inset-0 [transform:scale(0.5,1.4)] md:[transform:scale(1)] origin-left">
+      {/* Left icons — uniform 50% scale on mobile, taller virtual container for vertical spread */}
+      <div className="absolute -inset-y-[40%] inset-x-0 md:inset-0 [transform:scale(0.5)] md:[transform:scale(1)] origin-left opacity-60 md:opacity-100">
         <div className="absolute top-[20px] -left-[15px] rotate-90 z-[1]">
           <AnimatedEmblem duration={animationDuration} delay={delays[0]} rotationDirection="clockwise">
             <EmblemIcon iconName={icons[0].name} glitchIndex={1} size={71} shade={icons[0].shade} />
@@ -121,8 +121,8 @@ export function AnimatedEmblems() {
         </div>
       </div>
 
-      {/* Right icons — scale from right edge on mobile, spread vertically */}
-      <div className="absolute inset-0 [transform:scale(0.5,1.4)] md:[transform:scale(1)] origin-right">
+      {/* Right icons — uniform 50% scale on mobile, taller virtual container for vertical spread */}
+      <div className="absolute -inset-y-[40%] inset-x-0 md:inset-0 [transform:scale(0.5)] md:[transform:scale(1)] origin-right opacity-60 md:opacity-100">
         <div className="absolute top-[20px] -right-[15px] -rotate-90 z-[1]">
           <AnimatedEmblem duration={animationDuration} delay={delays[4]} rotationDirection="counterclockwise">
             <EmblemIcon iconName={icons[4].name} glitchIndex={5} size={71} shade={icons[4].shade} />

@@ -21,7 +21,7 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 import { PointsTooltip, TooltipSize } from './PointsTooltip';
-import { APRBreakdownTooltip } from '../APRBreakdownTooltip';
+import { APYBreakdownTooltip as APRBreakdownTooltip } from '../APYBreakdownTooltip';
 import { formatPercent, PLACEHOLDER_TEXT } from './formatters';
 
 interface PointsFeeStatProps {

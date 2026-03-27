@@ -123,8 +123,10 @@ export function PositionCardCompact({
     });
 
     const unifiedYieldApr = useMemo(() => {
+        const poolConfig = getPoolById(position.poolId, networkMode);
+        if (!poolConfig?.yieldSources?.length) return undefined;
         return getLendingAprForPair(aaveRatesData, token0Symbol, token1Symbol) ?? undefined;
-    }, [aaveRatesData, token0Symbol, token1Symbol]);
+    }, [aaveRatesData, token0Symbol, token1Symbol, position.poolId, networkMode]);
 
     // Get USD values for fees using Uniswap's routing-based pricing
     // This fixes the bug where tokens not in priceMap returned $0

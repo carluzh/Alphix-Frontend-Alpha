@@ -131,7 +131,7 @@ export const DEFAULT_WIZARD_STATE: WizardState = {
   token0Symbol: null,
   token1Symbol: null,
   poolId: null,
-  mode: 'rehypo',
+  mode: 'concentrated',
   tickLower: null,
   tickUpper: null,
   isFullRange: true,
