@@ -27,6 +27,8 @@ interface UsePoolChartDataOptions {
   networkMode: string;
   windowWidth: number;
   currentFeeBps?: number | null;
+  /** If true, fee events are always re-fetched (no caching) and current fee is appended */
+  isLvrFeePool?: boolean;
 }
 
 interface UsePoolChartDataReturn {
@@ -115,6 +117,7 @@ export function usePoolChartData({
   networkMode,
   windowWidth,
   currentFeeBps,
+  isLvrFeePool = false,
 }: UsePoolChartDataOptions): UsePoolChartDataReturn {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [feeEvents, setFeeEvents] = useState<FeeEvent[]>([]);
@@ -130,7 +133,8 @@ export function usePoolChartData({
     if (!poolId || !subgraphId) return;
 
     const poolKey = `${poolId}-${subgraphId}-${networkMode}`;
-    if (hasFetchedForPoolRef.current === poolKey && !force) return;
+    // LVR pools always refetch (no caching) to get latest fee events
+    if (hasFetchedForPoolRef.current === poolKey && !force && !isLvrFeePool) return;
 
     hasFetchedForPoolRef.current = poolKey;
     setIsLoadingChartData(true);
@@ -299,6 +303,19 @@ export function usePoolChartData({
       setChartData(prev => processChartDataForScreenSize(prev, windowWidth));
     }
   }, [windowWidth]);
+
+  // LVR pools: append live fee updates from WebSocket as new fee events
+  useEffect(() => {
+    if (!isLvrFeePool || !currentFeeBps || !Number.isFinite(currentFeeBps)) return;
+    const nowTs = String(Math.floor(Date.now() / 1000));
+    setFeeEvents(prev => {
+      if (!prev.length) return prev;
+      const last = prev[prev.length - 1];
+      // Skip if fee hasn't changed
+      if (last && String(currentFeeBps) === last.newFeeBps) return prev;
+      return [...prev, { timestamp: nowTs, newFeeBps: String(currentFeeBps), currentRatio: undefined, newTargetRatio: undefined }];
+    });
+  }, [isLvrFeePool, currentFeeBps]);
 
   return { chartData, feeEvents, isLoadingChartData, fetchChartData, updateTodayTvl };
 }

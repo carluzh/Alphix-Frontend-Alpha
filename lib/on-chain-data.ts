@@ -15,6 +15,7 @@ import { getStateViewAddress, getPositionManagerAddress } from './pools-config';
 import { getToken as getTokenConfig, getTokenSymbolByAddress } from './pools-config';
 import { position_manager_abi } from './abis/PositionManager_abi';
 import { modeForChainId, type NetworkMode } from './network-mode';
+import { calculateUnclaimedFeesV4 } from './liquidity/liquidity-utils';
 
 /**
  * Decoded position tick and subscription info from on-chain position data
@@ -164,7 +165,54 @@ export async function derivePositionsFromIds(
     }
   }
 
-  // 5. Final Assembly: Construct V4Position objects and derive amounts
+  // 5. Third Multicall: Fetch fee growth data for uncollected fees
+  const feeContracts = tokenIds.map(String).flatMap(tokenIdStr => {
+    const positionData = positionDataMap.get(tokenIdStr);
+    if (!positionData) return [];
+    const { tickLower, tickUpper } = decodePositionInfo(positionData.infoValue);
+    const salt = `0x${BigInt(tokenIdStr).toString(16).padStart(64, '0')}` as Hex;
+    return [
+      {
+        address: stateViewAddr,
+        abi: parseAbi(STATE_VIEW_HUMAN_READABLE_ABI as any),
+        functionName: 'getPositionInfo',
+        args: [positionData.poolId, pmAddress, tickLower, tickUpper, salt],
+      },
+      {
+        address: stateViewAddr,
+        abi: parseAbi(STATE_VIEW_HUMAN_READABLE_ABI as any),
+        functionName: 'getFeeGrowthInside',
+        args: [positionData.poolId, tickLower, tickUpper],
+      },
+    ];
+  });
+
+  const feeDataMap = new Map<string, { token0Fees: string; token1Fees: string }>();
+  if (feeContracts.length > 0) {
+    try {
+      const feeResults = await publicClient.multicall({ contracts: feeContracts, allowFailure: true });
+      let fi = 0;
+      for (const tokenIdStr of tokenIds.map(String)) {
+        const positionData = positionDataMap.get(tokenIdStr);
+        if (!positionData) continue;
+        const posInfoResult = feeResults[fi];
+        const feeInsideResult = feeResults[fi + 1];
+        fi += 2;
+        if (posInfoResult?.status === 'success' && feeInsideResult?.status === 'success') {
+          const posInfo = posInfoResult.result as readonly [bigint, bigint, bigint];
+          const feeInside = feeInsideResult.result as readonly [bigint, bigint];
+          const { token0Fees, token1Fees } = calculateUnclaimedFeesV4(
+            posInfo[0], feeInside[0], feeInside[1], posInfo[1], posInfo[2]
+          );
+          feeDataMap.set(tokenIdStr, { token0Fees: token0Fees.toString(), token1Fees: token1Fees.toString() });
+        }
+      }
+    } catch (e) {
+      console.warn('[derivePositionsFromIds] Fee batch failed, positions will show without fees:', e);
+    }
+  }
+
+  // 6. Final Assembly: Construct V4Position objects and derive amounts
   const out: any[] = [];
   for (const tokenIdStr of tokenIds.map(String)) {
     try {
@@ -212,6 +260,7 @@ export async function derivePositionsFromIds(
       if (created > 1e12) created = Math.floor(created / 1000);
       if (lastMod > 1e12) lastMod = Math.floor(lastMod / 1000);
 
+      const fees = feeDataMap.get(tokenIdStr);
       out.push({
         type: 'v4' as const,
         positionId: tokenIdStr,
@@ -226,6 +275,8 @@ export async function derivePositionsFromIds(
         blockTimestamp: created,
         lastTimestamp: lastMod || created,
         isInRange: poolState.tick >= tickLower && poolState.tick < tickUpper,
+        token0UncollectedFees: fees?.token0Fees,
+        token1UncollectedFees: fees?.token1Fees,
       });
     } catch (e) {
       console.warn(`[derivePositionsFromIds] Error processing tokenId ${tokenIdStr}:`, e);

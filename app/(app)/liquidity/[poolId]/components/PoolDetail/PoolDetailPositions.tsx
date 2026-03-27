@@ -30,7 +30,7 @@ interface PoolDetailPositionsProps {
   onPositionClick: (position: Position) => void;
   onAddLiquidity: () => void;
   /** Convert V4 position to PositionInfo for PositionCardCompact */
-  getPositionInfo: (position: V4ProcessedPosition) => PositionInfo | undefined;
+  getPositionInfo: (position: V4ProcessedPosition, feeData?: { amount0?: string; amount1?: string }) => PositionInfo | undefined;
   convertTickToPrice: (
     tick: number,
     currentPoolTick: number | null,
@@ -161,7 +161,8 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
             );
           } else if (isV4Position(position)) {
             // V4 position - convert to PositionInfo for PositionCardCompact
-            const positionInfo = getPositionInfo(position);
+            const feeData = getFeesForPosition(position.positionId, position);
+            const positionInfo = getPositionInfo(position, feeData ? { amount0: feeData.amount0, amount1: feeData.amount1 } : undefined);
             if (!positionInfo) return null;
 
             card = (

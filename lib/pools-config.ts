@@ -127,7 +127,7 @@ const TOKEN_ICONS: Record<string, string> = {
   aUSDT: '/tokens/aUSDT.png',
   aDAI: '/tokens/aDAI.png',
   aBTC: '/tokens/aBTC.png',
-  cbBTC: '/tokens/cbBTC.png',
+  cbBTC: '/tokens/cbBTC.svg',
 };
 
 /** Resolve a token icon by symbol. Chain-independent — icons are static assets. */

@@ -7,6 +7,7 @@ import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { useWSPool } from "@/lib/websocket";
 import { fetchPoolsMetrics } from "@/lib/backend-client";
 import { getPoolById, getPoolByIdMultiChain, getToken, getTokenDefinitions, resolveTokenIcon, type TokenSymbol, type NetworkMode } from "@/lib/pools-config";
+import { isLvrFeePool } from "@/lib/liquidity/utils/pool-type-guards";
 import { chainIdForMode } from "@/lib/network-mode";
 import { usePoolChartData, type ChartDataPoint } from "./usePoolChartData";
 import { usePoolPositions } from "./usePoolPositions";
@@ -305,6 +306,7 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
     networkMode,
     windowWidth,
     currentFeeBps: wsPool?.lpFee,
+    isLvrFeePool: poolConfig ? isLvrFeePool(poolConfig as any) : false,
   });
 
   // Positions hook
