@@ -33,8 +33,8 @@ export function MobileLiquidityList({ pools }: MobileLiquidityListProps) {
     <div className="space-y-3">
       {pools.map((pool) => (
         <Link
-          key={pool.id}
-          href={`/liquidity/${pool.id}?chain=${pool.networkMode ? CHAIN_REGISTRY[pool.networkMode].backendNetwork : 'base'}`}
+          key={pool.slug}
+          href={`/liquidity/${pool.slug}?chain=${pool.networkMode ? CHAIN_REGISTRY[pool.networkMode].backendNetwork : 'base'}`}
           prefetch
           className="block touch-manipulation select-none"
         >
@@ -83,19 +83,15 @@ export function MobileLiquidityList({ pools }: MobileLiquidityListProps) {
               <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
                 <div className="text-muted-foreground">Volume (24h)</div>
                 <div className="text-right text-foreground font-medium">
-                  {typeof pool.volume24hUSD === 'number' ? formatUSD(pool.volume24hUSD) : pool.volume24h === "Loading..." ? (
+                  {typeof pool.volume24hUSD === 'number' ? formatUSD(pool.volume24hUSD) : (
                     <div className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse"></div>
-                  ) : (
-                    pool.volume24h
                   )}
                 </div>
 
                 <div className="text-muted-foreground">TVL</div>
                 <div className="text-right text-foreground font-medium">
-                  {typeof pool.tvlUSD === 'number' ? formatUSD(pool.tvlUSD) : pool.liquidity === "Loading..." ? (
+                  {typeof pool.tvlUSD === 'number' ? formatUSD(pool.tvlUSD) : (
                     <div className="inline-block h-3 w-16 bg-muted/60 rounded animate-pulse"></div>
-                  ) : (
-                    pool.liquidity
                   )}
                 </div>
               </div>

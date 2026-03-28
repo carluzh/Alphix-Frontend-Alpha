@@ -13,9 +13,9 @@ interface PoolsConfigFile {
   hooks: { alphixHookId: string };
   tokens: Record<string, { symbol: string; name: string; address: string; decimals: number; icon: string; color?: string }>;
   pools: Array<{
-    id: string;
+    slug: string;
     name: string;
-    subgraphId: string;
+    poolId: string;
     currency0: { symbol: string; address: string };
     currency1: { symbol: string; address: string };
     fee: number;
@@ -75,9 +75,9 @@ export interface RehypoRangeConfig {
 export type YieldSource = 'aave' | 'spark';
 
 export interface PoolConfig {
-  id: string;
+  slug: string;
   name: string;
-  subgraphId: string;
+  poolId: string;
   currency0: PoolCurrency;
   currency1: PoolCurrency;
   fee: number;
@@ -127,6 +127,7 @@ const TOKEN_ICONS: Record<string, string> = {
   aUSDT: '/tokens/aUSDT.png',
   aDAI: '/tokens/aDAI.png',
   aBTC: '/tokens/aBTC.png',
+  cbBTC: '/tokens/cbBTC.svg',
 };
 
 /** Resolve a token icon by symbol. Chain-independent — icons are static assets. */
@@ -192,16 +193,17 @@ export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverr
   return matches[0];
 }
 
-export function getPoolById(poolId: string, networkModeOverride?: NetworkMode): PoolConfig | null {
+/** Look up a pool by slug ("eth-usdc") or poolId hash ("0xebb6...") */
+export function getPoolBySlug(slug: string, networkModeOverride?: NetworkMode): PoolConfig | null {
   const pools = getTaggedPools(networkModeOverride);
-  return pools.find(pool => pool.id === poolId)
-    || pools.find(pool => pool.subgraphId?.toLowerCase() === poolId.toLowerCase())
+  return pools.find(pool => pool.slug === slug)
+    || pools.find(pool => pool.poolId?.toLowerCase() === slug.toLowerCase())
     || null;
 }
 
-export function getPoolByIdMultiChain(poolId: string): PoolConfig | null {
+export function getPoolBySlugMultiChain(slug: string): PoolConfig | null {
   for (const mode of PRODUCTION_MODES) {
-    const pool = getPoolById(poolId, mode);
+    const pool = getPoolBySlug(slug, mode);
     if (pool) return pool;
   }
   return null;
@@ -268,9 +270,9 @@ export function createCanonicalPoolKey(tokenA: Token, tokenB: Token, pool: PoolC
   };
 }
 
-export function getPoolSubgraphId(poolId: string, networkModeOverride?: NetworkMode): string | null {
-  const pool = getPoolById(poolId, networkModeOverride);
-  return pool?.subgraphId || null;
+export function getPoolId(slug: string, networkModeOverride?: NetworkMode): string | null {
+  const pool = getPoolBySlug(slug, networkModeOverride);
+  return pool?.poolId || null;
 }
 
 export function getQuoterAddress(networkModeOverride?: NetworkMode): Address {

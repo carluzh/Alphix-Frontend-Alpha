@@ -10,7 +10,7 @@
 
 "use client"
 
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   Tooltip,
   TooltipContent,
@@ -119,21 +119,27 @@ export function PointsTooltip({
     ? `${padding}px`
     : getPaddingForSize(size);
 
+  const [open, setOpen] = useState(false);
+  const handleMouseEnter = useCallback(() => setOpen(true), []);
+  const handleMouseLeave = useCallback(() => setOpen(false), []);
+
   return (
-    <TooltipProvider delayDuration={0}>
-      <Tooltip>
+    <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+      <Tooltip open={open}>
         <TooltipTrigger asChild>
-          <span className="cursor-pointer">
+          <span
+            className="cursor-pointer"
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          >
             {children}
           </span>
         </TooltipTrigger>
         <TooltipContent
           side={placement}
           className={cn(
-            // Matches Alphix design system border radius
             "bg-popover border border-sidebar-border rounded-lg shadow-lg",
             "text-xs font-medium text-foreground",
-            // Prevent tooltip from capturing hover - disappears when leaving trigger
             "pointer-events-none",
             className
           )}

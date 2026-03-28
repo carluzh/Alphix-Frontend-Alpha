@@ -804,6 +804,12 @@ export interface PoolMetrics {
   lendingApy?: number;
   /** Total APY — swapApy + lendingApy */
   totalApy?: number;
+  /** Annualized realized volatility (%) — Volatile pools only */
+  volatility?: number | null;
+  /** LLM agent fee adjustment in bps — Volatile pools only */
+  agentAdjustment?: number | null;
+  /** Lifetime extra LP earnings from dynamic fee vs static base fee (USD) */
+  lvrSavedUsd?: number | null;
   timestamp: number;
 }
 

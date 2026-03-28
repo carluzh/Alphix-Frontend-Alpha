@@ -13,7 +13,7 @@ import { useMemo } from 'react';
 import type { Address } from 'viem';
 import type { LPMode } from '@/components/liquidity/wizard/types';
 import type { TokenSymbol } from '@/lib/pools-config';
-import { getPoolById } from '@/lib/pools-config';
+import { getPoolBySlug } from '@/lib/pools-config';
 import { modeForChainId } from '@/lib/network-mode';
 import { LiquidityTransactionType } from '../../types';
 
@@ -136,7 +136,7 @@ export function useModeAwareApprovals(
   // Get Hook address from pool config
   const hookAddress = useMemo(() => {
     if (!params?.poolId) return undefined;
-    const poolConfig = getPoolById(params.poolId, networkMode);
+    const poolConfig = getPoolBySlug(params.poolId, networkMode);
     return poolConfig?.hooks as Address | undefined;
   }, [params?.poolId, networkMode]);
 

@@ -142,43 +142,6 @@ export const resolvers = {
       }
     },
 
-    poolMetrics: async (
-      _: unknown,
-      args: { chain: string; poolId: string },
-      ctx: Context
-    ) => {
-      const resolvedCtx = { ...ctx, networkMode: chainToNetworkMode(args.chain) }
-      const data = await fetchInternal(
-        resolvedCtx,
-        `/api/liquidity/pool-metrics?poolId=${encodeURIComponent(args.poolId)}`
-      )
-
-      // Extract metrics for the specific pool
-      const pool = data.pools?.find(
-        (p: any) => p.poolId.toLowerCase() === args.poolId.toLowerCase()
-      )
-
-      if (!pool) {
-        return {
-          poolId: args.poolId,
-          tvlUSD: 0,
-          volume24hUSD: 0,
-          fees24hUSD: 0,
-          dynamicFeeBps: 0,
-          apr: 0,
-        }
-      }
-
-      return {
-        poolId: pool.poolId,
-        tvlUSD: pool.tvlUSD,
-        volume24hUSD: pool.volume24hUSD,
-        fees24hUSD: pool.fees24hUSD,
-        dynamicFeeBps: pool.dynamicFeeBps,
-        apr: pool.apr,
-      }
-    },
-
     poolPriceHistory: async (
       _: unknown,
       args: { chain: string; poolId: string; duration: string },

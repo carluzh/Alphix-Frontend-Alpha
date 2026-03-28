@@ -167,6 +167,4 @@ export function APYBreakdownTooltip({
   );
 }
 
-/** @deprecated Use APYBreakdownTooltip */
-export const APRBreakdownTooltip = APYBreakdownTooltip;
 export default APYBreakdownTooltip;

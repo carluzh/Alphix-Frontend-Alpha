@@ -20,7 +20,7 @@ import type { UnifiedYieldPosition } from './types';
 import { createUnifiedYieldPositionId } from './types';
 import type { NetworkMode } from '@/lib/pools-config';
 import { getEnabledPools, getToken, type PoolConfig } from '@/lib/pools-config';
-import { isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
+import { isStablePool } from '@/lib/liquidity/utils/pool-type-guards';
 import { UNIFIED_YIELD_HOOK_ABI } from './abi/unifiedYieldHookABI';
 
 /**
@@ -56,7 +56,7 @@ export async function fetchUnifiedYieldPositions(
 
   // Get all enabled Unified Yield pools
   const pools = getEnabledPools(networkMode);
-  const unifiedYieldPools = pools.filter(isUnifiedYieldPool);
+  const unifiedYieldPools = pools.filter(isStablePool);
 
   if (unifiedYieldPools.length === 0) {
     return [];
@@ -74,7 +74,7 @@ export async function fetchUnifiedYieldPositions(
       return position;
     } catch (error) {
       console.warn(
-        `Failed to fetch Unified Yield position for pool ${pool.id}:`,
+        `Failed to fetch Unified Yield position for pool ${pool.slug}:`,
         error
       );
       return null;
@@ -125,7 +125,7 @@ async function fetchPoolUnifiedYieldPosition(
     shareBalance = balanceResult as bigint;
   } catch (error) {
     console.warn(
-      `Failed to get share balance from Hook for pool ${pool.id}:`,
+      `Failed to get share balance from Hook for pool ${pool.slug}:`,
       error
     );
     return null;
@@ -155,7 +155,7 @@ async function fetchPoolUnifiedYieldPosition(
     token1AmountRaw = amount1;
   } catch (error) {
     console.warn(
-      `Failed to preview remove liquidity for pool ${pool.id}:`,
+      `Failed to preview remove liquidity for pool ${pool.slug}:`,
       error
     );
     // Fallback: set amounts to 0 if preview fails
@@ -185,9 +185,9 @@ async function fetchPoolUnifiedYieldPosition(
     token1Amount: formatUnits(token1AmountRaw, token1Decimals),
     token0AmountRaw,
     token1AmountRaw,
-    // Use subgraphId (bytes32 hash) for consistency with V4 positions
-    // The frontend filters positions by matching poolId against subgraphId
-    poolId: pool.subgraphId,
+    // Use poolId (bytes32 hash) for consistency with V4 positions
+    // The frontend filters positions by matching poolId against poolId
+    poolId: pool.poolId,
     token0Symbol: pool.currency0.symbol,
     token1Symbol: pool.currency1.symbol,
     token0Address: pool.currency0.address as Address,

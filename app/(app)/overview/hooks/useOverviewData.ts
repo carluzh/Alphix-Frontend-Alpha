@@ -61,7 +61,7 @@ export function useOverviewData(
     try {
       const allChainPools = getMultiChainEnabledPools();
       const allowedIds = new Set(
-        allChainPools.map((p: any) => String(p?.subgraphId || "").toLowerCase())
+        allChainPools.map((p: any) => String(p?.poolId || "").toLowerCase())
       );
       positions = positions.filter((pos: any) => {
         const pid = String(pos?.poolId || "").toLowerCase();
@@ -230,7 +230,7 @@ export function useOverview(
     try {
       const allChainPools = getMultiChainEnabledPools();
       const allowedIds = new Set(
-        allChainPools.map((p: any) => String(p?.subgraphId || "").toLowerCase())
+        allChainPools.map((p: any) => String(p?.poolId || "").toLowerCase())
       );
       positions = positions.filter((pos: any) => {
         const pid = String(pos?.poolId || "").toLowerCase();

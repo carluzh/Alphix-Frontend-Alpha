@@ -122,6 +122,7 @@ export interface BuildLiquidityContextParams {
   // Uniswap pattern: permitBatchData is embedded here so it's sent with signature
   createPositionRequestArgs?: {
     userAddress: string;
+    poolId: string;
     token0Symbol: string;
     token1Symbol: string;
     inputAmount: string;

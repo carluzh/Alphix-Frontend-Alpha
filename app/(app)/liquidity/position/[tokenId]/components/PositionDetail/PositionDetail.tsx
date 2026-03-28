@@ -346,7 +346,7 @@ function PositionHeader({
 
   // Determine breadcrumb based on origin
   const breadcrumbLink = fromPage === "pool"
-    ? `/liquidity/${poolConfig.id}`
+    ? `/liquidity/${poolConfig.slug}`
     : "/overview";
   const breadcrumbLabel = fromPage === "pool" ? poolName : "Overview";
 
@@ -395,7 +395,7 @@ function PositionHeader({
           {/* Token Pair Name and Badge - Stacked vertically like PoolDetail */}
           <div className="flex flex-col gap-1">
             <Link
-              href={`/liquidity/${poolConfig.id}`}
+              href={`/liquidity/${poolConfig.slug}`}
               className="text-xl font-semibold hover:text-muted-foreground transition-colors"
               style={{ fontFamily: 'Inter, sans-serif' }}
             >
@@ -753,7 +753,7 @@ function EarningPointsCard() {
 }
 
 function EarningSourcesSection({
-  yieldSources = ['aave'],
+  yieldSources = [],
   aprBySource,
 }: {
   yieldSources?: Array<'aave' | 'spark'>;
@@ -880,13 +880,13 @@ export const PositionDetail = memo(function PositionDetail({
     isLoading: isLoadingUyChart,
     refetch: refetchUyChart,
   } = useUnifiedYieldChartData({
-    poolId: poolConfig?.subgraphId,
+    poolId: poolConfig?.poolId,
     period: feeChartPeriod,
     yieldSources: poolConfig?.yieldSources,
     token0Symbol: poolConfig?.currency0?.symbol,
     token1Symbol: poolConfig?.currency1?.symbol,
     currentSwapApr: poolApr,
-    enabled: chartTab === "yield" && !!poolConfig?.subgraphId && isUnifiedYield,
+    enabled: chartTab === "yield" && !!poolConfig?.poolId && isUnifiedYield,
     networkModeOverride: networkMode,
   });
 
@@ -944,7 +944,7 @@ export const PositionDetail = memo(function PositionDetail({
       type: 'v4' as const,
       positionId: tokenId,
       owner: positionInfo.owner,
-      poolId: poolConfig.id,
+      poolId: poolConfig.slug,
       token0: {
         address: poolConfig.currency0.address,
         symbol: poolConfig.currency0.symbol,

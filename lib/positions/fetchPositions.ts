@@ -17,7 +17,7 @@ import JSBI from 'jsbi';
 import { getAddress, type Address, type Hex, encodeAbiParameters, keccak256, parseAbi } from "viem";
 import { getTokenSymbolByAddress, getToken as getTokenConfig, getChainId, getPositionManagerAddress, getStateViewAddress, type NetworkMode } from "@/lib/pools-config";
 import { getPositionDetails, getPoolState, calculateUnclaimedFeesV4 } from "@/lib/liquidity/liquidity-utils";
-import { getAlphixSubgraphUrl } from "@/lib/subgraph-url-helper";
+import { getAllAlphixSubgraphUrls } from "@/lib/subgraph-url-helper";
 import { STATE_VIEW_ABI } from "@/lib/abis/state_view_abi";
 import { createNetworkClient } from "@/lib/viemClient";
 
@@ -146,9 +146,7 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
     const chainId = getChainId(networkMode);
 
     // Build list of subgraph URLs to query
-    const subgraphUrls: string[] = [];
-    const primaryUrl = getAlphixSubgraphUrl(networkMode);
-    if (primaryUrl) subgraphUrls.push(primaryUrl);
+    const subgraphUrls = getAllAlphixSubgraphUrls(networkMode);
     console.log('[fetchUserPositions] subgraph URLs:', subgraphUrls);
 
     if (subgraphUrls.length === 0) {

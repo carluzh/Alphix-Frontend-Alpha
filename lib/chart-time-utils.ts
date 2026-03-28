@@ -15,7 +15,7 @@ import { UTCTimestamp } from "lightweight-charts";
 // Period types used across charts
 export type ChartPeriodOverview = "DAY" | "WEEK" | "MONTH";
 export type ChartPeriodPosition = "1W" | "1M" | "1Y" | "ALL";
-export type ChartPeriodPool = "1W" | "1M" | "All";
+export type ChartPeriodPool = "1D" | "1W" | "1M" | "All";
 
 /**
  * Get period duration in milliseconds
@@ -25,6 +25,7 @@ function getPeriodMs(period: ChartPeriodOverview | ChartPeriodPosition | ChartPe
 
   switch (period) {
     case "DAY":
+    case "1D":
       return MS_PER_DAY;
     case "WEEK":
     case "1W":
@@ -134,6 +135,7 @@ export function generateTicksForPeriod(
 ): number[] {
   switch (period) {
     case "DAY":
+    case "1D":
       // For 1 day, show ~6 ticks (every 4 hours)
       return generateTimeTicks(from, to, 7);
     case "WEEK":
@@ -172,6 +174,7 @@ export function formatTickForPeriod(
 
   switch (period) {
     case "DAY":
+    case "1D":
       // Show hours for 1 day view
       return date.toLocaleTimeString("en-US", {
         hour: "numeric",

@@ -94,6 +94,7 @@ export interface PoolDetailProps {
 
   // Chart data
   chartData: ChartDataPoint[];
+  feeEvents: import("../../hooks/usePoolChartData").FeeEvent[];
   isLoadingChartData: boolean;
 
   // Positions (discriminated union of V4 and Unified Yield)
@@ -124,6 +125,9 @@ export interface PoolDetailProps {
 
   // USD calculations (handles both V4 and Unified Yield positions)
   calculatePositionUsd: (position: Position) => number;
+
+  // LVR data (Volatile pools, from WebSocket)
+  lvrSavedUsd?: number | null;
 }
 
 /**
@@ -136,6 +140,7 @@ export const PoolDetail = memo(function PoolDetail({
   poolStats,
   poolState,
   chartData,
+  feeEvents,
   isLoadingChartData,
   userPositions,
   isLoadingPositions,
@@ -147,6 +152,7 @@ export const PoolDetail = memo(function PoolDetail({
   windowWidth,
   convertTickToPrice,
   calculatePositionUsd,
+  lvrSavedUsd,
 }: PoolDetailProps) {
   const router = useRouter();
 
@@ -167,18 +173,18 @@ export const PoolDetail = memo(function PoolDetail({
     staleTime: 5 * 60_000, // 5 minutes
   });
 
-  // Calculate lending yield APR (with pool-level factor applied)
+  // Calculate lending yield APR — only for pools with yield sources
   const aaveApr = useMemo(() => {
-    if (!poolConfig) return undefined;
+    if (!poolConfig?.yieldSources?.length) return undefined;
     const token0 = poolConfig.tokens[0]?.symbol;
     const token1 = poolConfig.tokens[1]?.symbol;
     if (!token0 || !token1) return undefined;
     return getLendingAprForPair(aaveRatesData, token0, token1) ?? undefined;
   }, [poolConfig, aaveRatesData]);
 
-  // Per-source lending APR breakdown (e.g. { aave: 3.2, spark: 5.1 })
+  // Per-source lending APR breakdown — only for pools with yield sources
   const aprBySource = useMemo(() => {
-    if (!poolConfig) return undefined;
+    if (!poolConfig?.yieldSources?.length) return undefined;
     const token0 = poolConfig.tokens[0]?.symbol;
     const token1 = poolConfig.tokens[1]?.symbol;
     if (!token0 || !token1) return undefined;
@@ -263,10 +269,11 @@ export const PoolDetail = memo(function PoolDetail({
   const handleAddLiquidity = useCallback(() => {
     // Navigate to the new wizard flow with pool pre-selected
     // This skips Token Selection and LP Option steps (pool already known)
-    if (poolConfig?.id) {
-      router.push(`/liquidity/add?pool=${poolConfig.id}&mode=rehypo&from=pool`);
+    if (poolConfig?.slug) {
+      const mode = poolConfig.yieldSources?.length ? 'rehypo' : 'concentrated';
+      router.push(`/liquidity/add?pool=${poolConfig.slug}&mode=${mode}&from=pool`);
     }
-  }, [poolConfig?.id, router]);
+  }, [poolConfig?.slug, router]);
 
   const handlePositionClick = useCallback((position: Position) => {
     const chainParam = networkMode ? `&chain=${CHAIN_REGISTRY[networkMode].backendNetwork}` : '';
@@ -315,16 +322,18 @@ export const PoolDetail = memo(function PoolDetail({
           {/* Chart — Dynamic Fee, Yield, Volume, TVL */}
           <ChartSection
             chartData={chartData}
+            feeEvents={feeEvents}
             isLoading={isLoadingChartData}
             windowWidth={windowWidth}
             chartType={chartType}
             onChartTypeChange={setChartType}
-            poolId={poolConfig?.subgraphId}
+            poolId={poolConfig?.poolId}
             token0Symbol={poolConfig?.tokens[0]?.symbol}
             token1Symbol={poolConfig?.tokens[1]?.symbol}
             yieldSources={poolConfig?.yieldSources}
             currentSwapApr={poolStats.swapApyRaw}
             networkMode={networkMode}
+            poolType={poolConfig?.type}
           />
 
           {/* Positions — desktop: inline in left column, mobile: also here (before sidebar) */}
@@ -358,6 +367,7 @@ export const PoolDetail = memo(function PoolDetail({
               tvlToken0Usd={poolStats.tvlToken0Usd}
               tvlToken1Usd={poolStats.tvlToken1Usd}
               networkMode={networkMode ?? 'base'}
+              lvrSavedUsd={lvrSavedUsd}
             />
           </div>
         </div>

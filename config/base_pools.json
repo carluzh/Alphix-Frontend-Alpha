@@ -37,13 +37,21 @@
       "decimals": 18,
       "icon": "/tokens/USDS.png",
       "color": "#F5AC37"
+    },
+    "cbBTC": {
+      "symbol": "cbBTC",
+      "name": "Coinbase Wrapped BTC",
+      "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+      "decimals": 8,
+      "icon": "/tokens/cbBTC.svg",
+      "color": "#0052FF"
     }
   },
   "pools": [
     {
-      "id": "usds-usdc",
+      "slug": "usds-usdc",
       "name": "USDS/USDC",
-      "subgraphId": "0xaf9168a5026bd5e398863dc1d0a0513fe21417792f9df4889571fd68d2d8cd71",
+      "poolId": "0xaf9168a5026bd5e398863dc1d0a0513fe21417792f9df4889571fd68d2d8cd71",
       "currency0": {
         "symbol": "USDS",
         "address": "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc"
@@ -66,9 +74,9 @@
       }
     },
     {
-      "id": "eth-usdc",
+      "slug": "eth-usdc",
       "name": "ETH/USDC",
-      "subgraphId": "0x71c06960eee8003ebf3f869caa480d7032c7088850d951f04de5b46d86ada017",
+      "poolId": "0xebb666a5c6449b83536950b975d74deb32aca1537a501b58161a896816b04da6",
       "currency0": {
         "symbol": "ETH",
         "address": "0x0000000000000000000000000000000000000000"
@@ -79,16 +87,29 @@
       },
       "fee": 8388608,
       "tickSpacing": 60,
-      "hooks": "0x831CfDf7c0E194f5369f204b3DD2481B843d60c0",
+      "hooks": "0x7cBbfF9C4fcd74B221C535F4fB4B1Db04F1B9044",
       "enabled": true,
       "featured": true,
-      "type": "Volatile",
-      "yieldSources": ["aave"],
-      "rehypoRange": {
-        "min": "-887220",
-        "max": "887220",
-        "isFullRange": true
-      }
+      "type": "Volatile"
+    },
+    {
+      "slug": "eth-cbbtc",
+      "name": "ETH/cbBTC",
+      "poolId": "0x3860784278e9e481ffd0888430ab2af8f2bb1180069f31cde9e1066728bbe73b",
+      "currency0": {
+        "symbol": "ETH",
+        "address": "0x0000000000000000000000000000000000000000"
+      },
+      "currency1": {
+        "symbol": "cbBTC",
+        "address": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"
+      },
+      "fee": 8388608,
+      "tickSpacing": 60,
+      "hooks": "0x7cBbfF9C4fcd74B221C535F4fB4B1Db04F1B9044",
+      "enabled": true,
+      "featured": true,
+      "type": "Volatile"
     }
   ]
 }

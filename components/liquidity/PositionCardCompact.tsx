@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import Image from "next/image";
 import { TokenStack } from "./TokenStack";
-import { getPoolById, type NetworkMode } from '@/lib/pools-config';
+import { getPoolBySlug, type NetworkMode } from '@/lib/pools-config';
 import { isFullRangePosition } from '@/lib/liquidity/hooks/range';
 import { usePriceOrdering, useGetRangeDisplay, type PositionInfo } from '@/lib/uniswap/liquidity';
 import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
@@ -123,8 +123,10 @@ export function PositionCardCompact({
     });
 
     const unifiedYieldApr = useMemo(() => {
+        const poolConfig = getPoolBySlug(position.poolId, networkMode);
+        if (!poolConfig?.yieldSources?.length) return undefined;
         return getLendingAprForPair(aaveRatesData, token0Symbol, token1Symbol) ?? undefined;
-    }, [aaveRatesData, token0Symbol, token1Symbol]);
+    }, [aaveRatesData, token0Symbol, token1Symbol, position.poolId, networkMode]);
 
     // Get USD values for fees using Uniswap's routing-based pricing
     // This fixes the bug where tokens not in priceMap returned $0
@@ -188,7 +190,7 @@ export function PositionCardCompact({
     // Get tickSpacing from position or pool config
     const tickSpacing = useMemo(() => {
         if (position.tickSpacing) return position.tickSpacing;
-        const poolConfig = getPoolById(position.poolId, networkMode);
+        const poolConfig = getPoolBySlug(position.poolId, networkMode);
         return poolConfig?.tickSpacing;
     }, [position.poolId, position.tickSpacing, networkMode]);
 
@@ -330,7 +332,9 @@ export function PositionCardCompact({
                         </div>
                     )}
                     <div className="flex flex-col justify-center gap-0.5">
-                        <div className="text-sm font-normal whitespace-nowrap">{token0Symbol} / {token1Symbol}</div>
+                        <div className="flex items-center gap-1.5 text-sm font-normal whitespace-nowrap">
+                            {token0Symbol} / {token1Symbol}
+                        </div>
                         <div className="flex items-center gap-2">
                             <div className={cn("flex items-center gap-1.5 text-xs", statusColor)}>
                                 <StatusIndicatorCircle className={statusColor} />

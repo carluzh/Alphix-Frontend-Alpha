@@ -43,6 +43,8 @@ export interface PositionInfo {
   token0: string;
   token1: string;
   fee: number;
+  tickSpacing: number;
+  hooks: string;
   tickLower: number;
   tickUpper: number;
   liquidity: bigint;
@@ -251,15 +253,22 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
       ) || null;
     }
 
-    // For V4 positions, find pool by token addresses across all chains
+    // For V4 positions, match by full pool key (tokens + fee + tickSpacing + hooks)
+    // This correctly disambiguates pools with the same token pair but different hooks
     if (!positionInfo) return null;
+
+    const matchesTokens = (pool: PoolConfig) =>
+      (pool.currency0.address.toLowerCase() === positionInfo.token0.toLowerCase() &&
+        pool.currency1.address.toLowerCase() === positionInfo.token1.toLowerCase()) ||
+      (pool.currency0.address.toLowerCase() === positionInfo.token1.toLowerCase() &&
+        pool.currency1.address.toLowerCase() === positionInfo.token0.toLowerCase());
 
     return allChainPools.find(
       (pool) =>
-        (pool.currency0.address.toLowerCase() === positionInfo.token0.toLowerCase() &&
-          pool.currency1.address.toLowerCase() === positionInfo.token1.toLowerCase()) ||
-        (pool.currency0.address.toLowerCase() === positionInfo.token1.toLowerCase() &&
-          pool.currency1.address.toLowerCase() === positionInfo.token0.toLowerCase())
+        matchesTokens(pool) &&
+        pool.fee === positionInfo.fee &&
+        pool.tickSpacing === positionInfo.tickSpacing &&
+        pool.hooks?.toLowerCase() === positionInfo.hooks?.toLowerCase()
     ) || null;
   }, [positionInfo, isUnifiedYieldPosition, unifiedYieldParsed]);
 
@@ -291,9 +300,9 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
 
   // Fetch pool state
   const { data: poolState, isLoading: isLoadingPool } = useQuery({
-    queryKey: ["poolState", poolConfig?.id, networkMode],
-    queryFn: () => fetchPoolState(poolConfig?.id || "", networkMode),
-    enabled: !!poolConfig?.id,
+    queryKey: ["poolState", poolConfig?.slug, networkMode],
+    queryFn: () => fetchPoolState(poolConfig?.slug || "", networkMode),
+    enabled: !!poolConfig?.slug,
     staleTime: 30_000,
   });
 
@@ -543,9 +552,9 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
 
   // Fetch pool APR from backend (fallback for pool-wide APR)
   const { data: poolStatsData } = useQuery({
-    queryKey: ["poolStats", poolConfig?.subgraphId, networkMode],
+    queryKey: ["poolStats", poolConfig?.poolId, networkMode],
     queryFn: async () => {
-      const poolId = poolConfig?.subgraphId || "";
+      const poolId = poolConfig?.poolId || "";
       // Fetch all pools and filter (backend only has /pools/metrics, not /pools/{id}/metrics)
       const response = await fetchPoolsMetrics(networkMode);
       if (!response.success || !response.pools) return null;
@@ -554,7 +563,7 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
       // Use swap-only APY — lending is added separately via aaveApr
       return { apr: pool.swapApy ?? 0 };
     },
-    enabled: !!poolConfig?.subgraphId,
+    enabled: !!poolConfig?.poolId,
     staleTime: 60_000, // Cache for 1 minute
   });
 
@@ -576,24 +585,25 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
     return poolStatsData?.apr ?? null;
   }, [backendAprData, poolStatsData]);
 
-  // Fetch Aave APY for rehypo positions
+  // Fetch Aave APY for rehypo positions with yield sources
+  const hasYieldSources = !!(poolConfig?.yieldSources?.length);
   const { data: aaveRatesData } = useQuery({
     queryKey: ["aaveRates", networkMode],
     queryFn: () => fetchAaveRates(networkMode),
-    enabled: lpType === "rehypo",
+    enabled: lpType === "rehypo" && hasYieldSources,
     staleTime: 5 * 60_000, // 5 minutes - matches backend cache
   });
 
   // Calculate lending yield APR (with pool-level factor applied)
   const aaveApr = useMemo(() => {
-    if (lpType !== "rehypo" || !poolConfig) return null;
+    if (lpType !== "rehypo" || !hasYieldSources || !poolConfig) return null;
     return getLendingAprForPair(aaveRatesData, poolConfig.currency0.symbol, poolConfig.currency1.symbol);
-  }, [lpType, aaveRatesData, poolConfig]);
+  }, [lpType, hasYieldSources, aaveRatesData, poolConfig]);
 
   const aprBySource = useMemo(() => {
-    if (lpType !== "rehypo" || !poolConfig) return undefined;
+    if (lpType !== "rehypo" || !hasYieldSources || !poolConfig) return undefined;
     return getLendingAprBySource(aaveRatesData, poolConfig.currency0.symbol, poolConfig.currency1.symbol);
-  }, [lpType, aaveRatesData, poolConfig]);
+  }, [lpType, hasYieldSources, aaveRatesData, poolConfig]);
 
   const totalApr = useMemo(() => {
     if (poolApr === null) return null;
@@ -603,7 +613,7 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
   // Chart data
   const { entries: chartData, loading: isLoadingChart } = usePoolPriceChartData({
     variables: {
-      poolId: poolConfig?.subgraphId,
+      poolId: poolConfig?.poolId,
       duration: DURATION_MAP[chartDuration],
     },
     priceInverted,

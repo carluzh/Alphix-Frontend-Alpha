@@ -97,11 +97,13 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
             </h1>
 
             {/* Pool Type Badge - Below title */}
-            {poolConfig.type && (
-              <span className="w-fit px-2 py-0.5 text-xs font-medium rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">
-                {poolConfig.type}
-              </span>
-            )}
+            <div className="flex items-center gap-1.5">
+              {poolConfig.type && (
+                <span className="w-fit px-2 py-0.5 text-xs font-medium rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">
+                  {poolConfig.type}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -110,7 +112,7 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
           asChild
           className="hidden sm:flex h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
         >
-          <Link href={`/liquidity/add?pool=${poolConfig.id}&from=pool`}>
+          <Link href={`/liquidity/add?pool=${poolConfig.slug}&from=pool`}>
             <Plus className="h-4 w-4" strokeWidth={2.5} />
             New position
           </Link>

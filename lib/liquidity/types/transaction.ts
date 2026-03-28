@@ -61,6 +61,7 @@ export enum LiquidityTransactionType {
  */
 export interface CreateLPPositionRequestArgs {
   userAddress: string;
+  poolId: string;
   token0Symbol: string;
   token1Symbol: string;
   inputAmount: string;

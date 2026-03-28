@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils';
 import { formatAprPercent } from '@/lib/format';
 import { FeeStat, FeeStatLoader } from './FeeStat';
 import { PointsTooltip, TooltipSize } from '../PointsCampaign/PointsTooltip';
-import { APRBreakdownTooltip } from '../APRBreakdownTooltip';
+import { APYBreakdownTooltip as APRBreakdownTooltip } from '../APYBreakdownTooltip';
 import type { APRFeeStatProps } from './types';
 
 /**

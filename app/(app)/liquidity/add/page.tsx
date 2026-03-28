@@ -15,7 +15,7 @@ import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 
 import { AddLiquidityWizard, type WizardEntryConfig, WizardStep } from '@/components/liquidity/wizard';
-import { getPoolByIdMultiChain } from '@/lib/pools-config';
+import { getPoolBySlugMultiChain } from '@/lib/pools-config';
 
 // Loading fallback
 function PageLoading() {
@@ -44,23 +44,20 @@ function AddLiquidityPageContent() {
     // Note: We do NOT skip to step 2 - users should always see the strategy selection
     // to choose between Unified Yield and Custom Range
     if (poolId) {
-      const pool = getPoolByIdMultiChain(poolId);
+      const pool = getPoolBySlugMultiChain(poolId);
       if (pool) {
+        const defaultMode = pool.yieldSources?.length ? 'rehypo' : 'concentrated';
         return {
           poolId,
           token0Symbol: pool.currency0.symbol,
           token1Symbol: pool.currency1.symbol,
-          mode: mode || 'rehypo',
-          // Pool is pre-selected but user still sees step 1 to choose LP strategy
+          mode: mode === 'rehypo' && !pool.yieldSources?.length ? 'concentrated' : (mode || defaultMode),
         };
       }
     }
 
-    // If mode is specified but no pool
     if (mode) {
-      return {
-        mode,
-      };
+      return { mode };
     }
 
     // Default: start from beginning

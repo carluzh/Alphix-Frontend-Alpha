@@ -14,7 +14,7 @@
 
 import type { UnifiedYieldPosition } from './types';
 import type { ProcessedPosition } from '@/pages/api/liquidity/get-positions';
-import { getPoolById, type NetworkMode } from '@/lib/pools-config';
+import { getPoolBySlug, type NetworkMode } from '@/lib/pools-config';
 import { TickMath } from '@uniswap/v3-sdk';
 
 /**
@@ -41,7 +41,7 @@ export function adaptUnifiedYieldToProcessedPosition(
   uyPosition: UnifiedYieldPosition,
   networkMode: NetworkMode
 ): UnifiedYieldProcessedPosition {
-  const poolConfig = getPoolById(uyPosition.poolId, networkMode);
+  const poolConfig = getPoolBySlug(uyPosition.poolId, networkMode);
 
   // For Unified Yield, we use full range ticks
   // TickMath.MIN_TICK and TickMath.MAX_TICK represent full range

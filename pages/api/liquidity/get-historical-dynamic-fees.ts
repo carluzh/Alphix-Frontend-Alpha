@@ -29,9 +29,13 @@ export default async function handler(
     // Use CacheService for Redis-backed caching with stale-while-revalidate
     const result = await cacheService.cachedApiCall<HookEvent[]>(
       cacheKey,
-      { fresh: 6 * 60 * 60, stale: 24 * 60 * 60 }, // 6h fresh, 24h stale
+      { fresh: 30 * 60, stale: 2 * 60 * 60 }, // 30min fresh, 2h stale
       () => fetchFeeEvents(poolId, networkMode),
-      { skipCache: shouldBypassCache }
+      {
+        skipCache: shouldBypassCache,
+        // Don't cache thin results — they indicate a transient backend issue
+        shouldCache: (data) => Array.isArray(data) && data.length >= 3,
+      }
     );
 
     // Set cache headers

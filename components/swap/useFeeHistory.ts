@@ -51,11 +51,11 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
     if (!isMounted) return null
     if (!isConnected) {
       const fallback = getPoolByTokens("atUSDC", "atDAI", networkMode)
-      return fallback ? `${fallback.subgraphId}_fallback_${networkMode || 'base'}` : null
+      return fallback ? `${fallback.poolId}_fallback_${networkMode || 'base'}` : null
     }
     if (!currentRoute) return null
     const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1)
-    const poolIdForHistory = currentRoute.pools[poolIndex]?.subgraphId
+    const poolIdForHistory = currentRoute.pools[poolIndex]?.poolId
     return poolIdForHistory ? `${poolIdForHistory}_${selectedPoolIndexForChart}_${networkMode || 'base'}` : null
   }, [isMounted, isConnected, currentRoute, selectedPoolIndexForChart, networkMode])
 
@@ -69,13 +69,13 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
       let poolIdForFeeHistory: string | undefined
       if (currentRoute) {
         const poolIndex = Math.min(selectedPoolIndexForChart, currentRoute.pools.length - 1)
-        poolIdForFeeHistory = currentRoute.pools[poolIndex]?.subgraphId
+        poolIdForFeeHistory = currentRoute.pools[poolIndex]?.poolId
       } else {
         const fallback = getPoolByTokens("atUSDC", "atDAI", networkMode)
-        poolIdForFeeHistory = fallback?.subgraphId
+        poolIdForFeeHistory = fallback?.poolId
       }
 
-      const cacheKey = `feeHistory_${poolIdForFeeHistory}_${networkMode || 'base'}_30days`
+      const cacheKey = `feeHistory_${poolIdForFeeHistory}_${networkMode || 'base'}_100pts`
 
       try {
         const cachedItem = sessionStorage.getItem(cacheKey)
@@ -104,7 +104,7 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
 
       try {
         const networkParam = networkMode ? `&network=${networkMode}` : ''
-        const response = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${poolIdForFeeHistory}&days=30${networkParam}`)
+        const response = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${poolIdForFeeHistory}${networkParam}`)
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}))
           throw new Error(errorData.error || `Failed to fetch historical fee data: ${response.statusText}`)
@@ -113,9 +113,6 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
 
         if (rawEvents && rawEvents.length > 0) {
           // Transform raw HookEvent[] → FeeHistoryPoint[]
-          const nowSec = Math.floor(Date.now() / 1000)
-          const thirtyDaysAgoSec = nowSec - 30 * 24 * 60 * 60
-
           const scaleRatio = (val: any): number => {
             const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0)
             if (!Number.isFinite(n)) return 0
@@ -132,7 +129,6 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
               ratio: e?.currentRatio,
               ema: e?.newTargetRatio,
             }))
-            .filter((e: any) => e.ts >= thirtyDaysAgoSec)
             .sort((a: any, b: any) => a.ts - b.ts)
             .map((e: any) => ({
               timeLabel: new Date(e.ts * 1000).toISOString().split('T')[0],
@@ -141,7 +137,7 @@ export function useFeeHistory({ isMounted, isConnected, currentRoute, selectedPo
               dynamicFee: (Number.isFinite(e.feeBps) ? e.feeBps : 0) / 10000,
             }))
 
-          if (points.length > 30) points = points.slice(-30)
+          if (points.length > 100) points = points.slice(-100)
 
           try {
             sessionStorage.setItem(cacheKey, JSON.stringify({ data: points, timestamp: Date.now() }))

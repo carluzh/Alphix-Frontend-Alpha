@@ -26,7 +26,7 @@ import { useCreatePositionTxContext } from '../CreatePositionTxContext';
 import { Container } from '../shared/Container';
 import { RangePreset } from '../types';
 import Image from 'next/image';
-import { getPoolById, getTokenDefinitions, TokenSymbol } from '@/lib/pools-config';
+import { getPoolBySlug, getTokenDefinitions, TokenSymbol } from '@/lib/pools-config';
 import { chainIdForMode } from '@/lib/network-mode';
 import { CHAIN_REGISTRY } from '@/lib/chain-registry';
 import { getDecimalsForDenomination } from '@/lib/denomination-utils';
@@ -52,7 +52,7 @@ import {
 import { D3LiquidityRangeChart, LiquidityChartSkeleton, CHART_DIMENSIONS } from '@/components/liquidity/d3-chart';
 import { HistoryDuration, usePoolPriceChartData } from '@/lib/chart';
 import { useLiquidityChartData } from '@/hooks/useLiquidityChartData';
-import { getPoolSubgraphId } from '@/lib/pools-config';
+import { getPoolId } from '@/lib/pools-config';
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 import { isZapEligiblePool } from '@/lib/liquidity/zap';
 
@@ -378,7 +378,7 @@ export function RangeAndAmountsStep() {
   }, [sdkPool, state.tickLower, state.tickUpper]);
 
   // Pool and token data - now uses context (Uniswap pattern)
-  const poolConfig = state.poolId ? getPoolById(state.poolId, networkMode) : null;
+  const poolConfig = state.poolId ? getPoolBySlug(state.poolId, networkMode) : null;
   const isStablePool = poolConfig?.type === 'Stable';
   const isRehypoMode = state.mode === 'rehypo';
 
@@ -490,7 +490,7 @@ export function RangeAndAmountsStep() {
     };
   }, [isRehypoMode, hasValidRehypoTicks, rehypoMinPriceFormatted, rehypoMaxPriceFormatted]);
 
-  const subgraphPoolId = state.poolId ? (getPoolSubgraphId(state.poolId, networkMode) || state.poolId) : undefined;
+  const subgraphPoolId = state.poolId ? (getPoolId(state.poolId, networkMode) || state.poolId) : undefined;
 
   // Fetch pre-transformed data for chart (handles inversion)
   // Pass SDK tokens for proper decimal handling in tick-to-price conversion

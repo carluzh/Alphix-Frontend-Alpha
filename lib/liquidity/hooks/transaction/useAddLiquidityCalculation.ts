@@ -38,6 +38,7 @@ export interface CalculationInput {
 }
 
 export interface UseAddLiquidityCalculationParams {
+  poolId?: string;
   token0Symbol: TokenSymbol;
   token1Symbol: TokenSymbol;
   chainId?: number;
@@ -76,7 +77,7 @@ export interface UseAddLiquidityCalculationResult {
 export function useAddLiquidityCalculation(
   params: UseAddLiquidityCalculationParams
 ): UseAddLiquidityCalculationResult {
-  const { token0Symbol, token1Symbol, chainId, networkMode } = params;
+  const { poolId, token0Symbol, token1Symbol, chainId, networkMode } = params;
 
   const [calculatedData, setCalculatedData] = useState<CalculatedLiquidityData | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -172,6 +173,7 @@ export function useAddLiquidityCalculation(
           // Use liquidity math for in-range positions
           const { calculateLiquidityParameters } = await import('@/lib/liquidity/liquidity-math');
           result = await calculateLiquidityParameters({
+            poolId,
             token0Symbol,
             token1Symbol,
             inputAmount: primaryAmount,

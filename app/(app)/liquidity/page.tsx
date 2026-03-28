@@ -16,11 +16,11 @@ import { ColumnDef, RowData, Row } from "@tanstack/react-table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefetchOnHover } from "@/hooks/usePrefetchOnHover";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
-import { getMultiChainEnabledPools, getToken, getPoolSubgraphId, resolveTokenIcon, type NetworkMode } from "@/lib/pools-config";
+import { getMultiChainEnabledPools, getToken, getPoolId, resolveTokenIcon, type NetworkMode } from "@/lib/pools-config";
 import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 import { Pool } from "@/types";
 import { prefetchService } from "@/lib/prefetch-service";
-import { APRBadge } from "@/components/liquidity/APRBadge";
+import { APYBadge } from "@/components/liquidity/APRBadge";
 import { useWSPools } from "@/lib/websocket";
 import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
@@ -80,23 +80,21 @@ const generatePoolsFromConfig = (): Pool[] => {
     const token1 = getToken(poolConfig.currency1.symbol, poolConfig.networkMode);
 
     if (!token0 || !token1) {
-      console.warn(`Missing token configuration for pool ${poolConfig.id}`);
+      console.warn(`Missing token configuration for pool ${poolConfig.slug}`);
       return null;
     }
 
     return {
-      id: poolConfig.id,
+      slug: poolConfig.slug,
       tokens: [
         { symbol: token0.symbol, icon: resolveTokenIcon(token0.symbol) },
         { symbol: token1.symbol, icon: resolveTokenIcon(token1.symbol) }
       ],
-      pair: `${token0.symbol} / ${token1.symbol}`,
-      volume24h: "Loading...",
-      fees24h: "Loading...",
-      liquidity: "Loading...",
+      pair: poolConfig.name,
       apr: "Loading...",
-      highlighted: poolConfig.featured,
       type: poolConfig.type,
+      hooks: poolConfig.hooks,
+      yieldSources: poolConfig.yieldSources,
       networkMode: poolConfig.networkMode,
     } as Pool;
   }).filter(Boolean) as Pool[];
@@ -145,13 +143,15 @@ export default function LiquidityPage() {
   // Merge pool config with WebSocket metrics
   const poolsData = useMemo(() => {
     return poolConfigs.map(poolConfig => {
-      const subgraphId = (getPoolSubgraphId(poolConfig.id, poolConfig.networkMode) || poolConfig.id).toLowerCase();
-      const wsPool = wsPoolsMap.get(subgraphId);
+      const poolId = (getPoolId(poolConfig.slug, poolConfig.networkMode) || poolConfig.slug).toLowerCase();
+      const wsPool = wsPoolsMap.get(poolId);
 
       if (wsPool) {
         // Use frontend-fetched Aave rates (raw, no backend yield factor)
         const aaveRates = poolConfig.networkMode === 'arbitrum' ? aaveRatesArbitrum : aaveRatesBase;
-        const lendingApy = getLendingAprForPair(aaveRates, poolConfig.tokens[0].symbol, poolConfig.tokens[1].symbol) ?? undefined;
+        const lendingApy = poolConfig.yieldSources?.length
+          ? (getLendingAprForPair(aaveRates, poolConfig.tokens[0].symbol, poolConfig.tokens[1].symbol) ?? undefined)
+          : undefined;
 
         // Format APY string using swap + frontend lending
         const swapApy = wsPool.swapApy ?? 0;
@@ -241,7 +241,7 @@ export default function LiquidityPage() {
       })
       .map(pool => ({
         ...pool,
-        link: `/liquidity/${pool.id}?chain=${CHAIN_REGISTRY[pool.networkMode ?? 'base'].backendNetwork}`,
+        link: `/liquidity/${pool.slug}?chain=${CHAIN_REGISTRY[pool.networkMode ?? 'base'].backendNetwork}`,
       }));
 
     const getSortValue = (pool: any): number => {
@@ -379,7 +379,7 @@ export default function LiquidityPage() {
 
           return (
             <Cell justifyContent="flex-end">
-              <APRBadge
+              <APYBadge
                 breakdown={{ poolApy: (pool as any).swapApy, lendingApy: (pool as any).lendingApy }}
                 token0Symbol={tokens[0]?.symbol}
                 token1Symbol={tokens[1]?.symbol}
@@ -417,7 +417,7 @@ export default function LiquidityPage() {
   // Prefetch wrapper for pool rows - prefetches data on hover with stagger animation
   const poolRowWrapper = useCallback(
     (row: Row<Pool & { link: string }>, content: React.ReactNode) => {
-      const poolId = row.original?.id;
+      const poolId = row.original?.slug;
       if (!poolId) return content;
 
       return (

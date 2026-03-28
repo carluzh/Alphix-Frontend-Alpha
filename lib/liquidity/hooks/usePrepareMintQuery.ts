@@ -22,6 +22,7 @@ import type { MintTxApiResponse } from '@/lib/liquidity/transaction/context/buil
 
 export interface PrepareMintQueryParams {
   userAddress: Address | undefined;
+  poolId: string | undefined;
   token0Symbol: TokenSymbol | undefined;
   token1Symbol: TokenSymbol | undefined;
   inputAmount: string | undefined;
@@ -71,6 +72,7 @@ export function usePrepareMintQuery(
 ): PrepareMintQueryResult {
   const {
     userAddress,
+    poolId,
     token0Symbol,
     token1Symbol,
     inputAmount,
@@ -105,6 +107,7 @@ export function usePrepareMintQuery(
     queryKey: [
       'prepareMint',
       userAddress,
+      poolId,
       token0Symbol,
       token1Symbol,
       inputAmount,
@@ -120,6 +123,7 @@ export function usePrepareMintQuery(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userAddress,
+          poolId,
           token0Symbol,
           token1Symbol,
           inputAmount,

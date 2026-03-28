@@ -11,8 +11,6 @@ export interface APYBreakdown {
   lendingApy?: number;
 }
 
-/** @deprecated Use APYBreakdown */
-export type APRBreakdown = APYBreakdown;
 
 interface APYBadgeProps {
   apy?: number;
@@ -83,5 +81,3 @@ export function APYBadge({ apy, isLoading, className, breakdown, token0Symbol, t
   );
 }
 
-/** @deprecated Use APYBadge */
-export const APRBadge = APYBadge;

@@ -26,7 +26,7 @@ import { clearCachedPermit } from '@/lib/permit-types';
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useCreatePositionTxContext } from './CreatePositionTxContext';
 import dynamic from 'next/dynamic';
-import { getPoolById, getAllTokens, getToken, resolveTokenIcon, type TokenSymbol } from '@/lib/pools-config';
+import { getPoolBySlug, getAllTokens, getToken, resolveTokenIcon, type TokenSymbol } from '@/lib/pools-config';
 import { PositionStatus } from '@/lib/uniswap/liquidity/pool-types';
 
 const PositionRangeChart = dynamic(() => import('@/components/liquidity/PositionRangeChart/PositionRangeChart').then(mod => mod.PositionRangeChart), { ssr: false });
@@ -97,7 +97,7 @@ export function ReviewExecuteModal() {
   } = useCreatePositionTxContext();
 
   // Pool and token info
-  const pool = state.poolId ? getPoolById(state.poolId, networkMode) : null;
+  const pool = state.poolId ? getPoolBySlug(state.poolId, networkMode) : null;
   const tokens = getAllTokens(networkMode);
   const token0Config = pool ? tokens[pool.currency0.symbol] : null;
   const token1Config = pool ? tokens[pool.currency1.symbol] : null;
@@ -374,7 +374,7 @@ export function ReviewExecuteModal() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userAddress: address, token0Symbol, token1Symbol,
+        userAddress: address, poolId: state.poolId, token0Symbol, token1Symbol,
         inputAmount, inputTokenSymbol,
         userTickLower: tl, userTickUpper: tu,
         chainId, slippageBps, deadlineMinutes,
@@ -422,7 +422,7 @@ export function ReviewExecuteModal() {
       approveToken0Request: v4Approvals.token0,
       approveToken1Request: v4Approvals.token1,
       createPositionRequestArgs: {
-        userAddress: address, token0Symbol, token1Symbol,
+        userAddress: address, poolId: state.poolId!, token0Symbol, token1Symbol,
         inputAmount, inputTokenSymbol,
         userTickLower: tl, userTickUpper: tu,
         chainId, slippageBps, deadlineMinutes,
@@ -435,7 +435,7 @@ export function ReviewExecuteModal() {
   } catch (err) {
     Sentry.captureException(err, {
       tags: { component: 'ReviewExecuteModal', operation: isZapMode ? 'zapTransaction' : 'transaction' },
-      extra: { poolId: pool?.id, userAddress: address, chainId, isZapMode, isUnifiedYield },
+      extra: { poolId: pool?.slug, userAddress: address, chainId, isZapMode, isUnifiedYield },
     });
     throw err;
   }
@@ -523,10 +523,10 @@ export function ReviewExecuteModal() {
       </div>
 
       {/* Chart */}
-      {pool.subgraphId && (
+      {pool.poolId && (
         <div className="mt-4">
           <PositionRangeChart
-            poolId={pool.subgraphId}
+            poolId={pool.poolId}
             token0={pool.currency0.symbol}
             token1={pool.currency1.symbol}
             priceInverted={false}

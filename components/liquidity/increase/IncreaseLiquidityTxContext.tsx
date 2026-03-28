@@ -17,7 +17,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import { useAccount, useBalance } from "wagmi";
 import { parseUnits, type Address } from "viem";
 import * as Sentry from "@sentry/nextjs";
-import { getTokenDefinitions, getPoolById, type TokenSymbol } from "@/lib/pools-config";
+import { getTokenDefinitions, getPoolBySlug, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import { useDerivedIncreaseInfo } from "@/lib/liquidity/hooks";
@@ -127,11 +127,11 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
 
   // Get pool config for Unified Yield (hook address)
   const poolConfig = useMemo(() => {
-    return position.poolId ? getPoolById(position.poolId, networkMode) : null;
+    return position.poolId ? getPoolBySlug(position.poolId, networkMode) : null;
   }, [position.poolId, networkMode]);
 
   // Pool state for slippage protection (sqrtPriceX96)
-  const { data: poolStateData } = usePoolState(poolConfig?.subgraphId ?? '', networkMode);
+  const { data: poolStateData } = usePoolState(poolConfig?.poolId ?? '', networkMode);
 
   // Unified Yield deposit hook - only active for ReHypothecation positions
   const unifiedYieldDeposit = useUnifiedYieldDeposit({

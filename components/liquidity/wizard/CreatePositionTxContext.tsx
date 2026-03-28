@@ -30,7 +30,7 @@ import { formatUnits, parseUnits } from 'viem';
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useAddLiquidityCalculation, type CalculatedLiquidityData } from '@/lib/liquidity/hooks/transaction/useAddLiquidityCalculation';
 import { usePrepareMintQuery, useGasFeeEstimate } from '@/lib/liquidity';
-import { getToken, getPoolById, TokenSymbol } from '@/lib/pools-config';
+import { getToken, getPoolBySlug, TokenSymbol } from '@/lib/pools-config';
 import { useTokenPrices } from '@/hooks/useTokenPrices';
 import { useUserSlippageTolerance } from '@/hooks/useSlippage';
 import type { Address } from 'viem';
@@ -158,8 +158,6 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     depositMode, // zap or balanced
   } = state;
 
-  // Determine if this is Unified Yield mode
-  const isUnifiedYield = mode === 'rehypo';
 
   // State for Unified Yield deposit preview
   const [depositPreview, setDepositPreview] = useState<DepositPreviewResult | null>(null);
@@ -174,7 +172,9 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     () => createNetworkClient(effectiveNetworkMode),
     [effectiveNetworkMode]
   );
-  const poolConfig = poolId ? getPoolById(poolId, effectiveNetworkMode) : null;
+  const poolConfig = poolId ? getPoolBySlug(poolId, effectiveNetworkMode) : null;
+  // Unified Yield requires rehypo mode AND pool with yield sources
+  const isUnifiedYield = mode === 'rehypo' && !!poolConfig?.yieldSources?.length;
   const token0Symbol = (poolConfig?.currency0.symbol || stateToken0Symbol) as TokenSymbol | undefined;
   const token1Symbol = (poolConfig?.currency1.symbol || stateToken1Symbol) as TokenSymbol | undefined;
 
@@ -215,6 +215,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     dependentField,
     reset: resetCalculation,
   } = useAddLiquidityCalculation({
+    poolId: poolId || undefined,
     token0Symbol: token0Symbol || 'atUSDC' as TokenSymbol,
     token1Symbol: token1Symbol || 'atDAI' as TokenSymbol,
     chainId,
@@ -471,6 +472,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   const { gasLimit: preparedGasLimit } = usePrepareMintQuery(
     {
       userAddress: accountAddress as Address | undefined,
+      poolId: poolId || undefined,
       token0Symbol,
       token1Symbol,
       inputAmount: primaryAmount || undefined,

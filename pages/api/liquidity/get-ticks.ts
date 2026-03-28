@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-import { getPoolSubgraphId } from '../../../lib/pools-config'
+import { getPoolId, getPoolBySlugMultiChain } from '../../../lib/pools-config'
 import { resolveNetworkMode, type NetworkMode } from '../../../lib/network-mode'
-import { getAlphixSubgraphUrl } from '../../../lib/subgraph-url-helper'
+import { getSubgraphUrlForPool, getAlphixSubgraphUrl } from '../../../lib/subgraph-url-helper'
 import { cacheService } from '@/lib/cache/CacheService'
 import { poolKeys } from '@/lib/cache/redis-keys'
 import { CHAIN_REGISTRY } from '@/lib/chain-registry'
@@ -74,7 +74,12 @@ async function fetchUniswapGatewayTicks(poolId: string, networkMode: NetworkMode
  * Fetch tick data from subgraph.
  */
 async function fetchSubgraphTicks(poolId: string, limit: number, networkMode: NetworkMode): Promise<TickRow[] | null> {
-  const subgraphUrl = getAlphixSubgraphUrl(networkMode)
+  // Route to the correct subgraph for this pool
+  const poolConfig = getPoolBySlugMultiChain(poolId)
+  const subgraphUrl = poolConfig
+    ? getSubgraphUrlForPool(poolConfig, networkMode)
+    : getAlphixSubgraphUrl(networkMode)
+
   const query = `
     query GetTicks($pool: Bytes!, $first: Int!) {
       ticks(
@@ -140,7 +145,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const limit = Math.min(Number(first) || 500, 1000)
-    const apiId = getPoolSubgraphId(poolId, networkMode) || poolId
+    const apiId = getPoolId(poolId, networkMode) || poolId
 
     // Use CacheService for tick data with stale-while-revalidate
     const result = await cacheService.cachedApiCall(

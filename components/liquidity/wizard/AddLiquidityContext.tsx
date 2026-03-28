@@ -23,7 +23,7 @@ import {
   DEFAULT_WIZARD_STATE,
 } from './types';
 import { usePoolState } from '@/lib/apollo/hooks/usePoolState';
-import { getPoolById, getPoolByIdMultiChain, getChainId, type NetworkMode } from '@/lib/pools-config';
+import { getPoolBySlug, getPoolBySlugMultiChain, getChainId, type NetworkMode } from '@/lib/pools-config';
 import { useDerivedPositionInfo } from '@/lib/liquidity/hooks/position/useDerivedPositionInfo';
 import type { CreatePositionInfo } from '@/lib/liquidity/types';
 import { isZapEligiblePool } from '@/lib/liquidity/zap';
@@ -185,6 +185,10 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
 
     const initialPoolId = urlPool || entryConfig?.poolId || null;
 
+    // Default mode: rehypo if pool has yield sources, concentrated otherwise
+    const poolConfig = initialPoolId ? (getPoolBySlugMultiChain(initialPoolId) ?? getPoolBySlug(initialPoolId)) : null;
+    const defaultMode: LPMode = poolConfig?.yieldSources?.length ? 'rehypo' : 'concentrated';
+
     // Default to balanced (dual token) mode; user can switch to zap (single token) via toggle
     const depositModeForPool = { depositMode: 'balanced' as const, zapInputToken: null };
 
@@ -194,7 +198,8 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
       poolId: initialPoolId,
       token0Symbol: urlT0 || entryConfig?.token0Symbol || null,
       token1Symbol: urlT1 || entryConfig?.token1Symbol || null,
-      mode: urlMode || entryConfig?.mode || 'rehypo',
+      mode: (urlMode === 'rehypo' && !poolConfig?.yieldSources?.length) ? 'concentrated'
+        : (urlMode || entryConfig?.mode || defaultMode),
       ...depositModeForPool,
     };
   }, [searchParams, entryConfig]);
@@ -206,22 +211,22 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
 
   // Derived values
   const currentStep = state.currentStep;
-  const poolId = state.poolId;
+  const poolSlug = state.poolId;
   const ticks: [number | null, number | null] = [state.tickLower, state.tickUpper];
 
-  // Get pool config to find subgraphId — use multi-chain lookup so Arbitrum pools
+  // Get pool config — use multi-chain lookup so Arbitrum pools
   // are found regardless of the user's current network context
   const poolConfigWithNetwork = useMemo(() => {
-    if (!poolId) return null;
-    return getPoolByIdMultiChain(poolId);
-  }, [poolId]);
+    if (!poolSlug) return null;
+    return getPoolBySlugMultiChain(poolSlug);
+  }, [poolSlug]);
 
   const poolConfig = poolConfigWithNetwork;
   const poolNetworkMode: NetworkMode | undefined = poolConfigWithNetwork?.networkMode;
-  const subgraphId = poolConfig?.subgraphId || '';
+  const poolId = poolConfig?.poolId || '';
 
   // Fetch pool state when pool is selected (Uniswap pattern: useDerivedPositionInfo internally fetches)
-  const { data: poolStateRaw, loading: poolStateLoading, refetch: refetchPoolState } = usePoolState(subgraphId, poolNetworkMode);
+  const { data: poolStateRaw, loading: poolStateLoading, refetch: refetchPoolState } = usePoolState(poolId, poolNetworkMode);
 
   // Transform pool state to match our interface
   const poolStateData = useMemo(() => {
@@ -327,9 +332,14 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   }, []);
 
   const setPoolIdFn = useCallback((newPoolId: string | null) => {
+    // Reset mode based on pool's yield sources
+    const newPoolConfig = newPoolId ? (getPoolBySlugMultiChain(newPoolId) ?? getPoolBySlug(newPoolId)) : null;
+    const defaultMode: LPMode = newPoolConfig?.yieldSources?.length ? 'rehypo' : 'concentrated';
+
     setState(prev => ({
       ...prev,
       poolId: newPoolId,
+      mode: defaultMode,
       // Set deposit mode based on zap eligibility:
       // - USDS/USDC: default to zap mode (Single Token)
       // - Other pools: use balanced mode (Dual Deposit)

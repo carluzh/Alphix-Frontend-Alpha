@@ -11,18 +11,39 @@ export interface ChartDataPoint {
   volumeTvlRatio: number;
   emaRatio: number;
   dynamicFee: number;
+  volatility?: number;
+  agentAdjustment?: number;
+}
+
+/** Raw fee event from the API — per-event granularity */
+export interface FeeEvent {
+  timestamp: string;
+  newFeeBps?: string;
+  currentRatio?: string;
+  newTargetRatio?: string;
+  volatility?: number;
+  agentAdjustment?: number;
 }
 
 interface UsePoolChartDataOptions {
+  poolSlug: string;
   poolId: string;
-  subgraphId: string;
   networkMode: string;
   windowWidth: number;
   currentFeeBps?: number | null;
+  /** Volatile pools always re-fetch fee events (no caching) */
+  isVolatilePool?: boolean;
+  /** Latest volatility from WebSocket pools:metrics */
+  currentVolatility?: number | null;
+  /** Latest agent adjustment from WebSocket pools:metrics */
+  currentAgentAdjustment?: number | null;
 }
 
 interface UsePoolChartDataReturn {
+  /** Daily-bucketed chart data (Volume/TVL/Fee for standard pools, Volume/TVL for all) */
   chartData: ChartDataPoint[];
+  /** Raw fee events — per-event granularity for pools with dynamic fees */
+  feeEvents: FeeEvent[];
   isLoadingChartData: boolean;
   fetchChartData: (force?: boolean) => Promise<void>;
   updateTodayTvl: (tvl: number) => void;
@@ -99,13 +120,17 @@ const scaleRatio = (val: unknown): number => {
 };
 
 export function usePoolChartData({
+  poolSlug,
   poolId,
-  subgraphId,
   networkMode,
   windowWidth,
   currentFeeBps,
+  isVolatilePool = false,
+  currentVolatility,
+  currentAgentAdjustment,
 }: UsePoolChartDataOptions): UsePoolChartDataReturn {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
+  const [feeEvents, setFeeEvents] = useState<FeeEvent[]>([]);
   const [isLoadingChartData, setIsLoadingChartData] = useState(false);
 
   const hasFetchedForPoolRef = useRef<string | null>(null);
@@ -115,10 +140,11 @@ export function usePoolChartData({
   useEffect(() => { currentFeeBpsRef.current = currentFeeBps; }, [currentFeeBps]);
 
   const fetchChartData = useCallback(async (force?: boolean) => {
-    if (!poolId || !subgraphId) return;
+    if (!poolSlug || !poolId) return;
 
-    const poolKey = `${poolId}-${subgraphId}-${networkMode}`;
-    if (hasFetchedForPoolRef.current === poolKey && !force) return;
+    const poolKey = `${poolSlug}-${poolId}-${networkMode}`;
+    // Volatile pools always refetch (no caching) to get latest fee events
+    if (hasFetchedForPoolRef.current === poolKey && !force && !isVolatilePool) return;
 
     hasFetchedForPoolRef.current = poolKey;
     setIsLoadingChartData(true);
@@ -135,7 +161,7 @@ export function usePoolChartData({
           data?: any[];
           feeEvents?: any[];
         }>(
-          `/api/liquidity/pool-chart-data?poolId=${encodeURIComponent(poolId)}&days=60&network=${networkMode}`,
+          `/api/liquidity/pool-chart-data?poolId=${encodeURIComponent(poolSlug)}&days=60&network=${networkMode}`,
           {
             attempts: 2,
             baseDelay: 300,
@@ -146,18 +172,31 @@ export function usePoolChartData({
 
         const rawData = chartResult.data!;
         if (!rawData.success) throw new Error(rawData.message || 'Failed to fetch chart data');
-        if (!Array.isArray(rawData.data) || rawData.data.length === 0) throw new Error('No chart data available');
 
-        const dayData = rawData.data;
-        const feeEvents = Array.isArray(rawData.feeEvents) ? rawData.feeEvents : [];
+        const dayData = Array.isArray(rawData.data) ? rawData.data : [];
+        const rawFeeEvents = Array.isArray(rawData.feeEvents) ? rawData.feeEvents : [];
 
+        // Require minimum data quality — don't display/cache thin results
+        if (dayData.length === 0 && rawFeeEvents.length < 3) throw new Error('Insufficient chart data');
+
+        // Store raw fee events for per-event rendering
+        setFeeEvents(rawFeeEvents.map((e: any) => ({
+          timestamp: String(e?.timestamp ?? ''),
+          newFeeBps: String(e?.newFeeBps ?? e?.newFeeRateBps ?? '0'),
+          currentRatio: e?.currentRatio != null ? String(e.currentRatio) : undefined,
+          newTargetRatio: e?.newTargetRatio != null ? String(e.newTargetRatio) : undefined,
+          volatility: e?.volatility != null ? Number(e.volatility) : undefined,
+          agentAdjustment: e?.agentAdjustment != null ? Number(e.agentAdjustment) : undefined,
+        })));
+
+        // Build daily-bucketed chart data (used by all chart tabs)
         const dataByDate = new Map<string, { tvlUSD: number; volumeUSD: number }>();
         for (const d of dayData) {
           dataByDate.set(d.date, { tvlUSD: d.tvlUSD || 0, volumeUSD: d.volumeUSD || 0 });
         }
 
         const feeByDate = new Map<string, { ratio: number; ema: number; feePct: number }>();
-        const evAsc = [...feeEvents].sort((a, b) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
+        const evAsc = [...rawFeeEvents].sort((a: any, b: any) => Number(a?.timestamp || 0) - Number(b?.timestamp || 0));
 
         const allDates = Array.from(new Set([
           ...dayData.map((d: { date: string }) => d.date),
@@ -212,21 +251,12 @@ export function usePoolChartData({
       }
     }
 
+    // All retries exhausted — don't inject a single-point fallback from live fee,
+    // as it would display misleading chart data. Leave chart empty so the UI shows
+    // a proper empty/error state, and clear the fetch ref so next navigation retries.
     hasFetchedForPoolRef.current = null;
     const errorMessage = lastError instanceof Error ? lastError.message : String(lastError);
     console.error('[usePoolChartData] All retries exhausted:', errorMessage);
-
-    const liveFee = currentFeeBpsRef.current;
-    if (liveFee && Number.isFinite(liveFee)) {
-      setChartData([{
-        date: new Date().toISOString().split('T')[0],
-        volumeUSD: 0,
-        tvlUSD: 0,
-        volumeTvlRatio: 0,
-        emaRatio: 0,
-        dynamicFee: liveFee / 10000,
-      }]);
-    }
 
     toast.error('Chart data failed', {
       description: errorMessage,
@@ -237,7 +267,7 @@ export function usePoolChartData({
     });
     setIsLoadingChartData(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poolId, subgraphId, networkMode]);
+  }, [poolSlug, poolId, networkMode]);
 
   const updateTodayTvl = useCallback((tvl: number) => {
     if (!Number.isFinite(tvl)) return;
@@ -278,5 +308,27 @@ export function usePoolChartData({
     }
   }, [windowWidth]);
 
-  return { chartData, isLoadingChartData, fetchChartData, updateTodayTvl };
+  // Volatile pools: append live fee events from WebSocket pools:metrics push
+  useEffect(() => {
+    if (!isVolatilePool || !currentFeeBps || !Number.isFinite(currentFeeBps)) return;
+    const nowTs = String(Math.floor(Date.now() / 1000));
+    setFeeEvents(prev => {
+      if (!prev.length) return prev;
+      const last = prev[prev.length - 1];
+      // Skip if fee and volatility haven't changed
+      if (last && String(currentFeeBps) === last.newFeeBps
+        && (currentVolatility ?? undefined) === last.volatility
+        && (currentAgentAdjustment ?? undefined) === last.agentAdjustment) return prev;
+      return [...prev, {
+        timestamp: nowTs,
+        newFeeBps: String(currentFeeBps),
+        currentRatio: undefined,
+        newTargetRatio: undefined,
+        volatility: currentVolatility ?? undefined,
+        agentAdjustment: currentAgentAdjustment ?? undefined,
+      }];
+    });
+  }, [isVolatilePool, currentFeeBps, currentVolatility, currentAgentAdjustment]);
+
+  return { chartData, feeEvents, isLoadingChartData, fetchChartData, updateTodayTvl };
 }

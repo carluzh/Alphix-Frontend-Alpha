@@ -10,13 +10,13 @@ import { Button } from '@/components/ui/button';
 import { useAddLiquidityContext } from '../AddLiquidityContext';
 import { Container } from '../shared/Container';
 import { LPMode } from '../types';
-import { getMultiChainEnabledPools, getPoolById, getPoolByIdMultiChain, getPoolSubgraphId, type PoolConfig } from '@/lib/pools-config';
+import { getMultiChainEnabledPools, getPoolBySlug, getPoolBySlugMultiChain, getPoolId, type PoolConfig } from '@/lib/pools-config';
 
 import { fetchPoolsMetrics } from '@/lib/backend-client';
 import { CHAIN_REGISTRY, ALL_MODES } from '@/lib/chain-registry';
 import type { NetworkMode } from '@/lib/network-mode';
 import { TokenStack } from '@/components/liquidity/TokenStack';
-import { APRBadge } from '@/components/liquidity/APRBadge';
+import { APYBadge } from '@/components/liquidity/APRBadge';
 import { useAccount } from 'wagmi';
 import { useQuery } from '@tanstack/react-query';
 import { fetchAaveRates, getLendingAprForPair } from '@/lib/aave-rates';
@@ -73,10 +73,10 @@ function PoolCard({ pool, selected, onSelect, apr, lendingApr, aprLoading }: {
       )}
     >
       <TokenStack position={{ token0: { symbol: pool.currency0.symbol }, token1: { symbol: pool.currency1.symbol } }} />
-      <span className="flex-1 text-sm font-medium">
-        {pool.currency0.symbol} / {pool.currency1.symbol}
-      </span>
-      <APRBadge
+      <div className="flex-1 flex items-center gap-2 min-w-0">
+        <span className="text-sm font-medium truncate">{pool.name}</span>
+      </div>
+      <APYBadge
         breakdown={{ poolApy: apr, lendingApy: lendingApr }}
         token0Symbol={pool.currency0.symbol}
         token1Symbol={pool.currency1.symbol}
@@ -107,7 +107,7 @@ function SparkPattern() {
 
 function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { selected: boolean; onSelect: () => void; extraApr?: number; yieldSources?: Array<'aave' | 'spark'> }) {
   const hasSpark = yieldSources?.includes('spark');
-  const hasAave = yieldSources?.includes('aave') ?? true; // Default to Aave if not specified
+  const hasAave = yieldSources?.includes('aave') ?? false;
   const hasBoth = hasAave && hasSpark;
 
   // Border gradient - always Aave purple (loops seamlessly)
@@ -283,6 +283,11 @@ function CustomRangeModeCard({ selected, onSelect }: { selected: boolean; onSele
 }
 
 function LPModeSection({ mode, onSelectMode, extraAaveApr, yieldSources }: { mode: LPMode; onSelectMode: (mode: LPMode) => void; extraAaveApr?: number; yieldSources?: Array<'aave' | 'spark'> }) {
+  const hasYieldSources = !!(yieldSources && yieldSources.length > 0);
+
+  // No yield sources → only Custom Range, no mode selection needed
+  if (!hasYieldSources) return null;
+
   return (
     <div className="flex flex-col gap-4 pt-4 border-t border-sidebar-border/40">
       <div className="flex flex-col gap-1">
@@ -305,7 +310,7 @@ export function PoolAndModeStep() {
 
   // Get pools from ALL chains for display
   const pools = useMemo(() => getMultiChainEnabledPools(), []);
-  const selectedPool = state.poolId ? getPoolByIdMultiChain(state.poolId) : null;
+  const selectedPool = state.poolId ? getPoolBySlugMultiChain(state.poolId) : null;
 
   // Group pools by chain for display
   const poolsByChain = useMemo(() => {
@@ -333,12 +338,12 @@ export function PoolAndModeStep() {
         for (const result of results) {
           if (result.status !== 'fulfilled' || !result.value.success) continue;
           for (const pool of pools) {
-            // Use pool's networkMode to find the correct subgraphId
-            const apiPoolId = getPoolSubgraphId(pool.id, pool.networkMode) || pool.id;
+            // Use pool's networkMode to find the correct poolId
+            const apiPoolId = getPoolId(pool.slug, pool.networkMode) || pool.slug;
             const poolData = result.value.pools.find((p) => p.poolId.toLowerCase() === apiPoolId.toLowerCase());
             if (poolData) {
               const apr = poolData.swapApy ?? 0;
-              aprs[pool.id] = apr;
+              aprs[pool.slug] = apr;
             }
           }
         }
@@ -353,7 +358,7 @@ export function PoolAndModeStep() {
   }, [pools]);
 
   const handleSelectPool = useCallback((pool: PoolConfig) => {
-    setPoolId(pool.id);
+    setPoolId(pool.slug);
     setTokens(pool.currency0.symbol, pool.currency1.symbol);
   }, [setPoolId, setTokens]);
 
@@ -380,15 +385,16 @@ export function PoolAndModeStep() {
     if (!aaveRatesByChain) return {};
     const aprs: Record<string, number> = {};
     pools.forEach(pool => {
+      if (!pool.yieldSources?.length) return;
       const chainRates = aaveRatesByChain[pool.networkMode || 'base'];
       const apr = getLendingAprForPair(chainRates, pool.currency0.symbol, pool.currency1.symbol);
-      if (apr !== null) aprs[pool.id] = apr;
+      if (apr !== null) aprs[pool.slug] = apr;
     });
     return aprs;
   }, [pools, aaveRatesByChain]);
 
   // Get Aave APR for the selected pool (for the strategy section)
-  const extraAaveApr = selectedPool ? poolAaveAprs[selectedPool.id] : undefined;
+  const extraAaveApr = selectedPool ? poolAaveAprs[selectedPool.slug] : undefined;
 
   return (
     <Container>
@@ -422,12 +428,12 @@ export function PoolAndModeStep() {
                 </div>
                 {chainPools.map(pool => (
                   <PoolCard
-                    key={pool.id}
+                    key={pool.slug}
                     pool={pool}
-                    selected={state.poolId === pool.id}
+                    selected={state.poolId === pool.slug}
                     onSelect={() => handleSelectPool(pool)}
-                    apr={poolAprs[pool.id]}
-                    lendingApr={poolAaveAprs[pool.id]}
+                    apr={poolAprs[pool.slug]}
+                    lendingApr={poolAaveAprs[pool.slug]}
                     aprLoading={aprsLoading}
                   />
                 ))}

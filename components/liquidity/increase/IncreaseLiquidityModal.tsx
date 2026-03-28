@@ -27,7 +27,7 @@ import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { chainIdForMode } from "@/lib/network-mode";
 import { clearCachedPermit } from "@/lib/permit-types";
 import { useChainMismatch } from "@/hooks/useChainMismatch";
-import { getPoolById, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
+import { getPoolBySlug, getTokenDefinitions, type TokenSymbol } from "@/lib/pools-config";
 import { getStoredUserSettings } from "@/hooks/useUserSettings";
 import { formatCalculatedAmount, getTokenIcon } from "../liquidity-form-utils";
 import { DepositInputForm, type PositionField } from "../shared/DepositInputForm";
@@ -263,7 +263,7 @@ function IncreaseLiquidityInner({
         preview = freshResult.data;
       }
 
-      const poolConfig = getPoolById(position.poolId, networkMode);
+      const poolConfig = getPoolBySlug(position.poolId, networkMode);
       if (!poolConfig?.hooks) throw new Error('Pool hook address not found');
 
       const inputToken = preview.inputTokenInfo.symbol as ZapToken;
@@ -448,7 +448,7 @@ function IncreaseLiquidityInner({
                 </span>
               </div>
               {position.poolId && (() => {
-                const poolConfig = getPoolById(position.poolId, networkMode);
+                const poolConfig = getPoolBySlug(position.poolId, networkMode);
                 const isUY = poolConfig?.rehypoRange !== undefined;
                 return isUY ? (
                   <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: "rgba(152, 150, 255, 0.10)", color: "#9896FF" }}>

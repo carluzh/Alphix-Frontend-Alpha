@@ -156,8 +156,8 @@ export interface SwapTxInfo {
   toSymbol: string;
   explorerUrl: string;
   // Optional: list of pools touched by the executed route (single or multi-hop)
-  // Each entry should include the friendly route id (poolId) and its subgraphId if available
-  touchedPools?: Array<{ poolId: string; subgraphId?: string }>;
+  // Pools touched by the executed route (slug + on-chain poolId hash)
+  touchedPools?: Array<{ slug: string; poolId?: string }>;
 }
 
 // FeeDetail type comes from the trade model hook
@@ -1018,7 +1018,54 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
               <div className="w-full relative group overflow-x-hidden overflow-y-visible sm:overflow-visible">
                 <div className="absolute inset-y-0 left-0 right-0 sm:left-[-2.75rem] sm:right-[-2.75rem]"></div>
                 <div className="relative touch-pan-y" onTouchStart={handlePreviewTouchStart} onTouchEnd={handlePreviewTouchEnd}>
-                  {/* Route preview — always shown when available */}
+                  {/* Fee chart — shown above the route for Alphix pools */}
+                  <AnimatePresence mode="wait">
+                    {showChartPreview && (
+                      <motion.div
+                        key={`dynamic-fee-preview-${feeChartPoolIndex}`}
+                        className="w-full relative"
+                        initial={{ opacity: 0, height: 'auto', marginTop: '12px' }}
+                        animate={{ opacity: 1, height: 'auto', marginTop: '12px' }}
+                        exit={{ opacity: 0, height: 0, marginTop: '0px' }}
+                        transition={{ duration: 0.15, ease: "easeInOut" }}
+                        onAnimationComplete={() => { setCombinedRect(getContainerRect()); }}
+                      >
+                        <DynamicFeeChartPreview
+                          data={isFeeHistoryLoading ? [] : feeHistoryData}
+                          poolInfo={poolInfo || fallbackPoolInfo}
+                          isLoading={isFeeHistoryLoading}
+                          alwaysShowSkeleton={false}
+                        />
+                        {/* Multi-hop chevrons for navigating between fee charts */}
+                        {totalFeeChartSegments > 1 && (
+                          <>
+                            {selectedPoolIndexForChart > 0 && (
+                              <button
+                                type="button"
+                                aria-label="Previous pool fee chart"
+                                onClick={handlePreviousPool}
+                                className="absolute left-0 sm:left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
+                              >
+                                <ChevronLeftIcon className="h-4 w-4" />
+                              </button>
+                            )}
+                            {selectedPoolIndexForChart < totalFeeChartSegments - 1 && (
+                              <button
+                                type="button"
+                                aria-label="Next pool fee chart"
+                                onClick={handleNextPool}
+                                className="absolute right-0 sm:right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
+                              >
+                                <ChevronRightIcon className="h-4 w-4" />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Route preview — shown below the fee chart */}
                   <AnimatePresence mode="wait">
                     {showRoutePreview ? (
                       <motion.div
@@ -1055,53 +1102,6 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
                           data={[]}
                           alwaysShowSkeleton={true}
                         />
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  {/* Fee chart — shown underneath the route for Alphix pools */}
-                  <AnimatePresence mode="wait">
-                    {showChartPreview && (
-                      <motion.div
-                        key={`dynamic-fee-preview-${feeChartPoolIndex}`}
-                        className="w-full relative"
-                        initial={{ opacity: 0, height: 'auto', marginTop: '12px' }}
-                        animate={{ opacity: 1, height: 'auto', marginTop: '12px' }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.15, ease: "easeInOut" }}
-                        onAnimationComplete={() => { setCombinedRect(getContainerRect()); }}
-                      >
-                        <DynamicFeeChartPreview
-                          data={isFeeHistoryLoading ? [] : feeHistoryData}
-                          poolInfo={poolInfo || fallbackPoolInfo}
-                          isLoading={isFeeHistoryLoading}
-                          alwaysShowSkeleton={false}
-                        />
-                        {/* Multi-hop chevrons for navigating between fee charts */}
-                        {totalFeeChartSegments > 1 && (
-                          <>
-                            {selectedPoolIndexForChart > 0 && (
-                              <button
-                                type="button"
-                                aria-label="Previous pool fee chart"
-                                onClick={handlePreviousPool}
-                                className="absolute left-0 sm:left-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
-                              >
-                                <ChevronLeftIcon className="h-4 w-4" />
-                              </button>
-                            )}
-                            {selectedPoolIndexForChart < totalFeeChartSegments - 1 && (
-                              <button
-                                type="button"
-                                aria-label="Next pool fee chart"
-                                onClick={handleNextPool}
-                                className="absolute right-0 sm:right-[-2.5rem] top-1/2 -translate-y-1/2 h-8 w-8 flex items-center justify-center text-muted-foreground hover:text-white opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto transition-opacity duration-150"
-                              >
-                                <ChevronRightIcon className="h-4 w-4" />
-                              </button>
-                            )}
-                          </>
-                        )}
                       </motion.div>
                     )}
                   </AnimatePresence>

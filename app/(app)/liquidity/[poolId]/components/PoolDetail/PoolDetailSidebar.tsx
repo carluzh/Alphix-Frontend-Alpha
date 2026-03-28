@@ -6,6 +6,7 @@ import { cn, shortenAddress, getTokenIcon, getTokenColor } from "@/lib/utils";
 import { IconClone2, IconCheck, IconPlus, IconMinus } from "nucleo-micro-bold-essential";
 import { PointsIcon } from "@/components/PointsIcons/PointsIcon";
 import type { PoolConfig } from "../../hooks";
+import { isVolatilePool } from "@/lib/liquidity/utils/pool-type-guards";
 
 /** Local number formatter matching the position detail formatNumber API */
 function formatNumber(
@@ -323,10 +324,31 @@ function ContractsSection({ poolConfig }: { poolConfig: PoolConfig }) {
         {token1 && (
           <CopyableRow label={token1.symbol} value={token1.address} />
         )}
-        {poolConfig.hooks && (
+        {poolConfig.hooks && poolConfig.yieldSources && poolConfig.yieldSources.length > 0 && (
           <CopyableRow label="Lending Vault" value={poolConfig.hooks} />
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── LVR Saved Card ──────────────────────────────────────────────────────────
+
+function LvrSavedCard({ lvrSavedUsd }: { lvrSavedUsd?: number }) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 surface-depth p-3">
+      <Image src="/landing/feature-icons/dynamic.png" alt="Dynamic Fee" width={18} height={18} style={{ filter: 'invert(31%) sepia(96%) saturate(2648%) hue-rotate(16deg) brightness(96%) contrast(97%)' }} />
+      <span className="text-sm text-muted-foreground flex-1">
+        LVR Saved
+      </span>
+      <span
+        className="px-2.5 py-0.5 rounded-md text-xs font-semibold font-mono"
+        style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#4ade80' }}
+      >
+        {lvrSavedUsd != null && lvrSavedUsd > 0
+          ? `$${formatNumber(lvrSavedUsd, { min: 2, max: 2 })}`
+          : '-'}
+      </span>
     </div>
   );
 }
@@ -377,7 +399,7 @@ function FAQItem({
   );
 }
 
-const poolFaqItems: { question: string; answer: React.ReactNode }[] = [
+const stableFaqItems: { question: string; answer: React.ReactNode }[] = [
   {
     question: "What does a Pool do?",
     answer:
@@ -400,13 +422,37 @@ const poolFaqItems: { question: string; answer: React.ReactNode }[] = [
   },
 ];
 
-function PoolFAQSection() {
+const volatileFaqItems: { question: string; answer: React.ReactNode }[] = [
+  {
+    question: "What does a Pool do?",
+    answer:
+      "A pool holds two tokens and allows traders to swap between them. When you deposit, you earn a share of the trading fees proportional to your liquidity.",
+  },
+  {
+    question: "Where does yield come from?",
+    answer:
+      "Yield comes from a single source: swap fees paid by traders using the pool. The pool automatically optimizes the fee to ensure you as an LP are rewarded fairly in accordance to the risk you take on by providing liquidity.",
+  },
+  {
+    question: "How do dynamic fees work?",
+    answer:
+      "Our dynamic fee algorithm continuously adjusts fees based on realized price volatility and market conditions. When volatility is high, LPs face greater adverse selection risk — so fees increase to compensate. When markets are calm, fees decrease to attract volume. An AI agent layer further refines these adjustments in real-time.",
+  },
+  {
+    question: "What are the risks?",
+    answer:
+      "All DeFi protocols carry inherent risks, including impermanent loss, smart contract risk, and market risk. Dynamic fees are designed to offset impermanent loss through LVR recapture, but cannot eliminate it entirely. At Alphix, security is non-negotiable — we maintain the highest standards of safety through rigorous audits and continuous monitoring.",
+  },
+];
+
+function PoolFAQSection({ isVolatile }: { isVolatile?: boolean }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const items = isVolatile ? volatileFaqItems : stableFaqItems;
 
   return (
     <div className="flex flex-col gap-1">
       <h3 className="text-base font-semibold text-foreground mb-1">FAQ</h3>
-      {poolFaqItems.map((item, i) => (
+      {items.map((item, i) => (
         <FAQItem
           key={i}
           question={item.question}
@@ -430,7 +476,7 @@ interface PoolDetailSidebarProps {
   tvlToken0Usd?: number;
   tvlToken1Usd?: number;
   networkMode: NetworkMode;
-  yieldSources?: Array<'aave' | 'spark'>;
+  lvrSavedUsd?: number | null;
 }
 
 /**
@@ -447,9 +493,10 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
   tvlToken0Usd,
   tvlToken1Usd,
   networkMode,
-  yieldSources,
+  lvrSavedUsd,
 }: PoolDetailSidebarProps) {
-  const effectiveYieldSources = yieldSources ?? poolConfig.yieldSources ?? ['aave'];
+  const yieldSources = poolConfig.yieldSources ?? [];
+  const isVolatile = isVolatilePool(poolConfig as any);
 
   return (
     <div className="flex flex-col gap-6">
@@ -459,8 +506,11 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
           Pool Details
         </h3>
         <div className="flex flex-col gap-3">
+          {/* LVR Saved card (Volatile pools only) */}
+          {isVolatile && <LvrSavedCard lvrSavedUsd={lvrSavedUsd ?? undefined} />}
+
           {/* Earning on sources */}
-          {effectiveYieldSources.map((source) => (
+          {yieldSources.map((source) => (
             <EarningOnCard
               key={source}
               source={source}
@@ -479,7 +529,7 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
       </div>
 
       {/* FAQ */}
-      <PoolFAQSection />
+      <PoolFAQSection isVolatile={isVolatile} />
     </div>
   );
 });
