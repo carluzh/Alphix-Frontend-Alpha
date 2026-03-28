@@ -23,8 +23,8 @@ import {
 import { invalidateAfterTx } from "@/lib/apollo/mutations";
 
 interface UsePoolPositionsOptions {
+  poolSlug: string;
   poolId: string;
-  subgraphId: string;
   /** Pool's networkMode — positions must be fetched from the correct chain */
   networkModeOverride?: NetworkMode;
 }
@@ -60,8 +60,8 @@ interface MutationInfo {
 }
 
 export function usePoolPositions({
+  poolSlug,
   poolId,
-  subgraphId,
   networkModeOverride,
 }: UsePoolPositionsOptions): UsePoolPositionsReturn {
   const { address: accountAddress, isConnected } = useAccount();
@@ -78,9 +78,9 @@ export function usePoolPositions({
 
   // Filter positions to this pool (works for both V4 and Unified Yield)
   const filterPositionsForPool = useCallback((positions: Position[]) => {
-    const subgraphIdLc = (subgraphId || '').toLowerCase();
-    return positions.filter(pos => String(pos.poolId || '').toLowerCase() === subgraphIdLc);
-  }, [subgraphId]);
+    const poolIdLc = (poolId || '').toLowerCase();
+    return positions.filter(pos => String(pos.poolId || '').toLowerCase() === poolIdLc);
+  }, [poolId]);
 
   // Fetch all positions (V4 from on-chain, UY from Hook contracts)
   const fetchAllPositions = useCallback(async (ids: string[]): Promise<Position[]> => {

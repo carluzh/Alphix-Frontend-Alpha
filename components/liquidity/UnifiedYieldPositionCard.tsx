@@ -16,7 +16,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { TokenStack } from "./TokenStack";
-import { getPoolById, getToken, type NetworkMode } from '@/lib/pools-config';
+import { getPoolBySlug, getToken, type NetworkMode } from '@/lib/pools-config';
 import { chainIdForMode } from '@/lib/network-mode';
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
@@ -81,7 +81,7 @@ export function UnifiedYieldPositionCard({
 
     // Get pool config
     const poolConfig = useMemo(() => {
-        return getPoolById(position.poolId, networkMode);
+        return getPoolBySlug(position.poolId, networkMode);
     }, [position.poolId, networkMode]);
 
     // Get token configs for decimals
@@ -258,7 +258,7 @@ export function UnifiedYieldPositionCard({
                 {/* Yield chart - mobile */}
                 <div className="flex lg:hidden w-[140px] sm:w-[160px] h-10 sm:h-12 ml-auto cursor-pointer flex-shrink-0">
                     <PositionYieldChart
-                        poolId={poolConfig?.id || position.poolId}
+                        poolId={poolConfig?.slug || position.poolId}
                         token0Symbol={token0Symbol}
                         token1Symbol={token1Symbol}
                         yieldSources={poolConfig?.yieldSources}
@@ -270,7 +270,7 @@ export function UnifiedYieldPositionCard({
                 {/* Yield chart - desktop */}
                 <div className="hidden lg:flex flex-1 max-w-[280px] h-12 ml-auto cursor-pointer">
                     <PositionYieldChart
-                        poolId={poolConfig?.id || position.poolId}
+                        poolId={poolConfig?.slug || position.poolId}
                         token0Symbol={token0Symbol}
                         token1Symbol={token1Symbol}
                         yieldSources={poolConfig?.yieldSources}

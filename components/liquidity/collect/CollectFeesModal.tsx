@@ -18,7 +18,7 @@ import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 import { Token } from "@uniswap/sdk-core";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
-import { getToken, getPoolById } from "@/lib/pools-config";
+import { getToken, getPoolBySlug } from "@/lib/pools-config";
 import { chainIdForMode } from "@/lib/network-mode";
 
 import { TransactionModal } from "@/components/transactions";
@@ -72,7 +72,7 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
   const hasFees = fee0 > 0 || fee1 > 0;
 
   // Pool type
-  const poolConfig = position.poolId ? getPoolById(position.poolId, networkMode) : null;
+  const poolConfig = position.poolId ? getPoolBySlug(position.poolId, networkMode) : null;
   const isUnifiedYield = poolConfig?.rehypoRange !== undefined;
 
   // Flow definition

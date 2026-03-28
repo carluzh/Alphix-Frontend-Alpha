@@ -254,7 +254,7 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
     }
 
     // For V4 positions, match by full pool key (tokens + fee + tickSpacing + hooks)
-    // This correctly disambiguates pools with the same token pair but different hooks (e.g. ETH/USDC V1 vs V2)
+    // This correctly disambiguates pools with the same token pair but different hooks
     if (!positionInfo) return null;
 
     const matchesTokens = (pool: PoolConfig) =>
@@ -300,9 +300,9 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
 
   // Fetch pool state
   const { data: poolState, isLoading: isLoadingPool } = useQuery({
-    queryKey: ["poolState", poolConfig?.id, networkMode],
-    queryFn: () => fetchPoolState(poolConfig?.id || "", networkMode),
-    enabled: !!poolConfig?.id,
+    queryKey: ["poolState", poolConfig?.slug, networkMode],
+    queryFn: () => fetchPoolState(poolConfig?.slug || "", networkMode),
+    enabled: !!poolConfig?.slug,
     staleTime: 30_000,
   });
 
@@ -552,9 +552,9 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
 
   // Fetch pool APR from backend (fallback for pool-wide APR)
   const { data: poolStatsData } = useQuery({
-    queryKey: ["poolStats", poolConfig?.subgraphId, networkMode],
+    queryKey: ["poolStats", poolConfig?.poolId, networkMode],
     queryFn: async () => {
-      const poolId = poolConfig?.subgraphId || "";
+      const poolId = poolConfig?.poolId || "";
       // Fetch all pools and filter (backend only has /pools/metrics, not /pools/{id}/metrics)
       const response = await fetchPoolsMetrics(networkMode);
       if (!response.success || !response.pools) return null;
@@ -563,7 +563,7 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
       // Use swap-only APY — lending is added separately via aaveApr
       return { apr: pool.swapApy ?? 0 };
     },
-    enabled: !!poolConfig?.subgraphId,
+    enabled: !!poolConfig?.poolId,
     staleTime: 60_000, // Cache for 1 minute
   });
 
@@ -613,7 +613,7 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
   // Chart data
   const { entries: chartData, loading: isLoadingChart } = usePoolPriceChartData({
     variables: {
-      poolId: poolConfig?.subgraphId,
+      poolId: poolConfig?.poolId,
       duration: DURATION_MAP[chartDuration],
     },
     priceInverted,

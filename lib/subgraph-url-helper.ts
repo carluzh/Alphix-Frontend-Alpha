@@ -1,7 +1,7 @@
 // Subgraph URL resolution per chain. Env vars per chain are required.
 
 import { type NetworkMode } from './network-mode';
-import { isLvrFeePool } from './liquidity/utils/pool-type-guards';
+import { isVolatilePool } from './liquidity/utils/pool-type-guards';
 import type { PoolConfig } from './pools-config';
 
 function resolveSubgraphUrl(mode: NetworkMode): string {
@@ -19,7 +19,7 @@ function resolveSubgraphUrl(mode: NetworkMode): string {
   }
 }
 
-function resolveLvrFeeSubgraphUrl(): string | null {
+function resolveVolatileSubgraphUrl(): string | null {
   return process.env.SUBGRAPH_URL_BASE_LVRFEE || null;
 }
 
@@ -30,19 +30,19 @@ export function getAlphixSubgraphUrl(networkMode: NetworkMode): string {
 
 /** Return the correct subgraph URL for a specific pool. */
 export function getSubgraphUrlForPool(pool: PoolConfig, networkMode: NetworkMode): string {
-  if (isLvrFeePool(pool)) {
-    const lvrFeeUrl = resolveLvrFeeSubgraphUrl();
-    if (lvrFeeUrl) return lvrFeeUrl;
+  if (isVolatilePool(pool)) {
+    const volatileUrl = resolveVolatileSubgraphUrl();
+    if (volatileUrl) return volatileUrl;
   }
   return resolveSubgraphUrl(networkMode);
 }
 
-/** Return all subgraph URLs for a network (primary + LVRFee). */
+/** Return all subgraph URLs for a network (primary + Volatile). */
 export function getAllAlphixSubgraphUrls(networkMode: NetworkMode): string[] {
   const urls = [resolveSubgraphUrl(networkMode)];
   if (networkMode === 'base') {
-    const lvrFeeUrl = resolveLvrFeeSubgraphUrl();
-    if (lvrFeeUrl) urls.push(lvrFeeUrl);
+    const volatileUrl = resolveVolatileSubgraphUrl();
+    if (volatileUrl) urls.push(volatileUrl);
   }
   return urls;
 }

@@ -23,7 +23,7 @@ import { getTokenIcon } from "../liquidity-form-utils";
 import { PositionAmountsDisplay } from "../shared/PositionAmountsDisplay";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
-import { getPoolById } from "@/lib/pools-config";
+import { getPoolBySlug } from "@/lib/pools-config";
 
 import { TransactionModal } from "@/components/transactions/TransactionModal";
 import { DecreaseLiquidityContextProvider, useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
@@ -185,7 +185,7 @@ function DecreaseLiquidityInner({
                 </span>
               </div>
               {position.poolId && (() => {
-                const poolConfig = getPoolById(position.poolId, networkMode);
+                const poolConfig = getPoolBySlug(position.poolId, networkMode);
                 const isUY = poolConfig?.rehypoRange !== undefined;
                 return isUY ? (
                   <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: "rgba(152, 150, 255, 0.10)", color: "#9896FF" }}>

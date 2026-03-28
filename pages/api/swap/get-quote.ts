@@ -65,7 +65,7 @@ import {
   createCanonicalPoolKey,
   getQuoterAddress,
   getStateViewAddress,
-  getPoolById,
+  getPoolBySlug,
   getUniversalRouterAddress
 } from '../../../lib/pools-config';
 import { STATE_VIEW_ABI } from '../../../lib/abis/state_view_abi';
@@ -195,7 +195,7 @@ async function getMidPrice(
     const { poolKey, zeroForOne } = createPoolKeyAndDirection(fromToken, toToken, poolConfig);
 
     // Get pool ID
-    const poolId = poolConfig.pool.subgraphId;
+    const poolId = poolConfig.pool.poolId;
 
     // Get current tick from state view - use network-aware RPC
     const provider = createProvider(networkMode);
@@ -268,7 +268,7 @@ async function getV4QuoteExactInputSingle(
 
   const quoterAddress = getQuoterAddress(networkMode);
   const stateViewAddress = getStateViewAddress(networkMode);
-  const poolId = poolConfig.pool.subgraphId;
+  const poolId = poolConfig.pool.poolId;
 
   try {
     const provider = createProvider(networkMode);
@@ -342,8 +342,8 @@ async function getV4QuoteExactOutputSingle(
 
   const quoterAddress = getQuoterAddress(networkMode);
   const stateViewAddress = getStateViewAddress(networkMode);
-  // Use subgraphId directly - DO NOT recalculate using keccak256
-  const poolId = poolConfig.pool.subgraphId;
+  // Use poolId directly - DO NOT recalculate using keccak256
+  const poolId = poolConfig.pool.poolId;
 
   // Check if we need state overrides for USDS input swaps
   // Pool Manager only has ~375 USDS on-chain (rest is rehypothecated to Sky vault)
@@ -472,12 +472,12 @@ async function getV4QuoteExactInputMultiHop(
     let dynamicFeeBps: number | undefined;
     for (let i = 0; i < route.pools.length; i++) {
       const hop = route.pools[i];
-      const poolCfg = getPoolById(hop.poolId, networkMode);
+      const poolCfg = getPoolBySlug(hop.poolId, networkMode);
       if (!poolCfg) {
         throw new Error(`Missing pool config for hop ${i}: ${hop.poolId}`);
       }
-      // Use subgraphId directly - DO NOT recalculate using keccak256
-      const poolId = poolCfg.subgraphId;
+      // Use poolId directly - DO NOT recalculate using keccak256
+      const poolId = poolCfg.poolId;
       const slot0 = await stateView.callStatic.getSlot0(poolId);
       // Use fee from first pool (matches existing behavior in useSwapRoutingFees)
       if (i === 0) {

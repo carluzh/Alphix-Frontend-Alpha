@@ -41,9 +41,9 @@
   },
   "pools": [
     {
-      "id": "usdc-usdt",
+      "slug": "usdc-usdt",
       "name": "USDC/USDT",
-      "subgraphId": "0xe2c28a234aadc40f115dcc56b70a759d02a372db90dfeed19048392d942ee286",
+      "poolId": "0xe2c28a234aadc40f115dcc56b70a759d02a372db90dfeed19048392d942ee286",
       "currency0": {
         "symbol": "USDC",
         "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"

@@ -3,7 +3,7 @@ export const preferredRegion = 'iad1';
 
 import { NextResponse } from 'next/server';
 import { checkRateLimit } from '@/lib/api/ratelimit';
-import { getPoolSubgraphId, getPoolByIdMultiChain } from '@/lib/pools-config';
+import { getPoolId, getPoolBySlugMultiChain } from '@/lib/pools-config';
 import { parseNetworkMode, type NetworkMode } from '@/lib/network-mode';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
 import { poolKeys } from '@/lib/cache/redis-keys';
@@ -36,26 +36,26 @@ function getPeriodForDays(days: number): 'DAY' | 'WEEK' | 'MONTH' {
   return 'MONTH';
 }
 
-async function computeChartData(poolId: string, days: number, networkMode: NetworkMode): Promise<ChartDataResponse> {
+async function computeChartData(poolSlug: string, days: number, networkMode: NetworkMode): Promise<ChartDataResponse> {
   try {
-    // Try specified network first, then multi-chain fallback for cross-chain pool IDs
-    let subgraphId = getPoolSubgraphId(poolId, networkMode);
+    // Resolve slug to on-chain poolId hash
+    let poolId = getPoolId(poolSlug, networkMode);
     let effectiveNetworkMode = networkMode;
-    if (!subgraphId) {
-      const multiChainPool = getPoolByIdMultiChain(poolId);
+    if (!poolId) {
+      const multiChainPool = getPoolBySlugMultiChain(poolSlug);
       if (multiChainPool) {
-        subgraphId = multiChainPool.subgraphId;
+        poolId = multiChainPool.poolId;
         effectiveNetworkMode = multiChainPool.networkMode;
       }
     }
-    subgraphId = (subgraphId || poolId).toLowerCase();
-    if (!/^0x[a-f0-9]+$/i.test(subgraphId)) throw new Error('Invalid pool ID format');
+    poolId = (poolId || poolSlug).toLowerCase();
+    if (!/^0x[a-f0-9]+$/i.test(poolId)) throw new Error('Invalid pool ID format');
 
     // Fetch historical data from backend + fee events from backend in parallel
     const period = getPeriodForDays(days);
     const [historyResponse, feeEvents] = await Promise.all([
-      fetchPoolHistory(subgraphId, period, effectiveNetworkMode),
-      fetchFeeEventsShared(subgraphId, effectiveNetworkMode),
+      fetchPoolHistory(poolId, period, effectiveNetworkMode),
+      fetchFeeEventsShared(poolId, effectiveNetworkMode),
     ]);
 
     if (!historyResponse.success || !historyResponse.snapshots) {
@@ -155,6 +155,11 @@ async function computeChartData(poolId: string, days: number, networkMode: Netwo
   }
 }
 
+/** Don't cache thin results — they indicate a transient backend issue */
+function isCacheWorthy(p: ChartDataResponse): boolean {
+  return p.data.length >= 2 || p.feeEvents.length >= 3;
+}
+
 export async function GET(request: Request) {
   const rateLimited = await checkRateLimit(request)
   if (rateLimited) return rateLimited
@@ -202,8 +207,8 @@ export async function GET(request: Request) {
     // Invalidated cache: blocking fetch (user just did an action)
     if (cachedData && isInvalidated) {
       const payload = await computeChartData(poolId, days, networkMode);
-      // Only cache successful responses
-      if (payload.success) {
+      // Only cache responses with meaningful data — thin results re-fetch next time
+      if (payload.success && isCacheWorthy(payload)) {
         await setCachedData(cacheKey, payload, 3600); // 1 hour TTL
       }
       return NextResponse.json({ ...payload, isStale: false });
@@ -214,8 +219,7 @@ export async function GET(request: Request) {
       // Trigger background revalidation (fire-and-forget)
       void computeChartData(poolId, days, networkMode)
         .then((payload) => {
-          // Only cache successful responses
-          if (payload.success) {
+          if (payload.success && isCacheWorthy(payload)) {
             return setCachedData(cacheKey, payload, 3600);
           }
         })
@@ -230,8 +234,8 @@ export async function GET(request: Request) {
     // Cache miss: fetch fresh data
     const payload = await computeChartData(poolId, days, networkMode);
 
-    // Only cache successful responses
-    if (payload.success) {
+    // Only cache responses with meaningful data — thin results re-fetch next time
+    if (payload.success && isCacheWorthy(payload)) {
       await setCachedData(cacheKey, payload, 3600); // 1 hour
     }
 

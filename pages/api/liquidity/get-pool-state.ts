@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { parseAbi, type Hex } from 'viem';
-import { getPoolSubgraphId, getAllPools, getStateViewAddress, getToken } from '@/lib/pools-config';
+import { getPoolId, getAllPools, getStateViewAddress, getToken } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { createNetworkClient } from '@/lib/viemClient';
 import { PoolStateSchema, validateApiResponse, GetPoolStateInputSchema, validateApiInput } from '@/lib/validation';
@@ -48,17 +48,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Accept either friendly route id or subgraph id (bytes32 hex)
   const all = getAllPools(networkMode);
-  const maybe = all.find(p => String(p.id).toLowerCase() === raw.toLowerCase());
-  let subgraphId = maybe?.subgraphId || getPoolSubgraphId(raw, networkMode);
+  const maybe = all.find(p => String(p.slug).toLowerCase() === raw.toLowerCase());
+  let poolId = maybe?.poolId || getPoolId(raw, networkMode);
 
   // If not found by friendly ID, check if raw is already a valid bytes32 hex
-  if (!subgraphId && /^0x[a-fA-F0-9]{64}$/.test(raw)) {
-    subgraphId = raw;
+  if (!poolId && /^0x[a-fA-F0-9]{64}$/.test(raw)) {
+    poolId = raw;
   }
 
   // Validate we have a proper bytes32 hex string
-  if (!subgraphId || !/^0x[a-fA-F0-9]{64}$/.test(subgraphId)) {
-    console.error('[get-pool-state] Pool not found:', raw, 'networkMode:', networkMode, 'available pools:', all.map(p => p.id));
+  if (!poolId || !/^0x[a-fA-F0-9]{64}$/.test(poolId)) {
+    console.error('[get-pool-state] Pool not found:', raw, 'networkMode:', networkMode, 'available pools:', all.map(p => p.slug));
     return res.status(404).json({
       error: 'Pool not found',
       details: `poolId=${raw}, networkMode=${networkMode}`
@@ -67,7 +67,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     // No caching - pool state (sqrtPriceX96, tick, liquidity) must always be fresh for accurate quotes
-    const poolIdHex = subgraphId as Hex;
+    const poolIdHex = poolId as Hex;
     const address = getStateViewAddress(networkMode) as `0x${string}`;
     const client = createNetworkClient(networkMode);
 
@@ -98,8 +98,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
       const allPools = getAllPools(networkMode);
       const lowerRaw = raw.toLowerCase();
-      const poolCfg = allPools.find(p => String(p.subgraphId).toLowerCase() === String(subgraphId).toLowerCase())
-        || allPools.find(p => String(p.id).toLowerCase() === lowerRaw);
+      const poolCfg = allPools.find(p => String(p.poolId).toLowerCase() === String(poolId).toLowerCase())
+        || allPools.find(p => String(p.slug).toLowerCase() === lowerRaw);
       if (poolCfg) {
         const token0Cfg = getToken(poolCfg.currency0.symbol, networkMode);
         const token1Cfg = getToken(poolCfg.currency1.symbol, networkMode);
@@ -124,7 +124,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const currentPrice = formatFixed(priceScaled, scale);
 
     const responseData = {
-      poolId: subgraphId,
+      poolId: poolId,
       sqrtPriceX96: sqrtPriceX96.toString(),
       tick,
       protocolFee,

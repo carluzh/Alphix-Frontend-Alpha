@@ -12,7 +12,7 @@ import { Token, Currency } from '@uniswap/sdk-core';
 import { Pool as V4Pool } from '@uniswap/v4-sdk';
 import JSBI from 'jsbi';
 
-import { getPoolById, getToken, getChainId, type PoolConfig, type NetworkMode } from '../../../pools-config';
+import { getPoolBySlug, getToken, getChainId, type PoolConfig, type NetworkMode } from '../../../pools-config';
 import { PositionField, type CreatePositionInfo, type PositionState, type FeeData } from '../../types';
 
 // =============================================================================
@@ -138,7 +138,7 @@ export function useDerivedPositionInfo(
   // Get pool configuration
   const poolConfig = useMemo(() => {
     if (!poolId) return undefined;
-    return getPoolById(poolId, networkMode);
+    return getPoolBySlug(poolId, networkMode);
   }, [poolId, networkMode]);
 
   // Build Token instances
@@ -243,7 +243,7 @@ export function useDerivedPositionInfoFromState(
   // Get pool configuration
   const poolConfig = useMemo(() => {
     if (!poolId) return undefined;
-    return getPoolById(poolId, networkMode);
+    return getPoolBySlug(poolId, networkMode);
   }, [poolId, networkMode]);
 
   // Build V4Pool instance

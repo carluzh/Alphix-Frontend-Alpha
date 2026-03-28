@@ -6,8 +6,8 @@ import { usePoolState } from "@/lib/apollo/hooks";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { useWSPool } from "@/lib/websocket";
 import { fetchPoolsMetrics } from "@/lib/backend-client";
-import { getPoolById, getPoolByIdMultiChain, getToken, getTokenDefinitions, resolveTokenIcon, type TokenSymbol, type NetworkMode } from "@/lib/pools-config";
-import { isLvrFeePool } from "@/lib/liquidity/utils/pool-type-guards";
+import { getPoolBySlug, getPoolBySlugMultiChain, getToken, getTokenDefinitions, resolveTokenIcon, type TokenSymbol, type NetworkMode } from "@/lib/pools-config";
+import { isVolatilePool } from "@/lib/liquidity/utils/pool-type-guards";
 import { chainIdForMode } from "@/lib/network-mode";
 import { usePoolChartData, type ChartDataPoint } from "./usePoolChartData";
 import { usePoolPositions } from "./usePoolPositions";
@@ -48,8 +48,8 @@ const formatUSD = (value: number) => {
 };
 
 export interface PoolConfig {
-  id: string;
-  subgraphId?: string;
+  slug: string;
+  poolId?: string;
   networkMode: NetworkMode;
   tokens: Array<{
     symbol: string;
@@ -143,7 +143,7 @@ export interface UsePoolDetailPageDataReturn {
   // USD calculations
   calculatePositionUsd: (position: Position) => number;
 
-  // LVR data (V2 pools, from WebSocket)
+  // LVR data (Volatile pools, from WebSocket)
   lvrSavedUsd?: number | null;
 }
 
@@ -152,8 +152,8 @@ export interface UsePoolDetailPageDataReturn {
  */
 function getPoolConfiguration(poolId: string, networkModeOverride?: NetworkMode): PoolConfig | null {
   const poolConfig = networkModeOverride
-    ? getPoolById(poolId, networkModeOverride)
-    : getPoolByIdMultiChain(poolId) ?? getPoolById(poolId);
+    ? getPoolBySlug(poolId, networkModeOverride)
+    : getPoolBySlugMultiChain(poolId) ?? getPoolBySlug(poolId);
   if (!poolConfig) return null;
 
   const resolvedMode = poolConfig.networkMode;
@@ -163,8 +163,8 @@ function getPoolConfiguration(poolId: string, networkModeOverride?: NetworkMode)
   if (!token0 || !token1) return null;
 
   return {
-    id: poolConfig.id,
-    subgraphId: poolConfig.subgraphId,
+    slug: poolConfig.slug,
+    poolId: poolConfig.poolId,
     networkMode: resolvedMode ?? networkModeOverride ?? 'base',
     tokens: [
       { symbol: token0.symbol, icon: resolveTokenIcon(token0.symbol), address: token0.address },
@@ -235,12 +235,12 @@ function convertTickToPriceImpl(
   }
 }
 
-export function usePoolDetailPageData(poolId: string, networkModeOverride?: NetworkMode): UsePoolDetailPageDataReturn {
+export function usePoolDetailPageData(poolSlug: string, networkModeOverride?: NetworkMode): UsePoolDetailPageDataReturn {
   const { address: accountAddress, isConnected, chainId } = useAccount();
 
   // Get pool configuration (synchronous) — uses chain param for disambiguation
-  const poolConfig = useMemo(() => getPoolConfiguration(poolId, networkModeOverride), [poolId, networkModeOverride]);
-  const subgraphId = poolConfig?.subgraphId || '';
+  const poolConfig = useMemo(() => getPoolConfiguration(poolSlug, networkModeOverride), [poolSlug, networkModeOverride]);
+  const poolId = poolConfig?.poolId || '';
 
   // Pool's own networkMode is authoritative — falls back to override, then default
   const networkMode = poolConfig?.networkMode ?? networkModeOverride ?? 'base' as NetworkMode;
@@ -261,8 +261,8 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
   }, []);
 
   // Pool state from real-time WebSocket (with Apollo as fallback)
-  const { pool: wsPool, isConnected: wsConnected } = useWSPool(subgraphId || poolId, networkMode);
-  const { data: poolStateRaw } = usePoolState(subgraphId, networkMode);
+  const { pool: wsPool, isConnected: wsConnected } = useWSPool(poolId || poolSlug, networkMode);
+  const { data: poolStateRaw } = usePoolState(poolId, networkMode);
 
   // Pool state from Apollo (WebSocket only provides metrics, not tick/liquidity state)
   const poolState: PoolStateData = useMemo(() => {
@@ -304,12 +304,12 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
     fetchChartData,
     updateTodayTvl,
   } = usePoolChartData({
+    poolSlug,
     poolId,
-    subgraphId,
     networkMode,
     windowWidth,
     currentFeeBps: wsPool?.lpFee,
-    isLvrFeePool: poolConfig ? isLvrFeePool(poolConfig as any) : false,
+    isVolatilePool: poolConfig ? isVolatilePool(poolConfig as any) : false,
     currentVolatility: wsPool?.volatility,
     currentAgentAdjustment: wsPool?.agentAdjustment,
   });
@@ -328,8 +328,8 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
     clearOptimisticFees,
     clearAllOptimisticStates,
   } = usePoolPositions({
+    poolSlug,
     poolId,
-    subgraphId,
     networkModeOverride: poolConfig?.networkMode,
   });
 
@@ -420,7 +420,7 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
 
   // Fetch pool stats from REST as fallback (initial load or when WS disconnected)
   useEffect(() => {
-    if (!poolId || !subgraphId) return;
+    if (!poolSlug || !poolId) return;
     // Skip REST fetch if WebSocket data is available
     if (wsConnected && wsPool) return;
 
@@ -435,9 +435,9 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
         }
 
         // Find this pool in the response
-        const pool = response.pools.find(p => p.poolId.toLowerCase() === subgraphId.toLowerCase());
+        const pool = response.pools.find(p => p.poolId.toLowerCase() === poolId.toLowerCase());
         if (!pool) {
-          console.warn('[usePoolDetailPageData] Pool not found in metrics:', subgraphId);
+          console.warn('[usePoolDetailPageData] Pool not found in metrics:', poolId);
           return;
         }
 
@@ -477,14 +477,14 @@ export function usePoolDetailPageData(poolId: string, networkModeOverride?: Netw
     };
 
     fetchPoolStats();
-  }, [poolId, subgraphId, networkMode, updateTodayTvl, wsConnected, wsPool]);
+  }, [poolSlug, poolId, networkMode, updateTodayTvl, wsConnected, wsPool]);
 
   // Fetch chart data on mount (fetchChartData has its own deduplication via hasFetchedForPoolRef)
   useEffect(() => {
-    if (poolId) {
+    if (poolSlug) {
       fetchChartData();
     }
-  }, [poolId, fetchChartData]);
+  }, [poolSlug, fetchChartData]);
 
   return {
     poolConfig,

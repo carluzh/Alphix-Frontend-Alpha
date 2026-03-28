@@ -19,7 +19,7 @@ import type { Token } from "@/components/swap/swap-interface"
 // TYPES
 // =============================================================================
 
-export type TouchedPool = { poolId: string; subgraphId?: string }
+export type TouchedPool = { slug: string; poolId?: string }
 
 export type ExistingPermit = {
   amount: string

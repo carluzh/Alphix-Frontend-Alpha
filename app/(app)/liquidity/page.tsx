@@ -16,10 +16,9 @@ import { ColumnDef, RowData, Row } from "@tanstack/react-table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePrefetchOnHover } from "@/hooks/usePrefetchOnHover";
 import { MobileLiquidityList } from "@/components/MobileLiquidityList";
-import { getMultiChainEnabledPools, getToken, getPoolSubgraphId, resolveTokenIcon, type NetworkMode } from "@/lib/pools-config";
+import { getMultiChainEnabledPools, getToken, getPoolId, resolveTokenIcon, type NetworkMode } from "@/lib/pools-config";
 import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 import { Pool } from "@/types";
-import { isLvrFeePool } from "@/lib/liquidity/utils/pool-type-guards";
 import { prefetchService } from "@/lib/prefetch-service";
 import { APYBadge } from "@/components/liquidity/APRBadge";
 import { useWSPools } from "@/lib/websocket";
@@ -81,22 +80,18 @@ const generatePoolsFromConfig = (): Pool[] => {
     const token1 = getToken(poolConfig.currency1.symbol, poolConfig.networkMode);
 
     if (!token0 || !token1) {
-      console.warn(`Missing token configuration for pool ${poolConfig.id}`);
+      console.warn(`Missing token configuration for pool ${poolConfig.slug}`);
       return null;
     }
 
     return {
-      id: poolConfig.id,
+      slug: poolConfig.slug,
       tokens: [
         { symbol: token0.symbol, icon: resolveTokenIcon(token0.symbol) },
         { symbol: token1.symbol, icon: resolveTokenIcon(token1.symbol) }
       ],
       pair: poolConfig.name,
-      volume24h: "Loading...",
-      fees24h: "Loading...",
-      liquidity: "Loading...",
       apr: "Loading...",
-      highlighted: poolConfig.featured,
       type: poolConfig.type,
       hooks: poolConfig.hooks,
       yieldSources: poolConfig.yieldSources,
@@ -148,8 +143,8 @@ export default function LiquidityPage() {
   // Merge pool config with WebSocket metrics
   const poolsData = useMemo(() => {
     return poolConfigs.map(poolConfig => {
-      const subgraphId = (getPoolSubgraphId(poolConfig.id, poolConfig.networkMode) || poolConfig.id).toLowerCase();
-      const wsPool = wsPoolsMap.get(subgraphId);
+      const poolId = (getPoolId(poolConfig.slug, poolConfig.networkMode) || poolConfig.slug).toLowerCase();
+      const wsPool = wsPoolsMap.get(poolId);
 
       if (wsPool) {
         // Use frontend-fetched Aave rates (raw, no backend yield factor)
@@ -246,7 +241,7 @@ export default function LiquidityPage() {
       })
       .map(pool => ({
         ...pool,
-        link: `/liquidity/${pool.id}?chain=${CHAIN_REGISTRY[pool.networkMode ?? 'base'].backendNetwork}`,
+        link: `/liquidity/${pool.slug}?chain=${CHAIN_REGISTRY[pool.networkMode ?? 'base'].backendNetwork}`,
       }));
 
     const getSortValue = (pool: any): number => {
@@ -316,11 +311,6 @@ export default function LiquidityPage() {
                 </div>
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-medium text-sm truncate">{pool.pair}</span>
-                  {pool.hooks && isLvrFeePool({ hooks: pool.hooks } as any) && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-orange-500/50 bg-orange-500/10 text-orange-400 flex-shrink-0">
-                      V2
-                    </span>
-                  )}
                   {pool.type && (
                     <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">
                       {pool.type}
@@ -427,7 +417,7 @@ export default function LiquidityPage() {
   // Prefetch wrapper for pool rows - prefetches data on hover with stagger animation
   const poolRowWrapper = useCallback(
     (row: Row<Pool & { link: string }>, content: React.ReactNode) => {
-      const poolId = row.original?.id;
+      const poolId = row.original?.slug;
       if (!poolId) return content;
 
       return (

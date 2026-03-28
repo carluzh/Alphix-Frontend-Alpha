@@ -6,7 +6,6 @@ import Link from "next/link";
 import { ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PoolConfig } from "../../hooks";
-import { isLvrFeePool } from "@/lib/liquidity/utils/pool-type-guards";
 
 interface PoolDetailHeaderProps {
   poolConfig: PoolConfig | null;
@@ -99,11 +98,6 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
 
             {/* Pool Type Badge - Below title */}
             <div className="flex items-center gap-1.5">
-              {isLvrFeePool(poolConfig as any) && (
-                <span className="w-fit px-2 py-0.5 text-xs font-medium rounded border border-orange-500/50 bg-orange-500/10 text-orange-400">
-                  V2
-                </span>
-              )}
               {poolConfig.type && (
                 <span className="w-fit px-2 py-0.5 text-xs font-medium rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">
                   {poolConfig.type}
@@ -118,7 +112,7 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
           asChild
           className="hidden sm:flex h-10 px-4 gap-2 bg-button-primary hover-button-primary text-sidebar-primary font-semibold rounded-md transition-all active:scale-[0.98]"
         >
-          <Link href={`/liquidity/add?pool=${poolConfig.id}&from=pool`}>
+          <Link href={`/liquidity/add?pool=${poolConfig.slug}&from=pool`}>
             <Plus className="h-4 w-4" strokeWidth={2.5} />
             New position
           </Link>

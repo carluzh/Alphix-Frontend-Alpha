@@ -1,7 +1,7 @@
 import { getAlphixSubgraphUrl } from '@/lib/subgraph-url-helper'
 import { buildBackendUrl } from '@/lib/backend-client'
-import { getPoolByIdMultiChain } from '@/lib/pools-config'
-import { isLvrFeePool } from '@/lib/liquidity/utils/pool-type-guards'
+import { getPoolBySlugMultiChain } from '@/lib/pools-config'
+import { isVolatilePool } from '@/lib/liquidity/utils/pool-type-guards'
 import type { NetworkMode } from '@/lib/network-mode'
 
 export type HookEvent = {
@@ -36,17 +36,17 @@ type SubgraphResp = { data?: { alphixHooks?: HookEvent[] }; errors?: any[] }
 /**
  * Fetch historical dynamic fee events.
  * Routes by pool type:
- * - Alphix hook pools → subgraph (alphixHooks entity)
- * - LVRFee pools → backend REST API
+ * - Stable pools → subgraph (alphixHooks entity)
+ * - Volatile pools → backend REST API
  */
 export async function fetchFeeEvents(
   poolId: string,
   networkMode: NetworkMode
 ): Promise<HookEvent[]> {
-  const pool = getPoolByIdMultiChain(poolId)
+  const pool = getPoolBySlugMultiChain(poolId)
 
   try {
-    if (pool && isLvrFeePool(pool)) {
+    if (pool && isVolatilePool(pool)) {
       return await fetchFromBackend(poolId, networkMode)
     }
     return await fetchFromSubgraph(poolId, networkMode)

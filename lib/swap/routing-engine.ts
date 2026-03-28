@@ -8,14 +8,14 @@ export interface SwapRoute {
 }
 
 export interface PoolHop {
-  poolId: string;
+  slug: string;
   poolName: string;
   token0: string; // Token symbol
   token1: string; // Token symbol
   fee: number;
   tickSpacing: number;
   hooks: string;
-  subgraphId: string;
+  poolId: string;
 }
 
 export interface RouteResult {
@@ -45,14 +45,14 @@ function buildPoolGraph(networkMode?: NetworkMode): Map<string, PoolHop[]> {
   // Add pool connections to the graph
   Object.values(allPools).forEach(pool => {
     const poolHop: PoolHop = {
-      poolId: pool.id,
+      slug: pool.slug,
       poolName: pool.name,
       token0: pool.currency0.symbol,
       token1: pool.currency1.symbol,
       fee: pool.fee,
       tickSpacing: pool.tickSpacing,
       hooks: pool.hooks,
-      subgraphId: pool.subgraphId
+      poolId: pool.poolId
     };
 
     // Add bidirectional connections

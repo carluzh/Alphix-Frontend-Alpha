@@ -6,7 +6,7 @@ import { cn, shortenAddress, getTokenIcon, getTokenColor } from "@/lib/utils";
 import { IconClone2, IconCheck, IconPlus, IconMinus } from "nucleo-micro-bold-essential";
 import { PointsIcon } from "@/components/PointsIcons/PointsIcon";
 import type { PoolConfig } from "../../hooks";
-import { isLvrFeePool } from "@/lib/liquidity/utils/pool-type-guards";
+import { isVolatilePool } from "@/lib/liquidity/utils/pool-type-guards";
 
 /** Local number formatter matching the position detail formatNumber API */
 function formatNumber(
@@ -399,7 +399,7 @@ function FAQItem({
   );
 }
 
-const standardFaqItems: { question: string; answer: React.ReactNode }[] = [
+const stableFaqItems: { question: string; answer: React.ReactNode }[] = [
   {
     question: "What does a Pool do?",
     answer:
@@ -422,7 +422,7 @@ const standardFaqItems: { question: string; answer: React.ReactNode }[] = [
   },
 ];
 
-const lvrFaqItems: { question: string; answer: React.ReactNode }[] = [
+const volatileFaqItems: { question: string; answer: React.ReactNode }[] = [
   {
     question: "What does a Pool do?",
     answer:
@@ -445,9 +445,9 @@ const lvrFaqItems: { question: string; answer: React.ReactNode }[] = [
   },
 ];
 
-function PoolFAQSection({ isLvr }: { isLvr?: boolean }) {
+function PoolFAQSection({ isVolatile }: { isVolatile?: boolean }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
-  const items = isLvr ? lvrFaqItems : standardFaqItems;
+  const items = isVolatile ? volatileFaqItems : stableFaqItems;
 
   return (
     <div className="flex flex-col gap-1">
@@ -496,7 +496,7 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
   lvrSavedUsd,
 }: PoolDetailSidebarProps) {
   const yieldSources = poolConfig.yieldSources ?? [];
-  const isLvr = isLvrFeePool(poolConfig as any);
+  const isVolatile = isVolatilePool(poolConfig as any);
 
   return (
     <div className="flex flex-col gap-6">
@@ -506,8 +506,8 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
           Pool Details
         </h3>
         <div className="flex flex-col gap-3">
-          {/* LVR Saved card (V2 pools only) */}
-          {isLvr && <LvrSavedCard lvrSavedUsd={lvrSavedUsd ?? undefined} />}
+          {/* LVR Saved card (Volatile pools only) */}
+          {isVolatile && <LvrSavedCard lvrSavedUsd={lvrSavedUsd ?? undefined} />}
 
           {/* Earning on sources */}
           {yieldSources.map((source) => (
@@ -529,7 +529,7 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
       </div>
 
       {/* FAQ */}
-      <PoolFAQSection isLvr={isLvr} />
+      <PoolFAQSection isVolatile={isVolatile} />
     </div>
   );
 });

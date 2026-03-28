@@ -16,7 +16,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const poolRoutes = basePools.pools
     .filter(pool => pool.enabled)
     .map(pool => ({
-      route: `/liquidity/${pool.id}`,
+      route: `/liquidity/${pool.slug}`,
       priority: 0.8,
     }))
 

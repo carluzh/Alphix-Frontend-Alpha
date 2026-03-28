@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { Currency } from '@uniswap/sdk-core';
-import { getPoolSubgraphId } from '@/lib/pools-config';
+import { getPoolId } from '@/lib/pools-config';
 import { tickToPriceSimple, tickToPriceNumber } from '@/lib/liquidity/utils/tick-price';
 
 export interface ChartEntry {
@@ -47,7 +47,7 @@ export function useLiquidityChartData({
   const [error, setError] = useState<Error | null>(null);
 
   // Get the subgraph pool ID for API calls
-  const subgraphPoolId = poolId ? (getPoolSubgraphId(poolId, networkMode) || poolId) : undefined;
+  const subgraphPoolId = poolId ? (getPoolId(poolId, networkMode) || poolId) : undefined;
 
   // Fetch raw liquidity data
   useEffect(() => {

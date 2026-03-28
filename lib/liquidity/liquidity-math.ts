@@ -5,7 +5,7 @@ import JSBI from 'jsbi';
 import { parseUnits, getAddress, parseAbi, type Hex } from "viem";
 import { createNetworkClient } from "@/lib/viemClient";
 import { STATE_VIEW_ABI } from "@/lib/abis/state_view_abi";
-import { getToken, TokenSymbol, getStateViewAddress, getPoolByTokens, getPoolByIdMultiChain } from "@/lib/pools-config";
+import { getToken, TokenSymbol, getStateViewAddress, getPoolByTokens, getPoolBySlugMultiChain } from "@/lib/pools-config";
 import { modeForChainId, type NetworkMode } from "@/lib/network-mode";
 
 interface CalculateLiquidityParams {
@@ -114,7 +114,7 @@ export async function calculateLiquidityParameters(
   }
 
   const poolConfig = params.poolId
-    ? getPoolByIdMultiChain(params.poolId)
+    ? getPoolBySlugMultiChain(params.poolId)
     : getPoolByTokens(token0Symbol, token1Symbol, networkMode);
   if (!poolConfig) {
     throw new Error(`No pool found for ${params.poolId || `${token0Symbol}/${token1Symbol}`}`);
@@ -133,7 +133,7 @@ export async function calculateLiquidityParameters(
   // Use the canonical on-chain poolId from config rather than recomputing via V4Pool.getPoolId().
   // Computing keccak256(PoolKey) requires all config values to be exact; any mismatch
   // (e.g. tickSpacing) produces a wrong hash and StateView reads return zeros.
-  const poolId = poolConfig.subgraphId;
+  const poolId = poolConfig.poolId;
 
   const stateViewAbiViem = parseAbi(STATE_VIEW_ABI);
   const stateViewAddress = getStateViewAddress(networkMode);

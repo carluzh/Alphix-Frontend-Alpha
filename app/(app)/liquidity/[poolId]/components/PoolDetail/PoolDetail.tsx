@@ -126,7 +126,7 @@ export interface PoolDetailProps {
   // USD calculations (handles both V4 and Unified Yield positions)
   calculatePositionUsd: (position: Position) => number;
 
-  // LVR data (V2 pools only, from WebSocket)
+  // LVR data (Volatile pools, from WebSocket)
   lvrSavedUsd?: number | null;
 }
 
@@ -269,11 +269,11 @@ export const PoolDetail = memo(function PoolDetail({
   const handleAddLiquidity = useCallback(() => {
     // Navigate to the new wizard flow with pool pre-selected
     // This skips Token Selection and LP Option steps (pool already known)
-    if (poolConfig?.id) {
+    if (poolConfig?.slug) {
       const mode = poolConfig.yieldSources?.length ? 'rehypo' : 'concentrated';
-      router.push(`/liquidity/add?pool=${poolConfig.id}&mode=${mode}&from=pool`);
+      router.push(`/liquidity/add?pool=${poolConfig.slug}&mode=${mode}&from=pool`);
     }
-  }, [poolConfig?.id, router]);
+  }, [poolConfig?.slug, router]);
 
   const handlePositionClick = useCallback((position: Position) => {
     const chainParam = networkMode ? `&chain=${CHAIN_REGISTRY[networkMode].backendNetwork}` : '';
@@ -327,12 +327,13 @@ export const PoolDetail = memo(function PoolDetail({
             windowWidth={windowWidth}
             chartType={chartType}
             onChartTypeChange={setChartType}
-            poolId={poolConfig?.subgraphId}
+            poolId={poolConfig?.poolId}
             token0Symbol={poolConfig?.tokens[0]?.symbol}
             token1Symbol={poolConfig?.tokens[1]?.symbol}
             yieldSources={poolConfig?.yieldSources}
             currentSwapApr={poolStats.swapApyRaw}
             networkMode={networkMode}
+            poolType={poolConfig?.type}
           />
 
           {/* Positions — desktop: inline in left column, mobile: also here (before sidebar) */}

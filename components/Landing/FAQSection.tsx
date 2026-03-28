@@ -86,7 +86,7 @@ const faqItems: { number: string; question: string; answer: React.ReactNode }[] 
     number: '03',
     question: 'How do dynamic fees work?',
     answer:
-      "Unlike traditional AMMs locked to fixed fee tiers, our dynamic fee algorithm is fully unbounded. It adjusts fees in real-time based on each pool's Volume/TVL ratio, finding the market optimum automatically. Quiet markets see lower fees to attract volume, while busy periods increase fees to maximize LP returns.",
+      "Unlike traditional AMMs locked to fixed fee tiers, our pools use dynamic fees that adjust in real-time. Each pool type optimizes differently: Stable pools respond to volume patterns while volatile pools adapt to market volatility and adverse selection risk. The goal is the same — finding the optimal fee automatically so our LPs earn more.",
   },
   {
     number: '04',

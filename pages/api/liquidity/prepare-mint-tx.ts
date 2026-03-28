@@ -6,7 +6,7 @@ import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from "@/lib/abis/state_view_abi";
-import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getPoolByIdMultiChain } from "@/lib/pools-config";
+import { TokenSymbol, getToken, getPositionManagerAddress, getStateViewAddress, getPoolBySlugMultiChain } from "@/lib/pools-config";
 import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
 import { resolveNetworkMode } from "@/lib/network-mode";
 import { createNetworkClient } from "@/lib/viemClient";
@@ -272,7 +272,7 @@ export default async function handler(
         const requestPoolId = req.body.poolId;
         const { getPoolByTokens } = await import('@/lib/pools-config');
         const poolConfig = requestPoolId
-            ? getPoolByIdMultiChain(requestPoolId)
+            ? getPoolBySlugMultiChain(requestPoolId)
             : getPoolByTokens(token0Symbol, token1Symbol, networkMode);
 
         if (!poolConfig) {
@@ -296,7 +296,7 @@ export default async function handler(
         // Use the canonical on-chain poolId from config rather than recomputing via V4Pool.getPoolId().
         // Computing keccak256(PoolKey) requires all config values to be exact; any mismatch
         // (e.g. tickSpacing) produces a wrong hash and StateView reads return zeros.
-        const poolId = poolConfig.subgraphId;
+        const poolId = poolConfig.poolId;
         
         // sortedToken0/1 determined above
 

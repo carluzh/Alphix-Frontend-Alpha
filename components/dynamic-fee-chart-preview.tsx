@@ -70,11 +70,11 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
         if (isParentDataUsable) return;
         if (!poolInfo?.token0Symbol || !poolInfo?.token1Symbol) return;
         const cfg = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
-        const subgraphId = (cfg as any)?.subgraphId || (cfg as any)?.id;
-        if (!subgraphId) return;
+        const poolId = (cfg as any)?.poolId || (cfg as any)?.id;
+        if (!poolId) return;
 
         // Check local cache with 60s TTL
-        const cacheKey = `dynamicFeeChart_${subgraphId}_30days`;
+        const cacheKey = `dynamicFeeChart_${poolId}_100pts`;
         try {
           const cachedItem = sessionStorage.getItem(cacheKey);
           if (cachedItem) {
@@ -96,14 +96,10 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
 
         setIsChartDataLoading(true);
 
-        const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(subgraphId))}&days=30`);
+        const resp = await fetch(`/api/liquidity/get-historical-dynamic-fees?poolId=${encodeURIComponent(String(poolId))}`);
         if (!resp.ok) return;
         const events = await resp.json();
-        console.log('[DynamicFeeChart] Subgraph events:', events);
         if (!Array.isArray(events)) return;
-        // Filter to last 30 days from today (not from oldest data)
-        const nowSec = Math.floor(Date.now() / 1000);
-        const thirtyDaysAgoSec = nowSec - (30 * 24 * 60 * 60);
         const evAsc = events
           .map((e: any) => ({
             ts: Number(e?.timestamp) || 0,
@@ -111,7 +107,6 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
             ratio: e?.currentRatio,    // Vol/TVL activity measurement (volatile, jumps around)
             ema: e?.newTargetRatio,    // EMA target (smooth, changes gradually)
           }))
-          .filter((e: any) => e.ts >= thirtyDaysAgoSec) // Keep only last 30 days
           .sort((a: any, b: any) => a.ts - b.ts);
         const scaleRatio = (val: any): number => {
           const n = typeof val === 'string' ? Number(val) : (typeof val === 'number' ? val : 0);
@@ -128,9 +123,9 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
           dynamicFee: (Number.isFinite(e.feeBps) ? e.feeBps : 0) / 10000,
         }));
 
-        // Always show exactly 30 days - take the most recent 30 data points
-        if (out.length > 30) {
-          out = out.slice(-30);
+        // Take the most recent 100 data points (use whatever is available if fewer)
+        if (out.length > 100) {
+          out = out.slice(-100);
         }
         
         // Cache the processed data
@@ -170,7 +165,7 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
     } else {
       // Fallback: map from token symbols to configured pool
       const poolConfig = getPoolByTokens(poolInfo.token0Symbol, poolInfo.token1Symbol);
-      if (poolConfig) targetId = poolConfig.id;
+      if (poolConfig) targetId = poolConfig.slug;
     }
 
     if (targetId) {
@@ -243,7 +238,7 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
     }
 
     // When data is available, render the full chart preview
-    // Straight mapping: no normalization, 30-day window already applied
+    // Straight mapping: no normalization, data point limit already applied
     const newChartData = effectiveData.map((point, index) => ({
       name: point?.timeLabel || `Point ${index}`,
       activity: Number(point?.volumeTvlRatio) || 0,
@@ -400,7 +395,7 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
     const effectiveMaxValue: any = 'auto';
 
     return (
-      <div className="relative">
+      <div className="relative z-10">
       <div
         className="w-full rounded-lg border border-primary transition-colors overflow-hidden relative cursor-pointer group hover:shadow-lg transition-shadow bg-container-secondary"
         onClick={handleClick}

@@ -898,18 +898,18 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         }
         // For USDS ExactOut: simulation skipped, quote already verified by quoter
 
-        // Derive touched pools (friendly poolId and subgraphId) for downstream cache invalidation
-        const touchedPools: Array<{ poolId: string; subgraphId?: string }> = [];
+        // Derive touched pools (slug + poolId hash) for downstream cache invalidation
+        const touchedPools: Array<{ slug: string; poolId?: string }> = [];
         try {
             if (route.isDirectRoute) {
                 const poolCfg = getPoolConfigForTokens(fromTokenSymbol, toTokenSymbol, networkMode);
                 if (poolCfg) {
-                    touchedPools.push({ poolId: poolCfg.pool.id, subgraphId: poolCfg.pool.subgraphId || poolCfg.pool.id });
+                    touchedPools.push({ slug: poolCfg.pool.slug, poolId: poolCfg.pool.poolId || poolCfg.pool.slug });
                 }
             } else {
                 for (const hop of route.pools) {
                     const cfg = getPoolConfigForTokens(hop.token0 as TokenSymbol, hop.token1 as TokenSymbol, networkMode);
-                    if (cfg) touchedPools.push({ poolId: cfg.pool.id, subgraphId: cfg.pool.subgraphId || cfg.pool.id });
+                    if (cfg) touchedPools.push({ slug: cfg.pool.slug, poolId: cfg.pool.poolId || cfg.pool.slug });
                 }
             }
         } catch {}

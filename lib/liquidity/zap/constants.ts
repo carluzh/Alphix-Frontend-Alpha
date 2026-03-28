@@ -10,7 +10,7 @@
 
 import { type Address, getAddress } from 'viem';
 import type { ZapToken } from './types';
-import { getPoolById, getToken, type NetworkMode } from '@/lib/pools-config';
+import { getPoolBySlug, getToken, type NetworkMode } from '@/lib/pools-config';
 
 // =============================================================================
 // POOL CONFIG DERIVATION (single source of truth: config/*.json)
@@ -21,13 +21,13 @@ import { getPoolById, getToken, type NetworkMode } from '@/lib/pools-config';
  * All addresses, decimals, tick spacing, and fees come from the JSON.
  */
 function deriveZapPoolBase(poolId: string, mode: NetworkMode) {
-  const pool = getPoolById(poolId, mode);
+  const pool = getPoolBySlug(poolId, mode);
   if (!pool) throw new Error(`[zap/constants] Pool "${poolId}" not found in ${mode} config`);
   const t0 = getToken(pool.currency0.symbol, mode);
   const t1 = getToken(pool.currency1.symbol, mode);
   if (!t0 || !t1) throw new Error(`[zap/constants] Tokens for pool "${poolId}" not found`);
   return {
-    poolId: pool.id,
+    poolId: pool.slug,
     hookAddress: getAddress(pool.hooks) as Address,
     token0: { symbol: t0.symbol as ZapToken, address: getAddress(t0.address) as Address, decimals: t0.decimals },
     token1: { symbol: t1.symbol as ZapToken, address: getAddress(t1.address) as Address, decimals: t1.decimals },
@@ -69,9 +69,6 @@ export const PSM_CONFIG = {
 
 /** USDS/USDC Unified Yield pool (Base) */
 export const USDS_USDC_POOL_CONFIG = deriveZapPoolBase('usds-usdc', 'base');
-
-/** ETH/USDC Unified Yield pool (Base) */
-export const ETH_USDC_POOL_CONFIG = deriveZapPoolBase('eth-usdc', 'base');
 
 /** USDC/USDT Unified Yield pool (Arbitrum) */
 export const USDC_USDT_ARB_POOL_CONFIG = deriveZapPoolBase('usdc-usdt', 'arbitrum');
@@ -132,12 +129,6 @@ const ZAP_POOL_CONFIGS: ZapPoolConfig[] = [
     isPegged: true,
   },
   {
-    ...ETH_USDC_POOL_CONFIG,
-    fallbackRoute: 'kyberswap',
-    priceImpactThreshold: KYBERSWAP_PRICE_IMPACT_THRESHOLD,
-    isPegged: false,
-  },
-  {
     ...USDC_USDT_ARB_POOL_CONFIG,
     fallbackRoute: 'kyberswap',
     priceImpactThreshold: PSM_PRICE_IMPACT_THRESHOLD,
@@ -154,13 +145,13 @@ export function getZapPoolConfig(poolId: string): ZapPoolConfig | null {
   const direct = ZAP_POOL_CONFIGS.find(c => c.poolId === poolId);
   if (direct) return direct;
 
-  // Fallback: resolve subgraphId via multi-chain lookup
+  // Fallback: resolve poolId via multi-chain lookup
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { getPoolByIdMultiChain } = require('@/lib/pools-config');
-  const pool = getPoolByIdMultiChain(poolId);
+  const { getPoolBySlugMultiChain } = require('@/lib/pools-config');
+  const pool = getPoolBySlugMultiChain(poolId);
   if (!pool) return null;
 
-  return ZAP_POOL_CONFIGS.find(c => c.poolId === pool.id) ?? null;
+  return ZAP_POOL_CONFIGS.find(c => c.poolId === pool.slug) ?? null;
 }
 
 /**
@@ -277,11 +268,11 @@ export const USDS_TO_USDC_DIVISOR = 10n ** 12n;
 /**
  * Check if a pool supports the Zap feature.
  *
- * Enabled for USDS/USDC and ETH/USDC Unified Yield pools.
- * Accepts either pool config id ('usds-usdc', 'eth-usdc') or subgraphId (bytes32 hash)
+ * Enabled for Stable Unified Yield pools (USDS/USDC, USDC/USDT).
+ * Accepts either pool config id ('usds-usdc') or poolId (bytes32 hash)
  * since positions may use either format.
  *
- * @param poolId - The pool ID to check (can be config id or subgraphId)
+ * @param poolId - The pool ID to check (can be config id or poolId)
  * @returns True if the pool supports Zap
  */
 export function isZapEligiblePool(poolId: string | null): boolean {

@@ -16,7 +16,7 @@ import React, { createContext, useContext, useState, useMemo, useCallback, type 
 import { useAccount } from "wagmi";
 import { formatUnits, parseUnits, type Address, type Hash } from "viem";
 import * as Sentry from "@sentry/nextjs";
-import { getTokenDefinitions, getPoolById, getTokenSymbolByAddress, type TokenSymbol } from "@/lib/pools-config";
+import { getTokenDefinitions, getPoolBySlug, getTokenSymbolByAddress, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
@@ -95,13 +95,13 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   );
   const { prices } = useTokenPrices(priceSymbols);
 
-  // Get pool config for subgraphId (needed for pool state query)
+  // Get pool config for poolId (needed for pool state query)
   const poolConfig = useMemo(() => {
-    return position.poolId ? getPoolById(position.poolId, networkMode) : null;
+    return position.poolId ? getPoolBySlug(position.poolId, networkMode) : null;
   }, [position.poolId, networkMode]);
 
   // Pool state for slippage protection (sqrtPriceX96)
-  const { data: poolStateData } = usePoolState(poolConfig?.subgraphId ?? '', networkMode);
+  const { data: poolStateData } = usePoolState(poolConfig?.poolId ?? '', networkMode);
 
   // Unified Yield withdraw hook - only active for ReHypothecation positions
   const unifiedYieldWithdraw = useUnifiedYieldWithdraw({

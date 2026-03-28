@@ -72,6 +72,8 @@ interface ChartSectionProps {
   yieldSources?: Array<'aave' | 'spark'>;
   currentSwapApr?: number;
   networkMode?: string;
+  /** Pool type — drives fee chart rendering (Volatile: per-event, Stable: daily with Activity/Target) */
+  poolType?: string;
 }
 
 const PDP_CHART_HEIGHT_PX = 300; // Match PortfolioChart height
@@ -145,19 +147,21 @@ export const ChartSection = memo(function ChartSection({
   yieldSources,
   currentSwapApr,
   networkMode,
+  poolType,
 }: ChartSectionProps) {
   const internal = usePDPChartState();
   const chartType = controlledChartType ?? internal.chartType;
+  const isVolatile = poolType === 'Volatile';
   const rawSetChartType = onChartTypeChange ?? internal.setChartType;
 
   // Derived flags from data shape
   const hasYieldSources = !!(yieldSources && yieldSources.length > 0);
-  // Per-event fee data: multiple fee events within the same day
+  // Per-event fee data: Volatile pools use granular per-event rendering (multiple events/day)
   const hasPerEventFees = useMemo(() => {
-    if (!feeEvents || feeEvents.length < 2) return false;
+    if (!isVolatile || !feeEvents || feeEvents.length < 2) return false;
     const days = new Set(feeEvents.map(e => new Date(Number(e.timestamp) * 1000).toISOString().split('T')[0]));
     return feeEvents.length > days.size;
-  }, [feeEvents]);
+  }, [isVolatile, feeEvents]);
 
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("1M");
   const hasSetInitialPeriod = useRef(false);
@@ -798,7 +802,7 @@ interface ChartTypeTabsProps {
   chartType: ChartType;
   onChartTypeChange: (type: ChartType) => void;
   disabled?: boolean;
-  /** Hide Yield tab (LVR pools have no lending yield) */
+  /** Hide Yield tab (Volatile pools have no lending yield) */
   hideYield?: boolean;
 }
 
@@ -838,7 +842,7 @@ interface TimePeriodSelectorProps {
   period: TimePeriod;
   onPeriodChange: (period: TimePeriod) => void;
   disabled?: boolean;
-  /** Show 1D option (only for LVRFee Fee chart) */
+  /** Show 1D option (only for Volatile pool Fee chart) */
   show1D?: boolean;
 }
 

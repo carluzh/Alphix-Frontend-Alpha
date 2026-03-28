@@ -131,8 +131,8 @@ const ModularityCard = () => {
       <div className="flex flex-col md:hidden">
         <div className="px-4 py-3">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            <span className="text-foreground font-medium">Modular by design.</span>
-            {' '}Unified Pools enable seamless feature expansion as we scale.
+            <span className="text-foreground font-medium">Built to maximize.</span>
+            {' '}Our Unified Pools are custom-tuned to the market they facilitate with the sole goal to increase LP yield.
           </p>
         </div>
         <div
@@ -151,9 +151,9 @@ const ModularityCard = () => {
       <div className="hidden md:flex flex-row items-center">
         <div className="shrink-0 pl-2 pr-4 py-2 max-w-[280px]">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            <span className="text-foreground font-medium">Modular by design.</span>
+            <span className="text-foreground font-medium">Built to maximize.</span>
             <br />
-            Unified Pools enable seamless feature expansion as we scale.
+            Our Unified Pools are custom-tuned to the market they facilitate with the sole goal to increase LP yield.
           </p>
         </div>
 
