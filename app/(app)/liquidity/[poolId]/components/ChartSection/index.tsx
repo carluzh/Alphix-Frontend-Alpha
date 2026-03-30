@@ -509,7 +509,7 @@ export const ChartSection = memo(function ChartSection({
             cursor={{ fill: "hsl(var(--muted) / 0.3)" }}
             content={() => null}
           />
-          <Bar dataKey="volumeUSD" fill={CHART_COLORS.bar} radius={[2, 2, 0, 0]} />
+          <Bar dataKey="volumeUSD" fill={CHART_COLORS.bar} radius={[2, 2, 0, 0]} barSize={filteredChartData.length > 60 ? 8 : filteredChartData.length > 20 ? 14 : 20} />
         </BarChart>
       </ResponsiveContainer>
     </ChartContainer>
@@ -532,7 +532,7 @@ export const ChartSection = memo(function ChartSection({
             cursor={{ fill: "hsl(var(--muted) / 0.3)" }}
             content={() => null}
           />
-          <Bar dataKey="tvlUSD" fill={CHART_COLORS.bar} radius={[2, 2, 0, 0]} />
+          <Bar dataKey="tvlUSD" fill={CHART_COLORS.bar} radius={[2, 2, 0, 0]} barSize={filteredChartData.length > 60 ? 8 : filteredChartData.length > 20 ? 14 : 20} />
         </BarChart>
       </ResponsiveContainer>
     </ChartContainer>

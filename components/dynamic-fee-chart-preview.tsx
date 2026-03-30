@@ -250,6 +250,12 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
     return newChartData;
   }, [effectiveData]);
 
+  // Check if activity/target lines have meaningful data (not all zeros)
+  const hasRatioData = useMemo(() => {
+    if (!chartData || chartData.length === 0) return false;
+    return chartData.some(d => d.activity !== 0 || d.target !== 0);
+  }, [chartData]);
+
   // Lock fee Y-axis domain so viewport doesn't change on hover
   const feeYAxisDomain = useMemo(() => {
     if (!chartData || chartData.length === 0) return [0, 1] as [number, number];
@@ -522,31 +528,35 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
                       strokeOpacity={0}
                     />
                   )}
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="activity"
-                    stroke={"hsl(var(--chart-3))"}
-                    strokeWidth={1.5}
-                    dot={false}
-                    activeDot={false}
-                    isAnimationActive={shouldAnimate}
-                    animationDuration={600}
-                    animationEasing="ease-out"
-                  />
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="target"
-                    stroke={"hsl(var(--chart-2))"}
-                    strokeWidth={1}
-                    strokeDasharray="3 3"
-                    dot={false}
-                    activeDot={false}
-                    isAnimationActive={shouldAnimate}
-                    animationDuration={600}
-                    animationEasing="ease-out"
-                  />
+                  {hasRatioData && (
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="activity"
+                      stroke={"hsl(var(--chart-3))"}
+                      strokeWidth={1.5}
+                      dot={false}
+                      activeDot={false}
+                      isAnimationActive={shouldAnimate}
+                      animationDuration={600}
+                      animationEasing="ease-out"
+                    />
+                  )}
+                  {hasRatioData && (
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="target"
+                      stroke={"hsl(var(--chart-2))"}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      dot={false}
+                      activeDot={false}
+                      isAnimationActive={shouldAnimate}
+                      animationDuration={600}
+                      animationEasing="ease-out"
+                    />
+                  )}
                   {/* Base line: orange before hover, grey during hover */}
                   <Line
                     yAxisId="right"
@@ -583,10 +593,10 @@ function DynamicFeeChartPreviewComponent({ data, poolInfo, isLoading = false, on
           </div>
         </div>
       </div>
-      {/* Hover footer tooltip - absolutely positioned to not affect layout */}
+      {/* Hover tooltip - positioned inside card to avoid clipping by parent overflow */}
       {!isMobile && footerDisplay && (
-        <div className="absolute top-full right-0 mt-2 pointer-events-none z-10">
-          <div className="rounded-md border border-primary bg-container-secondary px-2.5 py-1.5 shadow-sm inline-flex">
+        <div className="absolute bottom-3 right-3 pointer-events-none z-20">
+          <div className="rounded-md border border-primary bg-container-secondary/90 backdrop-blur-sm px-2.5 py-1.5 shadow-sm inline-flex">
             <div className="flex items-center gap-4 text-[10px] md:text-xs font-mono">
               <span className="text-muted-foreground">{footerDisplay.daysAgoLabel}</span>
               <span className="text-sidebar-primary font-medium">{footerDisplay.pct}</span>

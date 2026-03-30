@@ -53,6 +53,7 @@ const processChartDataForScreenSize = (data: ChartDataPoint[], windowWidth: numb
   if (!data?.length) return [];
 
   const sortedData = [...data].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
   const daysBack = windowWidth < 1500 ? 30 : windowWidth < 1700 ? 45 : 60;
 
   const cutoffDate = new Date();
