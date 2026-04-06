@@ -19,23 +19,30 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
 export async function checkRateLimit(request: Request): Promise<NextResponse | null> {
   if (!ratelimit) return null
 
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
-  const { success, limit, remaining, reset } = await ratelimit.limit(ip)
+  try {
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1'
+    const { success, limit, remaining, reset } = await ratelimit.limit(ip)
 
-  if (!success) {
-    return NextResponse.json(
-      { error: 'Rate limit exceeded' },
-      {
-        status: 429,
-        headers: {
-          'X-RateLimit-Limit': limit.toString(),
-          'X-RateLimit-Remaining': remaining.toString(),
-          'X-RateLimit-Reset': reset.toString(),
-        },
-      }
-    )
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded' },
+        {
+          status: 429,
+          headers: {
+            'X-RateLimit-Limit': limit.toString(),
+            'X-RateLimit-Remaining': remaining.toString(),
+            'X-RateLimit-Reset': reset.toString(),
+          },
+        }
+      )
+    }
+
+    return null
+  } catch (err) {
+    // Fail open — if Redis is unreachable (e.g. rotated credentials),
+    // allow the request through rather than 500ing the entire app
+    console.error('[ratelimit] Redis error, failing open:', err)
+    return null
   }
-
-  return null
 }
 
