@@ -23,7 +23,6 @@ export default function PointsPage() {
     volumePoints,
     liquidityPoints,
     referralPoints,
-    recentPointsEarned,
     pointsHistory,
     leaderboardData,
     accountAddress,
@@ -59,7 +58,7 @@ export default function PointsPage() {
       volumePoints={volumePoints}
       liquidityPoints={liquidityPoints}
       referralPoints={referralPoints}
-      recentPointsEarned={recentPointsEarned}
+      recentPointsEarned={0}
       pointsHistory={pointsHistory}
       leaderboardData={leaderboardData}
       accountAddress={accountAddress}

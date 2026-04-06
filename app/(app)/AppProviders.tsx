@@ -96,12 +96,15 @@ export default function AppProviders({
   }, []);
 
   // Capture referral code from URL on any page and store in localStorage
+  // Sanitize: only allow alphanumeric codes (4-32 chars) to prevent XSS via ?ref=
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const refCode = urlParams.get("ref")
     if (refCode) {
-      localStorage.setItem("alphix_pending_referral", refCode)
-      // Clean URL by removing the ref param
+      if (/^[a-zA-Z0-9]{4,32}$/.test(refCode)) {
+        localStorage.setItem("alphix_pending_referral", refCode)
+      }
+      // Always clean URL regardless of validity
       const newUrl = window.location.pathname
       window.history.replaceState({}, "", newUrl)
     }

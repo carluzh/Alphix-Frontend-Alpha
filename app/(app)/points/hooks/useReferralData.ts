@@ -8,9 +8,7 @@ import {
   fetchRefereesData,
   fetchMyReferrer,
   DEFAULT_REFEREES_DATA,
-  type CachedReferralCode,
   type CachedRefereesData,
-  type CachedMyReferrer,
 } from "@/lib/upstash-points";
 
 // =============================================================================
@@ -50,9 +48,18 @@ export interface UseReferralDataReturn extends ReferralData {
 // CONSTANTS
 // =============================================================================
 
-// Use same env var as backend-client.ts for consistency
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || "http://localhost:3001";
 const PENDING_REFERRAL_KEY = "alphix_pending_referral";
+
+/**
+ * Validate a referral code: alphanumeric, 4-32 chars.
+ * Used to sanitize ?ref= values before storing or using them.
+ */
+const REFERRAL_CODE_REGEX = /^[a-zA-Z0-9]{4,32}$/;
+
+function isValidReferralCode(code: string): boolean {
+  return REFERRAL_CODE_REGEX.test(code);
+}
 
 // =============================================================================
 // HOOK
@@ -74,28 +81,35 @@ export function useReferralData(): UseReferralDataReturn {
   const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
 
   // =============================================================================
-  // URL REFERRAL TRACKING
+  // URL REFERRAL TRACKING (with sanitization)
   // =============================================================================
 
-  // Check for pending referral in localStorage on mount
+  // Check for pending referral in localStorage on mount — re-validate before trusting
   useEffect(() => {
     if (typeof window !== "undefined") {
       const pending = localStorage.getItem(PENDING_REFERRAL_KEY);
-      if (pending) {
+      if (pending && isValidReferralCode(pending)) {
         setPendingReferralCode(pending);
+      } else if (pending) {
+        // Invalid value in localStorage — remove it
+        localStorage.removeItem(PENDING_REFERRAL_KEY);
       }
     }
   }, []);
 
-  // Check URL for referral code on mount
+  // Check URL for referral code on mount — validate before storing
   useEffect(() => {
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
       const refCode = urlParams.get("ref");
-      if (refCode) {
+      if (refCode && isValidReferralCode(refCode)) {
         localStorage.setItem(PENDING_REFERRAL_KEY, refCode);
         setPendingReferralCode(refCode);
         // Clean URL
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, "", newUrl);
+      } else if (refCode) {
+        // Invalid ref code in URL — just clean the URL, don't store
         const newUrl = window.location.pathname;
         window.history.replaceState({}, "", newUrl);
       }
@@ -113,7 +127,6 @@ export function useReferralData(): UseReferralDataReturn {
   // DATA FETCHING
   // =============================================================================
 
-  // Fetch all referral data when connected
   useEffect(() => {
     // Reset state whenever address changes (including disconnect)
     setMyCode(null);
@@ -134,7 +147,7 @@ export function useReferralData(): UseReferralDataReturn {
       setError(null);
 
       try {
-        // Fetch all data in parallel from Upstash
+        // Fetch all data in parallel from backend API
         const [codeData, referrerData, refereesResult] = await Promise.all([
           fetchReferralCode(address!),
           fetchMyReferrer(address!),
@@ -143,32 +156,13 @@ export function useReferralData(): UseReferralDataReturn {
 
         if (cancelled) return;
 
-        // Set my code - if not found in cache, auto-generate via backend
+        // Set my code
         if (codeData) {
-          setMyCode(codeData.code);
-          setMyCodeUsageCount(codeData.usageCount);
-        } else {
-          // Auto-generate referral code via backend (GET creates if doesn't exist)
-          try {
-            const response = await fetch(`${BACKEND_URL}/referral/code/${address}`, {
-              method: "GET",
-            });
-            if (response.ok) {
-              const data = await response.json();
-              if (data.success && data.data) {
-                // Check if user is eligible - backend returns success:true even when ineligible
-                if (data.data.code === null && data.data.eligible === false) {
-                  // User doesn't meet requirements (e.g., "Minimum $10 TVL or $50 volume required")
-                  setMyCode("REQUIREMENTS_NOT_MET");
-                } else if (data.data.code) {
-                  setMyCode(data.data.code);
-                  setMyCodeUsageCount(data.data.usageCount || 0);
-                }
-              }
-            }
-          } catch (codeErr) {
-            // Silently fail code generation - not critical
-            console.error("Failed to auto-generate referral code:", codeErr);
+          if (codeData.code === null && codeData.eligible === false) {
+            setMyCode("REQUIREMENTS_NOT_MET");
+          } else if (codeData.code) {
+            setMyCode(codeData.code);
+            setMyCodeUsageCount(codeData.usageCount);
           }
         }
 
@@ -211,11 +205,6 @@ export function useReferralData(): UseReferralDataReturn {
   // =============================================================================
 
   useEffect(() => {
-    // Only apply if:
-    // 1. Connected
-    // 2. Have pending code
-    // 3. Don't already have a referrer
-    // 4. Not loading
     if (
       isConnected &&
       address &&
@@ -245,28 +234,17 @@ export function useReferralData(): UseReferralDataReturn {
     }
 
     try {
-      // First check Upstash
       const existing = await fetchReferralCode(address);
-      if (existing) {
+      if (existing && existing.code) {
         setMyCode(existing.code);
         setMyCodeUsageCount(existing.usageCount);
         return existing.code;
       }
 
-      // Create via backend
-      const response = await fetch(`${BACKEND_URL}/referral/code/${address}`, {
-        method: "GET",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to get referral code");
-      }
-
-      const data = await response.json();
-      if (data.success && data.data) {
-        setMyCode(data.data.code);
-        setMyCodeUsageCount(data.data.usageCount);
-        return data.data.code;
+      // If code is null but we got a response, user may not be eligible
+      if (existing && existing.code === null && existing.eligible === false) {
+        setMyCode("REQUIREMENTS_NOT_MET");
+        return null;
       }
 
       return null;
@@ -283,7 +261,6 @@ export function useReferralData(): UseReferralDataReturn {
 
   /**
    * Apply a referral code (requires signature)
-   * Returns: { success: boolean, error?: string }
    */
   const applyReferralCode = useCallback(async (code: string): Promise<{ success: boolean; error?: string }> => {
     if (!address || !isConnected) {
@@ -298,15 +275,20 @@ export function useReferralData(): UseReferralDataReturn {
       return { success: false, error: errorMsg };
     }
 
+    // Validate the code before using it in a signing message
+    if (!isValidReferralCode(code)) {
+      const errorMsg = "Invalid referral code format";
+      setError(errorMsg);
+      return { success: false, error: errorMsg };
+    }
+
     try {
-      // Sign message to prove ownership
       const message = `Apply referral code: ${code}\nAddress: ${address}\nTimestamp: ${Date.now()}`;
 
       let signature: string;
       try {
         signature = await signMessageAsync({ message });
       } catch (signErr: unknown) {
-        // User rejected the signature request
         const err = signErr as { code?: number; message?: string };
         if (err?.code === 4001 || err?.message?.includes("rejected") || err?.message?.includes("denied")) {
           const errorMsg = "Signature rejected";
@@ -316,7 +298,6 @@ export function useReferralData(): UseReferralDataReturn {
         throw signErr;
       }
 
-      // Send to backend
       const response = await fetch(`${BACKEND_URL}/referral/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -328,11 +309,16 @@ export function useReferralData(): UseReferralDataReturn {
         }),
       });
 
+      if (response.status === 429) {
+        const errorMsg = "Too many requests. Please wait a moment and try again.";
+        setError(errorMsg);
+        return { success: false, error: errorMsg };
+      }
+
       if (!response.ok) {
         const errorData = await response.json();
         const backendError = errorData.error || "Failed to apply referral code";
 
-        // Map exact backend error messages to user-friendly messages
         const errorMap: Record<string, string> = {
           "Cannot refer yourself": "You cannot refer yourself",
           "Invalid referral code": "Invalid referral code",
@@ -381,14 +367,18 @@ export function useReferralData(): UseReferralDataReturn {
       return false;
     }
 
+    // Validate the code before using it in a signing message
+    if (!isValidReferralCode(newCode)) {
+      setError("Invalid referral code format");
+      return false;
+    }
+
     try {
-      // Sign message to prove ownership
-      const message = `Change referrer to code: ${newCode}\nAddress: ${address}\nTimestamp: ${Date.now()}`;
+      const message = `Change referral code to: ${newCode}\nAddress: ${address}\nTimestamp: ${Date.now()}`;
       const signature = await signMessageAsync({ message });
 
-      // Send to backend
       const response = await fetch(`${BACKEND_URL}/referral/change`, {
-        method: "PUT",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userAddress: address,
@@ -397,6 +387,11 @@ export function useReferralData(): UseReferralDataReturn {
           message,
         }),
       });
+
+      if (response.status === 429) {
+        setError("Too many requests. Please wait a moment and try again.");
+        return false;
+      }
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -427,27 +422,21 @@ export function useReferralData(): UseReferralDataReturn {
   // =============================================================================
 
   return {
-    // My referral code
     myCode,
     myCodeUsageCount,
-    // Who referred me
     myReferrer,
     myReferrerCode,
     joinedAt,
-    // My referees
     referees: refereesData.referees,
     totalReferees: refereesData.totalReferees,
     totalEarnings: refereesData.totalEarnings,
     totalReferredTvlUsd: refereesData.totalReferredTvlUsd,
     totalReferredVolumeUsd: refereesData.totalReferredVolumeUsd,
-    // State
     isLoading,
     error,
-    // Actions
     applyReferralCode,
     changeReferrer,
     getOrCreateReferralCode,
-    // URL tracking
     pendingReferralCode,
     clearPendingReferral,
   };

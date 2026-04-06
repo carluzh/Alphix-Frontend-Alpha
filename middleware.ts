@@ -60,8 +60,7 @@ const BASE_CSP: Record<string, string[]> = {
     "https://ipfs.io",
     "https://gateway.ipfs.io",
     "https://cloudflare-ipfs.com",
-    // Upstash (client-side points/cache - wildcard required for dynamic subdomains)
-    "https://*.upstash.io",
+    // Upstash removed — all points/referral data now fetched via backend API
     // Monitoring
     "https://o4510478966980608.ingest.de.sentry.io",
     "https://sentry.io",

@@ -8,7 +8,7 @@ import { usePollingIntervalByChain } from "@/hooks/usePollingIntervalByChain";
 import { useOverview } from "./useOverviewData";
 import { ALL_MODES } from "@/lib/chain-registry";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
-import { fetchUserPoints, DEFAULT_USER_POINTS, type CachedUserPoints } from "@/lib/upstash-points";
+import { fetchUserPoints, DEFAULT_USER_POINTS, type CachedUserPoints } from "@/lib/upstash-points"; // now fetches from backend API, not Upstash
 import { fetchUnifiedYieldPositions } from "@/lib/liquidity/unified-yield/fetchUnifiedYieldPositions";
 import { createNetworkClient } from "@/lib/viemClient";
 import { chainIdForMode } from "@/lib/network-mode";
@@ -134,7 +134,7 @@ export function useOverviewPageData() {
     };
   }, [isConnected, accountAddress, positionsRefresh]);
 
-  // Points data (fetched from Upstash)
+  // Points data (fetched from backend API)
   const [pointsData, setPointsData] = useState<CachedUserPoints>(DEFAULT_USER_POINTS);
   const [isLoadingPoints, setIsLoadingPoints] = useState(false);
 

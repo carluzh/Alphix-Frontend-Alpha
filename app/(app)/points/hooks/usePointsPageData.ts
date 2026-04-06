@@ -4,10 +4,10 @@ import { useState, useEffect, useCallback } from "react";
 import { useAccount } from "wagmi";
 import * as Sentry from "@sentry/nextjs";
 import {
-  fetchUserPoints as fetchUserPointsFromUpstash,
+  fetchUserPoints,
   fetchUserHistory,
-  fetchLeaderboard as fetchLeaderboardFromUpstash,
-  fetchGlobalStats as fetchGlobalStatsFromUpstash,
+  fetchLeaderboard,
+  fetchGlobalStats,
   DEFAULT_USER_POINTS,
   DEFAULT_GLOBAL_STATS,
 } from "@/lib/upstash-points";
@@ -40,7 +40,7 @@ export interface LeaderboardEntry {
 }
 
 /**
- * User points data from API
+ * User points data
  */
 interface UserPointsData {
   totalPoints: number;
@@ -49,11 +49,10 @@ interface UserPointsData {
   volumePoints: number;
   liquidityPoints: number;
   referralPoints: number;
-  recentPointsEarned: number;
 }
 
 /**
- * Global stats data from API
+ * Global stats data
  */
 interface GlobalStatsData {
   totalParticipants: number;
@@ -92,7 +91,6 @@ export interface UsePointsPageDataReturn {
   volumePoints: number;
   liquidityPoints: number;
   referralPoints: number;
-  recentPointsEarned: number;
   // Tables data
   pointsHistory: PointsHistoryEntry[];
   leaderboardData: LeaderboardEntry[];
@@ -101,80 +99,6 @@ export interface UsePointsPageDataReturn {
   loadingStates: LoadingStates;
 }
 
-/**
- * Fetch user points from Upstash and transform to internal format
- */
-async function fetchUserPoints(address: string): Promise<UserPointsData> {
-  const data = await fetchUserPointsFromUpstash(address);
-  if (!data) {
-    return {
-      totalPoints: DEFAULT_USER_POINTS.totalPoints,
-      dailyRate: DEFAULT_USER_POINTS.dailyRate,
-      leaderboardPosition: DEFAULT_USER_POINTS.leaderboardPosition,
-      volumePoints: DEFAULT_USER_POINTS.volumePoints,
-      liquidityPoints: DEFAULT_USER_POINTS.liquidityPoints,
-      referralPoints: DEFAULT_USER_POINTS.referralPoints,
-      recentPointsEarned: DEFAULT_USER_POINTS.recentPointsEarned,
-    };
-  }
-  return {
-    totalPoints: data.totalPoints,
-    dailyRate: data.dailyRate,
-    leaderboardPosition: data.leaderboardPosition,
-    volumePoints: data.volumePoints,
-    liquidityPoints: data.liquidityPoints,
-    referralPoints: data.referralPoints,
-    recentPointsEarned: data.recentPointsEarned,
-  };
-}
-
-/**
- * Fetch global stats from Upstash
- */
-async function fetchGlobalStats(): Promise<GlobalStatsData> {
-  const data = await fetchGlobalStatsFromUpstash();
-  return {
-    totalParticipants: data?.totalParticipants ?? DEFAULT_GLOBAL_STATS.totalParticipants,
-    currentSeason: data?.currentSeason ?? DEFAULT_GLOBAL_STATS.currentSeason,
-    currentWeek: data?.currentWeek ?? DEFAULT_GLOBAL_STATS.currentWeek,
-    seasonStartDate: data?.seasonStartDate ?? DEFAULT_GLOBAL_STATS.seasonStartDate,
-  };
-}
-
-/**
- * Fetch points history from Upstash and transform to internal format
- */
-async function fetchPointsHistory(address: string): Promise<PointsHistoryEntry[]> {
-  const data = await fetchUserHistory(address);
-  return data.map((entry) => ({
-    id: entry.id,
-    type: entry.type,
-    points: entry.points,
-    season: entry.season,
-    week: entry.week,
-    startDate: entry.startDate,
-    endDate: entry.endDate,
-    referralCount: entry.referralCount,
-    // For referral entries, use startDate as timestamp
-    timestamp: entry.type === "referral" ? entry.startDate : undefined,
-  }));
-}
-
-/**
- * Fetch leaderboard from Upstash
- */
-async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
-  const data = await fetchLeaderboardFromUpstash();
-  return data.map((entry) => ({
-    rank: entry.rank,
-    address: entry.address,
-    points: entry.points,
-  }));
-}
-
-/**
- * Default empty states (using constants from upstash-points)
- */
 const EMPTY_USER_POINTS: UserPointsData = {
   totalPoints: DEFAULT_USER_POINTS.totalPoints,
   dailyRate: DEFAULT_USER_POINTS.dailyRate,
@@ -182,7 +106,6 @@ const EMPTY_USER_POINTS: UserPointsData = {
   volumePoints: DEFAULT_USER_POINTS.volumePoints,
   liquidityPoints: DEFAULT_USER_POINTS.liquidityPoints,
   referralPoints: DEFAULT_USER_POINTS.referralPoints,
-  recentPointsEarned: DEFAULT_USER_POINTS.recentPointsEarned,
 };
 
 const EMPTY_GLOBAL_STATS: GlobalStatsData = {
@@ -195,22 +118,17 @@ const EMPTY_GLOBAL_STATS: GlobalStatsData = {
 /**
  * usePointsPageData - Aggregates all data needed for the points page
  *
- * Architecture follows Uniswap patterns:
- * - Separate state for each data category
- * - Granular loading states for progressive UI
- * - Parallel fetching with Promise.allSettled
- * - Clean separation between fetching and derived values
+ * Fetches from backend API endpoints (not Upstash).
+ * Parallel fetching with Promise.allSettled + granular loading states.
  */
 export function usePointsPageData(): UsePointsPageDataReturn {
   const { address: accountAddress, isConnected } = useAccount();
 
-  // Separate state for each data category (Uniswap pattern)
   const [userPoints, setUserPoints] = useState<UserPointsData>(EMPTY_USER_POINTS);
   const [globalStats, setGlobalStats] = useState<GlobalStatsData>(EMPTY_GLOBAL_STATS);
   const [pointsHistory, setPointsHistory] = useState<PointsHistoryEntry[]>([]);
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
 
-  // Granular loading states (Uniswap pattern)
   const [loadingStates, setLoadingStates] = useState<LoadingStates>({
     userPoints: false,
     globalStats: false,
@@ -218,27 +136,21 @@ export function usePointsPageData(): UsePointsPageDataReturn {
     leaderboard: false,
   });
 
-  // Helper to update specific loading state
   const setLoading = useCallback((key: keyof LoadingStates, value: boolean) => {
     setLoadingStates((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  // Single consolidated effect - fetches all data in parallel
   useEffect(() => {
     let cancelled = false;
 
     async function loadData() {
-      // Always fetch public data (globalStats, leaderboard)
-      // Only fetch user data when connected
       const fetchingUserData = !!(isConnected && accountAddress);
 
-      // Reset user-specific data when disconnected
       if (!fetchingUserData) {
         setUserPoints(EMPTY_USER_POINTS);
         setPointsHistory([]);
       }
 
-      // Set loading states for what we're fetching
       setLoadingStates({
         userPoints: fetchingUserData,
         globalStats: true,
@@ -246,31 +158,35 @@ export function usePointsPageData(): UsePointsPageDataReturn {
         leaderboard: true,
       });
 
-      // Build request array conditionally
       const requests: Promise<unknown>[] = [
         fetchGlobalStats(),
         fetchLeaderboard(),
       ];
 
-      // Add user-specific requests if connected
       if (fetchingUserData) {
         requests.push(
           fetchUserPoints(accountAddress),
-          fetchPointsHistory(accountAddress)
+          fetchUserHistory(accountAddress)
         );
       }
 
-      // Parallel fetch with independent error handling
       const results = await Promise.allSettled(requests);
 
       if (cancelled) return;
 
-      // Process results - indices depend on whether user data was fetched
       const [globalStatsResult, leaderboardResult] = results;
 
       // Handle global stats
       if (globalStatsResult.status === "fulfilled") {
-        setGlobalStats(globalStatsResult.value as GlobalStatsData);
+        const data = globalStatsResult.value as Awaited<ReturnType<typeof fetchGlobalStats>>;
+        if (data) {
+          setGlobalStats({
+            totalParticipants: data.totalParticipants,
+            currentSeason: data.currentSeason,
+            currentWeek: data.currentWeek,
+            seasonStartDate: data.seasonStartDate,
+          });
+        }
       } else {
         Sentry.captureException(globalStatsResult.reason, {
           tags: { operation: "points_fetch_global_stats" },
@@ -288,13 +204,23 @@ export function usePointsPageData(): UsePointsPageDataReturn {
       }
       setLoading("leaderboard", false);
 
-      // Handle user-specific data if fetched
+      // Handle user-specific data
       if (fetchingUserData) {
         const userPointsResult = results[2];
         const historyResult = results[3];
 
         if (userPointsResult.status === "fulfilled") {
-          setUserPoints(userPointsResult.value as UserPointsData);
+          const data = userPointsResult.value as Awaited<ReturnType<typeof fetchUserPoints>>;
+          if (data) {
+            setUserPoints({
+              totalPoints: data.totalPoints,
+              dailyRate: data.dailyRate,
+              leaderboardPosition: data.leaderboardPosition,
+              volumePoints: data.volumePoints,
+              liquidityPoints: data.liquidityPoints,
+              referralPoints: data.referralPoints,
+            });
+          }
         } else {
           Sentry.captureException(userPointsResult.reason, {
             tags: { operation: "points_fetch_user_points" },
@@ -304,7 +230,20 @@ export function usePointsPageData(): UsePointsPageDataReturn {
         setLoading("userPoints", false);
 
         if (historyResult.status === "fulfilled") {
-          setPointsHistory(historyResult.value as PointsHistoryEntry[]);
+          const data = historyResult.value as Awaited<ReturnType<typeof fetchUserHistory>>;
+          setPointsHistory(
+            data.map((entry) => ({
+              id: entry.id,
+              type: entry.type,
+              points: entry.points,
+              season: entry.season,
+              week: entry.week,
+              startDate: entry.startDate,
+              endDate: entry.endDate,
+              referralCount: entry.referralCount,
+              timestamp: entry.type === "referral" ? entry.startDate : undefined,
+            }))
+          );
         } else {
           Sentry.captureException(historyResult.reason, {
             tags: { operation: "points_fetch_history" },
@@ -322,36 +261,23 @@ export function usePointsPageData(): UsePointsPageDataReturn {
     };
   }, [isConnected, accountAddress, setLoading]);
 
-  // Computed overall loading state (includes all categories)
   const isLoading = Object.values(loadingStates).some(Boolean);
 
   return {
-    // Connection state
     isConnected,
     accountAddress,
-
-    // Points data (flattened for backward compatibility)
     totalPoints: userPoints.totalPoints,
     dailyRate: userPoints.dailyRate,
     leaderboardPosition: userPoints.leaderboardPosition,
     totalParticipants: globalStats.totalParticipants,
-
-    // Season data
     currentSeason: globalStats.currentSeason,
     currentWeek: globalStats.currentWeek,
     seasonStartDate: new Date(globalStats.seasonStartDate),
-
-    // Points breakdown
     volumePoints: userPoints.volumePoints,
     liquidityPoints: userPoints.liquidityPoints,
     referralPoints: userPoints.referralPoints,
-    recentPointsEarned: userPoints.recentPointsEarned,
-
-    // Tables data
     pointsHistory,
     leaderboardData,
-
-    // Loading states (granular + overall)
     isLoading,
     loadingStates,
   };
