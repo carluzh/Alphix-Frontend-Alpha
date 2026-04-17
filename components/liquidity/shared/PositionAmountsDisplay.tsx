@@ -9,8 +9,8 @@
  */
 
 import React from "react";
-import Image from "next/image";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
+import { TokenImage } from "@/components/ui/token-image";
 import { resolveTokenIcon, type TokenSymbol } from "@/lib/pools-config";
 
 interface TokenAmountRow {
@@ -53,12 +53,10 @@ export function PositionAmountsDisplay({
         {/* Token 0 - always show */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Image
+            <TokenImage
               src={token0Icon}
               alt={token0.symbol}
-              width={20}
-              height={20}
-              className="rounded-full"
+              size={20}
             />
             <span className="text-sm font-medium">{token0.symbol}</span>
           </div>
@@ -72,12 +70,10 @@ export function PositionAmountsDisplay({
         {/* Token 1 - always show */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Image
+            <TokenImage
               src={token1Icon}
               alt={token1.symbol}
-              width={20}
-              height={20}
-              className="rounded-full"
+              size={20}
             />
             <span className="text-sm font-medium">{token1.symbol}</span>
           </div>

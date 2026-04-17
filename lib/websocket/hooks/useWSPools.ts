@@ -148,10 +148,10 @@ export function useWSPools(): UseWSPoolsReturn {
     fetchPools();
   }, [fetchPools]);
 
-  // Poll — faster when WS is disconnected
+  // Poll only when WS is disconnected — WS provides real-time updates when healthy
   useEffect(() => {
-    const interval = isConnected ? 60_000 : 45_000;
-    const intervalId = setInterval(() => fetchPools(true), interval);
+    if (isConnected) return;
+    const intervalId = setInterval(() => fetchPools(true), 45_000);
     return () => clearInterval(intervalId);
   }, [isConnected, fetchPools]);
 

@@ -83,6 +83,8 @@ const CHART_COLORS = {
   activity: "hsl(var(--chart-3))",
   target: "hsl(var(--chart-2))",
   fee: "#e85102",
+  buyFee: "hsl(142.1 76.2% 36.3%)",  // custom-green
+  sellFee: "hsl(0 84.2% 60.2%)",       // custom-red
   volatility: "#a0a0a0",
   bar: "#404040",
 };
@@ -112,6 +114,8 @@ interface HoverData {
   tvl?: number;
   volatility?: number;
   agentAdjustment?: number;
+  buyFee?: number;
+  sellFee?: number;
 }
 
 /**
@@ -152,19 +156,28 @@ export const ChartSection = memo(function ChartSection({
   const internal = usePDPChartState();
   const chartType = controlledChartType ?? internal.chartType;
   const isVolatile = poolType === 'Volatile';
+  const isPro = poolType === 'Pro';
   const rawSetChartType = onChartTypeChange ?? internal.setChartType;
 
   // Derived flags from data shape
   const hasYieldSources = !!(yieldSources && yieldSources.length > 0);
-  // Per-event fee data: Volatile pools use granular per-event rendering (multiple events/day)
+  // Per-event fee data: Volatile and Pro pools use granular per-event rendering
   const hasPerEventFees = useMemo(() => {
-    if (!isVolatile || !feeEvents || feeEvents.length < 2) return false;
+    if (!feeEvents || feeEvents.length < 2) return false;
+    // Pro pools always use per-event rendering when fee events are present
+    if (isPro) return true;
+    // Volatile pools use per-event when there are multiple events in a single day
+    if (!isVolatile) return false;
     const days = new Set(feeEvents.map(e => new Date(Number(e.timestamp) * 1000).toISOString().split('T')[0]));
     return feeEvents.length > days.size;
-  }, [isVolatile, feeEvents]);
+  }, [isVolatile, isPro, feeEvents]);
 
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("1M");
   const hasSetInitialPeriod = useRef(false);
+
+  // Toggleable series for Pro pool buy/sell lines
+  const [showBuyFee, setShowBuyFee] = useState(true);
+  const [showSellFee, setShowSellFee] = useState(true);
   useEffect(() => {
     if (hasPerEventFees && !hasSetInitialPeriod.current) {
       hasSetInitialPeriod.current = true;
@@ -229,17 +242,30 @@ export const ChartSection = memo(function ChartSection({
   // Calculate period range for x-axis domain
   const [periodFrom, periodTo] = useMemo(() => calculatePeriodRange(timePeriod as ChartPeriodPool), [timePeriod]);
 
-  // Generate ticks for x-axis based on period
-  const xAxisTicks = useMemo(() => {
-    return generateTicksForPeriod(timePeriod as ChartPeriodPool, periodFrom, periodTo);
-  }, [timePeriod, periodFrom, periodTo]);
-
   // Build per-event fee chart data when applicable (Fee tab + per-event fee data)
   const perEventFeeData = useMemo(() => {
     if (!hasPerEventFees || chartType !== ChartType.FEE || !feeEvents?.length) return null;
     return feeEvents
       .map(e => {
         const ts = Number(e.timestamp || 0);
+        if (isPro) {
+          const buyBps = e.buyFeeBps != null ? Number(e.buyFeeBps) : null;
+          const sellBps = e.sellFeeBps != null ? Number(e.sellFeeBps) : null;
+          const buyFee = buyBps != null && Number.isFinite(buyBps) ? buyBps / 10000 : undefined;
+          const sellFee = sellBps != null && Number.isFinite(sellBps) ? sellBps / 10000 : undefined;
+          return {
+            date: new Date(ts * 1000).toISOString(),
+            volumeUSD: 0,
+            tvlUSD: 0,
+            volumeTvlRatio: 0,
+            emaRatio: 0,
+            // Use buyFee as dynamicFee for domain/header calculations; buy/sell are separate lines
+            dynamicFee: buyFee ?? 0,
+            buyFee,
+            sellFee,
+            timestamp: ts,
+          };
+        }
         const bps = Number(e.newFeeBps ?? 0);
         return {
           date: new Date(ts * 1000).toISOString(),
@@ -254,7 +280,7 @@ export const ChartSection = memo(function ChartSection({
         };
       })
       .sort((a, b) => a.timestamp - b.timestamp);
-  }, [hasPerEventFees, chartType, feeEvents]);
+  }, [hasPerEventFees, chartType, feeEvents, isPro]);
 
   // Transform chart data to include timestamps and filter based on time period
   const filteredChartData = useMemo(() => {
@@ -271,11 +297,32 @@ export const ChartSection = memo(function ChartSection({
 
     const dataWithTimestamps = chartData.map(d => ({
       ...d,
-      timestamp: Math.floor(new Date(d.date).getTime() / 1000),
+      // Use end-of-day (23:59:59 UTC) so daily bars aren't filtered out by period boundaries
+      timestamp: Math.floor(new Date(`${d.date}T23:59:59Z`).getTime() / 1000),
     }));
 
     return dataWithTimestamps.filter(d => d.timestamp >= periodFrom && d.timestamp <= periodTo);
   }, [perEventFeeData, chartData, timePeriod, periodFrom, periodTo]);
+
+  // For per-event fee data, use the actual data range so events aren't compressed into a sliver
+  const effectiveDomain = useMemo((): [number, number] => {
+    if (perEventFeeData && filteredChartData.length > 0 && chartType === ChartType.FEE) {
+      const timestamps = filteredChartData.map((d: any) => d.timestamp).filter(Boolean);
+      if (timestamps.length > 0) {
+        const minTs = Math.min(...timestamps);
+        const maxTs = Math.max(...timestamps);
+        const pad = Math.max((maxTs - minTs) * 0.05, 3600); // 5% padding or 1h min
+        return [minTs - pad, maxTs + pad];
+      }
+    }
+    return [periodFrom, periodTo];
+  }, [perEventFeeData, filteredChartData, chartType, periodFrom, periodTo]);
+
+  // Generate ticks for x-axis based on period
+  const xAxisTicks = useMemo(() => {
+    return generateTicksForPeriod(timePeriod as ChartPeriodPool, effectiveDomain[0], effectiveDomain[1]);
+  }, [timePeriod, effectiveDomain]);
+
 
   // Get current (latest) values and daily change from the data
   const currentValues = useMemo(() => {
@@ -308,7 +355,7 @@ export const ChartSection = memo(function ChartSection({
   }, [filteredChartData]);
 
   // Handle mouse move on chart
-  const handleMouseMove = useCallback((data: { activePayload?: Array<{ payload: ChartDataPoint }> }) => {
+  const handleMouseMove = useCallback((data: { activePayload?: Array<{ payload: any }> }) => {
     if (data.activePayload && data.activePayload.length > 0) {
       const point = data.activePayload[0].payload;
       setHoverData({
@@ -320,6 +367,8 @@ export const ChartSection = memo(function ChartSection({
         tvl: point.tvlUSD,
         volatility: point.volatility,
         agentAdjustment: point.agentAdjustment,
+        buyFee: point.buyFee,
+        sellFee: point.sellFee,
       });
     }
   }, []);
@@ -362,7 +411,9 @@ export const ChartSection = memo(function ChartSection({
     }
 
     const ratios = filteredChartData.flatMap((d) => [d.volumeTvlRatio ?? 0, d.emaRatio ?? 0]).filter(Boolean);
-    const fees = filteredChartData.map((d) => d.dynamicFee ?? 0).filter(Boolean);
+    const fees = isPro
+      ? filteredChartData.flatMap((d) => [(d as any).buyFee, (d as any).sellFee]).filter((v): v is number => v != null && Number.isFinite(v) && v > 0)
+      : filteredChartData.map((d) => d.dynamicFee ?? 0).filter(Boolean);
 
     const ratioMin = ratios.length > 0 ? Math.min(...ratios) : 0;
     const ratioMax = ratios.length > 0 ? Math.max(...ratios) : 1;
@@ -382,10 +433,18 @@ export const ChartSection = memo(function ChartSection({
   const dotPattern = `radial-gradient(circle, ${DOT_PATTERN.color} ${DOT_PATTERN.size}, transparent ${DOT_PATTERN.size})`;
 
   // Loading skeleton — only for non-yield tabs (yield has its own loading in YieldChartSection)
-  if (chartType !== ChartType.YIELD && (isLoading || chartData.length === 0)) {
+  // Skip skeleton on Fee tab when per-event fee data is available (Pro/Volatile pools may have no chartData)
+  const hasFeeData = chartType === ChartType.FEE && perEventFeeData != null && perEventFeeData.length > 0;
+  const hasNoData = chartType !== ChartType.YIELD && !hasFeeData && chartData.length === 0;
+
+  if (chartType !== ChartType.YIELD && !hasFeeData && (isLoading || hasNoData)) {
+    const emptyMessage = !isLoading && hasNoData
+      ? (chartType === ChartType.FEE ? "No fee events yet" : "Not enough data to display")
+      : null;
+
     return (
       <div className="flex flex-col gap-4">
-        <ChartTypeTabs chartType={chartType} onChartTypeChange={setChartType} disabled hideYield={!hasYieldSources} />
+        <ChartTypeTabs chartType={chartType} onChartTypeChange={setChartType} disabled={isLoading} hideYield={!hasYieldSources} />
         <div className="relative" style={{ height: PDP_CHART_HEIGHT_PX }}>
           {/* Pattern overlay - avoid axes */}
           <div
@@ -399,15 +458,20 @@ export const ChartSection = memo(function ChartSection({
               backgroundSize: `${DOT_PATTERN.spacing} ${DOT_PATTERN.spacing}`,
             }}
           />
-          {/* Header skeleton */}
-          <div className="flex flex-row absolute w-full gap-2 items-start z-10">
-            <div className="flex flex-col gap-1 p-3 pointer-events-none bg-background rounded-xl">
-              <div className="h-9 w-20 bg-muted/20 animate-pulse rounded" />
-              <div className="h-4 w-32 bg-muted/10 animate-pulse rounded" />
+          {emptyMessage ? (
+            <div className="flex items-center justify-center absolute inset-0 z-10">
+              <span className="text-sm text-muted-foreground">{emptyMessage}</span>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-row absolute w-full gap-2 items-start z-10">
+              <div className="flex flex-col gap-1 p-3 pointer-events-none bg-background rounded-xl">
+                <div className="h-9 w-20 bg-muted/20 animate-pulse rounded" />
+                <div className="h-4 w-32 bg-muted/10 animate-pulse rounded" />
+              </div>
+            </div>
+          )}
         </div>
-        <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} disabled show1D={hasPerEventFees && chartType === ChartType.FEE} />
+        <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} disabled show1D={(isVolatile || isPro) && hasPerEventFees && chartType === ChartType.FEE} />
       </div>
     );
   }
@@ -417,84 +481,131 @@ export const ChartSection = memo(function ChartSection({
     const dataLength = filteredChartData.length;
     const isHovering = hoverData !== null;
 
-    return (
-      <ChartContainer config={chartConfig as ChartConfig} className="w-full h-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart
-            data={filteredChartData}
-            margin={{ top: 96, right: 0, bottom: 0, left: 0 }}
-            onMouseMove={handleMouseMove}
-            onMouseLeave={handleMouseLeave}
-          >
-            <CartesianGrid horizontal vertical={false} strokeDasharray="3 3" stroke="hsl(var(--sidebar-border) / 0.2)" />
-            <XAxis
-              dataKey="timestamp"
-              type="number"
-              domain={[periodFrom, periodTo]}
-              ticks={xAxisTicks}
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={formatTimestamp}
-              tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-              padding={{ left: 0, right: CHART_DATA_PADDING }}
-              scale="time"
-            />
-            <YAxis
-              yAxisId="left"
-              tickLine={false}
-              axisLine={false}
-              width={0}
-              tickFormatter={(value) => value.toFixed(2)}
-              domain={ratioDomain}
-              tick={false}
-              hide
-            />
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              tickLine={false}
-              axisLine={false}
-              width={PRICE_SCALE_WIDTH}
-              tickFormatter={(value) => `${formatFeeValue(value)}%`}
-              domain={feeDomain}
-              tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-            />
-            <ChartTooltip
-              cursor={{ stroke: "hsl(var(--muted-foreground))", strokeWidth: 1, strokeDasharray: "4 4" }}
-              content={() => null}
-            />
-            {!hasPerEventFees && (
-              <>
-                <Line yAxisId="left" type="monotone" dataKey="volumeTvlRatio" strokeWidth={2} dot={false} stroke={CHART_COLORS.activity} isAnimationActive={false} />
-                <Line yAxisId="left" type="monotone" dataKey="emaRatio" strokeWidth={2} dot={false} stroke={CHART_COLORS.target} strokeDasharray="5 5" isAnimationActive={false} />
-              </>
-            )}
-            <Line
-              yAxisId="right"
-              type="stepAfter"
-              dataKey="dynamicFee"
-              strokeWidth={2}
-              stroke={CHART_COLORS.fee}
-              isAnimationActive={false}
-              dot={(props) => (
-                <LastPointPulsatingDot
-                  {...props}
-                  dataLength={dataLength}
-                  color={CHART_COLORS.fee}
-                  isHovering={isHovering}
+    // Per-event fee chart (Pro/Volatile): single Y axis, no ratio lines
+    if (hasPerEventFees) {
+      return (
+        <ChartContainer config={chartConfig as ChartConfig} className="w-full h-full aspect-auto">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={filteredChartData}
+              margin={{ top: 96, right: 0, bottom: 0, left: 0 }}
+              onMouseMove={handleMouseMove}
+              onMouseLeave={handleMouseLeave}
+            >
+              <CartesianGrid horizontal vertical={false} strokeDasharray="3 3" stroke="hsl(var(--sidebar-border) / 0.2)" />
+              <XAxis
+                dataKey="timestamp"
+                type="number"
+                domain={effectiveDomain}
+                ticks={xAxisTicks}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={formatTimestamp}
+                tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                padding={{ left: 0, right: CHART_DATA_PADDING }}
+                scale="time"
+              />
+              <YAxis
+                orientation="right"
+                tickLine={false}
+                axisLine={false}
+                width={PRICE_SCALE_WIDTH}
+                tickFormatter={(value) => `${formatFeeValue(value)}%`}
+                domain={feeDomain}
+                tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+              />
+              <ChartTooltip cursor={{ stroke: "hsl(var(--muted-foreground))", strokeWidth: 1, strokeDasharray: "4 4" }} content={() => null} />
+              {showBuyFee && (
+                <Line type="stepAfter" dataKey="dynamicFee" strokeWidth={2} stroke={isPro ? CHART_COLORS.buyFee : CHART_COLORS.fee} isAnimationActive={false}
+                  dot={(props) => <LastPointPulsatingDot {...props} dataLength={dataLength} color={isPro ? CHART_COLORS.buyFee : CHART_COLORS.fee} isHovering={isHovering} />}
                 />
               )}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </ChartContainer>
+              {isPro && showSellFee && (
+                <Line type="stepAfter" dataKey="sellFee" strokeWidth={2} stroke={CHART_COLORS.sellFee} strokeDasharray="6 3" isAnimationActive={false} connectNulls={false} dot={false} />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartContainer>
+      );
+    }
+
+    return (
+      <>
+        <ChartContainer config={chartConfig as ChartConfig} className="w-full h-full aspect-auto">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={filteredChartData}
+              margin={{ top: 96, right: 0, bottom: 0, left: 0 }}
+              onMouseMove={handleMouseMove}
+              onMouseLeave={handleMouseLeave}
+            >
+              <CartesianGrid horizontal vertical={false} strokeDasharray="3 3" stroke="hsl(var(--sidebar-border) / 0.2)" />
+              <XAxis
+                dataKey="timestamp"
+                type="number"
+                domain={effectiveDomain}
+                ticks={xAxisTicks}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={formatTimestamp}
+                tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                padding={{ left: 0, right: CHART_DATA_PADDING }}
+                scale="time"
+              />
+              <YAxis
+                yAxisId="left"
+                tickLine={false}
+                axisLine={false}
+                width={0}
+                tickFormatter={(value) => value.toFixed(2)}
+                domain={ratioDomain}
+                tick={false}
+                hide
+              />
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                tickLine={false}
+                axisLine={false}
+                width={PRICE_SCALE_WIDTH}
+                tickFormatter={(value) => `${formatFeeValue(value)}%`}
+                domain={feeDomain}
+                tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+              />
+              <ChartTooltip
+                cursor={{ stroke: "hsl(var(--muted-foreground))", strokeWidth: 1, strokeDasharray: "4 4" }}
+                content={() => null}
+              />
+              <Line yAxisId="left" type="monotone" dataKey="volumeTvlRatio" strokeWidth={2} dot={false} stroke={CHART_COLORS.activity} isAnimationActive={false} />
+              <Line yAxisId="left" type="monotone" dataKey="emaRatio" strokeWidth={2} dot={false} stroke={CHART_COLORS.target} strokeDasharray="5 5" isAnimationActive={false} />
+              <Line
+                yAxisId="right"
+                type="stepAfter"
+                dataKey="dynamicFee"
+                strokeWidth={2}
+                stroke={CHART_COLORS.fee}
+                isAnimationActive={false}
+                dot={(props) => (
+                  <LastPointPulsatingDot
+                    {...props}
+                    dataLength={dataLength}
+                    color={CHART_COLORS.fee}
+                    isHovering={isHovering}
+                  />
+                )}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartContainer>
+      </>
     );
   };
 
   // Render Volume bar chart
   const renderVolumeChart = () => (
-    <ChartContainer config={chartConfig as ChartConfig} className="w-full h-full">
+    <ChartContainer config={chartConfig as ChartConfig} className="w-full h-full aspect-auto">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={filteredChartData}
@@ -505,10 +616,7 @@ export const ChartSection = memo(function ChartSection({
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--sidebar-border) / 0.2)" />
           <XAxis dataKey="timestamp" type="number" domain={[periodFrom, periodTo]} ticks={xAxisTicks} tickFormatter={formatTimestamp} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} padding={{ left: 0, right: CHART_DATA_PADDING }} scale="time" />
           <YAxis tickFormatter={formatUSD} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} width={PRICE_SCALE_WIDTH} orientation="right" />
-          <ChartTooltip
-            cursor={{ fill: "hsl(var(--muted) / 0.3)" }}
-            content={() => null}
-          />
+          <ChartTooltip cursor={{ fill: "hsl(var(--muted) / 0.3)" }} content={() => null} />
           <Bar dataKey="volumeUSD" fill={CHART_COLORS.bar} radius={[2, 2, 0, 0]} barSize={filteredChartData.length > 60 ? 8 : filteredChartData.length > 20 ? 14 : 20} />
         </BarChart>
       </ResponsiveContainer>
@@ -517,7 +625,7 @@ export const ChartSection = memo(function ChartSection({
 
   // Render TVL bar chart
   const renderTVLChart = () => (
-    <ChartContainer config={chartConfig as ChartConfig} className="w-full h-full">
+    <ChartContainer config={chartConfig as ChartConfig} className="w-full h-full aspect-auto">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={filteredChartData}
@@ -528,10 +636,7 @@ export const ChartSection = memo(function ChartSection({
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--sidebar-border) / 0.2)" />
           <XAxis dataKey="timestamp" type="number" domain={[periodFrom, periodTo]} ticks={xAxisTicks} tickFormatter={formatTimestamp} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} padding={{ left: 0, right: CHART_DATA_PADDING }} scale="time" />
           <YAxis tickFormatter={formatUSD} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} width={PRICE_SCALE_WIDTH} orientation="right" />
-          <ChartTooltip
-            cursor={{ fill: "hsl(var(--muted) / 0.3)" }}
-            content={() => null}
-          />
+          <ChartTooltip cursor={{ fill: "hsl(var(--muted) / 0.3)" }} content={() => null} />
           <Bar dataKey="tvlUSD" fill={CHART_COLORS.bar} radius={[2, 2, 0, 0]} barSize={filteredChartData.length > 60 ? 8 : filteredChartData.length > 20 ? 14 : 20} />
         </BarChart>
       </ResponsiveContainer>
@@ -554,8 +659,10 @@ export const ChartSection = memo(function ChartSection({
     switch (chartType) {
       case ChartType.FEE:
         return {
-          value: displayValues.fee != null ? `${formatFeeValue(displayValues.fee)}%` : "—",
-          label: "Dynamic Fee",
+          value: isPro
+            ? (displayValues.buyFee != null ? `${formatFeeValue(displayValues.buyFee)}%` : (displayValues.fee != null ? `${formatFeeValue(displayValues.fee)}%` : "—"))
+            : (displayValues.fee != null ? `${formatFeeValue(displayValues.fee)}%` : "—"),
+          label: isPro ? "Buy Fee" : "Dynamic Fee",
           delta: currentValues?.feeDailyDelta ?? 0,
         };
       case ChartType.VOLUME:
@@ -626,17 +733,31 @@ export const ChartSection = memo(function ChartSection({
                   {chartType === ChartType.FEE && (
                     isHovering && displayValues ? (
                       hasPerEventFees ? (
-                        <>
-                          <span className="text-muted-foreground">
-                            Volatility: <span className="text-foreground tabular-nums">{displayValues.volatility != null ? `${displayValues.volatility.toFixed(1)}%` : '-'}</span>
-                          </span>
-                          <span className="text-muted-foreground">
-                            Agent: <span className="text-foreground tabular-nums">{displayValues.agentAdjustment != null ? `${displayValues.agentAdjustment >= 0 ? '+' : ''}${displayValues.agentAdjustment.toFixed(1)} bps` : '-'}</span>
-                          </span>
-                          <span className="text-muted-foreground">
-                            {new Date(hoverData.date).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                        </>
+                        isPro ? (
+                          <>
+                            <span className="text-muted-foreground">
+                              Buy: <span className="text-foreground tabular-nums">{displayValues.buyFee != null ? `${formatFeeValue(displayValues.buyFee)}%` : '-'}</span>
+                            </span>
+                            <span className="text-muted-foreground">
+                              Sell: <span className="text-foreground tabular-nums">{displayValues.sellFee != null ? `${formatFeeValue(displayValues.sellFee)}%` : '-'}</span>
+                            </span>
+                            <span className="text-muted-foreground">
+                              {new Date(hoverData.date).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-muted-foreground">
+                              Volatility: <span className="text-foreground tabular-nums">{displayValues.volatility != null ? `${displayValues.volatility.toFixed(1)}%` : '-'}</span>
+                            </span>
+                            <span className="text-muted-foreground">
+                              Agent: <span className="text-foreground tabular-nums">{displayValues.agentAdjustment != null ? `${displayValues.agentAdjustment >= 0 ? '+' : ''}${displayValues.agentAdjustment.toFixed(1)} bps` : '-'}</span>
+                            </span>
+                            <span className="text-muted-foreground">
+                              {new Date(hoverData.date).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </>
+                        )
                       ) : (
                         <>
                           <span className="text-muted-foreground">
@@ -671,8 +792,22 @@ export const ChartSection = memo(function ChartSection({
             {renderChart()}
           </div>
 
-          {/* Time period selector at bottom */}
-          <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} show1D={hasPerEventFees && chartType === ChartType.FEE} />
+          {/* Time period selector + buy/sell legend row */}
+          <div className="flex items-center justify-between">
+            <TimePeriodSelector period={timePeriod} onPeriodChange={setTimePeriod} show1D={(isVolatile || isPro) && hasPerEventFees && chartType === ChartType.FEE} />
+            {isPro && chartType === ChartType.FEE && (
+              <div className="flex items-center gap-3">
+                <button onClick={() => setShowBuyFee(v => !v)} className={cn("flex items-center gap-1.5 text-xs transition-opacity duration-150 cursor-pointer select-none", showBuyFee ? "opacity-100" : "opacity-40")}>
+                  <span className="w-3 h-0.5 rounded-full shrink-0" style={{ backgroundColor: CHART_COLORS.buyFee }} />
+                  <span className={showBuyFee ? "text-foreground" : "text-muted-foreground"}>Buy</span>
+                </button>
+                <button onClick={() => setShowSellFee(v => !v)} className={cn("flex items-center gap-1.5 text-xs transition-opacity duration-150 cursor-pointer select-none", showSellFee ? "opacity-100" : "opacity-40")}>
+                  <span className="w-3 h-0.5 rounded-full shrink-0" style={{ borderTop: `2px dashed ${CHART_COLORS.sellFee}`, backgroundColor: "transparent" }} />
+                  <span className={showSellFee ? "text-foreground" : "text-muted-foreground"}>Sell</span>
+                </button>
+              </div>
+            )}
+          </div>
         </>
       )}
 

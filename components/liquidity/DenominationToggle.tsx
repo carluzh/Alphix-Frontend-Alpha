@@ -8,8 +8,8 @@
 "use client"
 
 import React from 'react';
-import Image from 'next/image';
 import { cn, getTokenIcon } from '@/lib/utils';
+import { TokenImage } from "@/components/ui/token-image";
 import type { NetworkMode } from '@/lib/network-mode';
 
 interface DenominationToggleProps {
@@ -62,12 +62,10 @@ export function DenominationToggle({
             : "text-muted-foreground hover:text-foreground"
         )}
       >
-        <Image
+        <TokenImage
           src={icon0}
           alt={token0Symbol}
-          width={16}
-          height={16}
-          className="rounded-full"
+          size={16}
         />
         <span className="text-xs font-medium">{token0Symbol}</span>
       </button>
@@ -84,12 +82,10 @@ export function DenominationToggle({
             : "text-muted-foreground hover:text-foreground"
         )}
       >
-        <Image
+        <TokenImage
           src={icon1}
           alt={token1Symbol}
-          width={16}
-          height={16}
-          className="rounded-full"
+          size={16}
         />
         <span className="text-xs font-medium">{token1Symbol}</span>
       </button>

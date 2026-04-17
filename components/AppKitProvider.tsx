@@ -14,9 +14,13 @@ import { apolloClient } from '@/lib/apollo/client'
 import { PersistQueryClientProvider } from '@/components/PersistQueryClientProvider'
 import { TransactionProvider } from '@/lib/transactions/TransactionProvider'
 
-// Store the AppKit instance for direct access (avoids useAppKit hook SSR issues)
-export const appKit = typeof window !== 'undefined' && projectId
-  ? createAppKit({
+// Lazy-initialized AppKit instance — only created when AppKitProvider mounts
+// (i.e. inside the (app) route group), so the marketing/landing page never triggers it.
+let _appKit: ReturnType<typeof createAppKit> | null = null
+
+export function initializeAppKit() {
+  if (!_appKit && typeof window !== 'undefined' && projectId) {
+    _appKit = createAppKit({
       adapters: [wagmiAdapter],
       projectId,
       networks: [appKitBase, appKitArbitrum],
@@ -26,7 +30,13 @@ export const appKit = typeof window !== 'undefined' && projectId
       themeMode: 'dark',
       themeVariables: { '--w3m-font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif', '--w3m-accent': '#FFFFFF', '--w3m-border-radius-master': '8px' }
     })
-  : null
+  }
+  return _appKit
+}
+
+export function getAppKit() {
+  return _appKit
+}
 
 // Identical to Uniswap SharedQueryClient.ts
 const queryClient = new QueryClient({
@@ -44,6 +54,7 @@ const queryClient = new QueryClient({
 })
 
 function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: string | null }) {
+  initializeAppKit()
   const initialState = cookieToInitialState(config, cookies ?? '')
 
   return (

@@ -11,7 +11,8 @@
     "stateView": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71"
   },
   "hooks": {
-    "alphixHookId": "0x831CfDf7c0E194f5369f204b3DD2481B843d60c0"
+    "alphixHookId": "0x831CfDf7c0E194f5369f204b3DD2481B843d60c0",
+    "alphixProHookId": "0x2f9Cf87A6CbFA53C3F1B184900de17298e3F9080"
   },
   "tokens": {
     "ETH": {
@@ -45,6 +46,14 @@
       "decimals": 8,
       "icon": "/tokens/cbBTC.svg",
       "color": "#0052FF"
+    },
+    "ZFI": {
+      "symbol": "ZFI",
+      "name": "ZyFAI",
+      "address": "0xD080eD3c74a20250a2c9821885203034ACD2D5ae",
+      "decimals": 18,
+      "icon": "/tokens/ZFI.png",
+      "color": "#7C3AED"
     }
   },
   "pools": [
@@ -110,6 +119,38 @@
       "enabled": true,
       "featured": true,
       "type": "Volatile"
+    },
+    {
+      "slug": "eth-zfi",
+      "name": "ETH/ZFI",
+      "poolId": "0x2d926f31a3b94ae9e0d22a0606f7684c9dbee8fcf46fae2ea68557ac1c48cb2d",
+      "currency0": {
+        "symbol": "ETH",
+        "address": "0x0000000000000000000000000000000000000000"
+      },
+      "currency1": {
+        "symbol": "ZFI",
+        "address": "0xD080eD3c74a20250a2c9821885203034ACD2D5ae"
+      },
+      "fee": 8388608,
+      "tickSpacing": 200,
+      "hooks": "0x2f9Cf87A6CbFA53C3F1B184900de17298e3F9080",
+      "enabled": true,
+      "featured": true,
+      "type": "Pro",
+      "proMeta": {
+        "projectName": "ZyFAI",
+        "hookType": "AlphixPro",
+        "hookDescription": "Asymmetric dynamic fees, auto-routed",
+        "isToken0Quote": true,
+        "initialBuyFeeBps": 3000,
+        "initialSellFeeBps": 8000,
+        "accessManager": "0x0e19A4c8e9bAa3ECa1c6DAf2885FFca4ad376784",
+        "accessManagerAdmin": "0xAf1989c5D392A8B405FE7a189ac77B0Ea07e6209",
+        "feePoker1": "0xb9e8Db60e88F8949ce0b91d451B269d0108c03D9",
+        "feePoker2": "0x240B7e8FcfdB38C94c0b8733A4A50F28A4C99fa8",
+        "pauser": "0xe03bAD906D1215f032516A88d650Be8310d016b8"
+      }
     }
   ]
 }

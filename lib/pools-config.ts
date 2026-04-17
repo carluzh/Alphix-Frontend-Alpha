@@ -10,7 +10,7 @@ export type { NetworkMode };
 interface PoolsConfigFile {
   meta: { chainId: number; chainName: string };
   contracts: { poolManager: string; universalRouter?: string; quoter: string; positionManager: string; stateView: string };
-  hooks: { alphixHookId: string };
+  hooks: { alphixHookId: string; alphixProHookId?: string };
   tokens: Record<string, { symbol: string; name: string; address: string; decimals: number; icon: string; color?: string }>;
   pools: Array<{
     slug: string;
@@ -26,6 +26,19 @@ interface PoolsConfigFile {
     type?: string;
     yieldSources?: Array<'aave' | 'spark'>;
     rehypoRange?: { min: string; max: string; isFullRange: boolean };
+    proMeta?: {
+      projectName: string;
+      hookType: string;
+      hookDescription: string;
+      isToken0Quote: boolean;
+      initialBuyFeeBps: number;
+      initialSellFeeBps: number;
+      accessManager: string;
+      accessManagerAdmin: string;
+      feePoker1: string;
+      feePoker2: string;
+      pauser: string;
+    };
   }>;
 }
 
@@ -49,7 +62,7 @@ function getPoolsConfig(networkModeOverride?: NetworkMode): PoolsConfigFile {
 function getTaggedPools(networkModeOverride?: NetworkMode): PoolConfig[] {
   const mode = resolveMode(networkModeOverride);
   const config = CONFIG_MAP[mode] ?? CONFIG_MAP.base;
-  return config.pools.map(pool => ({ ...pool, networkMode: mode }));
+  return config.pools.map(pool => ({ ...pool, networkMode: mode, proMeta: pool.proMeta as ProMeta | undefined }));
 }
 
 export interface TokenConfig {
@@ -74,6 +87,22 @@ export interface RehypoRangeConfig {
 
 export type YieldSource = 'aave' | 'spark';
 
+export type PoolType = 'Stable' | 'Volatile' | 'Pro';
+
+export interface ProMeta {
+  projectName: string;
+  hookType: string;
+  hookDescription: string;
+  isToken0Quote: boolean;
+  initialBuyFeeBps: number;
+  initialSellFeeBps: number;
+  accessManager: string;
+  accessManagerAdmin: string;
+  feePoker1: string;
+  feePoker2: string;
+  pauser: string;
+}
+
 export interface PoolConfig {
   slug: string;
   name: string;
@@ -88,6 +117,7 @@ export interface PoolConfig {
   type?: string;
   yieldSources?: YieldSource[];
   rehypoRange?: RehypoRangeConfig;
+  proMeta?: ProMeta;
   networkMode: NetworkMode;
 }
 
@@ -128,6 +158,7 @@ const TOKEN_ICONS: Record<string, string> = {
   aDAI: '/tokens/aDAI.png',
   aBTC: '/tokens/aBTC.png',
   cbBTC: '/tokens/cbBTC.svg',
+  ZFI: '/tokens/ZFI.png',
 };
 
 /** Resolve a token icon by symbol. Chain-independent — icons are static assets. */

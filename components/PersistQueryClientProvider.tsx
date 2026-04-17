@@ -31,8 +31,9 @@ function safeSerialize(data: unknown): string {
 /**
  * Version buster - increment to invalidate entire cache.
  * Change this when making breaking changes to query data structures.
+ * v2: excluded volatile queries from persistence, reduced maxAge
  */
-const CACHE_BUSTER = 'v1'
+const CACHE_BUSTER = 'v2'
 
 interface PersistQueryClientProviderProps {
   client: QueryClient

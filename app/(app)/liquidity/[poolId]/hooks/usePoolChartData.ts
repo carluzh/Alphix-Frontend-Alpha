@@ -13,16 +13,25 @@ export interface ChartDataPoint {
   dynamicFee: number;
   volatility?: number;
   agentAdjustment?: number;
+  /** Pro pool: buy fee in percentage form (bps / 10000) */
+  buyFee?: number;
+  /** Pro pool: sell fee in percentage form (bps / 10000) */
+  sellFee?: number;
 }
 
 /** Raw fee event from the API — per-event granularity */
 export interface FeeEvent {
   timestamp: string;
+  // Volatile pool fields
   newFeeBps?: string;
   currentRatio?: string;
   newTargetRatio?: string;
   volatility?: number;
   agentAdjustment?: number;
+  // Pro pool fields (AlphixPro asymmetric fees)
+  buyFeeBps?: string;
+  sellFeeBps?: string;
+  pokeType?: 'both' | 'buy' | 'sell';
 }
 
 interface UsePoolChartDataOptions {
@@ -33,6 +42,8 @@ interface UsePoolChartDataOptions {
   currentFeeBps?: number | null;
   /** Volatile pools always re-fetch fee events (no caching) */
   isVolatilePool?: boolean;
+  /** Pro pools always re-fetch fee events (no caching) */
+  isProPool?: boolean;
   /** Latest volatility from WebSocket pools:metrics */
   currentVolatility?: number | null;
   /** Latest agent adjustment from WebSocket pools:metrics */
@@ -49,7 +60,11 @@ interface UsePoolChartDataReturn {
   updateTodayTvl: (tvl: number) => void;
 }
 
-const processChartDataForScreenSize = (data: ChartDataPoint[], windowWidth: number): ChartDataPoint[] => {
+/**
+ * Filter chart data to a window based on screen width.
+ * No gap-filling — plot only what the backend returns.
+ */
+const filterChartDataForScreenSize = (data: ChartDataPoint[], windowWidth: number): ChartDataPoint[] => {
   if (!data?.length) return [];
 
   const sortedData = [...data].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -60,55 +75,7 @@ const processChartDataForScreenSize = (data: ChartDataPoint[], windowWidth: numb
   cutoffDate.setDate(cutoffDate.getDate() - daysBack);
 
   const recentData = sortedData.filter(item => new Date(item.date) >= cutoffDate);
-  if (!recentData.length) return sortedData;
-
-  const filledData: ChartDataPoint[] = [];
-  const endDate = new Date(recentData[recentData.length - 1].date);
-  let currentDate = new Date(recentData[0].date);
-  let lastTvl = 0;
-
-  while (currentDate <= endDate) {
-    const dateStr = currentDate.toISOString().split('T')[0];
-    const existingData = recentData.find(item => item.date === dateStr);
-
-    if (existingData) {
-      filledData.push(existingData);
-      lastTvl = existingData.tvlUSD;
-    } else {
-      filledData.push({
-        date: dateStr,
-        volumeUSD: 0,
-        tvlUSD: lastTvl,
-        volumeTvlRatio: 0,
-        emaRatio: 0,
-        dynamicFee: filledData[filledData.length - 1]?.dynamicFee ?? 0,
-      });
-    }
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
-
-  if (filledData.length > 0 && filledData.length < daysBack) {
-    const daysToAdd = daysBack - filledData.length;
-    const oldestDate = new Date(filledData[0].date);
-    const emptyDays: ChartDataPoint[] = [];
-
-    for (let i = 1; i <= daysToAdd; i++) {
-      const emptyDate = new Date(oldestDate);
-      emptyDate.setDate(emptyDate.getDate() - i);
-      emptyDays.unshift({
-        date: emptyDate.toISOString().split('T')[0],
-        volumeUSD: 0,
-        tvlUSD: 0,
-        volumeTvlRatio: 0,
-        emaRatio: 0,
-        dynamicFee: 0,
-      });
-    }
-
-    return [...emptyDays, ...filledData];
-  }
-
-  return filledData;
+  return recentData.length > 0 ? recentData : sortedData;
 };
 
 const scaleRatio = (val: unknown): number => {
@@ -127,6 +94,7 @@ export function usePoolChartData({
   windowWidth,
   currentFeeBps,
   isVolatilePool = false,
+  isProPool = false,
   currentVolatility,
   currentAgentAdjustment,
 }: UsePoolChartDataOptions): UsePoolChartDataReturn {
@@ -136,16 +104,14 @@ export function usePoolChartData({
 
   const hasFetchedForPoolRef = useRef<string | null>(null);
   const windowWidthRef = useRef(windowWidth);
-  const currentFeeBpsRef = useRef(currentFeeBps);
   useEffect(() => { windowWidthRef.current = windowWidth; }, [windowWidth]);
-  useEffect(() => { currentFeeBpsRef.current = currentFeeBps; }, [currentFeeBps]);
 
   const fetchChartData = useCallback(async (force?: boolean) => {
     if (!poolSlug || !poolId) return;
 
     const poolKey = `${poolSlug}-${poolId}-${networkMode}`;
-    // Volatile pools always refetch (no caching) to get latest fee events
-    if (hasFetchedForPoolRef.current === poolKey && !force && !isVolatilePool) return;
+    // Volatile and Pro pools always refetch (no caching) to get latest fee events
+    if (hasFetchedForPoolRef.current === poolKey && !force && !isVolatilePool && !isProPool) return;
 
     hasFetchedForPoolRef.current = poolKey;
     setIsLoadingChartData(true);
@@ -183,11 +149,16 @@ export function usePoolChartData({
         // Store raw fee events for per-event rendering
         setFeeEvents(rawFeeEvents.map((e: any) => ({
           timestamp: String(e?.timestamp ?? ''),
-          newFeeBps: String(e?.newFeeBps ?? e?.newFeeRateBps ?? '0'),
+          // Volatile fields
+          newFeeBps: e?.newFeeBps != null || e?.newFeeRateBps != null ? String(e?.newFeeBps ?? e?.newFeeRateBps ?? '0') : undefined,
           currentRatio: e?.currentRatio != null ? String(e.currentRatio) : undefined,
           newTargetRatio: e?.newTargetRatio != null ? String(e.newTargetRatio) : undefined,
           volatility: e?.volatility != null ? Number(e.volatility) : undefined,
           agentAdjustment: e?.agentAdjustment != null ? Number(e.agentAdjustment) : undefined,
+          // Pro pool fields (AlphixPro)
+          buyFeeBps: e?.buyFeeBps != null ? String(e.buyFeeBps) : undefined,
+          sellFeeBps: e?.sellFeeBps != null ? String(e.sellFeeBps) : undefined,
+          pokeType: e?.pokeType as FeeEvent['pokeType'] | undefined,
         })));
 
         // Build daily-bucketed chart data (used by all chart tabs)
@@ -204,9 +175,9 @@ export function usePoolChartData({
           todayKey,
         ])).sort((a, b) => a.localeCompare(b));
 
-        const liveFee = currentFeeBpsRef.current;
         let ei = 0;
-        let curFeePct = (liveFee && Number.isFinite(liveFee) && evAsc.length === 0) ? liveFee / 10000 : 0;
+        // Fee chart data comes only from API fee events — never seed from live WS fee
+        let curFeePct = 0;
         let curRatio = 0, curEma = 0;
 
         for (const dateStr of allDates) {
@@ -222,11 +193,6 @@ export function usePoolChartData({
           feeByDate.set(dateStr, { ratio: curRatio, ema: curEma, feePct: curFeePct });
         }
 
-        if (liveFee && Number.isFinite(liveFee)) {
-          const todayFee = feeByDate.get(todayKey);
-          if (todayFee) todayFee.feePct = liveFee / 10000;
-        }
-
         const merged: ChartDataPoint[] = allDates.map((dateStr) => {
           const dayInfo = dataByDate.get(dateStr);
           const feeInfo = feeByDate.get(dateStr);
@@ -240,7 +206,7 @@ export function usePoolChartData({
           };
         });
 
-        setChartData(processChartDataForScreenSize(merged, windowWidthRef.current));
+        setChartData(filterChartDataForScreenSize(merged, windowWidthRef.current));
         setIsLoadingChartData(false);
         return;
       } catch (error: unknown) {
@@ -286,26 +252,12 @@ export function usePoolChartData({
     });
   }, []);
 
-  useEffect(() => {
-    if (!currentFeeBps || !Number.isFinite(currentFeeBps)) return;
-    const todayKey = new Date().toISOString().split('T')[0];
-    const feePct = currentFeeBps / 10000;
-
-    setChartData(prev => {
-      if (!prev?.length) return prev;
-      const idx = prev.findIndex(d => d.date === todayKey);
-      if (idx !== -1 && Math.abs(prev[idx].dynamicFee - feePct) > 0.0001) {
-        const updated = [...prev];
-        updated[idx] = { ...updated[idx], dynamicFee: feePct };
-        return updated;
-      }
-      return prev;
-    });
-  }, [currentFeeBps]);
+  // currentFeeBps is no longer injected into chart data — it can be displayed
+  // as a separate badge/label by the parent, but must not pollute the chart series.
 
   useEffect(() => {
     if (chartData.length > 0) {
-      setChartData(prev => processChartDataForScreenSize(prev, windowWidth));
+      setChartData(prev => filterChartDataForScreenSize(prev, windowWidth));
     }
   }, [windowWidth]);
 

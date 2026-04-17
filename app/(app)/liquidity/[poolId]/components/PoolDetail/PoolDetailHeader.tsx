@@ -99,9 +99,22 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
             {/* Pool Type Badge - Below title */}
             <div className="flex items-center gap-1.5">
               {poolConfig.type && (
-                <span className="w-fit px-2 py-0.5 text-xs font-medium rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">
-                  {poolConfig.type}
-                </span>
+                poolConfig.type === 'Pro' ? (
+                  <>
+                    <span className="w-fit px-1.5 py-0.5 text-xs font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">
+                      Volatile
+                    </span>
+                    <span className="w-fit px-1.5 py-0.5 text-xs font-semibold rounded border border-orange-500/40 text-orange-300"
+                      style={{ backgroundColor: 'rgba(249, 115, 22, 0.1)' }}
+                    >
+                      Pro
+                    </span>
+                  </>
+                ) : (
+                  <span className="w-fit px-2 py-0.5 text-xs font-medium rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">
+                    {poolConfig.type}
+                  </span>
+                )
               )}
             </div>
           </div>

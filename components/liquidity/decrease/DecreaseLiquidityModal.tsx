@@ -13,8 +13,8 @@
  */
 
 import React, { useState, useCallback, useMemo, useRef, useLayoutEffect } from "react";
-import Image from "next/image";
 import { useAccount } from "wagmi";
+import { TokenImage } from "@/components/ui/token-image";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
@@ -198,8 +198,8 @@ function DecreaseLiquidityInner({
             </div>
           </div>
           <div className="flex items-center -space-x-2">
-            <Image src={getTokenIcon(position.token0.symbol, networkMode)} alt="" width={36} height={36} className="rounded-full" />
-            <Image src={getTokenIcon(position.token1.symbol, networkMode)} alt="" width={36} height={36} className="rounded-full" />
+            <TokenImage src={getTokenIcon(position.token0.symbol, networkMode)} alt="" size={36} />
+            <TokenImage src={getTokenIcon(position.token1.symbol, networkMode)} alt="" size={36} />
           </div>
         </div>
 
@@ -297,7 +297,7 @@ function DecreaseLiquidityInner({
                   <div className="rounded-lg border border-sidebar-border/60 bg-surface p-3 space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Image src={getTokenIcon(position.token0.symbol, networkMode)} alt={position.token0.symbol} width={20} height={20} className="rounded-full" />
+                        <TokenImage src={getTokenIcon(position.token0.symbol, networkMode)} alt={position.token0.symbol} size={20} />
                         <span className="text-sm font-medium">{position.token0.symbol}</span>
                       </div>
                       <span className={cn("text-sm font-medium tabular-nums", amount0 === 0 && "text-muted-foreground")}>
@@ -306,7 +306,7 @@ function DecreaseLiquidityInner({
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Image src={getTokenIcon(position.token1.symbol, networkMode)} alt={position.token1.symbol} width={20} height={20} className="rounded-full" />
+                        <TokenImage src={getTokenIcon(position.token1.symbol, networkMode)} alt={position.token1.symbol} size={20} />
                         <span className="text-sm font-medium">{position.token1.symbol}</span>
                       </div>
                       <span className={cn("text-sm font-medium tabular-nums", amount1 === 0 && "text-muted-foreground")}>

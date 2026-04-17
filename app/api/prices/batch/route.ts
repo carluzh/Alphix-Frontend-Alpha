@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       { prices, timestamp: Date.now() },
-      { headers: { 'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=30' } }
+      { headers: { 'Cache-Control': 'no-store' } }
     );
   } catch (error) {
     console.error('[/api/prices/batch] Error:', error);

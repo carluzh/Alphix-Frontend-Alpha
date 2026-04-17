@@ -1,7 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import { motion } from "framer-motion";
+import { TokenImage } from "@/components/ui/token-image";
 import { resolveTokenIcon } from "@/lib/pools-config";
 
 /**
@@ -58,12 +58,11 @@ export function TokenStack({ position }: TokenStackProps) {
               left: `${leftPos}px`,
             }}
           >
-            <Image
+            <TokenImage
               src={token.icon}
               alt={token.symbol}
-              width={iconSize}
-              height={iconSize}
-              className="rounded-full bg-background"
+              size={iconSize}
+              className="bg-background"
             />
           </div>
         );

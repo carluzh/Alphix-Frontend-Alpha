@@ -45,6 +45,8 @@ export const chartConfig = {
   volumeTvlRatio: { label: "Activity", color: "hsl(var(--chart-3))" },
   emaRatio: { label: "Target", color: "hsl(var(--chart-2))" },
   dynamicFee: { label: "Fee", color: "#e85102" },
+  buyFee: { label: "Buy Fee", color: "#e85102" },
+  sellFee: { label: "Sell Fee", color: "#e85102" },
 };
 
 export type ChartConfigKey = keyof typeof chartConfig;

@@ -67,6 +67,10 @@ function getDefaultConfig(networkMode?: WSNetworkMode): Required<WSConfig> {
 /**
  * WebSocket connection manager with automatic reconnection
  */
+// Heartbeat constants
+const HEARTBEAT_INTERVAL_MS = 30_000; // Send ping every 30s
+const HEARTBEAT_TIMEOUT_MS = 60_000;  // Consider dead if no pong in 60s
+
 export class WebSocketManager {
   private ws: WebSocket | null = null;
   private config: Required<WSConfig>;
@@ -78,6 +82,9 @@ export class WebSocketManager {
   private pendingSubscriptions = new Set<string>();
   private isIntentionalDisconnect = false;
   private networkMode: WSNetworkMode | undefined;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimeout: ReturnType<typeof setTimeout> | null = null;
+  private lastPongTime = 0;
 
   constructor(handlers: WSEventHandlers = {}, config: WSConfig = {}, networkMode?: WSNetworkMode) {
     this.handlers = handlers;
@@ -138,6 +145,7 @@ export class WebSocketManager {
   disconnect(): void {
     this.isIntentionalDisconnect = true;
     this.clearReconnectTimeout();
+    this.stopHeartbeat();
     this.reconnectAttempts = 0;
 
     if (this.ws) {
@@ -281,6 +289,7 @@ export class WebSocketManager {
       console.log('[WS] Connected');
       this.setState('connected');
       this.reconnectAttempts = 0;
+      this.startHeartbeat();
       this.handlers.onConnect?.();
 
       // Re-subscribe to all channels on reconnect (one at a time)
@@ -295,6 +304,7 @@ export class WebSocketManager {
 
     this.ws.onclose = (event) => {
       console.log('[WS] Disconnected:', event.code, event.reason);
+      this.stopHeartbeat();
       this.ws = null;
 
       if (!this.isIntentionalDisconnect) {
@@ -311,6 +321,7 @@ export class WebSocketManager {
     };
 
     this.ws.onmessage = (event) => {
+      this.resetHeartbeatTimer();
       this.handleMessage(event);
     };
   }
@@ -442,6 +453,50 @@ export class WebSocketManager {
     if (!this.isIntentionalDisconnect) {
       this.scheduleReconnect();
     }
+  }
+
+  // ===========================================================================
+  // HEARTBEAT
+  // ===========================================================================
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.lastPongTime = Date.now();
+
+    this.heartbeatInterval = setInterval(() => {
+      if (!this.isConnected()) {
+        this.stopHeartbeat();
+        return;
+      }
+
+      // Check if we've received any message recently (acts as implicit pong)
+      const sinceLastPong = Date.now() - this.lastPongTime;
+      if (sinceLastPong > HEARTBEAT_TIMEOUT_MS) {
+        console.warn('[WS] Heartbeat timeout — no response in', sinceLastPong, 'ms. Reconnecting.');
+        this.stopHeartbeat();
+        this.reconnect();
+        return;
+      }
+
+      // Send ping as JSON message (backend handles application-level ping/pong)
+      this.sendMessage({ type: 'ping' } as any);
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    if (this.heartbeatTimeout) {
+      clearTimeout(this.heartbeatTimeout);
+      this.heartbeatTimeout = null;
+    }
+  }
+
+  /** Called on any incoming message to reset heartbeat timeout */
+  private resetHeartbeatTimer(): void {
+    this.lastPongTime = Date.now();
   }
 }
 

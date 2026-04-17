@@ -1,17 +1,22 @@
 import { getAlphixSubgraphUrl } from '@/lib/subgraph-url-helper'
 import { buildBackendUrl } from '@/lib/backend-client'
 import { getPoolBySlugMultiChain } from '@/lib/pools-config'
-import { isVolatilePool } from '@/lib/liquidity/utils/pool-type-guards'
+import { isVolatilePool, isProPool } from '@/lib/liquidity/utils/pool-type-guards'
 import type { NetworkMode } from '@/lib/network-mode'
 
 export type HookEvent = {
   timestamp: string
+  // Volatile pool fields
   newFeeBps?: string
   currentRatio?: string
   newTargetRatio?: string
   oldTargetRatio?: string
   volatility?: number
   agentAdjustment?: number
+  // Pro pool fields (AlphixPro asymmetric fees)
+  buyFeeBps?: string
+  sellFeeBps?: string
+  pokeType?: 'both' | 'buy' | 'sell'
 }
 
 const SUBGRAPH_QUERY = `
@@ -37,7 +42,8 @@ type SubgraphResp = { data?: { alphixHooks?: HookEvent[] }; errors?: any[] }
  * Fetch historical dynamic fee events.
  * Routes by pool type:
  * - Stable pools → subgraph (alphixHooks entity)
- * - Volatile pools → backend REST API
+ * - Volatile pools → backend REST API (newFeeBps, volatility, agentAdjustment)
+ * - Pro pools → backend REST API (buyFeeBps, sellFeeBps, pokeType)
  */
 export async function fetchFeeEvents(
   poolId: string,
@@ -46,7 +52,7 @@ export async function fetchFeeEvents(
   const pool = getPoolBySlugMultiChain(poolId)
 
   try {
-    if (pool && isVolatilePool(pool)) {
+    if (pool && (isVolatilePool(pool) || isProPool(pool))) {
       return await fetchFromBackend(poolId, networkMode)
     }
     return await fetchFromSubgraph(poolId, networkMode)
@@ -86,8 +92,13 @@ async function fetchFromBackend(poolId: string, networkMode: NetworkMode): Promi
   const items: any[] = Array.isArray(json) ? json : (json.data ?? [])
   return items.map((e: any) => ({
     timestamp: String(e.timestamp),
-    newFeeBps: String(e.newFeeBps ?? e.newFeeRateBps ?? 0),
+    // Volatile fields
+    newFeeBps: e.newFeeBps != null || e.newFeeRateBps != null ? String(e.newFeeBps ?? e.newFeeRateBps ?? 0) : undefined,
     volatility: e.volatility != null ? Number(e.volatility) : undefined,
     agentAdjustment: e.agentAdjustment ?? e.agent_adjustment != null ? Number(e.agentAdjustment ?? e.agent_adjustment) : undefined,
+    // Pro pool fields (AlphixPro)
+    buyFeeBps: e.buyFeeBps != null ? String(e.buyFeeBps) : undefined,
+    sellFeeBps: e.sellFeeBps != null ? String(e.sellFeeBps) : undefined,
+    pokeType: e.pokeType as HookEvent['pokeType'] | undefined,
   }))
 }

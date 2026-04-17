@@ -190,7 +190,7 @@ export default function LiquidityPage() {
   const activeChains = useMemo(() => new Set<NetworkMode>(['base', 'arbitrum']), []);
 
   // Pool type filter
-  type PoolTypeFilter = 'all' | 'Stable' | 'Volatile';
+  type PoolTypeFilter = 'all' | 'Stable' | 'Volatile' | 'Pro';
   const [activePoolType, setActivePoolType] = useState<PoolTypeFilter>('all');
 
   // Sorting state
@@ -312,9 +312,22 @@ export default function LiquidityPage() {
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-medium text-sm truncate">{pool.pair}</span>
                   {pool.type && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">
-                      {pool.type}
-                    </span>
+                    pool.type === 'Pro' ? (
+                      <>
+                        <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">
+                          Volatile
+                        </span>
+                        <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded border border-orange-500/40 text-orange-300 flex-shrink-0"
+                          style={{ backgroundColor: 'rgba(249, 115, 22, 0.1)' }}
+                        >
+                          Pro
+                        </span>
+                      </>
+                    ) : (
+                      <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">
+                        {pool.type}
+                      </span>
+                    )
                   )}
                 </div>
               </div>
@@ -442,6 +455,7 @@ export default function LiquidityPage() {
             { id: 'all' as PoolTypeFilter, label: 'All Pools' },
             { id: 'Stable' as PoolTypeFilter, label: 'Stable' },
             { id: 'Volatile' as PoolTypeFilter, label: 'Volatile' },
+            { id: 'Pro' as PoolTypeFilter, label: 'Pro' },
           ]).map((opt) => (
             <button
               key={opt.id}

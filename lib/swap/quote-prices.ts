@@ -1,7 +1,7 @@
 // Quote-based pricing utility
-// Uses on-chain V4 Quoter for real prices from pool liquidity
-// Falls back to CoinGecko when quoter has insufficient liquidity
-// Redis caching to reduce RPC calls and prevent rate limiting
+// Uses backend pool metrics for token prices (no self-call deadlocks)
+// Falls back to CoinGecko for major tokens (ETH, BTC)
+// Redis caching to reduce API calls and prevent rate limiting
 
 import type { NetworkMode } from '@/lib/pools-config'
 import { modeForChainId } from '@/lib/network-mode'
@@ -28,49 +28,43 @@ function isStablecoinUSD(symbol: string | null | undefined): boolean {
   return STABLECOINS_USD.has(symbol) || STABLECOINS_USD.has(upper)
 }
 
-function getBaseUrl(): string {
-  if (typeof window !== 'undefined') return ''
-  return process.env.NEXT_PUBLIC_BASE_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
-}
-
 /**
- * Fetch price from V4 Quoter (internal - no caching)
- * Returns 0 on failure (caller handles caching/fallback)
+ * Fetch price from backend pool metrics.
+ * Each pool reports token0Price and token1Price in USD.
+ * We find any pool containing the target symbol and read its USD price.
+ * No self-call to the same server — avoids Next.js dev server deadlocks.
  */
-async function fetchPriceFromQuoter(
+async function fetchPriceFromPoolMetrics(
   symbol: string,
-  chainId: number,
   networkMode: NetworkMode
 ): Promise<number> {
-  const quoteToken = CHAIN_REGISTRY[networkMode].quoteToken
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 5000)
 
   try {
-    const baseUrl = getBaseUrl()
-    const response = await fetch(`${baseUrl}/api/swap/get-quote`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fromTokenSymbol: symbol,
-        toTokenSymbol: quoteToken,
-        amountDecimalsStr: '1',
-        swapType: 'ExactIn',
-        chainId,
-        network: networkMode,
-      }),
-      signal: controller.signal,
-    })
-
+    const backendUrl = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001'
+    const network = CHAIN_REGISTRY[networkMode].backendNetwork
+    const url = `${backendUrl}/pools/metrics?network=${network}`
+    const response = await fetch(url, { signal: controller.signal })
     clearTimeout(timeoutId)
     if (!response.ok) return 0
     const data = await response.json()
-    if (!data.success) return 0
-    // Use midPrice (fair price from tick) instead of toAmount (execution price with slippage)
-    const price = parseFloat(data.midPrice || data.toAmount)
-    return Number.isFinite(price) && price > 0 ? price : 0
+    if (!data.success || !Array.isArray(data.pools)) return 0
+
+    const upperSymbol = symbol.toUpperCase()
+    for (const pool of data.pools) {
+      const name: string = pool.name || ''
+      const [sym0, sym1] = name.split('/')
+      if (sym0?.toUpperCase() === upperSymbol && typeof pool.token0Price === 'number' && pool.token0Price > 0) {
+        return pool.token0Price
+      }
+      if (sym1?.toUpperCase() === upperSymbol && typeof pool.token1Price === 'number' && pool.token1Price > 0) {
+        return pool.token1Price
+      }
+    }
+    return 0
   } catch {
+    clearTimeout(timeoutId)
     return 0
   }
 }
@@ -134,7 +128,7 @@ export async function getQuotePrice(
   try {
     const cached = await cacheService.getWithStale<number>(cacheKey, PRICE_TTL)
 
-    if (cached.data && cached.data > 0) {
+    if (typeof cached.data === 'number' && cached.data > 0) {
       if (cached.isStale) {
         // Background refresh - fire and forget
         // Same priority as fresh fetch: CoinGecko first for known tokens, quoter for others
@@ -143,9 +137,9 @@ export async function getQuotePrice(
           let price: number
           if (hasCgId) {
             price = await fetchCoinGeckoFallback(symbol)
-            if (price === 0) price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+            if (price === 0) price = await fetchPriceFromPoolMetrics(symbol, resolvedNetworkMode)
           } else {
-            price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+            price = await fetchPriceFromPoolMetrics(symbol, resolvedNetworkMode)
             if (price === 0) price = await fetchCoinGeckoFallback(symbol)
           }
           if (price > 0) {
@@ -168,9 +162,9 @@ export async function getQuotePrice(
   let price: number
   if (hasCoinGeckoId) {
     price = await fetchCoinGeckoFallback(symbol)
-    if (price === 0) price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+    if (price === 0) price = await fetchPriceFromPoolMetrics(symbol, resolvedNetworkMode)
   } else {
-    price = await fetchPriceFromQuoter(symbol, chainId, resolvedNetworkMode)
+    price = await fetchPriceFromPoolMetrics(symbol, resolvedNetworkMode)
     if (price === 0) price = await fetchCoinGeckoFallback(symbol)
   }
 

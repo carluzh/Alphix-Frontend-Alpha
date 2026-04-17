@@ -15,8 +15,8 @@
  */
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import Image from "next/image";
 import { AlertCircle, RefreshCw } from "lucide-react";
+import { TokenImage } from "@/components/ui/token-image";
 import { useAnimation } from "framer-motion";
 import { useAccount, usePublicClient } from "wagmi";
 import { type Address } from "viem";
@@ -461,8 +461,8 @@ function IncreaseLiquidityInner({
             </div>
           </div>
           <div className="flex items-center -space-x-2">
-            <Image src={getTokenIcon(position.token0.symbol, networkMode)} alt="" width={36} height={36} className="rounded-full" />
-            <Image src={getTokenIcon(position.token1.symbol, networkMode)} alt="" width={36} height={36} className="rounded-full" />
+            <TokenImage src={getTokenIcon(position.token0.symbol, networkMode)} alt="" size={36} />
+            <TokenImage src={getTokenIcon(position.token1.symbol, networkMode)} alt="" size={36} />
           </div>
         </div>
 
@@ -545,7 +545,7 @@ function IncreaseLiquidityInner({
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-muted-foreground">Route</span>
                       <div className="flex items-center gap-1">
-                        <Image src={getTokenIcon(zapPreview.inputTokenInfo.symbol, networkMode)} alt={zapPreview.inputTokenInfo.symbol} width={16} height={16} className="rounded-full" />
+                        <TokenImage src={getTokenIcon(zapPreview.inputTokenInfo.symbol, networkMode)} alt={zapPreview.inputTokenInfo.symbol} size={16} />
                         <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
                           <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
                         </svg>
@@ -555,7 +555,7 @@ function IncreaseLiquidityInner({
                         <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
                           <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
                         </svg>
-                        <Image src={getTokenIcon(zapPreview.outputTokenInfo.symbol, networkMode)} alt={zapPreview.outputTokenInfo.symbol} width={16} height={16} className="rounded-full" />
+                        <TokenImage src={getTokenIcon(zapPreview.outputTokenInfo.symbol, networkMode)} alt={zapPreview.outputTokenInfo.symbol} size={16} />
                       </div>
                     </div>
                     {zapPreview.route.priceImpact >= 3 && (

@@ -26,7 +26,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import type { SwapTradeModel } from "./useSwapTrade";
 import type { PriceDeviationResult } from "@/hooks/usePriceDeviation";
 import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
-import { appKit } from "@/components/AppKitProvider";
+import { getAppKit } from "@/components/AppKitProvider";
 
 interface SwapInputViewProps {
   fromToken: Token;
@@ -160,9 +160,9 @@ export function SwapInputView({
     () => [fromToken.symbol, toToken.symbol].filter(Boolean) as string[],
     [fromToken.symbol, toToken.symbol]
   );
-  const { prices: swapInputPrices } = useTokenPrices(swapInputPriceSymbols);
-  const fromTokenPrice = { price: fromToken ? (swapInputPrices[fromToken.symbol] || null) : null };
-  const toTokenPrice = { price: toToken ? (swapInputPrices[toToken.symbol] || null) : null };
+  const { prices: swapInputPrices } = useTokenPrices(swapInputPriceSymbols, { chainId: TARGET_CHAIN_ID });
+  const fromTokenPrice = { price: fromToken ? (swapInputPrices[fromToken.symbol] ?? null) : null };
+  const toTokenPrice = { price: toToken ? (swapInputPrices[toToken.symbol] ?? null) : null };
   const { showWarning: showSlippageWarning, warningMessage: slippageWarningMessage, isCritical: isSlippageCritical } = useSlippageValidation(slippage);
 
   const formatPercentFromBps = React.useCallback((bps: number) => {
@@ -387,7 +387,7 @@ export function SwapInputView({
                     "opacity-50": trade.quoteLoading && activelyEditedSide === 'to',
                     "swap-usd-fade": isConnected && parseFloat(fromToken.balance || "0") > 0
                   })}>
-                    {trade.formatCurrency((parseFloat(fromAmount || "0") * (fromTokenPrice.price || fromToken.usdPrice || 0)).toString())}
+                    {trade.formatCurrency((parseFloat(fromAmount || "0") * (fromTokenPrice.price ?? 0)).toString())}
                   </div>
                   {isConnected && parseFloat(fromToken.balance || "0") > 0 && (
                     <div className="absolute right-0 top-[3px] flex gap-1 swap-pct-container transition-all duration-100">
@@ -655,7 +655,7 @@ export function SwapInputView({
                       {(() => {
                         const amount = parseFloat(toAmount || "");
                         if (!toAmount || isNaN(amount)) return "$0.00";
-                        return trade.formatCurrency((amount * (toTokenPrice.price || toToken.usdPrice || 0)).toString());
+                        return trade.formatCurrency((amount * (toTokenPrice.price ?? 0)).toString());
                       })()}
                     </div>
                     {isConnected && parseFloat(toToken.balance || "0") > 0 && (
@@ -856,7 +856,7 @@ export function SwapInputView({
                         if (trade.dynamicFeeBps === null) {
                           return <span className="text-muted-foreground">N/A</span>;
                         }
-                        const inputAmountUSD = parseFloat(fromAmount || "0") * (fromTokenPrice.price || fromToken.usdPrice || 0);
+                        const inputAmountUSD = parseFloat(fromAmount || "0") * (fromTokenPrice.price ?? 0);
                         const feeInUSD = inputAmountUSD * (trade.dynamicFeeBps / 10000);
                         const percentDisplay = formatPercentFromBps(trade.dynamicFeeBps);
                         const amountDisplay = feeInUSD > 0 && feeInUSD < 0.01 ? "< $0.01" : trade.formatCurrency(feeInUSD.toString());
@@ -988,7 +988,7 @@ export function SwapInputView({
         ) : (
           <button
             type="button"
-            onClick={() => appKit?.open()}
+            onClick={() => getAppKit()?.open()}
             className="flex h-10 w-full cursor-pointer items-center justify-center rounded-md border border-sidebar-border bg-[var(--sidebar-connect-button-bg)] px-3 text-sm font-medium transition-all duration-200 hover:bg-accent hover:brightness-110 hover:border-white/30 text-white"
             style={{ backgroundImage: 'url(/patterns/button-wide.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
           >

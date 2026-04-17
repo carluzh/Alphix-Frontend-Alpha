@@ -4,9 +4,10 @@ import { memo, useState, useCallback, useEffect } from "react";
 import Image from "next/image";
 import { cn, shortenAddress, getTokenIcon, getTokenColor } from "@/lib/utils";
 import { IconClone2, IconCheck, IconPlus, IconMinus } from "nucleo-micro-bold-essential";
+import { ExternalLink } from "lucide-react";
 import { PointsIcon } from "@/components/PointsIcons/PointsIcon";
 import type { PoolConfig } from "../../hooks";
-import { isVolatilePool } from "@/lib/liquidity/utils/pool-type-guards";
+import { isVolatilePool, isProPool } from "@/lib/liquidity/utils/pool-type-guards";
 
 /** Local number formatter matching the position detail formatNumber API */
 function formatNumber(
@@ -27,10 +28,13 @@ function CopyableRow({
   label,
   value,
   displayValue,
+  href,
 }: {
   label: string;
   value: string;
   displayValue?: string;
+  /** Optional external link (e.g. Basescan address URL) */
+  href?: string;
 }) {
   const [isCopied, setIsCopied] = useState(false);
 
@@ -56,11 +60,11 @@ function CopyableRow({
       onClick={handleCopy}
     >
       <span className="text-xs text-muted-foreground">{label}</span>
-      <div className="flex items-center">
+      <div className="flex items-center gap-1.5">
         <span className="text-xs font-mono text-muted-foreground group-hover:text-foreground transition-colors">
           {displayValue || shortenAddress(value)}
         </span>
-        <div className="relative w-0 group-hover:w-3.5 h-3.5 ml-0 group-hover:ml-1.5 overflow-hidden transition-all duration-200">
+        <div className="relative w-0 group-hover:w-3.5 h-3.5 ml-0 overflow-hidden transition-all duration-200">
           <IconClone2
             width={14}
             height={14}
@@ -78,6 +82,17 @@ function CopyableRow({
             )}
           />
         </div>
+        {href && (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+          >
+            <ExternalLink width={11} height={11} />
+          </a>
+        )}
       </div>
     </div>
   );
@@ -332,6 +347,7 @@ function ContractsSection({ poolConfig }: { poolConfig: PoolConfig }) {
   );
 }
 
+
 // ─── LVR Saved Card ──────────────────────────────────────────────────────────
 
 function LvrSavedCard({ lvrSavedUsd }: { lvrSavedUsd?: number }) {
@@ -445,9 +461,10 @@ const volatileFaqItems: { question: string; answer: React.ReactNode }[] = [
   },
 ];
 
-function PoolFAQSection({ isVolatile }: { isVolatile?: boolean }) {
+function PoolFAQSection({ isVolatile, isPro }: { isVolatile?: boolean; isPro?: boolean }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
-  const items = isVolatile ? volatileFaqItems : stableFaqItems;
+  // Pro pools use volatile-style FAQs (dynamic fees, no rehypothecation)
+  const items = (isVolatile || isPro) ? volatileFaqItems : stableFaqItems;
 
   return (
     <div className="flex flex-col gap-1">
@@ -497,6 +514,7 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
 }: PoolDetailSidebarProps) {
   const yieldSources = poolConfig.yieldSources ?? [];
   const isVolatile = isVolatilePool(poolConfig as any);
+  const isPro = isProPool(poolConfig as any);
 
   return (
     <div className="flex flex-col gap-6">
@@ -518,8 +536,8 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
             />
           ))}
 
-          {/* Earning Points */}
-          <EarningPointsCard />
+          {/* Earning Points — not shown for Pro pools */}
+          {!isPro && <EarningPointsCard />}
 
           {/* Pool Balance */}
           <PoolBalanceSection poolConfig={poolConfig} tvlUsd={tvlUsd} tvlToken0Usd={tvlToken0Usd} tvlToken1Usd={tvlToken1Usd} networkMode={networkMode} />
@@ -529,7 +547,7 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
       </div>
 
       {/* FAQ */}
-      <PoolFAQSection isVolatile={isVolatile} />
+      <PoolFAQSection isVolatile={isVolatile} isPro={isPro} />
     </div>
   );
 });

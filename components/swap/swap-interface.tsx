@@ -98,7 +98,7 @@ const createTokenFromConfig = (tokenSymbol: string, prices: { BTC: number; USDC:
   if (!tokenConfig) return null;
 
   const priceType = getTokenPriceMapping(tokenSymbol);
-  const usdPrice = prices[priceType] || 1;
+  const usdPrice = prices[priceType] || 0;
 
   const chain = CHAIN_META[mode || 'base'];
 
@@ -740,26 +740,20 @@ export function SwapInterface({ currentRoute, setCurrentRoute, selectedPoolIndex
     () => [fromToken?.symbol, toToken?.symbol].filter(Boolean) as string[],
     [fromToken?.symbol, toToken?.symbol]
   );
-  const { prices: swapPrices } = useTokenPrices(swapPriceSymbols);
+  const { prices: swapPrices } = useTokenPrices(swapPriceSymbols, { chainId: TARGET_CHAIN_ID });
 
-  // Update token prices when USD prices change
+  // Update token usdPrice when real prices arrive from batch API
   useEffect(() => {
     const price = swapPrices[fromToken?.symbol];
-    if (price && price > 0) {
-      setFromToken(prev => {
-        if (prev.usdPrice === price) return prev;
-        return { ...prev, usdPrice: price };
-      });
+    if (price != null && price > 0) {
+      setFromToken(prev => prev.usdPrice === price ? prev : { ...prev, usdPrice: price });
     }
   }, [swapPrices, fromToken?.symbol]);
 
   useEffect(() => {
     const price = swapPrices[toToken?.symbol];
-    if (price && price > 0) {
-      setToToken(prev => {
-        if (prev.usdPrice === price) return prev;
-        return { ...prev, usdPrice: price };
-      });
+    if (price != null && price > 0) {
+      setToToken(prev => prev.usdPrice === price ? prev : { ...prev, usdPrice: price });
     }
   }, [swapPrices, toToken?.symbol]);
   

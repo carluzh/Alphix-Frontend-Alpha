@@ -12,6 +12,7 @@
 import React, { useMemo } from "react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
+import { TokenImage } from "@/components/ui/token-image";
 import { resolveTokenIcon } from "@/lib/pools-config";
 import { getYieldSourcesForTokens } from "@/lib/aave-rates";
 import { formatAprPercent } from "@/lib/format";
@@ -59,12 +60,12 @@ function TokenPairLogo({ token0Symbol, token1Symbol }: TokenPairLogoProps) {
   return (
     <div className="flex items-center -space-x-1">
       {icon0 ? (
-        <Image src={icon0} alt={token0Symbol || ""} width={14} height={14} className="rounded-full ring-1 ring-popover" />
+        <TokenImage src={icon0} alt={token0Symbol || ""} size={14} className="ring-1 ring-popover" />
       ) : (
         <div className="w-3.5 h-3.5 rounded-full bg-muted ring-1 ring-popover" />
       )}
       {icon1 ? (
-        <Image src={icon1} alt={token1Symbol || ""} width={14} height={14} className="rounded-full ring-1 ring-popover" />
+        <TokenImage src={icon1} alt={token1Symbol || ""} size={14} className="ring-1 ring-popover" />
       ) : (
         <div className="w-3.5 h-3.5 rounded-full bg-muted ring-1 ring-popover" />
       )}

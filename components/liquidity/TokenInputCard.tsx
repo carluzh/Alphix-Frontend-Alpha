@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import Image from "next/image";
 import { IconCaretExpandY } from "nucleo-micro-bold-essential";
+import { TokenImage } from "@/components/ui/token-image";
 import { motion, useAnimation, type AnimationControls } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -229,24 +229,20 @@ export function TokenInputCard({
                 onClick={onTokenClick}
                 className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3 transition-colors hover:bg-sidebar-accent hover:border-sidebar-border group/token"
               >
-                <Image
+                <TokenImage
                   src={tokenIcon}
                   alt={tokenSymbol}
-                  width={20}
-                  height={20}
-                  className="rounded-full"
+                  size={20}
                 />
                 <span className="text-sm font-medium">{tokenSymbol}</span>
                 {tokenClickIcon ?? <IconCaretExpandY className="w-3.5 h-3.5 text-muted-foreground group-hover/token:text-white transition-colors" />}
               </button>
             ) : (
               <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
-                <Image
+                <TokenImage
                   src={tokenIcon}
                   alt={tokenSymbol}
-                  width={20}
-                  height={20}
-                  className="rounded-full"
+                  size={20}
                 />
                 <span className="text-sm font-medium">{tokenSymbol}</span>
               </div>

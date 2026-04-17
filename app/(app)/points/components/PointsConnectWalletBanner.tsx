@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatedEmblems } from "@/app/(app)/overview/components/ConnectWalletBanner/AnimatedStyledBanner/AnimatedEmblems";
-import { appKit } from "@/components/AppKitProvider";
+import { getAppKit } from "@/components/AppKitProvider";
 
 /**
  * PointsConnectWalletBanner - Shows connect wallet CTA on Points page
@@ -11,7 +11,7 @@ import { appKit } from "@/components/AppKitProvider";
  */
 export function PointsConnectWalletBanner() {
   const handleConnect = () => {
-    appKit?.open();
+    getAppKit()?.open();
   };
 
   return (

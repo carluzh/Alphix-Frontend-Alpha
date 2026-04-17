@@ -612,7 +612,7 @@ export function TokenSelector({
         const r = raw[token.address];
         const existing = prev[token.address];
         if (!r || !existing || existing.isLoading) continue;
-        const price = tokenPrices[token.symbol] || token.usdPrice || 0;
+        const price = tokenPrices[token.symbol] ?? token.usdPrice ?? 0;
         updated[token.address] = { ...existing, usdValue: r.numericBalance * price };
       }
       return updated;

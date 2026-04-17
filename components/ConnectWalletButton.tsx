@@ -3,14 +3,14 @@
 import React from 'react'
 import { useAccount } from 'wagmi'
 import { SidebarMenu, SidebarMenuItem } from "@/components/ui/sidebar"
-import { appKit } from "@/components/AppKitProvider"
+import { getAppKit } from "@/components/AppKitProvider"
 
 // Connect Wallet Button component
 export function ConnectWalletButton() {
   const { isConnected } = useAccount()
 
   const handleConnect = () => {
-    appKit?.open()
+    getAppKit()?.open()
   }
 
   if (isConnected) {

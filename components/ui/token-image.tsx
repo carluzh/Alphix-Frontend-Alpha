@@ -48,13 +48,14 @@ export function TokenImage({ src, alt, size = 32, className }: TokenImageProps) 
     );
   }
 
-  // Use Next.js Image for local images
+  // Use Next.js Image for local images (unoptimized to avoid cache-miss issues with small PNGs)
   return (
     <Image
       src={imgSrc}
       alt={alt}
       width={size}
       height={size}
+      unoptimized
       className={cn("rounded-full", className)}
       onError={() => {
         setImgSrc('/tokens/placeholder.svg');

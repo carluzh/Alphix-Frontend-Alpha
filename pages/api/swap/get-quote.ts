@@ -752,7 +752,56 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     // Find the best route using the routing engine (network-aware)
     const routeResult = findBestRoute(fromTokenSymbol, toTokenSymbol, networkMode);
 
+    // Extract aggregator-related params (needed for both Alphix and Kyberswap paths)
+    const { userAddress, slippageBps = 50, fromTokenAddress, toTokenAddress } = req.body;
+
     if (!routeResult.bestRoute) {
+      // No Alphix pool for this pair — fall through to Kyberswap if addresses available
+      if (swapType === 'ExactIn' && fromTokenAddress && toTokenAddress) {
+        await ensureTokenListLoaded(networkMode).catch(() => {});
+        const kyberRequest: QuoteRequest = {
+          fromTokenAddress,
+          toTokenAddress,
+          fromTokenDecimals: fromToken.decimals,
+          toTokenDecimals: toToken.decimals,
+          amount: amountInSmallestUnits.toString(),
+          slippageBps,
+          userAddress,
+          isExactIn: true,
+          networkMode,
+        };
+        try {
+          const kyberQuote = await getKyberswapQuote(kyberRequest);
+          if (kyberQuote) {
+            const responseData = {
+              success: true,
+              swapType,
+              fromAmount: amountDecimalsStr,
+              fromToken: fromTokenSymbol,
+              toAmount: kyberQuote.outputAmount,
+              toToken: toTokenSymbol,
+              gasEstimate: String(kyberQuote.gasEstimate || 0),
+              priceImpact: '0',
+              midPrice: null,
+              dynamicFeeBps: 0,
+              route: { path: [fromTokenSymbol, toTokenSymbol], hops: 1, isDirectRoute: false, pools: [] },
+              source: 'kyberswap' as AggregatorSource,
+              selectionReason: 'no_alphix_pool',
+              kyberswapData: {
+                routerAddress: kyberQuote.routerAddress,
+                encodedSwapData: kyberQuote.encodedSwapData,
+                routeSummary: kyberQuote.routeSummary,
+                tokenMetadata: buildRouteTokenMetadata(kyberQuote.routeSummary, networkMode),
+              },
+            };
+            quoteCache.set(cacheKey, { result: responseData, timestamp: Date.now() });
+            return res.status(200).json(responseData);
+          }
+        } catch (err: any) {
+          console.warn('[Kyberswap fallback] Quote failed:', err?.message || err);
+        }
+      }
+
       return res.status(400).json({
         message: `No route found for token pair: ${fromTokenSymbol} → ${toTokenSymbol}`,
         error: 'No available pools to complete this swap'
@@ -760,9 +809,6 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     }
 
     const route = routeResult.bestRoute;
-
-    // Extract aggregator-related params
-    const { userAddress, slippageBps = 50, fromTokenAddress, toTokenAddress } = req.body;
 
     // Start Kyberswap quote fetch in parallel (only for ExactIn swaps with token addresses)
     // Kyberswap doesn't support ExactOut, so we only fetch for ExactIn

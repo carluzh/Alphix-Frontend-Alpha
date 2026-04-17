@@ -5,9 +5,8 @@ import { useAccount } from "wagmi";
 import { usePoolState } from "@/lib/apollo/hooks";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { useWSPool } from "@/lib/websocket";
-import { fetchPoolsMetrics } from "@/lib/backend-client";
-import { getPoolBySlug, getPoolBySlugMultiChain, getToken, getTokenDefinitions, resolveTokenIcon, type TokenSymbol, type NetworkMode } from "@/lib/pools-config";
-import { isVolatilePool } from "@/lib/liquidity/utils/pool-type-guards";
+import { getPoolBySlug, getPoolBySlugMultiChain, getToken, getTokenDefinitions, resolveTokenIcon, type TokenSymbol, type NetworkMode, type ProMeta } from "@/lib/pools-config";
+import { isVolatilePool, isProPool } from "@/lib/liquidity/utils/pool-type-guards";
 import { chainIdForMode } from "@/lib/network-mode";
 import { usePoolChartData, type ChartDataPoint } from "./usePoolChartData";
 import { usePoolPositions } from "./usePoolPositions";
@@ -61,6 +60,7 @@ export interface PoolConfig {
   type?: string;
   hooks?: string;
   yieldSources?: Array<'aave' | 'spark'>;
+  proMeta?: ProMeta;
 }
 
 export interface PoolStats {
@@ -166,6 +166,7 @@ function getPoolConfiguration(poolId: string, networkModeOverride?: NetworkMode)
     slug: poolConfig.slug,
     poolId: poolConfig.poolId,
     networkMode: resolvedMode ?? networkModeOverride ?? 'base',
+    proMeta: poolConfig.proMeta,
     tokens: [
       { symbol: token0.symbol, icon: resolveTokenIcon(token0.symbol), address: token0.address },
       { symbol: token1.symbol, icon: resolveTokenIcon(token1.symbol), address: token1.address },
@@ -310,6 +311,7 @@ export function usePoolDetailPageData(poolSlug: string, networkModeOverride?: Ne
     windowWidth,
     currentFeeBps: wsPool?.lpFee,
     isVolatilePool: poolConfig ? isVolatilePool(poolConfig as any) : false,
+    isProPool: poolConfig ? isProPool(poolConfig as any) : false,
     currentVolatility: wsPool?.volatility,
     currentAgentAdjustment: wsPool?.agentAdjustment,
   });
@@ -382,102 +384,43 @@ export function usePoolDetailPageData(poolSlug: string, networkModeOverride?: Ne
     [tokenDefinitions]
   );
 
-  // Update pool stats from WebSocket data when available
+  // Update pool stats from useWSPool data (covers both WS real-time and REST fallback).
+  // useWSPool already handles the initial REST fetch and WS overlay — no need
+  // for a separate fetchPoolsMetrics call here (was causing duplicate requests).
   useEffect(() => {
-    if (wsConnected && wsPool) {
-      const tvlUSD = wsPool.tvlUsd || 0;
-      const volume24hUSD = wsPool.volume24hUsd || 0;
-      const fees24hUSD = wsPool.fees24hUsd || 0;
-      // Backend provides separate swap/lending/total APY
-      const swapApyRaw = wsPool.swapApy ?? 0;
-      const lendingApyRaw = wsPool.lendingApy ?? 0;
-      const aprRaw = wsPool.totalApy ?? (wsPool.apy24h || 0);
-      const dynamicFeeBps = wsPool.lpFee || null;
+    if (!wsPool) return;
 
-      const aprFormatted = Number.isFinite(aprRaw) && aprRaw > 0
-        ? (aprRaw < 1000 ? `${aprRaw.toFixed(2)}%` : `${(aprRaw / 1000).toFixed(2)}K%`)
-        : '0.00%';
+    const tvlUSD = wsPool.tvlUsd || 0;
+    const volume24hUSD = wsPool.volume24hUsd || 0;
+    const fees24hUSD = wsPool.fees24hUsd || 0;
+    // Backend provides separate swap/lending/total APY
+    const swapApyRaw = wsPool.swapApy ?? 0;
+    const lendingApyRaw = wsPool.lendingApy ?? 0;
+    const aprRaw = wsPool.totalApy ?? (wsPool.apy24h || 0);
+    const dynamicFeeBps = wsPool.lpFee || null;
 
-      setPoolStats({
-        tvlUSD,
-        tvlToken0Usd: wsPool.tvlToken0Usd,
-        tvlToken1Usd: wsPool.tvlToken1Usd,
-        volume24hUSD,
-        fees24hUSD,
-        apr: aprFormatted,
-        aprRaw,
-        swapApyRaw,
-        lendingApyRaw,
-        dynamicFeeBps,
-        tvlFormatted: formatUSD(tvlUSD),
-        volume24hFormatted: formatUSD(volume24hUSD),
-        fees24hFormatted: formatUSD(fees24hUSD),
-      });
+    const aprFormatted = Number.isFinite(aprRaw) && aprRaw > 0
+      ? (aprRaw < 1000 ? `${aprRaw.toFixed(2)}%` : `${(aprRaw / 1000).toFixed(2)}K%`)
+      : '0.00%';
 
-      updateTodayTvl(tvlUSD);
-    }
-  }, [wsConnected, wsPool, updateTodayTvl]);
+    setPoolStats({
+      tvlUSD,
+      tvlToken0Usd: wsPool.tvlToken0Usd,
+      tvlToken1Usd: wsPool.tvlToken1Usd,
+      volume24hUSD,
+      fees24hUSD,
+      apr: aprFormatted,
+      aprRaw,
+      swapApyRaw,
+      lendingApyRaw,
+      dynamicFeeBps,
+      tvlFormatted: formatUSD(tvlUSD),
+      volume24hFormatted: formatUSD(volume24hUSD),
+      fees24hFormatted: formatUSD(fees24hUSD),
+    });
 
-  // Fetch pool stats from REST as fallback (initial load or when WS disconnected)
-  useEffect(() => {
-    if (!poolSlug || !poolId) return;
-    // Skip REST fetch if WebSocket data is available
-    if (wsConnected && wsPool) return;
-
-    const fetchPoolStats = async () => {
-      try {
-        // Fetch all pools and filter for this one (backend only has /pools/metrics, not /pools/{id}/metrics)
-        const response = await fetchPoolsMetrics(networkMode);
-
-        if (!response.success || !response.pools) {
-          console.warn('[usePoolDetailPageData] Failed to fetch pool metrics:', response.error);
-          return;
-        }
-
-        // Find this pool in the response
-        const pool = response.pools.find(p => p.poolId.toLowerCase() === poolId.toLowerCase());
-        if (!pool) {
-          console.warn('[usePoolDetailPageData] Pool not found in metrics:', poolId);
-          return;
-        }
-
-        const tvlUSD = pool.tvlUsd || 0;
-        const volume24hUSD = pool.volume24hUsd || 0;
-        const fees24hUSD = pool.fees24hUsd || 0;
-        // Backend provides separate swap/lending/total APY
-        const swapApyRaw = pool.swapApy ?? 0;
-        const lendingApyRaw = pool.lendingApy ?? 0;
-        const aprRaw = pool.totalApy ?? 0;
-        const dynamicFeeBps = pool.lpFee || null;
-
-        const aprFormatted = Number.isFinite(aprRaw) && aprRaw > 0
-          ? (aprRaw < 1000 ? `${aprRaw.toFixed(2)}%` : `${(aprRaw / 1000).toFixed(2)}K%`)
-          : '0.00%';
-
-        setPoolStats({
-          tvlUSD,
-          tvlToken0Usd: pool.tvlToken0Usd,
-          tvlToken1Usd: pool.tvlToken1Usd,
-          volume24hUSD,
-          fees24hUSD,
-          apr: aprFormatted,
-          aprRaw,
-          swapApyRaw,
-          lendingApyRaw,
-          dynamicFeeBps,
-          tvlFormatted: formatUSD(tvlUSD),
-          volume24hFormatted: formatUSD(volume24hUSD),
-          fees24hFormatted: formatUSD(fees24hUSD),
-        });
-
-        updateTodayTvl(tvlUSD);
-      } catch (error) {
-        console.error('[usePoolDetailPageData] Failed to fetch pool stats:', error);
-      }
-    };
-
-    fetchPoolStats();
-  }, [poolSlug, poolId, networkMode, updateTodayTvl, wsConnected, wsPool]);
+    updateTodayTvl(tvlUSD);
+  }, [wsPool, updateTodayTvl]);
 
   // Fetch chart data on mount (fetchChartData has its own deduplication via hasFetchedForPoolRef)
   useEffect(() => {

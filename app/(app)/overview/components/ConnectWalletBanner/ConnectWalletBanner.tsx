@@ -1,11 +1,11 @@
 'use client'
 
 import { AnimatedStyledBanner } from './AnimatedStyledBanner/AnimatedStyledBanner'
-import { appKit } from '@/components/AppKitProvider'
+import { getAppKit } from '@/components/AppKitProvider'
 
 export function OverviewConnectWalletBanner() {
   const handleConnect = () => {
-    appKit?.open()
+    getAppKit()?.open()
   }
 
   return (

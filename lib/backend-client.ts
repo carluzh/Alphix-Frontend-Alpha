@@ -2,6 +2,7 @@
 
 import { type NetworkMode } from './network-mode';
 import { CHAIN_REGISTRY } from './chain-registry';
+import { apiFetch } from './fetch-client';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
@@ -838,8 +839,7 @@ export async function fetchPoolsMetrics(
   try {
     const url = buildBackendUrl('/pools/metrics', networkMode);
 
-    const response = await fetch(url, {
-      method: 'GET',
+    const response = await apiFetch(url, {
       headers: { 'Content-Type': 'application/json' },
     });
 
@@ -864,7 +864,7 @@ export async function fetchPoolsMetrics(
 export async function fetchAllPoolsMetrics(): Promise<PoolsMetricsResponse> {
   try {
     const url = buildBackendUrlNoNetwork('/pools/metrics');
-    const response = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+    const response = await apiFetch(url, { headers: { 'Content-Type': 'application/json' } });
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData.error || `HTTP ${response.status}`);

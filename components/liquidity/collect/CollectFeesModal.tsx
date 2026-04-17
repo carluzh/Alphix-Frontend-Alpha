@@ -8,9 +8,8 @@
  */
 
 import React, { useMemo } from "react";
-import Image from "next/image";
-
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
+import { TokenImage } from "@/components/ui/token-image";
 import { formatUSD } from "@/lib/format";
 import { getTokenIcon } from "../liquidity-form-utils";
 import { resolveTokenIcon } from "@/lib/pools-config";
@@ -144,19 +143,15 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
           </div>
         </div>
         <div className="flex items-center -space-x-2">
-          <Image
+          <TokenImage
             src={getTokenIcon(position.token0.symbol, networkMode)}
             alt=""
-            width={36}
-            height={36}
-            className="rounded-full"
+            size={36}
           />
-          <Image
+          <TokenImage
             src={getTokenIcon(position.token1.symbol, networkMode)}
             alt=""
-            width={36}
-            height={36}
-            className="rounded-full"
+            size={36}
           />
         </div>
       </div>
@@ -173,12 +168,10 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                 </span>
                 <span className="text-sm text-muted-foreground">{formatUSD(usdFee0)}</span>
               </div>
-              <Image
+              <TokenImage
                 src={getTokenIcon(position.token0.symbol, networkMode)}
                 alt={position.token0.symbol}
-                width={36}
-                height={36}
-                className="rounded-full"
+                size={36}
               />
             </div>
           )}
@@ -190,12 +183,10 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
                 </span>
                 <span className="text-sm text-muted-foreground">{formatUSD(usdFee1)}</span>
               </div>
-              <Image
+              <TokenImage
                 src={getTokenIcon(position.token1.symbol, networkMode)}
                 alt={position.token1.symbol}
-                width={36}
-                height={36}
-                className="rounded-full"
+                size={36}
               />
             </div>
           )}
