@@ -36,9 +36,9 @@ export function APYBadge({ apy, isLoading, className, breakdown, token0Symbol, t
 
   if (totalApy === null) {
     return (
-      <div className={cn("inline-flex items-center justify-center h-7 min-w-[72px] px-3 rounded text-sm font-semibold font-mono bg-muted/40 text-muted-foreground", className)}>
+      <span className={cn("inline-flex items-center justify-center h-7 min-w-[72px] px-3 rounded text-sm font-semibold font-mono bg-muted/40 text-muted-foreground", className)}>
         -
-      </div>
+      </span>
     );
   }
 
@@ -52,13 +52,13 @@ export function APYBadge({ apy, isLoading, className, breakdown, token0Symbol, t
     : formatTotalApy({ swapApy: totalApy });
 
   const badge = (
-    <div className={cn(
+    <span className={cn(
       "inline-flex items-center justify-center h-7 min-w-[72px] px-3 rounded text-sm font-semibold font-mono",
       isZero ? "bg-muted/40 text-muted-foreground" : "bg-green-500/15 text-green-500",
       className
     )}>
       {formattedApy}
-    </div>
+    </span>
   );
 
   return (

@@ -10,7 +10,7 @@
 
 "use client"
 
-import React, { useState, useCallback } from 'react';
+import React from 'react';
 import {
   Tooltip,
   TooltipContent,
@@ -109,29 +109,19 @@ export function PointsTooltip({
   placement = 'top',
   className,
 }: PointsTooltipProps) {
-  // If disabled, render children without wrapper - mirrors Uniswap's Fragment return
   if (disabled) {
     return <>{children}</>;
   }
 
-  // Calculate padding style
   const paddingStyle = padding !== undefined
     ? `${padding}px`
     : getPaddingForSize(size);
 
-  const [open, setOpen] = useState(false);
-  const handleMouseEnter = useCallback(() => setOpen(true), []);
-  const handleMouseLeave = useCallback(() => setOpen(false), []);
-
   return (
     <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-      <Tooltip open={open}>
+      <Tooltip>
         <TooltipTrigger asChild>
-          <span
-            className="cursor-pointer"
-            onMouseEnter={handleMouseEnter}
-            onMouseLeave={handleMouseLeave}
-          >
+          <span className="cursor-pointer">
             {children}
           </span>
         </TooltipTrigger>
