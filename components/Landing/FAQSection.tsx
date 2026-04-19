@@ -59,67 +59,58 @@ const faqItems: { number: string; question: string; answer: React.ReactNode }[] 
   {
     number: '01',
     question: 'What is Alphix?',
-    answer: (
-      <>
-        Alphix is a DeFi protocol built on Uniswap V4 that introduces{' '}
-        <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
-          Unified Pools
-        </Link>
-        . By stacking multiple features into a single pool, we eliminate liquidity fragmentation and create more efficient markets. Think dynamic fees, liquidity rehypothecation, and other innovations, all coexisting without splitting liquidity. Alphix is live on Base and Arbitrum.
-      </>
-    ),
+    answer:
+      'Alphix is the non-custodial market maker for onchain protocols. We build a custom Uniswap v4 pool around a protocol\u2019s token and provide the infrastructure that manages its liquidity - leveraging AI agents and dedicated algorithms. Alphix is live on Base and Arbitrum.',
   },
   {
     number: '02',
     question: 'What problem does Alphix solve?',
     answer: (
       <>
-        The main barrier to hook adoption is fragmentation. Every new feature typically requires its own pool, splitting liquidity and volume. Alphix solves this with{' '}
-        <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
-          Unified Pools
-        </Link>{' '}
-        that combine multiple features into one, enabling us to compete with larger incumbents despite their liquidity depth advantages.
+        Every DeFi protocol needs deep, stable liquidity for its token. Today&rsquo;s options are a vanilla DEX pool and self-managed liquidity that bleeds value to MEV, a market maker retainer that takes custody and walks when the contract ends, or an ALM optimizing liquidity on top of a flawed, one-size-fits-all pool.
+        <br /><br />
+        Alphix is the permissionless alternative that handles liquidity infrastructure end-to-end - deep markets that earn more, so protocol teams can focus on building.
       </>
     ),
   },
   {
     number: '03',
-    question: 'How do dynamic fees work?',
+    question: 'How is Alphix different from an ALM?',
     answer:
-      "Unlike traditional AMMs locked to fixed fee tiers, our pools use dynamic fees that adjust in real-time. Each pool type optimizes differently: Stable pools respond to volume patterns while volatile pools adapt to market volatility and adverse selection risk. The goal is the same — finding the optimal fee automatically so our LPs earn more.",
+      'Automated Liquidity Managers rebalance positions on top of generic pools they cannot change. Alphix deploys the pool itself, which lets our agent handle not just the positions but also the underlying pool fees. Pricing is performance-only, and the agent operates within bounds the protocol sets - non-custodial throughout.',
   },
   {
     number: '04',
-    question: 'What is rehypothecation?',
+    question: 'How does liquidity delegation work?',
     answer:
-      'Rehypothecation allows idle liquidity sitting in Unified Pools to be deployed into trusted, yield-generating protocols. This means LPs earn additional yield on top of trading fees without any extra effort. We carefully vet and audit every integration partner to ensure security remains our top priority while maximizing capital efficiency.',
+      'The protocol deposits liquidity into an Alphix pool like any other LP, then delegates ongoing management to our agentic backend with a single signature. Custody of the underlying assets never leaves the protocol. The agent operates under a whitelisted set of on-chain actions - it can rebalance positions and adjust fees, but cannot move or withdraw funds.',
   },
   {
     number: '05',
-    question: 'Is Alphix safe to use?',
+    question: 'What makes an Alphix pool more efficient?',
     answer:
-      'Security is non-negotiable for us. We work with leading security teams to audit every feature before it is added to Unified Pools, including all rehypothecation integrations. Alphix is fully non-custodial, meaning you retain complete control over your assets at all times. No protocol can be considered entirely risk-free, but we take extensive steps to minimize risks.',
+      'A vanilla pool applies one static fee tier and leaves idle capital idle. Alphix pools adjust fees to volatility in real time, apply asymmetric buy and sell fees to defend against one-sided pressure, and route idle treasury to lending markets for extra yield between swaps. MEV that would otherwise leak to external bots is rebated to the protocol.',
   },
   {
     number: '06',
-    question: 'Which chains is Alphix available on?',
+    question: 'Is Alphix safe to use?',
     answer:
-      'Alphix is live on Base and Arbitrum. We chose Base for its strong growth potential and alignment with the Uniswap ecosystem, and Arbitrum for its thriving DeFi ecosystem and deep liquidity. We plan to expand to additional chains as the protocol grows.',
+      'Security is non-negotiable for us. Our contracts have been audited by Sherlock with zero critical findings, and a $30k bug bounty is live on their platform. Alphix is fully non-custodial, meaning protocols retain control of their assets at all times. No protocol can be considered entirely risk-free, but we take extensive steps to minimize risks.',
   },
   {
     number: '07',
-    question: 'How can I provide liquidity or trade?',
+    question: 'How does a protocol get started with Alphix?',
     answer: (
       <>
-        You can{' '}
-        <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
-          provide liquidity
-        </Link>{' '}
-        directly through our app by depositing tokens into Unified Pools on Base or Arbitrum. For trading, you can{' '}
-        <Link href="/swap" className="underline hover:text-foreground transition-colors">
-          swap directly on Alphix
-        </Link>{' '}
-        or through aggregators like KyberSwap and 1inch once integrated.
+        The process starts with a short scoping call to align on the token profile and the primitives that matter most - asymmetric fees, volatility response, rehypothecation. From there, pool deployment and delegation typically happen within days, not weeks.{' '}
+        <a
+          href="https://x.com/AlphixFi"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline hover:text-foreground transition-colors"
+        >
+          Contact us here!
+        </a>
       </>
     ),
   },

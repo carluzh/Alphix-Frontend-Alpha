@@ -121,11 +121,11 @@ export async function fetchUserPoints(
   address: string
 ): Promise<CachedUserPoints | null> {
   const res = await backendGet<{
-    totalPoints: number;
-    dailyRate: number;
-    tvlPoints: number;
-    volumePoints: number;
-    referralPoints: number;
+    totalPoints: number | null;
+    dailyRate: number | null;
+    tvlPoints: number | null;
+    volumePoints: number | null;
+    referralPoints: number | null;
     leaderboardRank: number | null;
   }>(`/points/user/${address}`);
 
@@ -133,12 +133,12 @@ export async function fetchUserPoints(
 
   const d = res.data;
   return {
-    totalPoints: d.totalPoints,
-    dailyRate: d.dailyRate,
+    totalPoints: d.totalPoints ?? 0,
+    dailyRate: d.dailyRate ?? 0,
     leaderboardPosition: d.leaderboardRank,
-    volumePoints: d.volumePoints,
-    liquidityPoints: d.tvlPoints,
-    referralPoints: d.referralPoints,
+    volumePoints: d.volumePoints ?? 0,
+    liquidityPoints: d.tvlPoints ?? 0,
+    referralPoints: d.referralPoints ?? 0,
     lastUpdated: Date.now(),
   };
 }
@@ -151,28 +151,28 @@ export async function fetchUserHistory(
 ): Promise<CachedHistoryEntry[]> {
   const res = await backendGet<{
     history: Array<{
-      weekStartTs: number;
-      weekEndTs: number;
-      season: number;
-      week: number;
-      totalPoints: number;
-      volumePoints: number;
-      tvlPoints: number;
-      referralPoints: number;
-    }>;
+      weekStartTs: number | null;
+      weekEndTs: number | null;
+      season: number | null;
+      week: number | null;
+      totalPoints: number | null;
+      volumePoints: number | null;
+      tvlPoints: number | null;
+      referralPoints: number | null;
+    }> | null;
     pagination?: { limit: number; offset: number; total: number; hasMore: boolean };
   }>(`/points/history/${address}`);
 
   if (!res.success || !res.data) return [];
 
-  return res.data.history.map((entry) => ({
-    id: `s${entry.season}-w${entry.week}`,
+  return (res.data.history ?? []).map((entry) => ({
+    id: `s${entry.season ?? 0}-w${entry.week ?? 0}`,
     type: "weekly_drop" as const,
-    points: entry.totalPoints,
-    season: entry.season,
-    week: entry.week,
-    startDate: entry.weekStartTs * 1000,
-    endDate: entry.weekEndTs * 1000,
+    points: entry.totalPoints ?? 0,
+    season: entry.season ?? 0,
+    week: entry.week ?? 0,
+    startDate: (entry.weekStartTs ?? 0) * 1000,
+    endDate: (entry.weekEndTs ?? 0) * 1000,
   }));
 }
 
@@ -183,18 +183,18 @@ export async function fetchLeaderboard(): Promise<CachedLeaderboardEntry[]> {
   const res = await backendGet<{
     leaderboard: Array<{
       userAddress: string;
-      totalPoints: number;
-      rank: number;
-    }>;
+      totalPoints: number | null;
+      rank: number | null;
+    }> | null;
     pagination?: { limit: number; offset: number; total: number; hasMore: boolean };
   }>("/points/leaderboard");
 
   if (!res.success || !res.data) return [];
 
-  return res.data.leaderboard.map((entry) => ({
-    rank: entry.rank,
+  return (res.data.leaderboard ?? []).map((entry) => ({
+    rank: entry.rank ?? 0,
     address: entry.userAddress,
-    points: entry.totalPoints,
+    points: entry.totalPoints ?? 0,
   }));
 }
 
@@ -203,11 +203,11 @@ export async function fetchLeaderboard(): Promise<CachedLeaderboardEntry[]> {
  */
 export async function fetchGlobalStats(): Promise<CachedGlobalStats | null> {
   const res = await backendGet<{
-    totalParticipants: number;
-    totalPointsDistributed: number;
-    currentSeason: number;
-    currentWeek: number;
-    seasonStartTs: number;
+    totalParticipants: number | null;
+    totalPointsDistributed: number | null;
+    currentSeason: number | null;
+    currentWeek: number | null;
+    seasonStartTs: number | null;
     weekStartTs?: number;
     weekEndTs?: number;
   }>("/points/stats");
@@ -216,11 +216,11 @@ export async function fetchGlobalStats(): Promise<CachedGlobalStats | null> {
 
   const d = res.data;
   return {
-    totalParticipants: d.totalParticipants,
-    totalPointsDistributed: d.totalPointsDistributed,
-    currentSeason: d.currentSeason,
-    currentWeek: d.currentWeek,
-    seasonStartDate: d.seasonStartTs * 1000,
+    totalParticipants: d.totalParticipants ?? 0,
+    totalPointsDistributed: d.totalPointsDistributed ?? 0,
+    currentSeason: d.currentSeason ?? 0,
+    currentWeek: d.currentWeek ?? 0,
+    seasonStartDate: (d.seasonStartTs ?? 0) * 1000,
     lastUpdated: Date.now(),
   };
 }
@@ -260,36 +260,42 @@ export async function fetchRefereesData(
   const res = await backendGet<{
     referees: Array<{
       refereeAddress: string;
-      refereePointsTotal: number;
-      referrerEarnings: number;
-      refereeTvlUsd?: number;
-      refereeVolumeUsd?: number;
+      refereePointsTotal: number | null;
+      referrerEarnings: number | null;
+      refereeTvlUsd?: number | null;
+      refereeVolumeUsd?: number | null;
       joinedAt?: string;
-    }>;
+    }> | null;
     stats: {
-      totalReferees: number;
-      totalEarnings: number;
-      totalRefereeTvl?: number;
-      totalRefereeVolume?: number;
-    };
+      totalReferees: number | null;
+      totalEarnings: number | null;
+      totalRefereeTvl?: number | null;
+      totalRefereeVolume?: number | null;
+    } | null;
   }>(`/referral/referees/${address}`);
 
   if (!res.success || !res.data) return null;
 
   const d = res.data;
+  const stats = d.stats ?? {
+    totalReferees: 0,
+    totalEarnings: 0,
+    totalRefereeTvl: 0,
+    totalRefereeVolume: 0,
+  };
   return {
-    referees: d.referees.map((r) => ({
+    referees: (d.referees ?? []).map((r) => ({
       address: r.refereeAddress,
-      theirPoints: r.refereePointsTotal,
-      yourEarnings: r.referrerEarnings,
+      theirPoints: r.refereePointsTotal ?? 0,
+      yourEarnings: r.referrerEarnings ?? 0,
       theirTvlUsd: r.refereeTvlUsd ?? 0,
       theirVolumeUsd: r.refereeVolumeUsd ?? 0,
       referredAt: r.joinedAt ? new Date(r.joinedAt).getTime() : 0,
     })),
-    totalReferees: d.stats.totalReferees,
-    totalEarnings: d.stats.totalEarnings,
-    totalReferredTvlUsd: d.stats.totalRefereeTvl ?? 0,
-    totalReferredVolumeUsd: d.stats.totalRefereeVolume ?? 0,
+    totalReferees: stats.totalReferees ?? 0,
+    totalEarnings: stats.totalEarnings ?? 0,
+    totalReferredTvlUsd: stats.totalRefereeTvl ?? 0,
+    totalReferredVolumeUsd: stats.totalRefereeVolume ?? 0,
   };
 }
 

@@ -6,6 +6,8 @@ import { FAQSection } from './FAQSection'
 import { Section } from './Section'
 import LandingLayout from './LandingLayout'
 import { FeatureCards } from './FeatureCards'
+import { ProtocolStatsBar } from './ProtocolStatsBar'
+import { SectionHeading } from './SectionHeading'
 import { SplitPromo } from './SplitPromo'
 import { ArrowUpRight } from 'lucide-react'
 import { GlitchIcon, type GlitchIconName } from './GlitchIcon'
@@ -57,6 +59,26 @@ const heroFeatures = [
     title: 'Rehypothecation',
     description: 'Idle liquidity put to work across external partner protocols.',
     image: '/landing/Rehypothecation.webp',
+    imageClassName: 'translate-x-[5%]',
+  },
+]
+
+const manageFeatures = [
+  {
+    title: 'Continuous Rebalancing',
+    description: 'Positions adjust to volatility and price without manual intervention.',
+    image: '/landing/Dynamic-Fees.webp',
+    imageClassName: 'translate-x-[5%]',
+  },
+  {
+    title: 'Auto-Compounding',
+    description: 'Earned fees reinvest into the pool, compounding yield automatically.',
+    image: '/landing/Rehypothecation.webp',
+  },
+  {
+    title: 'MEV Rebate',
+    description: 'Value otherwise lost to external bots is captured and returned.',
+    image: '/landing/Unified-Pool.webp',
     imageClassName: 'translate-x-[5%]',
   },
 ]
@@ -131,8 +153,8 @@ const ModularityCard = () => {
       <div className="flex flex-col md:hidden">
         <div className="px-4 py-3">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            <span className="text-foreground font-medium">Built to maximize.</span>
-            {' '}Our Unified Pools are custom-tuned to the market they facilitate with the sole goal to increase LP yield.
+            <span className="text-foreground font-medium">Built around the token.</span>
+            {' '}Our pools run a feature set customized to the protocol&rsquo;s profile.
           </p>
         </div>
         <div
@@ -151,9 +173,9 @@ const ModularityCard = () => {
       <div className="hidden md:flex flex-row items-center">
         <div className="shrink-0 pl-2 pr-4 py-2 max-w-[280px]">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            <span className="text-foreground font-medium">Built to maximize.</span>
+            <span className="text-foreground font-medium">Built around the token.</span>
             <br />
-            Our Unified Pools are custom-tuned to the market they facilitate with the sole goal to increase LP yield.
+            Our pools run a feature set customized to the protocol&rsquo;s profile.
           </p>
         </div>
 
@@ -180,10 +202,19 @@ export const PageContent = () => {
         <PaperShaderFrameLazy />
         <Hero
           title="The Non-Custodial Market Maker for Onchain Protocols"
-          description="Onchain liquidity is complex, but protocols need deep, efficient pools. We build the pool and manage it. Permissionless. Simple. Secure."
+          description={
+            <>
+              Onchain liquidity is complex, but protocols need deep, efficient pools. We build the pool and manage it.{' '}
+              <em className="italic">Permissionless. Simple. Secure.</em>
+            </>
+          }
         >
           <Link href="/home">
-            <Button size="lg" className="rounded-md font-semibold transition-all bg-button-primary text-sidebar-primary border border-sidebar-primary hover-button-primary">
+            <Button
+              size="lg"
+              data-hero-cta
+              className="rounded-md font-semibold transition-all bg-button-primary text-sidebar-primary border border-sidebar-primary hover-button-primary"
+            >
               Launch App
             </Button>
           </Link>
@@ -198,11 +229,26 @@ export const PageContent = () => {
           </Link>
         </Hero>
 
-        <FeatureCards features={heroFeatures} />
+        <div
+          className="relative z-10 h-px w-full max-w-5xl mx-auto -my-5 md:-my-8"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(90deg, rgba(255,255,255,0.25) 0, rgba(255,255,255,0.25) 4px, transparent 4px, transparent 7px)',
+            maskImage:
+              'linear-gradient(to right, transparent 0%, rgba(0,0,0,0.8) 15%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.8) 85%, transparent 100%)',
+            WebkitMaskImage:
+              'linear-gradient(to right, transparent 0%, rgba(0,0,0,0.8) 15%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.8) 85%, transparent 100%)',
+          }}
+        />
+
+        <ProtocolStatsBar />
       </Section>
 
       <Section className="flex flex-col gap-y-8 md:gap-y-12 py-0 md:py-0 mt-16 md:mt-24">
-        {/* Min-height wrapper to reserve space and prevent layout shift during lazy load */}
+        <SectionHeading title="The Pool" badge={{ text: 'Live', variant: 'live' }} className="-mb-4 md:-mb-6" />
+
+        <FeatureCards features={heroFeatures} />
+
         <div className="min-h-[700px] md:min-h-[520px] xl:min-h-[480px]">
           <DynamicFeeSectionLazy />
         </div>
@@ -233,6 +279,12 @@ export const PageContent = () => {
         />
 
         <ModularityCard />
+
+        {/* Manager section hidden
+        <SectionHeading title="The Manager" badge={{ text: 'In Development', variant: 'dev' }} className="-mb-4 md:-mb-6" />
+
+        <FeatureCards features={manageFeatures} />
+        */}
 
         <Features />
 

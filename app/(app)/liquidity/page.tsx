@@ -21,6 +21,7 @@ import { CHAIN_REGISTRY } from "@/lib/chain-registry";
 import { Pool } from "@/types";
 import { prefetchService } from "@/lib/prefetch-service";
 import { APYBadge } from "@/components/liquidity/APRBadge";
+import { ProBadge } from "@/components/liquidity/ProBadge";
 import { useWSPools } from "@/lib/websocket";
 import { fetchAaveRates, getLendingAprForPair } from "@/lib/aave-rates";
 import { TokenSearchBar } from "@/components/liquidity/TokenSearchBar";
@@ -317,11 +318,7 @@ export default function LiquidityPage() {
                         <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">
                           Volatile
                         </span>
-                        <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded border border-orange-500/40 text-orange-300 flex-shrink-0"
-                          style={{ backgroundColor: 'rgba(249, 115, 22, 0.1)' }}
-                        >
-                          Pro
-                        </span>
+                        <ProBadge size="sm" className="flex-shrink-0" />
                       </>
                     ) : (
                       <span className="px-1.5 py-0.5 text-[10px] font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground flex-shrink-0">

@@ -6,7 +6,7 @@ import { SonicBoom } from './SonicBoom'
 export type HeroProps = PropsWithChildren<{
   className?: string
   title: ReactNode
-  description: string
+  description: ReactNode
   stats?: ReactNode
 }>
 
@@ -49,7 +49,7 @@ export const Hero = ({
         {description}
       </p>
       <div
-        className="hero-animate in-view hero-cta relative z-10 mt-6 flex flex-row items-center gap-4 md:gap-6"
+        className="hero-animate in-view hero-cta relative z-10 mt-2 flex flex-row items-center gap-4 md:gap-6"
       >
         {children}
       </div>

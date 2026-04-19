@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ProBadge } from "@/components/liquidity/ProBadge";
 import type { PoolConfig } from "../../hooks";
 
 interface PoolDetailHeaderProps {
@@ -104,11 +105,7 @@ export const PoolDetailHeader = memo(function PoolDetailHeader({
                     <span className="w-fit px-1.5 py-0.5 text-xs font-normal rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">
                       Volatile
                     </span>
-                    <span className="w-fit px-1.5 py-0.5 text-xs font-semibold rounded border border-orange-500/40 text-orange-300"
-                      style={{ backgroundColor: 'rgba(249, 115, 22, 0.1)' }}
-                    >
-                      Pro
-                    </span>
+                    <ProBadge size="md" />
                   </>
                 ) : (
                   <span className="w-fit px-2 py-0.5 text-xs font-medium rounded border border-sidebar-border/50 bg-muted/30 text-muted-foreground">

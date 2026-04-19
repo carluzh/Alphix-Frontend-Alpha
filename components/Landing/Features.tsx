@@ -143,7 +143,7 @@ const ArbitrumCard = () => (
             Expanding to Arbitrum
           </h3>
           <p className="w-full grow text-lg font-medium leading-6 md:max-w-96 text-[#12AAFF] transition-colors duration-300 group-hover:text-white">
-            Bringing smarter markets to Arbitrum&apos;s thriving DeFi ecosystem.
+            Bringing our end-to-end liquidity infrastructure to Arbitrum&apos;s thriving ecosystem.
           </p>
         </div>
 
@@ -210,7 +210,7 @@ const UniswapFoundationCard = () => (
           className="text-base font-medium leading-6 md:max-w-[520px]"
           style={{ color: UNISWAP_PINK }}
         >
-          We use Hooks to bring smarter markets to production on battle-tested infrastructure.
+          We use Hooks to build smarter pools for protocols while plugging into the distribution of crypto&apos;s largest AMM.
         </p>
       </div>
 

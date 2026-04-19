@@ -3,7 +3,7 @@
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import Image from 'next/image'
-import { PropsWithChildren, useState } from 'react'
+import { PropsWithChildren, useEffect, useState } from 'react'
 import { IconArrowDoorIn } from 'nucleo-micro-bold-essential'
 import { toast } from 'sonner'
 import { TVLDisplay, SeasonBadge } from './TVLTicker'
@@ -63,12 +63,62 @@ export default function Layout({ children }: PropsWithChildren) {
 
 const LandingPageNavigation = () => {
   const [isLaunching, setIsLaunching] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
+  const [showSidePills, setShowSidePills] = useState(false)
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 16)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
+  useEffect(() => {
+    let observer: IntersectionObserver | null = null
+    let raf: number | null = null
+
+    const tryObserve = () => {
+      const target = document.querySelector('[data-hero-cta]')
+      if (target) {
+        observer = new IntersectionObserver(
+          (entries) => {
+            setShowSidePills(!entries[0].isIntersecting)
+          },
+          { threshold: 0 }
+        )
+        observer.observe(target)
+      } else {
+        raf = window.requestAnimationFrame(tryObserve)
+      }
+    }
+
+    tryObserve()
+
+    return () => {
+      if (raf !== null) window.cancelAnimationFrame(raf)
+      observer?.disconnect()
+    }
+  }, [])
+
+  const pillRevealClass = showSidePills
+    ? 'opacity-100 translate-y-0'
+    : 'opacity-0 -translate-y-1 pointer-events-none'
 
   return (
-    <div className="sticky top-0 z-50 flex w-full flex-col items-center py-4 md:py-6 px-4 md:px-0" style={{ willChange: 'transform' }}>
+    <div
+      className={`sticky top-0 z-50 flex w-full flex-col items-center py-4 md:py-6 px-4 md:px-0 transition-colors duration-200 ${
+        scrolled
+          ? 'bg-[#0d0d0c]/80 backdrop-blur-md border-b border-sidebar-border/40'
+          : 'bg-transparent border-b border-transparent'
+      }`}
+      style={{ willChange: 'transform' }}
+    >
       {/* Desktop: TVL | Nav | Season layout */}
       <div className="hidden md:flex w-full max-w-6xl items-center justify-between">
-        <Link href="/liquidity" className="rounded-lg bg-surface border border-sidebar-border/60 px-4 py-2 hover:border-white/30 transition-colors">
+        <Link
+          href="/liquidity"
+          className={`rounded-lg bg-surface border border-sidebar-border/60 px-4 py-2 hover:border-white/30 transition-all duration-300 ease-out ${pillRevealClass}`}
+        >
           <TVLDisplay />
         </Link>
         <nav className="flex items-center gap-6 rounded-lg bg-surface border border-sidebar-border/60 p-2">
@@ -121,7 +171,7 @@ const LandingPageNavigation = () => {
         <button
           type="button"
           onClick={() => toast('Coming soon')}
-          className="flex items-center gap-2 rounded-lg bg-surface border border-sidebar-border/60 px-4 py-2 hover:border-white/30 transition-colors"
+          className={`flex items-center gap-2 rounded-lg bg-surface border border-sidebar-border/60 px-4 py-2 hover:border-white/30 transition-all duration-300 ease-out ${pillRevealClass}`}
         >
           <span className="text-sm font-medium text-foreground">Partner Login</span>
           <IconArrowDoorIn className="h-4 w-4 text-white/70" />
@@ -302,9 +352,27 @@ const LandingPageFooter = () => {
                   <DefiLlamaIcon size={20} />
                 </a>
               </div>
-              <p className="text-[10px] md:text-sm text-muted-foreground">
-                © 2026 Alphix v{process.env.NEXT_PUBLIC_APP_VERSION}<span className="opacity-50">+{process.env.NEXT_PUBLIC_GIT_COMMIT}</span>
-              </p>
+              <div className="flex items-center gap-4 text-[10px] md:text-sm text-muted-foreground">
+                <Link
+                  href="/terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="opacity-50 hover:opacity-100 hover:text-foreground transition-all"
+                >
+                  Terms
+                </Link>
+                <Link
+                  href="/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="opacity-50 hover:opacity-100 hover:text-foreground transition-all"
+                >
+                  Privacy Policy
+                </Link>
+                <p>
+                  © 2026 Alphix v{process.env.NEXT_PUBLIC_APP_VERSION}<span className="opacity-50">+{process.env.NEXT_PUBLIC_GIT_COMMIT}</span>
+                </p>
+              </div>
             </div>
           </div>
         </footer>
