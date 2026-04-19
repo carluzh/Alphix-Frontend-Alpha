@@ -8,14 +8,18 @@ interface SectionHeadingProps {
     text: string
     variant: BadgeVariant
   }
+  connectBottom?: boolean
   className?: string
 }
 
-export function SectionHeading({ title, badge, className }: SectionHeadingProps) {
+export function SectionHeading({ title, badge, connectBottom, className }: SectionHeadingProps) {
   return (
     <div
       className={cn(
-        'animate-on-scroll flex items-center rounded-lg bg-muted/50 surface-depth px-4 md:px-5 py-2.5',
+        'animate-on-scroll flex items-center justify-between gap-3 bg-muted/50 surface-depth px-4 md:px-5 py-2.5',
+        connectBottom
+          ? 'rounded-t-lg border border-sidebar-border/60 border-b-0'
+          : 'rounded-lg',
         className,
       )}
     >
@@ -25,7 +29,7 @@ export function SectionHeading({ title, badge, className }: SectionHeadingProps)
       {badge && (
         <span
           className={cn(
-            'ml-auto inline-flex items-center self-stretch rounded-md px-3 text-sm font-medium',
+            'inline-flex items-center self-stretch rounded-md px-3 text-sm font-medium',
             badge.variant === 'live'
               ? 'bg-green-950/70 text-green-500'
               : 'bg-muted/50 text-muted-foreground',

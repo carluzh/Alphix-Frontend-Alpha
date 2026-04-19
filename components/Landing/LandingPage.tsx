@@ -1,6 +1,10 @@
+'use client'
+
 import { Hero } from '@/components/Landing/Hero/Hero'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
+import { useEffect, useRef, useState } from 'react'
+import { cn } from '@/lib/utils'
 import Features from './Features'
 import { FAQSection } from './FAQSection'
 import { Section } from './Section'
@@ -116,7 +120,7 @@ const RevealedIcon = ({ src, alt, size }: { src: string; alt: string; size?: 'de
   )
 }
 
-const ModularityCard = () => {
+const ModularityCard = ({ connectTop = false }: { connectTop?: boolean } = {}) => {
   const MarqueeContent = ({ iconSize, boxSize }: { iconSize: string; boxSize: string }) => (
     <>
       {modularityIcons.map((config, index) => (
@@ -148,7 +152,7 @@ const ModularityCard = () => {
 
   return (
     <div
-      className="animate-on-scroll w-full overflow-hidden rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2"
+      className={`animate-on-scroll w-full overflow-hidden border border-sidebar-border/60 bg-white dark:bg-[#131313] p-2 ${connectTop ? 'rounded-b-lg border-t-0' : 'rounded-lg'}`}
     >
       <div className="flex flex-col md:hidden">
         <div className="px-4 py-3">
@@ -196,6 +200,47 @@ const ModularityCard = () => {
 }
 
 export const PageContent = () => {
+  const customHeadingRef = useRef<HTMLDivElement>(null)
+  const managedHeadingRef = useRef<HTMLDivElement>(null)
+  const [isStuck, setIsStuck] = useState(false)
+  const [isManagedStuck, setIsManagedStuck] = useState(false)
+
+  useEffect(() => {
+    const STICKY_TOP_MOBILE = 100
+    const STICKY_TOP_DESKTOP = 120
+    let rafId: number | null = null
+
+    const measure = () => {
+      rafId = null
+      const isDesktop = window.matchMedia('(min-width: 768px)').matches
+      const threshold = isDesktop ? STICKY_TOP_DESKTOP : STICKY_TOP_MOBILE
+
+      const c = customHeadingRef.current
+      if (c) {
+        const rect = c.getBoundingClientRect()
+        setIsStuck(Math.abs(rect.top - threshold) < 2)
+      }
+      const m = managedHeadingRef.current
+      if (m) {
+        const rect = m.getBoundingClientRect()
+        setIsManagedStuck(Math.abs(rect.top - threshold) < 2)
+      }
+    }
+
+    const onScroll = () => {
+      if (rafId === null) rafId = window.requestAnimationFrame(measure)
+    }
+
+    measure()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onScroll)
+    return () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId)
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+    }
+  }, [])
+
   return (
     <>
       <Section className="relative flex flex-col gap-y-10 md:gap-y-16 py-0 md:py-0">
@@ -247,49 +292,104 @@ export const PageContent = () => {
       </Section>
 
       <Section className="flex flex-col gap-y-8 md:gap-y-12 py-0 md:py-0 mt-16 md:mt-24">
-        <SectionHeading title="The Pool" badge={{ text: 'Live', variant: 'live' }} className="-mb-4 md:-mb-6" />
+        <div className="flex flex-col gap-y-8 md:gap-y-12">
+          <div
+            ref={customHeadingRef}
+            className={cn(
+              'md:sticky md:top-[120px] md:z-40 origin-top transition-transform duration-[180ms] ease-[cubic-bezier(0.3,0,0.6,1.8)] -mb-4 md:-mb-6',
+              isStuck ? 'md:scale-[1.05]' : 'scale-100',
+            )}
+          >
+            {/* Invisible mask — same color as page bg, hides content in the gap above the bar */}
+            <div
+              aria-hidden
+              className={cn(
+                'hidden md:block absolute inset-x-0 bottom-full h-[20px] md:h-[24px] bg-[#0d0d0c] pointer-events-none transition-opacity duration-200',
+                isStuck ? 'opacity-100' : 'opacity-0',
+              )}
+            />
+            <SectionHeading
+              title="Custom Pools"
+              badge={{ text: 'Live', variant: 'live' }}
+              className="bg-[#1b1b1b]"
+            />
+          </div>
 
-        <FeatureCards features={heroFeatures} />
+          <ModularityCard />
 
-        <div className="min-h-[700px] md:min-h-[520px] xl:min-h-[480px]">
-          <DynamicFeeSectionLazy />
+          <div className="flex flex-col gap-y-3">
+            <span className="animate-on-scroll text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Features
+            </span>
+            <div className="flex flex-col gap-y-8 md:gap-y-12">
+              <div className="min-h-[700px] md:min-h-[520px] xl:min-h-[480px]">
+                <DynamicFeeSectionLazy />
+              </div>
+              <SplitPromo
+                title="More Yield for Everyone"
+                description="Through Rehypothecation, idle liquidity is put to work across trusted yield-generating protocols."
+                bullets={[
+                  'Increased yield on liquidity positions',
+                  'Leading protocol integrations to maximize security',
+                  'Seamless LP experience',
+                ]}
+                image="/landing/example.webp"
+                reverse
+                badge={{ text: 'Live', variant: 'active' }}
+                cta1={
+                  <Link href="https://alphix.gitbook.io/docs/" target="_blank">
+                    <button className="group relative flex flex-row items-center gap-x-2 rounded-md border border-sidebar-border bg-button px-8 py-2.5 text-sm font-semibold text-foreground hover:bg-accent hover:brightness-110 hover:border-white/30 transition-all overflow-hidden">
+                      <span
+                        className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0"
+                        style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
+                      />
+                      <span className="relative z-10">Learn More</span>
+                      <ArrowUpRight className="relative z-10 h-4 w-4" />
+                    </button>
+                  </Link>
+                }
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-y-3">
+            <span className="animate-on-scroll text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Summary
+            </span>
+            <FeatureCards features={heroFeatures} />
+          </div>
         </div>
 
-        <SplitPromo
-          title="More Yield for Everyone"
-          description="Through Rehypothecation, idle liquidity is put to work across trusted yield-generating protocols."
-          bullets={[
-            'Increased yield on liquidity positions',
-            'Leading protocol integrations to maximize security',
-            'Seamless LP experience',
-          ]}
-          image="/landing/example.webp"
-          reverse
-          badge={{ text: 'Live', variant: 'active' }}
-          cta1={
-            <Link href="https://alphix.gitbook.io/docs/" target="_blank">
-              <button className="group relative flex flex-row items-center gap-x-2 rounded-md border border-sidebar-border bg-button px-8 py-2.5 text-sm font-semibold text-foreground hover:bg-accent hover:brightness-110 hover:border-white/30 transition-all overflow-hidden">
-                <span
-                  className="absolute inset-0 transition-opacity duration-200 group-hover:opacity-0"
-                  style={{ backgroundImage: 'url(/patterns/button-default.svg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-                />
-                <span className="relative z-10">Learn More</span>
-                <ArrowUpRight className="relative z-10 h-4 w-4" />
-              </button>
-            </Link>
-          }
-        />
+        <div className="flex flex-col gap-y-8 md:gap-y-12">
+          <div
+            ref={managedHeadingRef}
+            className={cn(
+              'md:sticky md:top-[120px] md:z-40 origin-top transition-transform duration-[180ms] ease-[cubic-bezier(0.3,0,0.6,1.8)] -mb-4 md:-mb-6',
+              isManagedStuck ? 'md:scale-[1.05]' : 'scale-100',
+            )}
+          >
+            {/* Invisible mask — same color as page bg, hides content in the gap above the bar */}
+            <div
+              aria-hidden
+              className={cn(
+                'hidden md:block absolute inset-x-0 bottom-full h-[20px] md:h-[24px] bg-[#0d0d0c] pointer-events-none transition-opacity duration-200',
+                isManagedStuck ? 'opacity-100' : 'opacity-0',
+              )}
+            />
+            <SectionHeading
+              title="Managed Liquidity"
+              badge={{ text: 'In Development', variant: 'dev' }}
+              className="bg-[#1b1b1b]"
+            />
+          </div>
 
-        <ModularityCard />
-
-        <SectionHeading title="The Manager" badge={{ text: 'In Development', variant: 'dev' }} className="-mb-4 md:-mb-6" />
-
-        {/* Manager features hidden until launch
-        <FeatureCards features={manageFeatures} />
-        */}
-        <div className="animate-on-scroll w-full rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] overflow-hidden">
-          <div className="flex items-center justify-center min-h-[140px] md:min-h-[160px] p-8">
-            <p className="text-sm md:text-base text-muted-foreground">More Information Coming Soon</p>
+          {/* Manager features hidden until launch
+          <FeatureCards features={manageFeatures} />
+          */}
+          <div className="animate-on-scroll w-full rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] overflow-hidden">
+            <div className="flex items-center justify-center min-h-[140px] md:min-h-[160px] p-8">
+              <p className="text-sm md:text-base text-muted-foreground">More Information Coming Soon</p>
+            </div>
           </div>
         </div>
 
@@ -297,7 +397,6 @@ export const PageContent = () => {
 
         <FAQSection />
       </Section>
-
     </>
   )
 }

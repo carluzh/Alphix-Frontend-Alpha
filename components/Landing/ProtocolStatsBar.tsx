@@ -190,16 +190,20 @@ function StatCard({
   value,
   isLoading,
   sparkline,
+  hideOnMobile = false,
 }: {
   label: string
   value: string
   isLoading: boolean
   sparkline: React.ReactNode
+  hideOnMobile?: boolean
 }) {
   return (
     <Link
       href="/liquidity"
-      className="relative z-10 flex flex-1 items-center justify-between gap-4 rounded-lg bg-muted/50 surface-depth px-5 md:px-6 py-4 min-w-0 hover:bg-muted/70 transition-colors text-left"
+      className={`relative z-10 flex-1 items-center justify-between gap-4 rounded-lg bg-muted/50 surface-depth px-5 md:px-6 py-4 min-w-0 hover:bg-muted/70 transition-colors text-left ${
+        hideOnMobile ? 'hidden md:flex' : 'flex'
+      }`}
     >
       <div className="flex flex-col gap-0.5 min-w-0">
         <span className="text-xs text-muted-foreground font-medium">{label}</span>
@@ -211,7 +215,7 @@ function StatCard({
           )}
         </span>
       </div>
-      <div className="hidden md:flex w-[160px] h-14 -my-3 -mr-2 md:-mr-3 flex-shrink-0">
+      <div className="flex w-[140px] md:w-[160px] h-14 -my-3 -mr-2 md:-mr-3 flex-shrink-0">
         {sparkline}
       </div>
     </Link>
@@ -276,12 +280,14 @@ export function ProtocolStatsBar() {
         value={formatUSD(stats?.volume24h ?? 0)}
         isLoading={isLoading}
         sparkline={<HistorySparkline endpoint="/api/protocol/volume-history" valueKey="volume24hUsd" />}
+        hideOnMobile
       />
       <StatCard
         label="User Revenue"
         value={stats && stats.fees > 0 ? formatUSD(stats.fees) : '---'}
         isLoading={isLoading}
         sparkline={<HistorySparkline endpoint="/api/protocol/user-revenue-history" valueKey="userRevenueUsd" />}
+        hideOnMobile
       />
     </div>
   )

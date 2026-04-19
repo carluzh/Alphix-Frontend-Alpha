@@ -104,10 +104,8 @@ const LandingPageNavigation = () => {
 
   return (
     <div
-      className={`sticky top-0 z-50 flex w-full flex-col items-center py-4 md:py-6 px-4 md:px-0 transition-colors duration-200 ${
-        scrolled
-          ? 'bg-[#0d0d0c]/80 backdrop-blur-md border-b border-sidebar-border/40'
-          : 'bg-transparent border-b border-transparent'
+      className={`sticky top-0 z-50 flex w-full flex-col items-center py-4 md:py-6 px-4 md:px-0 transition-colors duration-200 bg-transparent border-b border-transparent ${
+        scrolled ? 'md:bg-[#0d0d0c] md:border-sidebar-border/40' : ''
       }`}
       style={{ willChange: 'transform' }}
     >
@@ -358,7 +356,7 @@ const LandingPageFooter = () => {
                   href="/terms"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="opacity-50 hover:opacity-100 hover:text-foreground transition-all"
+                  className="hidden md:inline-block opacity-50 hover:opacity-100 hover:text-foreground transition-all"
                 >
                   Terms
                 </Link>
@@ -366,7 +364,7 @@ const LandingPageFooter = () => {
                   href="/privacy"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="opacity-50 hover:opacity-100 hover:text-foreground transition-all"
+                  className="hidden md:inline-block opacity-50 hover:opacity-100 hover:text-foreground transition-all"
                 >
                   Privacy Policy
                 </Link>

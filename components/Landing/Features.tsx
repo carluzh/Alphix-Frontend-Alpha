@@ -6,11 +6,47 @@ import Image from 'next/image'
 import { ArrowRight } from 'lucide-react'
 
 const UNISWAP_PINK = '#ff37c7'
-const UNISWAP_LOGO_FILTER = 'brightness(0) saturate(100%) invert(47%) sepia(95%) saturate(2158%) hue-rotate(301deg) brightness(101%) contrast(101%)'
 const BASE_BLUE = '#3c8aff'
-const BASE_LOGO_FILTER = 'brightness(0) saturate(100%) invert(44%) sepia(82%) saturate(2689%) hue-rotate(209deg) brightness(101%) contrast(104%)'
 const ARBITRUM_BLUE = '#12AAFF'
-const ARBITRUM_LOGO_FILTER = 'brightness(0) saturate(100%) invert(58%) sepia(72%) saturate(2035%) hue-rotate(176deg) brightness(101%) contrast(101%)'
+
+// Uses backgroundColor + maskImage to guarantee exact brand-color match with text
+// (CSS filters for color shift are imprecise and produced noticeable deltas)
+function MaskedLogo({
+  src,
+  color,
+  width,
+  height,
+  className,
+  ariaLabel,
+}: {
+  src: string
+  color: string
+  width: number
+  height: number
+  className?: string
+  ariaLabel?: string
+}) {
+  return (
+    <div
+      role="img"
+      aria-label={ariaLabel}
+      style={{
+        width,
+        height,
+        backgroundColor: color,
+        maskImage: `url(${src})`,
+        WebkitMaskImage: `url(${src})`,
+        maskSize: 'contain',
+        WebkitMaskSize: 'contain',
+        maskRepeat: 'no-repeat',
+        WebkitMaskRepeat: 'no-repeat',
+        maskPosition: 'left center',
+        WebkitMaskPosition: 'left center',
+      }}
+      className={className}
+    />
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Base Card
@@ -50,10 +86,12 @@ const BaseCard = () => (
       {/* Content */}
       <div className="relative z-10 flex h-full flex-col gap-y-6">
         <div style={{ height: 28 }} className="relative flex items-center">
-          <img
+          <MaskedLogo
             src="/landing/base-lockup-white.svg"
-            alt="Base"
-            style={{ width: 85, height: 'auto', filter: BASE_LOGO_FILTER }}
+            color={BASE_BLUE}
+            width={85}
+            height={28}
+            ariaLabel="Base"
             className="transition-opacity duration-300 group-hover:opacity-0"
           />
           <img
@@ -123,10 +161,12 @@ const ArbitrumCard = () => (
       {/* Content */}
       <div className="relative z-10 flex h-full flex-col gap-y-6">
         <div style={{ height: 28 }} className="relative flex items-center">
-          <img
+          <MaskedLogo
             src="/landing/arbitrum-lockup-white.svg"
-            alt="Arbitrum"
-            style={{ width: 120, height: 'auto', filter: ARBITRUM_LOGO_FILTER }}
+            color={ARBITRUM_BLUE}
+            width={120}
+            height={28}
+            ariaLabel="Arbitrum"
             className="transition-opacity duration-300 group-hover:opacity-0"
           />
           <img
@@ -187,13 +227,12 @@ const UniswapFoundationCard = () => (
       {/* Left: logo + title + description stacked */}
       <div className="relative z-10 flex flex-col gap-y-2">
         <div className="flex items-center gap-x-2">
-          <Image
+          <MaskedLogo
             src="/landing/uniswap-logo.svg"
-            alt="Uniswap"
+            color={UNISWAP_PINK}
             width={28}
             height={28}
-            style={{ filter: UNISWAP_LOGO_FILTER }}
-            unoptimized
+            ariaLabel="Uniswap"
           />
           <span className="text-lg font-semibold" style={{ color: UNISWAP_PINK }}>
             Uniswap
