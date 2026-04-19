@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import Image from 'next/image'
 import { PropsWithChildren, useState } from 'react'
+import { IconArrowDoorIn } from 'nucleo-micro-bold-essential'
+import { toast } from 'sonner'
 import { TVLDisplay, SeasonBadge } from './TVLTicker'
 
 const GithubIcon = ({ size = 20 }: { size?: number }) => (
@@ -116,9 +118,14 @@ const LandingPageNavigation = () => {
             </Button>
           </Link>
         </nav>
-        <Link href="/points" className="rounded-lg bg-surface border border-sidebar-border/60 px-4 py-2 hover:border-white/30 transition-colors">
-          <SeasonBadge />
-        </Link>
+        <button
+          type="button"
+          onClick={() => toast('Coming soon')}
+          className="flex items-center gap-2 rounded-lg bg-surface border border-sidebar-border/60 px-4 py-2 hover:border-white/30 transition-colors"
+        >
+          <span className="text-sm font-medium text-foreground">Partner Login</span>
+          <IconArrowDoorIn className="h-4 w-4 text-white/70" />
+        </button>
       </div>
 
       {/* Mobile: just the nav bar */}

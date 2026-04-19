@@ -179,8 +179,8 @@ export const PageContent = () => {
       <Section className="relative flex flex-col gap-y-10 md:gap-y-16 py-0 md:py-0">
         <PaperShaderFrameLazy />
         <Hero
-          title="Building smarter onchain markets."
-          description="Our Unified Pools compound innovation into one secure pool. Empowering liquidity instead of fragmenting it."
+          title="The Non-Custodial Market Maker for Onchain Protocols"
+          description="Onchain liquidity is complex, but protocols need deep, efficient pools. We build the pool and manage it. Permissionless. Simple. Secure."
         >
           <Link href="/home">
             <Button size="lg" className="rounded-md font-semibold transition-all bg-button-primary text-sidebar-primary border border-sidebar-primary hover-button-primary">

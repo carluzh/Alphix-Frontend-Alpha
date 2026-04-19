@@ -44,7 +44,7 @@ export const Hero = ({
         {title}
       </h1>
       <p
-        className="hero-animate in-view hero-desc relative z-10 max-w-xl text-center text-base leading-relaxed text-balance text-muted-foreground md:text-lg"
+        className="hero-animate in-view hero-desc relative z-10 max-w-3xl text-center text-base leading-relaxed text-muted-foreground md:text-lg"
       >
         {description}
       </p>
