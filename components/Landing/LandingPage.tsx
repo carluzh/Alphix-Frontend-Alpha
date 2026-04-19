@@ -45,8 +45,8 @@ export default function LandingPage() {
 
 const heroFeatures = [
   {
-    title: 'Unified Pools',
-    description: 'Consolidated features in a single pool. Efficient, not fragmented.',
+    title: 'Custom Pools',
+    description: 'A tailored Uniswap v4 pool configured with primitives the token needs.',
     image: '/landing/Unified-Pool.webp',
     imageClassName: 'translate-x-[5%]',
   },
@@ -210,13 +210,15 @@ export const PageContent = () => {
           }
         >
           <Link href="/home">
-            <Button
-              size="lg"
-              data-hero-cta
-              className="rounded-md font-semibold transition-all bg-button-primary text-sidebar-primary border border-sidebar-primary hover-button-primary"
-            >
-              Launch App
-            </Button>
+            <span className="inline-flex rounded-lg input-gradient-hover input-gradient-always-visible">
+              <Button
+                size="lg"
+                data-hero-cta
+                className="relative z-[1] rounded-lg font-semibold transition-all bg-button-primary text-sidebar-primary hover-button-primary"
+              >
+                Launch App
+              </Button>
+            </span>
           </Link>
           <Link href="https://alphix.gitbook.io/docs/" target="_blank">
             <button className="group relative rounded-md border border-sidebar-border bg-button px-8 py-2.5 text-sm font-semibold text-foreground hover:bg-accent hover:brightness-110 hover:border-white/30 transition-all overflow-hidden">
@@ -280,11 +282,16 @@ export const PageContent = () => {
 
         <ModularityCard />
 
-        {/* Manager section hidden
         <SectionHeading title="The Manager" badge={{ text: 'In Development', variant: 'dev' }} className="-mb-4 md:-mb-6" />
 
+        {/* Manager features hidden until launch
         <FeatureCards features={manageFeatures} />
         */}
+        <div className="animate-on-scroll w-full rounded-lg border border-sidebar-border/60 bg-white dark:bg-[#131313] overflow-hidden">
+          <div className="flex items-center justify-center min-h-[140px] md:min-h-[160px] p-8">
+            <p className="text-sm md:text-base text-muted-foreground">More Information Coming Soon</p>
+          </div>
+        </div>
 
         <Features />
 

@@ -9,86 +9,84 @@ import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from 'recharts'
 import { Button } from '@/components/ui/button'
 
+// ---------------------------------------------------------------------------
+// Production parameters (ETH/USDC on Base)
+// fee_bps = C * sigma_annual_decimal^2, clamped to [MIN_FEE_BPS, MAX_FEE_BPS]
+// ---------------------------------------------------------------------------
+
+const C = 15
+const MIN_FEE_BPS = 5   // 0.05%
+const MAX_FEE_BPS = 30  // 0.30%
+
+const feeFromSigma = (sigmaPercent: number): number => {
+  const s = sigmaPercent / 100
+  const raw = C * s * s
+  return Math.max(MIN_FEE_BPS, Math.min(MAX_FEE_BPS, raw))
+}
+
+// ---------------------------------------------------------------------------
 // Types
+// ---------------------------------------------------------------------------
+
 interface FeeHistoryPoint {
   timeLabel: string
-  volumeTvlRatio: number
-  emaRatio: number
-  dynamicFee: number
+  sigmaPercent: number  // annualized volatility (%)
+  feeBps: number        // on-chain fee in bps
 }
 
 interface FeeUpdateItem {
   id: number
   timestamp: Date
-  emaRatio: number
-  volumeTvlRatio: number
-  difference: number
+  sigmaPercent: number
+  feeBps: number
+  feeChangeBps: number
   feeChange: 'up' | 'down' | 'neutral'
-  feeChangeAmount: number
-  dynamicFee: number
 }
 
-// Generate mock fee history data
-const generateMockFeeHistory = (points = 30): FeeHistoryPoint[] => {
+// ---------------------------------------------------------------------------
+// Mock ETH/USDC sigma walk — baseline ~60%, drift, occasional spikes
+// Sized so the fee mostly sits near floor (5 bps) with vol-driven bumps.
+// ---------------------------------------------------------------------------
+
+const stepSigma = (prev: number): number => {
+  const drift = (Math.random() - 0.5) * 6
+  const reversion = (60 - prev) * 0.05
+  let next = prev + drift + reversion
+  const r = Math.random()
+  if (r < 0.08) next += 12 + Math.random() * 22    // spike
+  else if (r < 0.12) next -= 8                     // calm
+  return Math.max(40, Math.min(140, next))
+}
+
+const generateMockSigmaHistory = (points = 30): FeeHistoryPoint[] => {
   const data: FeeHistoryPoint[] = []
-  let currentFeePercent = 0.3
-  const emaPeriod = 10
-  const ratios: number[] = []
-  const emaValues: number[] = []
-
+  let sigma = 62 + (Math.random() - 0.5) * 8
   for (let i = 0; i < points; i++) {
-    const timeLabel = `Step ${i + 1}`
-
-    const prevRatio = ratios.length > 0 ? ratios[ratios.length - 1] : 1.0
-    let change = (Math.random() - 0.5) * 0.15
-    if (i % 8 === 0) change += (Math.random() - 0.5) * 0.3
-    const volumeTvlRatio = Math.max(0.7, Math.min(1.3, parseFloat((prevRatio + change).toFixed(4))))
-    ratios.push(volumeTvlRatio)
-
-    let emaRatio: number
-    if (ratios.length < emaPeriod || emaValues.length === 0) {
-      const sum = ratios.slice(Math.max(0, ratios.length - emaPeriod)).reduce((s, r) => s + r, 0)
-      emaRatio = parseFloat((sum / Math.min(ratios.length, emaPeriod)).toFixed(4))
-    } else {
-      const k = 2 / (emaPeriod + 1)
-      const prevEma = emaValues[emaValues.length - 1]
-      emaRatio = parseFloat((volumeTvlRatio * k + prevEma * (1 - k)).toFixed(4))
-    }
-    emaValues.push(emaRatio)
-
-    const deadband = 0.02
-    const feeStepPercent = 0.01
-
-    if (volumeTvlRatio > emaRatio + deadband) {
-      currentFeePercent += feeStepPercent
-    } else if (volumeTvlRatio < emaRatio - deadband) {
-      currentFeePercent -= feeStepPercent
-    }
-    currentFeePercent = Math.max(0.05, Math.min(1.0, parseFloat(currentFeePercent.toFixed(4))))
-
+    if (i > 0) sigma = stepSigma(sigma)
     data.push({
-      timeLabel,
-      volumeTvlRatio,
-      emaRatio,
-      dynamicFee: currentFeePercent,
+      timeLabel: `Step ${i + 1}`,
+      sigmaPercent: parseFloat(sigma.toFixed(2)),
+      feeBps: parseFloat(feeFromSigma(sigma).toFixed(2)),
     })
   }
   return data
 }
 
-// Fee Update Indicator component
+// ---------------------------------------------------------------------------
+// Fee Update Indicator
+// ---------------------------------------------------------------------------
+
 const FeeUpdateIndicator = ({ type }: { type: 'up' | 'down' | 'neutral' }) => {
   const colors = {
     up: 'bg-green-50 dark:bg-green-950 text-green-500 dark:text-green-500',
     down: 'bg-red-50 dark:bg-red-950 text-red-500 dark:text-red-500',
     neutral: 'bg-sidebar-accent text-muted-foreground',
   }
-
   return (
     <div
       className={cn(
         'flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150',
-        colors[type]
+        colors[type],
       )}
     >
       {type === 'up' && <ChevronUp className="h-2.5 w-2.5" />}
@@ -98,18 +96,18 @@ const FeeUpdateIndicator = ({ type }: { type: 'up' | 'down' | 'neutral' }) => {
   )
 }
 
+// ---------------------------------------------------------------------------
 // Chart config
+// ---------------------------------------------------------------------------
+
 const chartConfig = {
-  volumeTvlRatio: {
-    color: 'hsl(var(--chart-3))',
-  },
-  emaRatio: {
-    color: 'hsl(var(--chart-2))',
-  },
-  dynamicFee: {
-    color: '#e85102',
-  },
+  sigma: { color: 'hsl(var(--chart-3))' },
+  fee: { color: '#e85102' },
 }
+
+// ---------------------------------------------------------------------------
+// DynamicFeeSection
+// ---------------------------------------------------------------------------
 
 export const DynamicFeeSection = () => {
   const [isMobile, setIsMobile] = useState(false)
@@ -126,46 +124,33 @@ export const DynamicFeeSection = () => {
     setMobileAnimationStarted(true)
   }, [])
 
-  // Track when component comes into view for animation
   useEffect(() => {
-    if (inView && !isInView) {
-      setIsInView(true)
-    }
+    if (inView && !isInView) setIsInView(true)
   }, [inView, isInView])
 
-  // Pre-generate 30 days of initial history
-  const initialHistory = useMemo(() => generateMockFeeHistory(30), [])
+  // Pre-generate 30 steps of initial history
+  const initialHistory = useMemo(() => generateMockSigmaHistory(30), [])
 
-  // Pre-compute initial 3 fee updates from history
-  const initialFeeUpdates = useMemo(() => {
+  // Pre-compute initial 3 push events from history
+  const initialFeeUpdates = useMemo<FeeUpdateItem[]>(() => {
     const baseDate = new Date(2025, 3, 12)
     const last3 = initialHistory.slice(-3).reverse()
-
     return last3.map((point, idx) => {
       const historyIndex = initialHistory.length - 1 - idx
       const prevPoint = initialHistory[historyIndex - 1]
-
-      let feeChange: 'up' | 'down' | 'neutral' = 'neutral'
-      let feeChangeAmount = 0
-      if (prevPoint) {
-        feeChangeAmount = Math.abs(point.dynamicFee - prevPoint.dynamicFee)
-        if (point.dynamicFee > prevPoint.dynamicFee) feeChange = 'up'
-        else if (point.dynamicFee < prevPoint.dynamicFee) feeChange = 'down'
-      }
-
+      const delta = prevPoint ? point.feeBps - prevPoint.feeBps : 0
+      const direction: 'up' | 'down' | 'neutral' =
+        delta > 0.1 ? 'up' : delta < -0.1 ? 'down' : 'neutral'
       const dayOffset = 31 - (historyIndex + 1)
       const updateDate = new Date(baseDate)
       updateDate.setDate(baseDate.getDate() - dayOffset)
-
       return {
         id: historyIndex + 1000,
         timestamp: updateDate,
-        emaRatio: point.emaRatio,
-        volumeTvlRatio: point.volumeTvlRatio,
-        difference: point.volumeTvlRatio - point.emaRatio,
-        feeChange,
-        feeChangeAmount,
-        dynamicFee: point.dynamicFee,
+        sigmaPercent: point.sigmaPercent,
+        feeBps: point.feeBps,
+        feeChangeBps: Math.abs(delta),
+        feeChange: direction,
       }
     })
   }, [initialHistory])
@@ -173,7 +158,7 @@ export const DynamicFeeSection = () => {
   const [chartData, setChartData] = useState<FeeHistoryPoint[]>(initialHistory)
   const [activityUpdates, setActivityUpdates] = useState<FeeUpdateItem[]>(initialFeeUpdates)
 
-  const MICRO_STEPS_PER_MAJOR = isMobile ? 10 : 15  // Mobile: 1 update per ~2 simulated days
+  const MICRO_STEPS_PER_MAJOR = isMobile ? 10 : 15
   const TOTAL_POINTS = 30 * MICRO_STEPS_PER_MAJOR
 
   const catmullRom = (p0: number, p1: number, p2: number, p3: number, t: number): number => {
@@ -187,46 +172,38 @@ export const DynamicFeeSection = () => {
     )
   }
 
-  const generateTarget = (prevRatio: number, prevEma: number, dayIndex: number) => {
-    let change = (Math.random() - 0.5) * 0.15
-    if (dayIndex % 8 === 0) change += (Math.random() - 0.5) * 0.3
-    const newRatio = Math.max(0.7, Math.min(1.3, prevRatio + change))
-    const emaPeriod = 10
-    const k = 2 / (emaPeriod + 1)
-    const newEma = newRatio * k + prevEma * (1 - k)
-    return { ratio: newRatio, ema: newEma }
-  }
-
   const lastPoint = initialHistory[initialHistory.length - 1]
   const secondLastPoint = initialHistory[initialHistory.length - 2]
+
   const futureTargets = useMemo(() => {
-    const targets: Array<{ ratio: number; ema: number }> = []
-    let prev = { ratio: lastPoint.volumeTvlRatio, ema: lastPoint.emaRatio }
+    const targets: FeeHistoryPoint[] = []
+    let prevSigma = lastPoint.sigmaPercent
     for (let i = 0; i < 3; i++) {
-      const next = generateTarget(prev.ratio, prev.ema, 31 + i)
-      targets.push(next)
-      prev = next
+      prevSigma = stepSigma(prevSigma)
+      targets.push({
+        timeLabel: `Future ${i + 1}`,
+        sigmaPercent: parseFloat(prevSigma.toFixed(2)),
+        feeBps: parseFloat(feeFromSigma(prevSigma).toFixed(2)),
+      })
     }
     return targets
   }, [lastPoint])
 
+  // Expand initial history with Catmull-Rom interpolation for smooth sigma line
   const expandedInitialHistory = useMemo(() => {
     const expanded: FeeHistoryPoint[] = []
     const points = initialHistory
-
     for (let i = 0; i < points.length - 1; i++) {
       const p0 = points[Math.max(0, i - 1)]
       const p1 = points[i]
       const p2 = points[i + 1]
       const p3 = points[Math.min(points.length - 1, i + 2)]
-
       for (let j = 0; j < MICRO_STEPS_PER_MAJOR; j++) {
         const t = j / MICRO_STEPS_PER_MAJOR
         expanded.push({
           timeLabel: `${p1.timeLabel}-${j}`,
-          volumeTvlRatio: catmullRom(p0.volumeTvlRatio, p1.volumeTvlRatio, p2.volumeTvlRatio, p3.volumeTvlRatio, t),
-          emaRatio: catmullRom(p0.emaRatio, p1.emaRatio, p2.emaRatio, p3.emaRatio, t),
-          dynamicFee: p1.dynamicFee,
+          sigmaPercent: catmullRom(p0.sigmaPercent, p1.sigmaPercent, p2.sigmaPercent, p3.sigmaPercent, t),
+          feeBps: p1.feeBps, // fee stays constant between major steps (step-after)
         })
       }
     }
@@ -239,34 +216,25 @@ export const DynamicFeeSection = () => {
       const t = j / MICRO_STEPS_PER_MAJOR
       expanded.push({
         timeLabel: `${last.timeLabel}-${j}`,
-        volumeTvlRatio: catmullRom(p0.volumeTvlRatio, p1.volumeTvlRatio, p2.ratio, p3.ratio, t),
-        emaRatio: catmullRom(p0.emaRatio, p1.emaRatio, p2.ema, p3.ema, t),
-        dynamicFee: last.dynamicFee,
+        sigmaPercent: catmullRom(p0.sigmaPercent, p1.sigmaPercent, p2.sigmaPercent, p3.sigmaPercent, t),
+        feeBps: last.feeBps,
       })
     }
     return expanded.slice(-TOTAL_POINTS)
-  }, [initialHistory, futureTargets, secondLastPoint])
+  }, [initialHistory, futureTargets, secondLastPoint, MICRO_STEPS_PER_MAJOR, TOTAL_POINTS])
 
-  const initialTargets = useMemo(() => {
-    return [
-      { ratio: secondLastPoint.volumeTvlRatio, ema: secondLastPoint.emaRatio },
-      { ratio: lastPoint.volumeTvlRatio, ema: lastPoint.emaRatio },
-      futureTargets[0],
-      futureTargets[1],
-    ]
+  const initialTargets = useMemo<FeeHistoryPoint[]>(() => {
+    return [secondLastPoint, lastPoint, futureTargets[0], futureTargets[1]]
   }, [lastPoint, secondLastPoint, futureTargets])
 
   const baseDate = useMemo(() => new Date(2025, 3, 12), [])
 
   const stateRef = useRef({
-    currentFee: lastPoint.dynamicFee,
+    currentFeeBps: lastPoint.feeBps,
     dayIndex: 31,
     chartData: expandedInitialHistory,
     targetQueue: initialTargets,
-    segmentIndex: 0,
     microStepCount: 0,
-    consecutiveSteps: 0,
-    lastFeeDirection: 'neutral' as 'up' | 'down' | 'neutral',
   })
   const animationRef = useRef<number | null>(null)
 
@@ -275,7 +243,6 @@ export const DynamicFeeSection = () => {
   }, [expandedInitialHistory])
 
   useEffect(() => {
-    // Run animation on desktop when in view, or on mobile when play button clicked
     const shouldAnimate = isInView && (!isMobile || mobileAnimationStarted)
     if (!shouldAnimate) return
 
@@ -293,63 +260,27 @@ export const DynamicFeeSection = () => {
         const microStepInSegment = state.microStepCount % MICRO_STEPS_PER_MAJOR
         const t = microStepInSegment / MICRO_STEPS_PER_MAJOR
 
+        // Major step boundary: new push event
         if (state.microStepCount > 0 && microStepInSegment === 0) {
           state.targetQueue.shift()
           const lastTarget = state.targetQueue[state.targetQueue.length - 1]
+          const nextSigma = stepSigma(lastTarget.sigmaPercent)
+          state.targetQueue.push({
+            timeLabel: `Future`,
+            sigmaPercent: parseFloat(nextSigma.toFixed(2)),
+            feeBps: parseFloat(feeFromSigma(nextSigma).toFixed(2)),
+          })
 
-          const generateTargetWithLikelihood = (prevRatio: number, prevEma: number, dayIdx: number) => {
-            let change = (Math.random() - 0.5) * 0.15
-            if (dayIdx % 8 === 0) change += (Math.random() - 0.5) * 0.3
-
-            const fee = state.currentFee
-            if (fee > 0.60) {
-              change -= 0.02 * Math.random()
-            } else if (fee < 0.10) {
-              change += 0.02 * Math.random()
-            }
-
-            const newRatio = Math.max(0.7, Math.min(1.3, prevRatio + change))
-            const emaPeriod = 10
-            const k = 2 / (emaPeriod + 1)
-            const newEma = newRatio * k + prevEma * (1 - k)
-            return { ratio: newRatio, ema: newEma }
-          }
-
-          state.targetQueue.push(generateTargetWithLikelihood(lastTarget.ratio, lastTarget.ema, state.dayIndex + 3))
-
-          const currentRatio = state.targetQueue[1].ratio
-          const currentEma = state.targetQueue[1].ema
-          const difference = currentRatio - currentEma
-          const deadband = 0.02
-          const prevFee = state.currentFee
+          const current = state.targetQueue[1]
+          const prevFee = state.currentFeeBps
+          const newFee = current.feeBps
+          const deltaBps = newFee - prevFee
 
           let direction: 'up' | 'down' | 'neutral' = 'neutral'
-          if (currentRatio > currentEma + deadband) {
-            direction = 'up'
-          } else if (currentRatio < currentEma - deadband) {
-            direction = 'down'
-          }
+          if (deltaBps > 0.1) direction = 'up'
+          else if (deltaBps < -0.1) direction = 'down'
 
-          let feeStep = 0.01
-          let feeChangeAmount = 0
-
-          if (direction !== 'neutral') {
-            if (direction === state.lastFeeDirection) {
-              state.consecutiveSteps++
-              feeStep = 0.01 * Math.pow(1.1, Math.min(state.consecutiveSteps, 3))
-            } else {
-              state.consecutiveSteps = 0
-            }
-            state.lastFeeDirection = direction
-
-            feeChangeAmount = feeStep
-            let newFee = direction === 'up' ? prevFee + feeStep : prevFee - feeStep
-            newFee = Math.max(0.01, Math.min(1.0, newFee))
-            state.currentFee = newFee
-          } else {
-            state.consecutiveSteps = 0
-            state.lastFeeDirection = 'neutral'
-          }
+          state.currentFeeBps = newFee
 
           const updateDate = new Date(baseDate)
           updateDate.setDate(baseDate.getDate() + state.dayIndex - 31)
@@ -357,12 +288,10 @@ export const DynamicFeeSection = () => {
           const newUpdate: FeeUpdateItem = {
             id: Date.now(),
             timestamp: updateDate,
-            emaRatio: currentEma,
-            volumeTvlRatio: currentRatio,
-            difference,
+            sigmaPercent: current.sigmaPercent,
+            feeBps: newFee,
+            feeChangeBps: Math.abs(deltaBps),
             feeChange: direction,
-            feeChangeAmount,
-            dynamicFee: state.currentFee,
           }
           setActivityUpdates(prev => [newUpdate, ...prev].slice(0, 3))
 
@@ -370,14 +299,12 @@ export const DynamicFeeSection = () => {
         }
 
         const [p0, p1, p2, p3] = state.targetQueue
-        const currentRatio = catmullRom(p0.ratio, p1.ratio, p2.ratio, p3.ratio, t)
-        const currentEma = catmullRom(p0.ema, p1.ema, p2.ema, p3.ema, t)
+        const currentSigma = catmullRom(p0.sigmaPercent, p1.sigmaPercent, p2.sigmaPercent, p3.sigmaPercent, t)
 
         const newPoint: FeeHistoryPoint = {
           timeLabel: `Step-${state.microStepCount}`,
-          volumeTvlRatio: currentRatio,
-          emaRatio: currentEma,
-          dynamicFee: state.currentFee,
+          sigmaPercent: currentSigma,
+          feeBps: state.currentFeeBps,
         }
 
         const newData = [...state.chartData.slice(1), newPoint]
@@ -393,28 +320,24 @@ export const DynamicFeeSection = () => {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current)
     }
-  }, [isInView, isMobile, mobileAnimationStarted])
+  }, [isInView, isMobile, mobileAnimationStarted, baseDate, MICRO_STEPS_PER_MAJOR])
 
-  const currentFee = useMemo(
-    () => (chartData.length > 0 ? chartData[chartData.length - 1].dynamicFee : 0.3),
-    [chartData]
+  const currentFeeBps = useMemo(
+    () => (chartData.length > 0 ? chartData[chartData.length - 1].feeBps : MIN_FEE_BPS),
+    [chartData],
   )
 
-  const ratioYDomain = useMemo(() => {
-    const allRatios = chartData.flatMap((d) => [d.volumeTvlRatio, d.emaRatio])
-    const min = Math.min(...allRatios)
-    const max = Math.max(...allRatios)
-    const pad = (max - min) * 0.1 || 0.1
-    return [min - pad, max + pad] as [number, number]
+  const sigmaYDomain = useMemo(() => {
+    const values = chartData.map(d => d.sigmaPercent)
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    const pad = Math.max((max - min) * 0.15, 3)
+    return [Math.max(0, min - pad), max + pad] as [number, number]
   }, [chartData])
 
   const feeYDomain = useMemo(() => {
-    const fees = chartData.map((d) => d.dynamicFee)
-    const min = Math.min(...fees)
-    const max = Math.max(...fees)
-    const pad = Math.max((max - min) * 0.1, 0.02)
-    return [Math.max(0, min - pad), max + pad] as [number, number]
-  }, [chartData])
+    return [0, MAX_FEE_BPS + 2] as [number, number]
+  }, [])
 
   const bullets = [
     'Competitive in any market condition',
@@ -441,14 +364,9 @@ export const DynamicFeeSection = () => {
         </p>
         <ul className="flex flex-col gap-y-1">
           {bullets.map((bullet, index) => (
-            <li
-              key={index}
-              className="flex flex-row items-center gap-x-2"
-            >
+            <li key={index} className="flex flex-row items-center gap-x-2">
               <IconCheck className="h-4 w-4 text-green-500 shrink-0" />
-              <p className="leading-relaxed text-pretty text-foreground">
-                {bullet}
-              </p>
+              <p className="leading-relaxed text-pretty text-foreground">{bullet}</p>
             </li>
           ))}
         </ul>
@@ -471,14 +389,12 @@ export const DynamicFeeSection = () => {
         <div className="flex flex-row items-center justify-between gap-x-4 mb-4">
           <h3>Fee Algorithm</h3>
           <div className="flex flex-row items-center gap-x-4">
-            {/* Desktop: show fee, Mobile: show play button or fee after started */}
             <div className="hidden md:flex flex-row items-center gap-x-4 text-xs font-sans">
               <span>Dynamic Fee</span>
               <span className="text-muted-foreground">
-                {currentFee.toFixed(2)}%
+                {(currentFeeBps / 100).toFixed(2)}%
               </span>
             </div>
-            {/* Mobile: play button or fee display */}
             <div className="md:hidden">
               {!mobileAnimationStarted ? (
                 <Button
@@ -496,7 +412,7 @@ export const DynamicFeeSection = () => {
                 <div className="flex flex-row items-center gap-x-2 text-xs font-sans">
                   <span className="text-muted-foreground/70">Dynamic Fee</span>
                   <span className="text-muted-foreground">
-                    {currentFee.toFixed(2)}%
+                    {(currentFeeBps / 100).toFixed(2)}%
                   </span>
                 </div>
               )}
@@ -511,41 +427,22 @@ export const DynamicFeeSection = () => {
               margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
             >
               <XAxis dataKey="timeLabel" hide />
-              <YAxis
-                yAxisId="left"
-                domain={ratioYDomain as [number, number]}
-                hide
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                domain={feeYDomain as [number, number]}
-                hide
-              />
+              <YAxis yAxisId="left" domain={sigmaYDomain} hide />
+              <YAxis yAxisId="right" orientation="right" domain={feeYDomain} hide />
               <Line
                 yAxisId="left"
                 type="monotone"
-                dataKey="volumeTvlRatio"
-                stroke={chartConfig.volumeTvlRatio.color}
+                dataKey="sigmaPercent"
+                stroke={chartConfig.sigma.color}
                 strokeWidth={1.5}
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Line
-                yAxisId="left"
-                type="monotone"
-                dataKey="emaRatio"
-                stroke={chartConfig.emaRatio.color}
-                strokeWidth={1.5}
-                strokeDasharray="4 4"
                 dot={false}
                 isAnimationActive={false}
               />
               <Line
                 yAxisId="right"
                 type="stepAfter"
-                dataKey="dynamicFee"
-                stroke={chartConfig.dynamicFee.color}
+                dataKey="feeBps"
+                stroke={chartConfig.fee.color}
                 strokeWidth={2}
                 dot={false}
                 isAnimationActive={false}
@@ -554,12 +451,12 @@ export const DynamicFeeSection = () => {
           </ResponsiveContainer>
         </div>
 
-        {/* Fee Updates List - CSS transitions instead of AnimatePresence */}
+        {/* Fee Updates List */}
         <div className="mt-auto flex flex-col">
           <div className="grid grid-cols-4 px-3 pb-2 text-[10px] text-muted-foreground">
             <span>Date</span>
-            <span className="text-center">Ratio</span>
-            <span className="text-center">Target</span>
+            <span className="text-center">Volatility</span>
+            <span className="text-center">Fee</span>
             <span className="text-right">Change</span>
           </div>
           <div
@@ -575,14 +472,11 @@ export const DynamicFeeSection = () => {
                   Waiting for fee updates...
                 </div>
               ) : (
-                activityUpdates.slice(0, 3).map((update, index) => (
+                activityUpdates.slice(0, 3).map((update) => (
                   <div
                     key={update.id}
                     className="grid grid-cols-4 items-center rounded-md border border-sidebar-border/60 bg-[#1b1b1b] px-3 py-2 text-xs transition-all duration-300 ease-out"
-                    style={{
-                      opacity: 1,
-                      transform: 'translateY(0)',
-                    }}
+                    style={{ opacity: 1, transform: 'translateY(0)' }}
                   >
                     <span className="text-foreground whitespace-nowrap" style={{ fontFamily: 'Consolas, monospace' }}>
                       {update.timestamp.toLocaleDateString('en-US', {
@@ -592,22 +486,26 @@ export const DynamicFeeSection = () => {
                       })}
                     </span>
                     <span className="text-muted-foreground text-center" style={{ fontFamily: 'Consolas, monospace' }}>
-                      {update.volumeTvlRatio.toFixed(3)}
+                      {update.sigmaPercent.toFixed(1)}%
                     </span>
                     <span className="text-muted-foreground text-center" style={{ fontFamily: 'Consolas, monospace' }}>
-                      {update.emaRatio.toFixed(3)}
+                      {update.feeBps.toFixed(1)}bps
                     </span>
                     <div className="flex flex-row items-center justify-end gap-x-2">
                       <span
                         className={cn(
                           "text-[11px]",
-                          update.feeChange === 'up' ? "text-green-500" : update.feeChange === 'down' ? "text-red-500" : "text-muted-foreground"
+                          update.feeChange === 'up'
+                            ? "text-green-500"
+                            : update.feeChange === 'down'
+                              ? "text-red-500"
+                              : "text-muted-foreground",
                         )}
                         style={{ fontFamily: 'Consolas, monospace' }}
                       >
                         {update.feeChange === 'neutral'
                           ? '0bp'
-                          : `${update.feeChange === 'up' ? '+' : '-'}${(update.feeChangeAmount * 100).toFixed(0)}bp`}
+                          : `${update.feeChange === 'up' ? '+' : '-'}${update.feeChangeBps.toFixed(1)}bp`}
                       </span>
                       <FeeUpdateIndicator type={update.feeChange} />
                     </div>

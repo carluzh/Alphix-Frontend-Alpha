@@ -22,27 +22,39 @@ function formatUSD(value: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// TVL Sparkline (ported from liquidity page, plain fetch instead of useQuery)
+// Generic history sparkline (shared layout/hover/tooltip)
 // ---------------------------------------------------------------------------
 
-interface TvlPoint {
+interface HistoryPoint {
   timestamp: number
-  tvlUsd: number
+  value: number
 }
 
-function TvlSparkline() {
-  const [points, setPoints] = useState<TvlPoint[]>([])
+function HistorySparkline({
+  endpoint,
+  valueKey,
+}: {
+  endpoint: string
+  valueKey: string
+}) {
+  const [points, setPoints] = useState<HistoryPoint[]>([])
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       try {
-        const res = await fetch('/api/protocol/tvl-history')
+        const res = await fetch(endpoint)
         if (!res.ok) return
         const json = await res.json()
         if (!cancelled && Array.isArray(json.data)) {
-          setPoints(json.data)
+          const normalized: HistoryPoint[] = json.data
+            .map((d: Record<string, number>) => ({
+              timestamp: Number(d.timestamp),
+              value: Number(d[valueKey]),
+            }))
+            .filter((p: HistoryPoint) => Number.isFinite(p.timestamp) && Number.isFinite(p.value))
+          setPoints(normalized)
         }
       } catch {
         // silently fail
@@ -52,7 +64,7 @@ function TvlSparkline() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [endpoint, valueKey])
 
   const W = 160
   const H = 64
@@ -61,7 +73,7 @@ function TvlSparkline() {
   const { pathD, coords } = useMemo(() => {
     if (!points || points.length < 2) return { pathD: null, coords: [] as { x: number; y: number }[] }
 
-    const values = points.map((p) => p.tvlUsd)
+    const values = points.map((p) => p.value)
     const mn = Math.min(...values)
     const mx = Math.max(...values)
     const range = mx - mn || 1
@@ -143,7 +155,7 @@ function TvlSparkline() {
               {new Date(hoveredPoint.timestamp * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
             </span>
             <span className="text-[10px] font-medium text-foreground">
-              {formatUSD(hoveredPoint.tvlUsd)}
+              {formatUSD(hoveredPoint.value)}
             </span>
           </div>
         </div>
@@ -257,19 +269,19 @@ export function ProtocolStatsBar() {
         label="TVL"
         value={formatUSD(stats?.tvl ?? 0)}
         isLoading={isLoading}
-        sparkline={<TvlSparkline />}
+        sparkline={<HistorySparkline endpoint="/api/protocol/tvl-history" valueKey="tvlUsd" />}
       />
       <StatCard
         label="Volume (24h)"
         value={formatUSD(stats?.volume24h ?? 0)}
         isLoading={isLoading}
-        sparkline={<PlaceholderSparkline />}
+        sparkline={<HistorySparkline endpoint="/api/protocol/volume-history" valueKey="volume24hUsd" />}
       />
       <StatCard
-        label="Fees"
+        label="User Revenue"
         value={stats && stats.fees > 0 ? formatUSD(stats.fees) : '---'}
         isLoading={isLoading}
-        sparkline={<PlaceholderSparkline />}
+        sparkline={<HistorySparkline endpoint="/api/protocol/user-revenue-history" valueKey="userRevenueUsd" />}
       />
     </div>
   )
