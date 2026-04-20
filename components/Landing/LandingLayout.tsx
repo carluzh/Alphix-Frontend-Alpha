@@ -304,7 +304,7 @@ const LandingPageFooter = () => {
                       Smart Contracts
                     </a>
                     <a
-                      href="https://dune.com/alphix/unified-pools"
+                      href="https://dune.com/alphix/stats"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="block text-sm text-muted-foreground hover:text-foreground transition-colors"

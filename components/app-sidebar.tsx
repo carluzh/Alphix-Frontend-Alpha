@@ -115,7 +115,7 @@ export function AppSidebar({ variant = "floating", ...props }: React.ComponentPr
                     asChild
                     className="w-full rounded-lg px-1.5 py-1 transition-colors hover:bg-[#1f1f1f] hover:text-white text-muted-foreground"
                   >
-                    <a href="https://dune.com/alphix/unified-pools" target="_blank" rel="noopener noreferrer" className="flex items-center">
+                    <a href="https://dune.com/alphix/stats" target="_blank" rel="noopener noreferrer" className="flex items-center">
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 18 18" className="flex-shrink-0">
                         <rect x="1.5" y="11" width="4" height="5" rx="1.75" ry="1.75" fill="currentColor"/>
                         <rect x="7" y="2" width="4" height="14" rx="1.75" ry="1.75" fill="currentColor"/>
