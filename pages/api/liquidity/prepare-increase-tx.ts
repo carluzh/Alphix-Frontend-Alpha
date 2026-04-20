@@ -15,12 +15,14 @@ import type { AddLiquidityOptions } from "@uniswap/v4-sdk";
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { getPositionManagerAddress } from "@/lib/pools-config";
+import { getPositionManagerAddress, getAllPools } from "@/lib/pools-config";
 import { resolveNetworkMode } from "@/lib/network-mode";
 import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
 import { createNetworkClient } from "@/lib/viemClient";
 import { buildPoolFromPosition } from "@/lib/liquidity/liquidity-utils";
 import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
+import { findPoolByPoolKey, isUnifiedYieldPool } from "@/lib/liquidity/utils/pool-type-guards";
+import { uniswapLPAPI, UniswapLPAPIError } from "@/lib/liquidity/uniswap-api/client";
 import {
   checkERC20Allowances,
   buildPermitBatchData,
@@ -203,6 +205,103 @@ export default async function handler(
 
     if (amountC0Raw === 0n && amountC1Raw === 0n) {
       return res.status(400).json({ message: 'Please enter a valid amount to add.' });
+    }
+
+    // Route non-UY pools through Uniswap Liquidity API.
+    const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
+    const useUniswapAPI = poolConfig != null && !isUnifiedYieldPool(poolConfig);
+
+    if (useUniswapAPI) {
+      try {
+        // Independent token = whichever the user provided. Prefer token0 when both given.
+        const independentIsToken0 = amountC0Raw > 0n;
+        const independentAmount = independentIsToken0 ? amountC0Raw : amountC1Raw;
+        const independentTokenAddress = independentIsToken0 ? details.poolKey.currency0 : details.poolKey.currency1;
+
+        // 1. Check approvals.
+        const approvalCheck = await uniswapLPAPI.checkApproval({
+          walletAddress: getAddress(userAddress),
+          chainId,
+          protocol: 'V4',
+          lpTokens: [
+            { tokenAddress: details.poolKey.currency0, amount: amountC0Raw.toString() },
+            { tokenAddress: details.poolKey.currency1, amount: amountC1Raw.toString() },
+          ].filter(t => BigInt(t.amount) > 0n),
+          action: 'INCREASE',
+        });
+
+        if (approvalCheck.transactions.length > 0) {
+          // Pick the first pending approval; frontend will submit and retry for the next.
+          const next = approvalCheck.transactions[0];
+          const tokenAddr = getAddress(next.tokenAddress ?? next.transaction.to);
+          const isToken0 = tokenAddr.toLowerCase() === getAddress(details.poolKey.currency0).toLowerCase();
+          const needsToken0Approval = approvalCheck.transactions.some(t =>
+            getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(details.poolKey.currency0).toLowerCase());
+          const needsToken1Approval = approvalCheck.transactions.some(t =>
+            getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(details.poolKey.currency1).toLowerCase());
+          return res.status(200).json({
+            needsApproval: true,
+            approvalType: 'ERC20_TO_PERMIT2' as const,
+            approvalTokenAddress: tokenAddr,
+            approvalTokenSymbol: isToken0 ? defC0.symbol : defC1.symbol,
+            approveToAddress: next.transaction.to,
+            approvalAmount: maxUint256.toString(),
+            needsToken0Approval,
+            needsToken1Approval,
+          });
+        }
+
+        // 2. No approvals needed — build the increase tx.
+        const response = await uniswapLPAPI.increase({
+          walletAddress: getAddress(userAddress),
+          chainId,
+          protocol: 'V4',
+          token0Address: details.poolKey.currency0,
+          token1Address: details.poolKey.currency1,
+          nftTokenId: nftTokenId.toString(),
+          independentToken: {
+            tokenAddress: independentTokenAddress,
+            amount: independentAmount.toString(),
+          },
+          simulateTransaction: false,
+        });
+
+        const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
+        const deadlineBigInt = latestBlock.timestamp + BigInt(deadlineMinutes) * 60n;
+
+        return res.status(200).json({
+          needsApproval: false,
+          create: {
+            to: response.increase.to,
+            from: response.increase.from,
+            data: response.increase.data,
+            value: response.increase.value,
+            chainId,
+          },
+          transaction: {
+            to: response.increase.to,
+            data: response.increase.data,
+            value: response.increase.value,
+          },
+          sqrtRatioX96: state.sqrtPriceX96.toString(),
+          currentTick: state.tick,
+          poolLiquidity: state.liquidity.toString(),
+          deadline: deadlineBigInt.toString(),
+          details: {
+            token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
+            token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },
+            liquidity: '0',
+            tickLower: details.tickLower,
+            tickUpper: details.tickUpper,
+          },
+        });
+      } catch (e) {
+        if (e instanceof UniswapLPAPIError) {
+          console.error('[prepare-increase-tx] Uniswap LP API error:', e.status, e.message);
+          return res.status(e.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${e.message}` });
+        }
+        throw e;
+      }
     }
 
     // Build position using SDK
