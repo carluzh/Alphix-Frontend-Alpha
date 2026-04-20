@@ -25,6 +25,10 @@ export function initializeAppKit() {
       projectId,
       networks: [appKitBase, appKitArbitrum],
       defaultNetwork: appKitBase,
+      // Suppress AppKit's blocking "Switch Network" modal when a previously connected
+      // wallet is on an unsupported chain. We handle mismatches ourselves via
+      // ChainAutoSwitcher (app mount) + ensureChain() (transaction time).
+      allowUnsupportedChain: true,
       metadata: { name: 'Alphix', description: 'Alphix AMM', url: window.location.origin, icons: ['/favicon.ico'] },
       features: { analytics: true, email: false, socials: [] },
       themeMode: 'dark',
