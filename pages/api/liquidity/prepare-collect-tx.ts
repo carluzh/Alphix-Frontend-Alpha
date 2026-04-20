@@ -1,10 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isAddress, getAddress } from 'viem';
 
-import { getPositionManagerAddress } from '@/lib/pools-config';
+import { getPositionManagerAddress, getAllPools } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
 import { buildCollectFeesTx, type BuildDecreaseTxContext } from '@/lib/liquidity/transaction/builders/buildDecreaseTx';
+import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
+import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
+import { uniswapLPAPI, UniswapLPAPIError } from '@/lib/liquidity/uniswap-api/client';
 
 interface PrepareCollectTxRequest extends NextApiRequest {
   body: {
@@ -38,7 +41,6 @@ export default async function handler(
 
     const networkMode = resolveNetworkMode(req);
 
-    // Check rate limit using client IP
     const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
       || req.socket?.remoteAddress
       || 'unknown';
@@ -48,37 +50,58 @@ export default async function handler(
       return res.status(429).json({ message: 'Too many requests. Please try again later.' });
     }
 
-    // Validate inputs
     if (!userAddress || !isAddress(userAddress)) {
       return res.status(400).json({ message: 'Invalid userAddress' });
     }
-
     if (!tokenId) {
       return res.status(400).json({ message: 'Missing tokenId' });
     }
-
     if (!chainId) {
       return res.status(400).json({ message: 'Missing chainId' });
     }
 
-    // Validate chain ID
     const chainIdError = validateChainId(chainId, networkMode);
     if (chainIdError) {
       return res.status(400).json({ message: chainIdError });
     }
 
-    // Build context
+    const positionManagerAddress = getPositionManagerAddress(networkMode);
+
+    // Route non-UY pools through Uniswap Liquidity API.
+    const details = await getPositionDetails(BigInt(tokenId), chainId);
+    const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
+    const useUniswapAPI = poolConfig != null && !isUnifiedYieldPool(poolConfig);
+
+    if (useUniswapAPI) {
+      try {
+        const response = await uniswapLPAPI.claimFees({
+          walletAddress: getAddress(userAddress),
+          chainId,
+          protocol: 'V4',
+          tokenId: tokenId,
+          simulateTransaction: false,
+        });
+        return res.status(200).json({
+          to: response.claim.to,
+          data: response.claim.data,
+          value: response.claim.value,
+        });
+      } catch (e) {
+        if (e instanceof UniswapLPAPIError) {
+          console.error('[prepare-collect-tx] Uniswap LP API error:', e.status, e.message);
+          return res.status(e.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${e.message}` });
+        }
+        throw e;
+      }
+    }
+
+    // Legacy path: UY pool (or unmatched pool) — use our SDK builder.
     const context: BuildDecreaseTxContext = {
       accountAddress: getAddress(userAddress),
       chainId,
       networkMode,
     };
-
-    // Build collect fees transaction
     const txResult = await buildCollectFeesTx(tokenId, context);
-
-    // Get position manager address
-    const positionManagerAddress = getPositionManagerAddress(networkMode);
 
     return res.status(200).json({
       to: positionManagerAddress,
