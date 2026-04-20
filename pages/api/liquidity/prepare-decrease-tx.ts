@@ -13,12 +13,14 @@ import { Position as V4Position, V4PositionManager, V4PositionPlanner, toHex } f
 import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { getPositionManagerAddress } from "@/lib/pools-config";
+import { getPositionManagerAddress, getAllPools } from "@/lib/pools-config";
 import { resolveNetworkMode } from "@/lib/network-mode";
 import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
 import { createNetworkClient } from "@/lib/viemClient";
 import { buildPoolFromPosition } from "@/lib/liquidity/liquidity-utils";
 import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
+import { findPoolByPoolKey, isUnifiedYieldPool } from "@/lib/liquidity/utils/pool-type-guards";
+import { uniswapLPAPI, UniswapLPAPIError } from "@/lib/liquidity/uniswap-api/client";
 import {
   isAddress,
   getAddress,
@@ -72,6 +74,24 @@ interface TransactionPreparedResponse {
 }
 
 type PrepareDecreaseTxResponse = TransactionPreparedResponse | { message: string; error?: any };
+
+function computeDecreasePercentage(args: {
+  isFullBurn: boolean;
+  amountC0Raw: bigint;
+  amountC1Raw: bigint;
+  maxAmount0: JSBI;
+  maxAmount1: JSBI;
+}): number {
+  if (args.isFullBurn) return 100;
+  let percentage = 0;
+  if (!JSBI.equal(args.maxAmount0, JSBI.BigInt(0))) {
+    percentage = Math.max(percentage, Number(args.amountC0Raw) / Number(args.maxAmount0.toString()) * 100);
+  }
+  if (!JSBI.equal(args.maxAmount1, JSBI.BigInt(0))) {
+    percentage = Math.max(percentage, Number(args.amountC1Raw) / Number(args.maxAmount1.toString()) * 100);
+  }
+  return Math.max(1, Math.min(100, Math.round(percentage)));
+}
 
 export default async function handler(
   req: PrepareDecreaseTxRequest,
@@ -141,36 +161,78 @@ export default async function handler(
       tickUpper: details.tickUpper,
     });
 
-    // Calculate liquidity to remove based on amounts
-    let liquidityToRemove: JSBI;
+    // Compute decrease percentage (1-100, int). Used by both legacy + Uniswap API paths.
+    const decreasePercentage = computeDecreasePercentage({
+      isFullBurn,
+      amountC0Raw, amountC1Raw,
+      maxAmount0: currentPosition.amount0.quotient,
+      maxAmount1: currentPosition.amount1.quotient,
+    });
 
-    if (isFullBurn) {
-      liquidityToRemove = currentPosition.liquidity;
-    } else {
-      // Calculate liquidity percentage from amounts
-      const maxAmount0 = currentPosition.amount0;
-      const maxAmount1 = currentPosition.amount1;
+    // Route non-UY pools through Uniswap Liquidity API.
+    const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
+    const useUniswapAPI = poolConfig != null && !isUnifiedYieldPool(poolConfig);
 
-      let percentage = 0;
-      if (!JSBI.equal(maxAmount0.quotient, JSBI.BigInt(0))) {
-        const pct0 = Number(amountC0Raw) / Number(maxAmount0.quotient.toString()) * 100;
-        percentage = Math.max(percentage, pct0);
+    if (useUniswapAPI) {
+      try {
+        const response = await uniswapLPAPI.decrease({
+          walletAddress: getAddress(userAddress),
+          chainId,
+          protocol: 'V4',
+          token0Address: details.poolKey.currency0,
+          token1Address: details.poolKey.currency1,
+          nftTokenId: nftTokenId.toString(),
+          liquidityPercentageToDecrease: decreasePercentage,
+          simulateTransaction: false,
+        });
+
+        const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
+        const deadlineBigInt = latestBlock.timestamp + BigInt(deadlineMinutes) * 60n;
+        const liquidityToRemove = (currentPosition.liquidity as any).toString
+          ? JSBI.divide(JSBI.multiply(currentPosition.liquidity, JSBI.BigInt(decreasePercentage)), JSBI.BigInt(100)).toString()
+          : '0';
+
+        return res.status(200).json({
+          needsApproval: false,
+          create: {
+            to: response.decrease.to,
+            from: response.decrease.from,
+            data: response.decrease.data,
+            value: response.decrease.value,
+            chainId,
+          },
+          transaction: {
+            to: response.decrease.to,
+            data: response.decrease.data,
+            value: response.decrease.value,
+          },
+          sqrtRatioX96: state.sqrtPriceX96.toString(),
+          currentTick: state.tick,
+          poolLiquidity: state.liquidity.toString(),
+          deadline: deadlineBigInt.toString(),
+          isFullBurn: decreasePercentage === 100,
+          details: {
+            token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
+            token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },
+            liquidityToRemove,
+            tickLower: details.tickLower,
+            tickUpper: details.tickUpper,
+          },
+        });
+      } catch (e) {
+        if (e instanceof UniswapLPAPIError) {
+          console.error('[prepare-decrease-tx] Uniswap LP API error:', e.status, e.message);
+          return res.status(e.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${e.message}` });
+        }
+        throw e;
       }
-      if (!JSBI.equal(maxAmount1.quotient, JSBI.BigInt(0))) {
-        const pct1 = Number(amountC1Raw) / Number(maxAmount1.quotient.toString()) * 100;
-        percentage = Math.max(percentage, pct1);
-      }
-
-      // Cap at 100%
-      percentage = Math.min(percentage, 100);
-
-      // Calculate liquidity to remove
-      const pctFraction = Math.round(percentage * 100); // basis points
-      liquidityToRemove = JSBI.divide(
-        JSBI.multiply(currentPosition.liquidity, JSBI.BigInt(pctFraction)),
-        JSBI.BigInt(10000)
-      );
     }
+
+    // Calculate liquidity to remove from the percentage we already computed.
+    const pctFraction = Math.round(decreasePercentage * 100); // basis points
+    const liquidityToRemove: JSBI = isFullBurn
+      ? currentPosition.liquidity
+      : JSBI.divide(JSBI.multiply(currentPosition.liquidity, JSBI.BigInt(pctFraction)), JSBI.BigInt(10000));
 
     // Create position for removal
     const positionToRemove = new V4Position({
