@@ -22,6 +22,8 @@ import {
 
 import { PERMIT2_ADDRESS } from '@uniswap/permit2-sdk';
 import { checkERC20Allowances, buildPermitBatchData, buildPermitBatchForSDK, type TokenForPermitCheck } from '@/lib/liquidity/transaction/permit2-checks';
+import { isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
+import { uniswapLPAPI, UniswapLPAPIError } from '@/lib/liquidity/uniswap-api/client';
 
 interface PrepareMintTxRequest extends NextApiRequest {
     body: {
@@ -285,6 +287,115 @@ export default async function handler(
         let tickUpper = nearestUsableTick(clampedUserTickUpper, poolConfig.tickSpacing);
         if (tickLower >= tickUpper) {
             tickLower = tickUpper - poolConfig.tickSpacing;
+        }
+
+        // Route non-UY pools through Uniswap Liquidity API.
+        if (!isUnifiedYieldPool(poolConfig)) {
+            try {
+                // 1. Check approvals against both pool tokens.
+                const approvalCheck = await uniswapLPAPI.checkApproval({
+                    walletAddress: getAddress(userAddress),
+                    chainId,
+                    protocol: 'V4',
+                    lpTokens: [
+                        { tokenAddress: getAddress(token0Config.address), amount: parsedInputAmount_BigInt.toString() },
+                        { tokenAddress: getAddress(token1Config.address), amount: parsedInputAmount_BigInt.toString() },
+                    ],
+                    action: 'CREATE',
+                });
+
+                if (approvalCheck.transactions.length > 0) {
+                    const next = approvalCheck.transactions[0];
+                    const tokenAddr = getAddress(next.tokenAddress ?? next.transaction.to);
+                    const isToken0 = tokenAddr.toLowerCase() === getAddress(token0Config.address).toLowerCase();
+                    const needsToken0Approval = approvalCheck.transactions.some(t =>
+                        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(token0Config.address).toLowerCase());
+                    const needsToken1Approval = approvalCheck.transactions.some(t =>
+                        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(token1Config.address).toLowerCase());
+                    return res.status(200).json({
+                        needsApproval: true,
+                        approvalType: 'ERC20_TO_PERMIT2' as const,
+                        approvalTokenAddress: tokenAddr,
+                        approvalTokenSymbol: (isToken0 ? token0Symbol : token1Symbol) as TokenSymbol,
+                        approveToAddress: next.transaction.to,
+                        approvalAmount: maxUint256.toString(),
+                        erc20ApprovalNeeded: true,
+                        needsToken0Approval,
+                        needsToken1Approval,
+                    });
+                }
+
+                // 2. Build create tx.
+                const inputTokenAddress = inputTokenSymbol === token0Symbol
+                    ? getAddress(token0Config.address)
+                    : getAddress(token1Config.address);
+
+                const response = await uniswapLPAPI.create({
+                    walletAddress: getAddress(userAddress),
+                    chainId,
+                    protocol: 'V4',
+                    existingPool: {
+                        token0Address: getAddress(token0Config.address),
+                        token1Address: getAddress(token1Config.address),
+                        poolReference: poolConfig.poolId,
+                    },
+                    independentToken: {
+                        tokenAddress: inputTokenAddress,
+                        amount: parsedInputAmount_BigInt.toString(),
+                    },
+                    tickBounds: { tickLower, tickUpper },
+                    simulateTransaction: false,
+                });
+
+                // Fetch pool state for UI fields expected by response contract.
+                const [slot0Result, liquidityResult] = await publicClient.multicall({
+                    contracts: [
+                        { address: STATE_VIEW_ADDRESS, abi: stateViewAbiViem, functionName: 'getSlot0', args: [poolConfig.poolId as Hex] },
+                        { address: STATE_VIEW_ADDRESS, abi: stateViewAbiViem, functionName: 'getLiquidity', args: [poolConfig.poolId as Hex] },
+                    ],
+                    allowFailure: true,
+                });
+                const slot0 = slot0Result.status === 'success'
+                    ? (slot0Result.result as readonly [bigint, number, number, number])
+                    : ([0n, 0, 0, 0] as const);
+                const curLiquidity = liquidityResult.status === 'success' ? (liquidityResult.result as bigint) : 0n;
+
+                const latestBlockForTx = await publicClient.getBlock({ blockTag: 'latest' });
+                const deadlineBigInt = latestBlockForTx.timestamp + BigInt(deadlineMinutes) * 60n;
+
+                return res.status(200).json({
+                    needsApproval: false,
+                    create: {
+                        to: response.create.to,
+                        from: response.create.from,
+                        data: response.create.data,
+                        value: response.create.value,
+                        chainId,
+                    },
+                    transaction: {
+                        to: response.create.to,
+                        data: response.create.data,
+                        value: response.create.value,
+                    },
+                    sqrtRatioX96: slot0[0].toString(),
+                    currentTick: slot0[1],
+                    poolLiquidity: curLiquidity.toString(),
+                    deadline: deadlineBigInt.toString(),
+                    details: {
+                        token0: { address: getAddress(token0Config.address), symbol: token0Symbol, amount: response.token0.amount },
+                        token1: { address: getAddress(token1Config.address), symbol: token1Symbol, amount: response.token1.amount },
+                        finalTickLower: response.tickLower,
+                        finalTickUpper: response.tickUpper,
+                        liquidity: '0',
+                    },
+                });
+            } catch (e) {
+                if (e instanceof UniswapLPAPIError) {
+                    console.error('[prepare-mint-tx] Uniswap LP API error:', e.status, e.message);
+                    return res.status(e.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${e.message}` });
+                }
+                throw e;
+            }
         }
 
         // After alignment, the previous clamp adjusts ordering. No further error required here.
