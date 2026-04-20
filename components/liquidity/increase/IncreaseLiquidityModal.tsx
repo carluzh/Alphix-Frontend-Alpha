@@ -381,14 +381,14 @@ function IncreaseLiquidityInner({
       toast.success("Liquidity added", {
         action: {
           label: "View transaction",
-          onClick: () => window.open(getExplorerTxUrl(hash!), "_blank"),
+          onClick: () => window.open(getExplorerTxUrl(hash!, networkMode), "_blank"),
         },
       });
     } else {
       toast.success("Liquidity added");
     }
     onSuccess?.();
-  }, [onSuccess, address, chainId, position.token0.symbol, position.token1.symbol, setExecuting]);
+  }, [onSuccess, address, chainId, networkMode, position.token0.symbol, position.token1.symbol, setExecuting]);
 
   // ─── Handle user input ────────────────────────────────────────────────
   const handleUserInput = (field: PositionField, value: string) => {

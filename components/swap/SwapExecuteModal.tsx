@@ -15,6 +15,7 @@ import { ArrowDown } from "lucide-react"
 import { toast } from "sonner"
 
 import { getExplorerTxUrl } from "@/lib/wagmiConfig"
+import { modeForChainId } from "@/lib/network-mode"
 import { TokenImage } from "@/components/ui/token-image"
 import { TransactionModal } from "@/components/transactions/TransactionModal"
 import { SwapRoutePreview } from "./SwapRoutePreview"
@@ -105,7 +106,7 @@ export function SwapExecuteModal({
       description: desc,
       duration: 4000,
       action: hash
-        ? { label: "View transaction", onClick: () => window.open(getExplorerTxUrl(hash!), "_blank") }
+        ? { label: "View transaction", onClick: () => window.open(getExplorerTxUrl(hash!, targetChainId ? modeForChainId(targetChainId) ?? undefined : undefined), "_blank") }
         : undefined,
     })
   }
