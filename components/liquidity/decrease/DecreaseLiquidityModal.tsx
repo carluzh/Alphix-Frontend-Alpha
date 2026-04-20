@@ -145,14 +145,14 @@ function DecreaseLiquidityInner({
 
     if (hash) {
       toast.success(msg, {
-        action: { label: "View transaction", onClick: () => window.open(getExplorerTxUrl(hash!), "_blank") },
+        action: { label: "View transaction", onClick: () => window.open(getExplorerTxUrl(hash!, networkMode), "_blank") },
       });
     } else {
       toast.success(msg);
     }
 
     onSuccess?.({ isFullBurn });
-  }, [onSuccess]);
+  }, [onSuccess, networkMode]);
 
   const isDisabled = percent === 0 || isLoading || !hasValidAmounts;
 

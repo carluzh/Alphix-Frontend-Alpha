@@ -371,7 +371,7 @@ export function useSwapFlow({
         description: isInfinite
           ? `Approved infinite ${fromToken.symbol} for swapping`
           : `Approved ${fromAmount} ${fromToken.symbol} for this swap`,
-        action: { label: "View transaction", onClick: () => window.open(getExplorerTxUrl(approveTxHash), "_blank") },
+        action: { label: "View transaction", onClick: () => window.open(getExplorerTxUrl(approveTxHash, currentChainId ? modeForChainId(currentChainId) ?? undefined : undefined), "_blank") },
       })
 
       if (source !== "kyberswap") {
@@ -487,7 +487,7 @@ export function useSwapFlow({
         fromSymbol: fromToken.symbol,
         toAmount,
         toSymbol: toToken.symbol,
-        explorerUrl: getExplorerTxUrl(txHash as string),
+        explorerUrl: getExplorerTxUrl(txHash as string, currentChainId ? modeForChainId(currentChainId) ?? undefined : undefined),
         touchedPools: Array.isArray(buildData?.touchedPools) ? buildData.touchedPools : undefined,
       })
 
