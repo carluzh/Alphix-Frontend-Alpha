@@ -125,25 +125,8 @@ export {
 } from './utils/parsing';
 
 // =============================================================================
-// TRANSACTION - Builders and step management
+// TRANSACTION - Step management (builders sunsetted in favor of Uniswap LP API)
 // =============================================================================
-
-// Transaction builders
-export {
-  buildIncreaseLiquidityTx,
-  parseTokenIdFromPosition,
-  type IncreasePositionData,
-  type BuildIncreaseOptions,
-  type BuildIncreaseTxResult,
-  type BuildIncreaseTxContext,
-  type PrepareIncreasePermitParams,
-  buildDecreaseLiquidityTx,
-  buildCollectFeesTx,
-  type DecreasePositionData,
-  type BuildDecreaseOptions,
-  type BuildDecreaseTxResult,
-  type BuildDecreaseTxContext,
-} from './transaction/builders';
 
 // Step factory functions - COPIED FROM UNISWAP
 export {
