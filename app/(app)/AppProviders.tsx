@@ -4,6 +4,7 @@ import type React from "react"
 import { useEffect } from "react"
 import * as Sentry from '@sentry/nextjs'
 import AppKitProvider from '@/components/AppKitProvider'
+import { ChainAutoSwitcher } from '@/components/ChainAutoSwitcher'
 import { NetworkProvider, type NetworkMode } from "@/lib/network-context"
 import { Toaster } from "@/components/ui/sonner"
 import { ConditionalAnalytics } from '@/components/ConditionalAnalytics'
@@ -131,6 +132,7 @@ export default function AppProviders({
 
   return (
     <AppKitProvider cookies={cookieString}>
+      <ChainAutoSwitcher />
       <NetworkProvider initialNetworkMode={initialNetworkMode}>
         <SSEProvider>
           <WebSocketProvider>
