@@ -11,7 +11,7 @@ import * as Sentry from '@sentry/nextjs';
 import { getAllPools, getToken, getTokenSymbolByAddress } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
-import { getPositionDetails, getPoolState } from '@/lib/liquidity/liquidity-utils';
+import { getPositionDetails, getPoolState, getPositionOwner } from '@/lib/liquidity/liquidity-utils';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
 import { isAddress, getAddress, zeroAddress, type Hex } from 'viem';
@@ -89,7 +89,16 @@ export default async function handler(
     const nftTokenId = BigInt(tokenId);
     const pct = Math.round(decreasePercentage);
 
-    const details = await getPositionDetails(nftTokenId, chainId);
+    const [details, owner] = await Promise.all([
+      getPositionDetails(nftTokenId, chainId),
+      getPositionOwner(nftTokenId, chainId),
+    ]);
+    if (owner.toLowerCase() !== getAddress(userAddress).toLowerCase()) {
+      return res.status(403).json({ message: 'Wallet does not own this position.' });
+    }
+    if (details.liquidity === 0n) {
+      return res.status(400).json({ message: 'Position has no liquidity to withdraw.' });
+    }
     const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
     if (!poolConfig) {
       return res.status(400).json({ message: 'Position is not in an Alphix pool.' });

@@ -5,7 +5,7 @@ import { isAddress, getAddress } from 'viem';
 import { getAllPools } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
-import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
+import { getPositionDetails, getPositionOwner } from '@/lib/liquidity/liquidity-utils';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
 
@@ -18,7 +18,7 @@ interface PrepareCollectTxRequest extends NextApiRequest {
 }
 
 interface CollectTxResponse { to: string; data: string; value: string; gasFee?: string }
-interface ErrorResponse { error?: string; message?: string }
+interface ErrorResponse { message: string; error?: any }
 
 export default async function handler(
   req: PrepareCollectTxRequest,
@@ -47,7 +47,14 @@ export default async function handler(
     const chainIdError = validateChainId(chainId, networkMode);
     if (chainIdError) return res.status(400).json({ message: chainIdError });
 
-    const details = await getPositionDetails(BigInt(tokenId), chainId);
+    const nftTokenId = BigInt(tokenId);
+    const [details, owner] = await Promise.all([
+      getPositionDetails(nftTokenId, chainId),
+      getPositionOwner(nftTokenId, chainId),
+    ]);
+    if (owner.toLowerCase() !== getAddress(userAddress).toLowerCase()) {
+      return res.status(403).json({ message: 'Wallet does not own this position.' });
+    }
     const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
 
     if (!poolConfig) {
@@ -93,9 +100,6 @@ export default async function handler(
       tags: { route: 'prepare-collect-tx', source: 'internal' },
       extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
     });
-    return res.status(500).json({
-      error: 'Failed to prepare collect transaction',
-      message: error?.message || 'Unknown error',
-    });
+    return res.status(500).json({ message: error?.message || 'Failed to prepare collect transaction' });
   }
 }
