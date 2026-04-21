@@ -238,22 +238,29 @@ export default async function handler(
       deadline: deadlineSeconds,
       ...(hasSignedPermit ? { batchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
     };
+    // Simulation acts as an approval/permit probe: if it succeeds, the user's ERC-20
+    // allowances AND their Permit2→PositionManager permit both cover the required
+    // amounts. No need to call /lp/check_approval — just return the tx.
+    // If it reverts with FAILED_TO_ESTIMATE_GAS / TRANSFER_FROM_FAILED, we retry
+    // without simulation to get the tx shape + amounts, then call check_approval
+    // to discover what specifically needs approving or signing.
     let createResponse;
+    let needsApprovalDiscovery = false;
     try {
       createResponse = await uniswapLPAPI.create({ ...baseReq, simulateTransaction: !hasSignedPermit });
     } catch (e) {
       if (e instanceof UniswapLPAPIError && e.status === 404 && /FAILED_TO_ESTIMATE_GAS|TRANSFER_FROM_FAILED/i.test(e.message)) {
         createResponse = await uniswapLPAPI.create({ ...baseReq, simulateTransaction: false });
+        needsApprovalDiscovery = true;
       } else {
         throw e;
       }
     }
 
-    // Step 2: if no permit was provided yet, use the real token amounts from step 1
-    // to check approvals. Passing real amounts (vs the inflated input-wei-for-both
-    // approach) lets Uniswap correctly report that no approval is needed when the
-    // user already has sufficient allowance — fixes the "always approving" UX bug.
-    if (!hasSignedPermit) {
+    // Only call check_approval when simulation failed (indicating approvals/permit are
+    // missing). A successful simulation is proof they're in place — skipping the call
+    // halves happy-path RPS and avoids asking users to re-sign a valid permit.
+    if (!hasSignedPermit && needsApprovalDiscovery) {
       const t0Addr = getAddress(token0Config.address);
       const t1Addr = getAddress(token1Config.address);
       const approvalCheck = await uniswapLPAPI.checkApproval({

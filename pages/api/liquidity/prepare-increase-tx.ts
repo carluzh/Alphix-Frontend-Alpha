@@ -186,21 +186,27 @@ export default async function handler(
       deadline: deadlineSeconds,
       ...(hasSignedPermit ? { v4BatchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
     };
+    // Simulation acts as an approval/permit probe: success proves both ERC-20 allowances
+    // and the Permit2→PositionManager permit cover the required amounts. Only on
+    // revert (FAILED_TO_ESTIMATE_GAS / TRANSFER_FROM_FAILED) do we fall back to
+    // check_approval to discover what's missing.
     let createResponse;
+    let needsApprovalDiscovery = false;
     try {
       createResponse = await uniswapLPAPI.increase({ ...baseReq, simulateTransaction: !hasSignedPermit });
     } catch (e) {
       if (e instanceof UniswapLPAPIError && e.status === 404 && /FAILED_TO_ESTIMATE_GAS|TRANSFER_FROM_FAILED/i.test(e.message)) {
         createResponse = await uniswapLPAPI.increase({ ...baseReq, simulateTransaction: false });
+        needsApprovalDiscovery = true;
       } else {
         throw e;
       }
     }
 
-    // Step 2: use the real token amounts from step 1 to check approvals. Passing real
-    // amounts (instead of the user-input wei for the dependent token too) lets the API
-    // correctly report that no approval is needed when allowance already suffices.
-    if (!hasSignedPermit) {
+    // Only call check_approval when simulation failed (approvals/permit missing).
+    // Successful simulation = both levels cleared; return the tx directly and skip
+    // the redundant second call. Halves happy-path RPS.
+    if (!hasSignedPermit && needsApprovalDiscovery) {
       const approvalCheck = await uniswapLPAPI.checkApproval({
         walletAddress: getAddress(userAddress),
         chainId,
