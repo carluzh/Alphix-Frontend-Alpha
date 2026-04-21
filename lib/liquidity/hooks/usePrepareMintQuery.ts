@@ -43,8 +43,8 @@ export interface PrepareMintQueryResult {
   error: Error | null;
   /** Refetch function */
   refetch: () => void;
-  /** Gas limit from response (in wei as bigint) */
-  gasLimit: bigint | undefined;
+  /** Estimated gas cost in wei from API simulation. */
+  gasFee: bigint | undefined;
 }
 
 // =============================================================================
@@ -149,13 +149,10 @@ export function usePrepareMintQuery(
     retry: false, // Don't retry on failure (Uniswap pattern)
   });
 
-  // Extract gasLimit from response
-  const gasLimit = (() => {
-    if (!data) return undefined;
-    const gasLimitStr = data.create?.gasLimit || data.transaction?.gasLimit;
-    if (!gasLimitStr) return undefined;
+  const gasFee = (() => {
+    if (!data?.gasFee) return undefined;
     try {
-      return BigInt(gasLimitStr);
+      return BigInt(data.gasFee);
     } catch {
       return undefined;
     }
@@ -166,6 +163,6 @@ export function usePrepareMintQuery(
     isLoading,
     error: error as Error | null,
     refetch,
-    gasLimit,
+    gasFee,
   };
 }

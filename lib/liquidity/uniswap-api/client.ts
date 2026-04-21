@@ -112,7 +112,8 @@ export interface CreatePositionResponse {
   adjustedMinPrice?: string;
   adjustedMaxPrice?: string;
   create: LPTransactionRequest;
-  gasFeeEstimates?: unknown;
+  /** Total estimated gas cost (gasLimit * maxFeePerGas) in wei. Present when simulateTransaction=true. */
+  gasFee?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +140,8 @@ export interface IncreasePositionResponse {
   token0: LPToken;
   token1: LPToken;
   increase: LPTransactionRequest;
-  gasFeeEstimates?: unknown;
+  /** Total estimated gas cost (gasLimit * maxFeePerGas) in wei. Present when simulateTransaction=true. */
+  gasFee?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +169,8 @@ export interface DecreasePositionResponse {
   token0: LPToken;
   token1: LPToken;
   decrease: LPTransactionRequest;
-  gasFeeEstimates?: unknown;
+  /** Total estimated gas cost (gasLimit * maxFeePerGas) in wei. Present when simulateTransaction=true. */
+  gasFee?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +190,8 @@ export interface ClaimFeesResponse {
   token0: LPToken;
   token1: LPToken;
   claim: LPTransactionRequest;
-  gasFeeEstimates?: unknown;
+  /** Total estimated gas cost (gasLimit * maxFeePerGas) in wei. Present when simulateTransaction=true. */
+  gasFee?: string;
 }
 
 // ---------------------------------------------------------------------------

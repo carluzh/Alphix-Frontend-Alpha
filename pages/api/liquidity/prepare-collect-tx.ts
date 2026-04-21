@@ -16,7 +16,7 @@ interface PrepareCollectTxRequest extends NextApiRequest {
   };
 }
 
-interface CollectTxResponse { to: string; data: string; value: string }
+interface CollectTxResponse { to: string; data: string; value: string; gasFee?: string }
 interface ErrorResponse { error?: string; message?: string }
 
 export default async function handler(
@@ -62,12 +62,13 @@ export default async function handler(
         chainId,
         protocol: 'V4',
         tokenId,
-        simulateTransaction: false,
+        simulateTransaction: true,
       });
       return res.status(200).json({
         to: response.claim.to,
         data: response.claim.data,
         value: response.claim.value,
+        gasFee: response.gasFee,
       });
     } catch (e) {
       if (e instanceof UniswapLPAPIError) {

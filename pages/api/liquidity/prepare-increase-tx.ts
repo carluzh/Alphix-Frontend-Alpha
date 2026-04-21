@@ -54,6 +54,8 @@ interface TransactionPreparedResponse {
   currentTick: number;
   poolLiquidity: string;
   deadline: string;
+  /** Estimated gas cost in wei from API simulation. */
+  gasFee?: string;
   details: {
     token0: { address: string; symbol: string; amount: string };
     token1: { address: string; symbol: string; amount: string };
@@ -178,7 +180,7 @@ export default async function handler(
       },
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
-      simulateTransaction: false,
+      simulateTransaction: true,
     });
 
     const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
@@ -214,6 +216,7 @@ export default async function handler(
       currentTick: slot0[1],
       poolLiquidity: curLiquidity.toString(),
       deadline: deadlineBigInt.toString(),
+      gasFee: response.gasFee,
       details: {
         token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
         token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },

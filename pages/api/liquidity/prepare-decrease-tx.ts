@@ -41,6 +41,8 @@ interface TransactionPreparedResponse {
   poolLiquidity: string;
   deadline: string;
   isFullBurn: boolean;
+  /** Estimated gas cost in wei from API simulation. */
+  gasFee?: string;
   details: {
     token0: { address: string; symbol: string; amount: string };
     token1: { address: string; symbol: string; amount: string };
@@ -153,7 +155,7 @@ export default async function handler(
         liquidityPercentageToDecrease: decreasePercentage,
         slippageTolerance: slippageBps / 100,
         deadline: deadlineSeconds,
-        simulateTransaction: false,
+        simulateTransaction: true,
       });
 
       const deadlineBigInt = BigInt(deadlineSeconds);
@@ -181,6 +183,7 @@ export default async function handler(
         poolLiquidity: state.liquidity.toString(),
         deadline: deadlineBigInt.toString(),
         isFullBurn: decreasePercentage === 100,
+        gasFee: response.gasFee,
         details: {
           token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
           token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },

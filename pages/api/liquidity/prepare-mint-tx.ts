@@ -59,6 +59,8 @@ interface TransactionPreparedResponse {
   currentTick: number;
   poolLiquidity: string;
   deadline: string;
+  /** Estimated gas cost in wei from API simulation. */
+  gasFee?: string;
   details: {
     token0: { address: string; symbol: string; amount: string };
     token1: { address: string; symbol: string; amount: string };
@@ -218,7 +220,7 @@ export default async function handler(
       tickBounds: { tickLower, tickUpper },
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
-      simulateTransaction: false,
+      simulateTransaction: true,
     });
 
     // Fetch pool state for UI fields expected by response contract.
@@ -254,6 +256,7 @@ export default async function handler(
       currentTick: slot0[1],
       poolLiquidity: curLiquidity.toString(),
       deadline: deadlineBigInt.toString(),
+      gasFee: response.gasFee,
       details: {
         token0: { address: getAddress(token0Config.address), symbol: token0Symbol, amount: response.token0.amount },
         token1: { address: getAddress(token1Config.address), symbol: token1Symbol, amount: response.token1.amount },
