@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import * as Sentry from '@sentry/nextjs';
 import { isAddress, getAddress } from 'viem';
 
 import { getAllPools } from '@/lib/pools-config';
@@ -78,12 +79,20 @@ export default async function handler(
       }
       if (e instanceof UniswapLPAPIError) {
         console.error('[prepare-collect-tx] Uniswap LP API error:', e.status, e.message);
+        Sentry.captureException(e, {
+          tags: { route: 'prepare-collect-tx', source: 'uniswap_lp_api', uniswap_status: String(e.status) },
+          extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
+        });
         return res.status(e.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${e.message}` });
       }
       throw e;
     }
   } catch (error: any) {
     console.error('[prepare-collect-tx] Error:', error);
+    Sentry.captureException(error, {
+      tags: { route: 'prepare-collect-tx', source: 'internal' },
+      extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
+    });
     return res.status(500).json({
       error: 'Failed to prepare collect transaction',
       message: error?.message || 'Unknown error',

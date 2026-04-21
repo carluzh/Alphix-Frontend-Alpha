@@ -8,6 +8,7 @@
  */
 
 import { nearestUsableTick, TickMath } from '@uniswap/v3-sdk';
+import * as Sentry from '@sentry/nextjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isAddress, getAddress, maxUint256, parseUnits, parseAbi, type Hex } from 'viem';
 
@@ -348,9 +349,17 @@ export default async function handler(
     }
     if (error instanceof UniswapLPAPIError) {
       console.error('[prepare-mint-tx] Uniswap LP API error:', error.status, error.message);
+      Sentry.captureException(error, {
+        tags: { route: 'prepare-mint-tx', source: 'uniswap_lp_api', uniswap_status: String(error.status) },
+        extra: { userAddress: req.body?.userAddress, poolId: req.body?.poolId, chainId: req.body?.chainId, tickLower: req.body?.userTickLower, tickUpper: req.body?.userTickUpper },
+      });
       return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
     }
     console.error('[API prepare-mint-tx] Error:', error);
+    Sentry.captureException(error, {
+      tags: { route: 'prepare-mint-tx', source: 'internal' },
+      extra: { userAddress: req.body?.userAddress, poolId: req.body?.poolId, chainId: req.body?.chainId },
+    });
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return res.status(500).json({ message: errorMessage, error: process.env.NODE_ENV === 'development' ? error : undefined });
   }

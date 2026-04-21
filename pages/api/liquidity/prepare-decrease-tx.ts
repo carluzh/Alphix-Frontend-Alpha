@@ -6,6 +6,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
+import * as Sentry from '@sentry/nextjs';
 
 import { getAllPools, getToken, getTokenSymbolByAddress } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
@@ -165,9 +166,17 @@ export default async function handler(
     }
     if (error instanceof UniswapLPAPIError) {
       console.error('[prepare-decrease-tx] Uniswap LP API error:', error.status, error.message);
+      Sentry.captureException(error, {
+        tags: { route: 'prepare-decrease-tx', source: 'uniswap_lp_api', uniswap_status: String(error.status) },
+        extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId, decreasePercentage: req.body?.decreasePercentage },
+      });
       return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
     }
     console.error('[API prepare-decrease-tx] Error:', error);
+    Sentry.captureException(error, {
+      tags: { route: 'prepare-decrease-tx', source: 'internal' },
+      extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
+    });
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return res.status(500).json({ message: errorMessage, error: process.env.NODE_ENV === 'development' ? error : undefined });
   }

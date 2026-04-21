@@ -12,6 +12,7 @@
  */
 
 import type { Currency, CurrencyAmount, Token } from '@uniswap/sdk-core';
+import * as Sentry from '@sentry/nextjs';
 import type { Address, Hex } from 'viem';
 import { maxUint256, getAddress } from 'viem';
 import type { TokenSymbol } from '@/lib/pools-config';
@@ -271,6 +272,14 @@ export function createIncreasePositionAsyncStep(
         return { txRequest, sqrtRatioX96: data.sqrtRatioX96 };
       } catch (e) {
         console.error('createIncreasePositionAsyncStep error:', e);
+        Sentry.captureException(e, {
+          tags: { flow: 'lp_increase', stage: 'async_build_with_signature' },
+          extra: {
+            userAddress: increasePositionRequestArgs.userAddress,
+            tokenId: increasePositionRequestArgs.tokenId,
+            chainId: increasePositionRequestArgs.chainId,
+          },
+        });
         throw e;
       }
     },
@@ -348,6 +357,14 @@ export function createCreatePositionAsyncStep(
         return { txRequest, sqrtRatioX96: data.sqrtRatioX96 };
       } catch (e) {
         console.error('createCreatePositionAsyncStep error:', e);
+        Sentry.captureException(e, {
+          tags: { flow: 'lp_create', stage: 'async_build_with_signature' },
+          extra: {
+            userAddress: createPositionRequestArgs.userAddress,
+            poolId: createPositionRequestArgs.poolId,
+            chainId: createPositionRequestArgs.chainId,
+          },
+        });
         throw e;
       }
     },
