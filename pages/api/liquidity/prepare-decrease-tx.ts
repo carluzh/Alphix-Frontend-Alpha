@@ -5,28 +5,23 @@
  * UY positions use a separate share-burn flow; this route rejects them.
  */
 
-import JSBI from 'jsbi';
-import { Position as V4Position } from '@uniswap/v4-sdk';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { getAllPools } from '@/lib/pools-config';
+import { getAllPools, getToken, getTokenSymbolByAddress } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
-import { createNetworkClient } from '@/lib/viemClient';
-import { buildPoolFromPosition } from '@/lib/liquidity/liquidity-utils';
-import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
+import { getPositionDetails, getPoolState } from '@/lib/liquidity/liquidity-utils';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { uniswapLPAPI, UniswapLPAPIError } from '@/lib/liquidity/uniswap-api/client';
-import { isAddress, getAddress, zeroAddress } from 'viem';
+import { isAddress, getAddress, zeroAddress, type Hex } from 'viem';
 
 interface PrepareDecreaseTxRequest extends NextApiRequest {
   body: {
     userAddress: string;
     tokenId: string;
-    decreaseAmount0: string;
-    decreaseAmount1: string;
+    /** 1-100. Sole supported input from frontend. */
+    decreasePercentage: number;
     chainId: number;
-    isFullBurn?: boolean;
     slippageBps?: number;
     deadlineMinutes?: number;
   };
@@ -54,24 +49,6 @@ interface TransactionPreparedResponse {
 
 type PrepareDecreaseTxResponse = TransactionPreparedResponse | { message: string; error?: any };
 
-function computeDecreasePercentage(args: {
-  isFullBurn: boolean;
-  amountC0Raw: bigint;
-  amountC1Raw: bigint;
-  maxAmount0: JSBI;
-  maxAmount1: JSBI;
-}): number {
-  if (args.isFullBurn) return 100;
-  let percentage = 0;
-  if (!JSBI.equal(args.maxAmount0, JSBI.BigInt(0))) {
-    percentage = Math.max(percentage, Number(args.amountC0Raw) / Number(args.maxAmount0.toString()) * 100);
-  }
-  if (!JSBI.equal(args.maxAmount1, JSBI.BigInt(0))) {
-    percentage = Math.max(percentage, Number(args.amountC1Raw) / Number(args.maxAmount1.toString()) * 100);
-  }
-  return Math.max(1, Math.min(100, Math.round(percentage)));
-}
-
 export default async function handler(
   req: PrepareDecreaseTxRequest,
   res: NextApiResponse<PrepareDecreaseTxResponse>,
@@ -89,16 +66,13 @@ export default async function handler(
   }
 
   const networkMode = resolveNetworkMode(req);
-  const publicClient = createNetworkClient(networkMode);
 
   try {
     const {
       userAddress,
       tokenId,
-      decreaseAmount0: inputAmount0,
-      decreaseAmount1: inputAmount1,
+      decreasePercentage,
       chainId,
-      isFullBurn = false,
       slippageBps = 50,
       deadlineMinutes = 30,
     } = req.body;
@@ -107,12 +81,14 @@ export default async function handler(
     if (chainIdError) return res.status(400).json({ message: chainIdError });
     if (!isAddress(userAddress)) return res.status(400).json({ message: 'Invalid userAddress.' });
     if (!tokenId) return res.status(400).json({ message: 'Missing tokenId.' });
+    if (typeof decreasePercentage !== 'number' || decreasePercentage < 1 || decreasePercentage > 100) {
+      return res.status(400).json({ message: 'decreasePercentage must be between 1 and 100.' });
+    }
 
     const nftTokenId = BigInt(tokenId);
+    const pct = Math.round(decreasePercentage);
 
-    const { details, defC0, defC1, isNativeC0, isNativeC1, pool, poolState: state } =
-      await buildPoolFromPosition(nftTokenId, chainId, networkMode);
-
+    const details = await getPositionDetails(nftTokenId, chainId);
     const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
     if (!poolConfig) {
       return res.status(400).json({ message: 'Position is not in an Alphix pool.' });
@@ -121,85 +97,71 @@ export default async function handler(
       return res.status(400).json({ message: 'Unified Yield positions use a separate withdraw flow.' });
     }
 
-    const amountC0Raw = safeParseUnits(inputAmount0 || '0', defC0.decimals);
-    const amountC1Raw = safeParseUnits(inputAmount1 || '0', defC1.decimals);
-    if (amountC0Raw === 0n && amountC1Raw === 0n && !isFullBurn) {
-      return res.status(400).json({ message: 'Please enter a valid amount to withdraw.' });
+    const sym0 = getTokenSymbolByAddress(details.poolKey.currency0, networkMode);
+    const sym1 = getTokenSymbolByAddress(details.poolKey.currency1, networkMode);
+    const defC0 = sym0 ? getToken(sym0, networkMode) : null;
+    const defC1 = sym1 ? getToken(sym1, networkMode) : null;
+    if (!defC0 || !defC1) {
+      return res.status(400).json({ message: 'Token metadata missing for this position.' });
     }
+    const isNativeC0 = getAddress(details.poolKey.currency0) === zeroAddress;
+    const isNativeC1 = getAddress(details.poolKey.currency1) === zeroAddress;
 
-    const currentPosition = new V4Position({
-      pool,
-      liquidity: JSBI.BigInt(details.liquidity.toString()),
-      tickLower: details.tickLower,
-      tickUpper: details.tickUpper,
-    });
+    const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
 
-    const decreasePercentage = computeDecreasePercentage({
-      isFullBurn,
-      amountC0Raw,
-      amountC1Raw,
-      maxAmount0: currentPosition.amount0.quotient,
-      maxAmount1: currentPosition.amount1.quotient,
-    });
-
-    try {
-      const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
-
-      const response = await uniswapLPAPI.decrease({
+    const [response, state] = await Promise.all([
+      uniswapLPAPI.decrease({
         walletAddress: getAddress(userAddress),
         chainId,
         protocol: 'V4',
         token0Address: details.poolKey.currency0,
         token1Address: details.poolKey.currency1,
         nftTokenId: nftTokenId.toString(),
-        liquidityPercentageToDecrease: decreasePercentage,
+        liquidityPercentageToDecrease: pct,
         slippageTolerance: slippageBps / 100,
         deadline: deadlineSeconds,
         simulateTransaction: true,
-      });
+      }),
+      getPoolState(poolConfig.poolId as Hex, chainId),
+    ]);
 
-      const deadlineBigInt = BigInt(deadlineSeconds);
-      const pctFraction = Math.round(decreasePercentage * 100);
-      const liquidityToRemove = isFullBurn
-        ? currentPosition.liquidity.toString()
-        : JSBI.divide(JSBI.multiply(currentPosition.liquidity, JSBI.BigInt(pctFraction)), JSBI.BigInt(10000)).toString();
+    const liquidityToRemove = pct === 100
+      ? details.liquidity.toString()
+      : ((details.liquidity * BigInt(pct)) / 100n).toString();
 
-      return res.status(200).json({
-        needsApproval: false,
-        create: {
-          to: response.decrease.to,
-          from: response.decrease.from,
-          data: response.decrease.data,
-          value: response.decrease.value,
-          chainId,
-        },
-        transaction: {
-          to: response.decrease.to,
-          data: response.decrease.data,
-          value: response.decrease.value,
-        },
-        sqrtRatioX96: state.sqrtPriceX96.toString(),
-        currentTick: state.tick,
-        poolLiquidity: state.liquidity.toString(),
-        deadline: deadlineBigInt.toString(),
-        isFullBurn: decreasePercentage === 100,
-        gasFee: response.gasFee,
-        details: {
-          token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
-          token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },
-          liquidityToRemove,
-          tickLower: details.tickLower,
-          tickUpper: details.tickUpper,
-        },
-      });
-    } catch (e) {
-      if (e instanceof UniswapLPAPIError) {
-        console.error('[prepare-decrease-tx] Uniswap LP API error:', e.status, e.message);
-        return res.status(e.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${e.message}` });
-      }
-      throw e;
-    }
+    return res.status(200).json({
+      needsApproval: false,
+      create: {
+        to: response.decrease.to,
+        from: response.decrease.from,
+        data: response.decrease.data,
+        value: response.decrease.value,
+        chainId,
+      },
+      transaction: {
+        to: response.decrease.to,
+        data: response.decrease.data,
+        value: response.decrease.value,
+      },
+      sqrtRatioX96: state.sqrtPriceX96.toString(),
+      currentTick: state.tick,
+      poolLiquidity: state.liquidity.toString(),
+      deadline: deadlineSeconds.toString(),
+      isFullBurn: pct === 100,
+      gasFee: response.gasFee,
+      details: {
+        token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
+        token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },
+        liquidityToRemove,
+        tickLower: details.tickLower,
+        tickUpper: details.tickUpper,
+      },
+    });
   } catch (error: any) {
+    if (error instanceof UniswapLPAPIError) {
+      console.error('[prepare-decrease-tx] Uniswap LP API error:', error.status, error.message);
+      return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
+    }
     console.error('[API prepare-decrease-tx] Error:', error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return res.status(500).json({ message: errorMessage, error: process.env.NODE_ENV === 'development' ? error : undefined });

@@ -5,7 +5,7 @@
  * UY deposits use a separate ERC-4626 flow; this route rejects them.
  */
 
-import { nearestUsableTick, TickMath } from '@uniswap/v3-sdk';
+import { TickMath } from '@uniswap/v3-sdk';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isAddress, getAddress, maxUint256, parseUnits, parseAbi, type Hex } from 'viem';
 
@@ -174,12 +174,12 @@ export default async function handler(
       return res.status(400).json({ message: 'Unified Yield positions use a separate deposit flow.' });
     }
 
-    // Align ticks to the pool's spacing.
-    const clampedUserTickLower = Math.max(userTickLower, TickMath.MIN_TICK);
-    const clampedUserTickUpper = Math.min(userTickUpper, TickMath.MAX_TICK);
-    let tickLower = nearestUsableTick(clampedUserTickLower, poolConfig.tickSpacing);
-    let tickUpper = nearestUsableTick(clampedUserTickUpper, poolConfig.tickSpacing);
-    if (tickLower >= tickUpper) tickLower = tickUpper - poolConfig.tickSpacing;
+    // /lp/create snaps ticks to spacing internally; just clamp to absolute bounds.
+    const tickLower = Math.max(userTickLower, TickMath.MIN_TICK);
+    const tickUpper = Math.min(userTickUpper, TickMath.MAX_TICK);
+    if (tickLower >= tickUpper) {
+      return res.status(400).json({ message: 'tickLower must be less than tickUpper.' });
+    }
 
     const normalizedInput = normalizeAmountString(inputAmount);
     const parsedInputAmount = parseUnits(normalizedInput, inputTokenConfig.decimals);
@@ -222,15 +222,13 @@ export default async function handler(
 
       // ERC-20 approvals clear; require off-chain Permit2 batch signature when available.
       if (approvalCheck.v4BatchPermitData) {
+        const v4 = approvalCheck.v4BatchPermitData;
+        const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
         return res.status(200).json({
           needsApproval: true,
           approvalType: 'PERMIT2_BATCH_SIGNATURE',
-          permitBatchData: approvalCheck.v4BatchPermitData,
-          signatureDetails: {
-            domain: approvalCheck.v4BatchPermitData.domain,
-            types: approvalCheck.v4BatchPermitData.types,
-            primaryType: 'PermitBatch',
-          },
+          permitBatchData: v4,
+          signatureDetails: { domain: v4.domain, types: v4.types, primaryType },
         });
       }
     }

@@ -185,15 +185,13 @@ export default async function handler(
 
       // ERC-20 approvals clear; require off-chain Permit2 batch signature when available.
       if (approvalCheck.v4BatchPermitData) {
+        const v4 = approvalCheck.v4BatchPermitData;
+        const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
         return res.status(200).json({
           needsApproval: true,
           approvalType: 'PERMIT2_BATCH_SIGNATURE',
-          permitBatchData: approvalCheck.v4BatchPermitData,
-          signatureDetails: {
-            domain: approvalCheck.v4BatchPermitData.domain,
-            types: approvalCheck.v4BatchPermitData.types,
-            primaryType: 'PermitBatch',
-          },
+          permitBatchData: v4,
+          signatureDetails: { domain: v4.domain, types: v4.types, primaryType },
         });
       }
     }
