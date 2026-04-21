@@ -49,6 +49,29 @@ export interface CheckApprovalRequest {
   simulateTransaction?: boolean;
 }
 
+/**
+ * EIP-712 typed-data envelope returned by the LP API for off-chain Permit2 batch signing.
+ * Matches Uniswap's NullablePermit schema (domain/types/values).
+ */
+export interface V4BatchPermit {
+  domain: {
+    name: string;
+    chainId: number;
+    verifyingContract: string;
+  };
+  types: Record<string, Array<{ name: string; type: string }>>;
+  values: {
+    details: Array<{
+      token: string;
+      amount: string;
+      expiration: string;
+      nonce: string;
+    }>;
+    spender: string;
+    sigDeadline: string;
+  };
+}
+
 export interface CheckApprovalResponse {
   requestId: string;
   /** Ordered list of ERC-20 approval txs (empty if no approvals needed). */
@@ -56,7 +79,8 @@ export interface CheckApprovalResponse {
     transaction: LPTransactionRequest;
     tokenAddress: string;
   }>;
-  permitData?: unknown;
+  /** Present when ERC-20 approvals are clear and a Permit2 batch must be signed off-chain. */
+  v4BatchPermitData?: V4BatchPermit | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +122,10 @@ export interface CreatePositionRequest {
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;
+  /** Off-chain Permit2 batch typed-data (echoed from /lp/check_approval). */
+  v4BatchPermitData?: V4BatchPermit;
+  /** EIP-712 signature over v4BatchPermitData. */
+  signature?: string;
   simulateTransaction?: boolean;
 }
 
@@ -132,6 +160,10 @@ export interface IncreasePositionRequest {
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;
+  /** Off-chain Permit2 batch typed-data (echoed from /lp/check_approval). */
+  v4BatchPermitData?: V4BatchPermit;
+  /** EIP-712 signature over v4BatchPermitData. */
+  signature?: string;
   simulateTransaction?: boolean;
 }
 

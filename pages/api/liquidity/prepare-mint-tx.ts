@@ -36,6 +36,10 @@ interface PrepareMintTxRequest extends NextApiRequest {
     chainId: number;
     slippageBps?: number;
     deadlineMinutes?: number;
+    /** EIP-712 signature over the v4BatchPermitData typed data. */
+    permitSignature?: string;
+    /** Echoed v4BatchPermitData from a prior check_approval response. */
+    permitBatchData?: import('@/lib/liquidity/uniswap-api/client').V4BatchPermit;
   };
 }
 
@@ -49,6 +53,17 @@ interface ApprovalNeededResponse {
   erc20ApprovalNeeded: boolean;
   needsToken0Approval: boolean;
   needsToken1Approval: boolean;
+}
+
+interface PermitSignatureNeededResponse {
+  needsApproval: true;
+  approvalType: 'PERMIT2_BATCH_SIGNATURE';
+  permitBatchData: import('@/lib/liquidity/uniswap-api/client').V4BatchPermit;
+  signatureDetails: {
+    domain: { name: string; chainId: number; verifyingContract: string };
+    types: Record<string, Array<{ name: string; type: string }>>;
+    primaryType: string;
+  };
 }
 
 interface TransactionPreparedResponse {
@@ -70,7 +85,7 @@ interface TransactionPreparedResponse {
   };
 }
 
-type PrepareMintTxResponse = ApprovalNeededResponse | TransactionPreparedResponse | { message: string; error?: any };
+type PrepareMintTxResponse = ApprovalNeededResponse | PermitSignatureNeededResponse | TransactionPreparedResponse | { message: string; error?: any };
 
 function normalizeAmountString(raw: string): string {
   let s = (raw ?? '').toString().trim().replace(/,/g, '.');
@@ -127,6 +142,8 @@ export default async function handler(
       chainId,
       slippageBps = 50,
       deadlineMinutes = 30,
+      permitSignature,
+      permitBatchData,
     } = req.body;
 
     const chainIdError = validateChainId(chainId, networkMode);
@@ -167,37 +184,55 @@ export default async function handler(
     const normalizedInput = normalizeAmountString(inputAmount);
     const parsedInputAmount = parseUnits(normalizedInput, inputTokenConfig.decimals);
 
-    // 1. Approvals.
-    const approvalCheck = await uniswapLPAPI.checkApproval({
-      walletAddress: getAddress(userAddress),
-      chainId,
-      protocol: 'V4',
-      lpTokens: [
-        { tokenAddress: getAddress(token0Config.address), amount: parsedInputAmount.toString() },
-        { tokenAddress: getAddress(token1Config.address), amount: parsedInputAmount.toString() },
-      ],
-      action: 'CREATE',
-    });
+    // Skip approval check if frontend already has a signed Permit2 batch in hand.
+    const hasSignedPermit = !!(permitSignature && permitBatchData);
 
-    if (approvalCheck.transactions.length > 0) {
-      const next = approvalCheck.transactions[0];
-      const tokenAddr = getAddress(next.tokenAddress ?? next.transaction.to);
-      const isToken0 = tokenAddr.toLowerCase() === getAddress(token0Config.address).toLowerCase();
-      const needsToken0Approval = approvalCheck.transactions.some(t =>
-        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(token0Config.address).toLowerCase());
-      const needsToken1Approval = approvalCheck.transactions.some(t =>
-        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(token1Config.address).toLowerCase());
-      return res.status(200).json({
-        needsApproval: true,
-        approvalType: 'ERC20_TO_PERMIT2',
-        approvalTokenAddress: tokenAddr,
-        approvalTokenSymbol: (isToken0 ? token0Symbol : token1Symbol) as TokenSymbol,
-        approveToAddress: next.transaction.to,
-        approvalAmount: maxUint256.toString(),
-        erc20ApprovalNeeded: true,
-        needsToken0Approval,
-        needsToken1Approval,
+    if (!hasSignedPermit) {
+      const approvalCheck = await uniswapLPAPI.checkApproval({
+        walletAddress: getAddress(userAddress),
+        chainId,
+        protocol: 'V4',
+        lpTokens: [
+          { tokenAddress: getAddress(token0Config.address), amount: parsedInputAmount.toString() },
+          { tokenAddress: getAddress(token1Config.address), amount: parsedInputAmount.toString() },
+        ],
+        action: 'CREATE',
       });
+
+      if (approvalCheck.transactions.length > 0) {
+        const next = approvalCheck.transactions[0];
+        const tokenAddr = getAddress(next.tokenAddress ?? next.transaction.to);
+        const isToken0 = tokenAddr.toLowerCase() === getAddress(token0Config.address).toLowerCase();
+        const needsToken0Approval = approvalCheck.transactions.some(t =>
+          getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(token0Config.address).toLowerCase());
+        const needsToken1Approval = approvalCheck.transactions.some(t =>
+          getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(token1Config.address).toLowerCase());
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'ERC20_TO_PERMIT2',
+          approvalTokenAddress: tokenAddr,
+          approvalTokenSymbol: (isToken0 ? token0Symbol : token1Symbol) as TokenSymbol,
+          approveToAddress: next.transaction.to,
+          approvalAmount: maxUint256.toString(),
+          erc20ApprovalNeeded: true,
+          needsToken0Approval,
+          needsToken1Approval,
+        });
+      }
+
+      // ERC-20 approvals clear; require off-chain Permit2 batch signature when available.
+      if (approvalCheck.v4BatchPermitData) {
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'PERMIT2_BATCH_SIGNATURE',
+          permitBatchData: approvalCheck.v4BatchPermitData,
+          signatureDetails: {
+            domain: approvalCheck.v4BatchPermitData.domain,
+            types: approvalCheck.v4BatchPermitData.types,
+            primaryType: 'PermitBatch',
+          },
+        });
+      }
     }
 
     // 2. Build create tx.
@@ -220,6 +255,7 @@ export default async function handler(
       tickBounds: { tickLower, tickUpper },
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
+      ...(hasSignedPermit ? { v4BatchPermitData: permitBatchData, signature: permitSignature } : {}),
       simulateTransaction: true,
     });
 
