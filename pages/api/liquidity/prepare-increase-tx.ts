@@ -176,12 +176,16 @@ export default async function handler(
       const needsToken1Approval = approvalCheck.transactions.some(t =>
         getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c1.toLowerCase());
       const firstApproval = approvalCheck.transactions[0];
+      // Decode the real spender (Permit2) from the approve() calldata — `transaction.to`
+      // is the token contract; using it as the spender would leave Permit2 at 0 allowance.
+      const decodeApproveSpender = (data: string): `0x${string}` =>
+        getAddress(`0x${data.slice(34, 74)}`);
       const erc20Fields = firstApproval ? {
         erc20ApprovalNeeded: true as const,
         approvalTokenAddress: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to),
         approvalTokenSymbol: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to).toLowerCase() === c0.toLowerCase()
           ? defC0.symbol : defC1.symbol,
-        approveToAddress: firstApproval.transaction.to,
+        approveToAddress: decodeApproveSpender(firstApproval.transaction.data),
         approvalAmount: maxUint256.toString(),
         needsToken0Approval,
         needsToken1Approval,

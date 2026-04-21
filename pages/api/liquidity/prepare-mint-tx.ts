@@ -222,12 +222,18 @@ export default async function handler(
       const needsToken1Approval = approvalCheck.transactions.some(t =>
         getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === t1Addr.toLowerCase());
       const firstApproval = approvalCheck.transactions[0];
+      // Decode the real spender (Permit2) from the approve(address,uint256) calldata.
+      // `transaction.to` is the TOKEN contract — using it as the spender would call
+      // approve(token, max) on the token itself (a no-op) and leave Permit2 at zero
+      // allowance, which then reverts the mint with TRANSFER_FROM_FAILED.
+      const decodeApproveSpender = (data: string): `0x${string}` =>
+        getAddress(`0x${data.slice(34, 74)}`);
       const erc20Fields = firstApproval ? {
         erc20ApprovalNeeded: true as const,
         approvalTokenAddress: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to),
         approvalTokenSymbol: (getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to).toLowerCase() === t0Addr.toLowerCase()
           ? token0Symbol : token1Symbol) as TokenSymbol,
-        approveToAddress: firstApproval.transaction.to,
+        approveToAddress: decodeApproveSpender(firstApproval.transaction.data),
         approvalAmount: maxUint256.toString(),
         needsToken0Approval,
         needsToken1Approval,
