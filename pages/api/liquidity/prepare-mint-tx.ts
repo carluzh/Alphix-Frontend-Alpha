@@ -279,7 +279,9 @@ export default async function handler(
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
       ...(hasSignedPermit ? { batchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
-      simulateTransaction: true,
+      // Uniswap's simulator 502s on hooked-pool /lp/create calls carrying a real
+      // signature — fine without permit (first-leg gas preview), so only simulate then.
+      simulateTransaction: !hasSignedPermit,
     });
 
     // Fetch pool state for UI fields expected by response contract.

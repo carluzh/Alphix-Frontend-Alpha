@@ -227,7 +227,9 @@ export default async function handler(
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
       ...(hasSignedPermit ? { v4BatchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
-      simulateTransaction: true,
+      // Skip simulation on the signed leg — Uniswap's simulator 502s on hooked pools
+      // with real permits. Gas estimate is already known from first-leg preview.
+      simulateTransaction: !hasSignedPermit,
     });
 
     const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
