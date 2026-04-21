@@ -154,70 +154,21 @@ export default async function handler(
       return res.status(400).json({ message: 'Please enter a valid amount to add.' });
     }
 
-    // Skip approval check if frontend already has a signed Permit2 batch in hand.
+    // Reject partial permit payloads — indicates a client-side bug.
+    if ((permitSignature == null) !== (permitBatchData == null)) {
+      return res.status(400).json({ message: 'permitSignature and permitBatchData must be provided together.' });
+    }
     const hasSignedPermit = !!(permitSignature && permitBatchData);
 
-    if (!hasSignedPermit) {
-      const approvalCheck = await uniswapLPAPI.checkApproval({
-        walletAddress: getAddress(userAddress),
-        chainId,
-        protocol: 'V4',
-        lpTokens: [
-          { tokenAddress: details.poolKey.currency0, amount: amountC0Raw.toString() },
-          { tokenAddress: details.poolKey.currency1, amount: amountC1Raw.toString() },
-        ].filter(t => BigInt(t.amount) > 0n),
-        action: 'INCREASE',
-      });
-
-      const c0 = getAddress(details.poolKey.currency0);
-      const c1 = getAddress(details.poolKey.currency1);
-      const needsToken0Approval = approvalCheck.transactions.some(t =>
-        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c0.toLowerCase());
-      const needsToken1Approval = approvalCheck.transactions.some(t =>
-        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c1.toLowerCase());
-      const firstApproval = approvalCheck.transactions[0];
-      // Decode the real spender (Permit2) from the approve() calldata — `transaction.to`
-      // is the token contract; using it as the spender would leave Permit2 at 0 allowance.
-      const decodeApproveSpender = (data: string): `0x${string}` =>
-        getAddress(`0x${data.slice(34, 74)}`);
-      const erc20Fields = firstApproval ? {
-        erc20ApprovalNeeded: true as const,
-        approvalTokenAddress: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to),
-        approvalTokenSymbol: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to).toLowerCase() === c0.toLowerCase()
-          ? defC0.symbol : defC1.symbol,
-        approveToAddress: decodeApproveSpender(firstApproval.transaction.data),
-        approvalAmount: maxUint256.toString(),
-        needsToken0Approval,
-        needsToken1Approval,
-      } : null;
-
-      // Prefer signed-permit path; include ERC-20 fields alongside when also needed.
-      if (approvalCheck.v4BatchPermitData) {
-        const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);
-        const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
-        return res.status(200).json({
-          needsApproval: true,
-          approvalType: 'PERMIT2_BATCH_SIGNATURE',
-          permitBatchData: v4,
-          signatureDetails: { domain: v4.domain, types: v4.types, primaryType },
-          ...(erc20Fields ?? {}),
-        });
-      }
-
-      if (erc20Fields) {
-        return res.status(200).json({
-          needsApproval: true,
-          approvalType: 'ERC20_TO_PERMIT2',
-          ...erc20Fields,
-        });
-      }
-    }
-
-    // 2. Build increase tx.
     const independentIsToken0 = amountC0Raw > 0n;
     const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
+    const c0 = getAddress(details.poolKey.currency0);
+    const c1 = getAddress(details.poolKey.currency1);
 
-    const response = await uniswapLPAPI.increase({
+    // Step 1: build the increase tx. Without a signed permit we simulate to get the
+    // computed counterpart amount + gas; with a permit we skip simulation (502 bug on
+    // hooked pools) and rely on the wallet for gas estimation.
+    const createResponse = await uniswapLPAPI.increase({
       walletAddress: getAddress(userAddress),
       chainId,
       protocol: 'V4',
@@ -231,10 +182,63 @@ export default async function handler(
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
       ...(hasSignedPermit ? { v4BatchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
-      // Skip simulation on the signed leg — Uniswap's simulator 502s on hooked pools
-      // with real permits. Gas estimate is already known from first-leg preview.
       simulateTransaction: !hasSignedPermit,
     });
+
+    // Step 2: use the real token amounts from step 1 to check approvals. Passing real
+    // amounts (instead of the user-input wei for the dependent token too) lets the API
+    // correctly report that no approval is needed when allowance already suffices.
+    if (!hasSignedPermit) {
+      const approvalCheck = await uniswapLPAPI.checkApproval({
+        walletAddress: getAddress(userAddress),
+        chainId,
+        protocol: 'V4',
+        lpTokens: [
+          { tokenAddress: c0, amount: createResponse.token0.amount },
+          { tokenAddress: c1, amount: createResponse.token1.amount },
+        ].filter(t => BigInt(t.amount) > 0n),
+        action: 'INCREASE',
+      });
+
+      const needsToken0Approval = approvalCheck.transactions.some(t =>
+        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c0.toLowerCase());
+      const needsToken1Approval = approvalCheck.transactions.some(t =>
+        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c1.toLowerCase());
+      const firstApproval = approvalCheck.transactions[0];
+      const decodeApproveSpender = (data: string): `0x${string}` =>
+        getAddress(`0x${data.slice(34, 74)}`);
+      const erc20Fields = firstApproval ? {
+        erc20ApprovalNeeded: true as const,
+        approvalTokenAddress: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to),
+        approvalTokenSymbol: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to).toLowerCase() === c0.toLowerCase()
+          ? defC0.symbol : defC1.symbol,
+        approveToAddress: decodeApproveSpender(firstApproval.transaction.data),
+        approvalAmount: maxUint256.toString(),
+        needsToken0Approval,
+        needsToken1Approval,
+      } : null;
+
+      if (approvalCheck.v4BatchPermitData) {
+        const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);
+        const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'PERMIT2_BATCH_SIGNATURE',
+          permitBatchData: v4,
+          signatureDetails: { domain: v4.domain, types: v4.types, primaryType },
+          ...(erc20Fields ?? {}),
+        });
+      }
+      if (erc20Fields) {
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'ERC20_TO_PERMIT2',
+          ...erc20Fields,
+        });
+      }
+    }
+
+    const response = createResponse;
 
     const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
     const [slot0Result, liquidityResult] = await publicClient.multicall({

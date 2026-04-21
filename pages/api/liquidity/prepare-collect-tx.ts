@@ -41,7 +41,7 @@ export default async function handler(
 
     if (!userAddress || !isAddress(userAddress)) return res.status(400).json({ message: 'Invalid userAddress' });
     if (!tokenId) return res.status(400).json({ message: 'Missing tokenId' });
-    if (!chainId) return res.status(400).json({ message: 'Missing chainId' });
+    if (!chainId || typeof chainId !== 'number') return res.status(400).json({ message: 'Missing or invalid chainId' });
 
     const chainIdError = validateChainId(chainId, networkMode);
     if (chainIdError) return res.status(400).json({ message: chainIdError });
