@@ -59,6 +59,13 @@ interface PermitSignatureNeededResponse {
     types: Record<string, Array<{ name: string; type: string }>>;
     primaryType: string;
   };
+  erc20ApprovalNeeded?: boolean;
+  approvalTokenAddress?: string;
+  approvalTokenSymbol?: string;
+  approveToAddress?: string;
+  approvalAmount?: string;
+  needsToken0Approval?: boolean;
+  needsToken1Approval?: boolean;
 }
 
 interface TransactionPreparedResponse {
@@ -162,28 +169,25 @@ export default async function handler(
         action: 'INCREASE',
       });
 
-      if (approvalCheck.transactions.length > 0) {
-        const next = approvalCheck.transactions[0];
-        const tokenAddr = getAddress(next.tokenAddress ?? next.transaction.to);
-        const c0 = getAddress(details.poolKey.currency0);
-        const c1 = getAddress(details.poolKey.currency1);
-        const needsToken0Approval = approvalCheck.transactions.some(t =>
-          getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c0.toLowerCase());
-        const needsToken1Approval = approvalCheck.transactions.some(t =>
-          getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c1.toLowerCase());
-        return res.status(200).json({
-          needsApproval: true,
-          approvalType: 'ERC20_TO_PERMIT2',
-          approvalTokenAddress: tokenAddr,
-          approvalTokenSymbol: tokenAddr.toLowerCase() === c0.toLowerCase() ? defC0.symbol : defC1.symbol,
-          approveToAddress: next.transaction.to,
-          approvalAmount: maxUint256.toString(),
-          needsToken0Approval,
-          needsToken1Approval,
-        });
-      }
+      const c0 = getAddress(details.poolKey.currency0);
+      const c1 = getAddress(details.poolKey.currency1);
+      const needsToken0Approval = approvalCheck.transactions.some(t =>
+        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c0.toLowerCase());
+      const needsToken1Approval = approvalCheck.transactions.some(t =>
+        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c1.toLowerCase());
+      const firstApproval = approvalCheck.transactions[0];
+      const erc20Fields = firstApproval ? {
+        erc20ApprovalNeeded: true as const,
+        approvalTokenAddress: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to),
+        approvalTokenSymbol: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to).toLowerCase() === c0.toLowerCase()
+          ? defC0.symbol : defC1.symbol,
+        approveToAddress: firstApproval.transaction.to,
+        approvalAmount: maxUint256.toString(),
+        needsToken0Approval,
+        needsToken1Approval,
+      } : null;
 
-      // ERC-20 approvals clear; require off-chain Permit2 batch signature when available.
+      // Prefer signed-permit path; include ERC-20 fields alongside when also needed.
       if (approvalCheck.v4BatchPermitData) {
         const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);
         const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
@@ -192,6 +196,15 @@ export default async function handler(
           approvalType: 'PERMIT2_BATCH_SIGNATURE',
           permitBatchData: v4,
           signatureDetails: { domain: v4.domain, types: v4.types, primaryType },
+          ...(erc20Fields ?? {}),
+        });
+      }
+
+      if (erc20Fields) {
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'ERC20_TO_PERMIT2',
+          ...erc20Fields,
         });
       }
     }

@@ -3,6 +3,8 @@
  *
  * Approvals come from /lp/check_approval; the final create tx from /lp/create.
  * UY deposits use a separate ERC-4626 flow; this route rejects them.
+ * When v4BatchPermitData is present, returns PERMIT2_BATCH_SIGNATURE alongside
+ * any ERC-20 approval fields so the frontend builds approval+sig+create steps.
  */
 
 import { TickMath } from '@uniswap/v3-sdk';
@@ -55,6 +57,12 @@ interface ApprovalNeededResponse {
   needsToken1Approval: boolean;
 }
 
+/**
+ * Returned when an off-chain Permit2 batch signature is required. May ALSO carry
+ * ERC-20 approval fields when `erc20ApprovalNeeded` is true — the frontend then
+ * builds steps for both the on-chain approve(s) AND the off-chain signature in a
+ * single context (matches master's pre-sunset shape).
+ */
 interface PermitSignatureNeededResponse {
   needsApproval: true;
   approvalType: 'PERMIT2_BATCH_SIGNATURE';
@@ -64,6 +72,13 @@ interface PermitSignatureNeededResponse {
     types: Record<string, Array<{ name: string; type: string }>>;
     primaryType: string;
   };
+  erc20ApprovalNeeded?: boolean;
+  approvalTokenAddress?: string;
+  approvalTokenSymbol?: TokenSymbol;
+  approveToAddress?: string;
+  approvalAmount?: string;
+  needsToken0Approval?: boolean;
+  needsToken1Approval?: boolean;
 }
 
 interface TransactionPreparedResponse {
@@ -199,28 +214,28 @@ export default async function handler(
         action: 'CREATE',
       });
 
-      if (approvalCheck.transactions.length > 0) {
-        const next = approvalCheck.transactions[0];
-        const tokenAddr = getAddress(next.tokenAddress ?? next.transaction.to);
-        const isToken0 = tokenAddr.toLowerCase() === getAddress(token0Config.address).toLowerCase();
-        const needsToken0Approval = approvalCheck.transactions.some(t =>
-          getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(token0Config.address).toLowerCase());
-        const needsToken1Approval = approvalCheck.transactions.some(t =>
-          getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === getAddress(token1Config.address).toLowerCase());
-        return res.status(200).json({
-          needsApproval: true,
-          approvalType: 'ERC20_TO_PERMIT2',
-          approvalTokenAddress: tokenAddr,
-          approvalTokenSymbol: (isToken0 ? token0Symbol : token1Symbol) as TokenSymbol,
-          approveToAddress: next.transaction.to,
-          approvalAmount: maxUint256.toString(),
-          erc20ApprovalNeeded: true,
-          needsToken0Approval,
-          needsToken1Approval,
-        });
-      }
+      // Compute ERC-20 approval metadata (if any on-chain approvals are needed).
+      const t0Addr = getAddress(token0Config.address);
+      const t1Addr = getAddress(token1Config.address);
+      const needsToken0Approval = approvalCheck.transactions.some(t =>
+        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === t0Addr.toLowerCase());
+      const needsToken1Approval = approvalCheck.transactions.some(t =>
+        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === t1Addr.toLowerCase());
+      const firstApproval = approvalCheck.transactions[0];
+      const erc20Fields = firstApproval ? {
+        erc20ApprovalNeeded: true as const,
+        approvalTokenAddress: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to),
+        approvalTokenSymbol: (getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to).toLowerCase() === t0Addr.toLowerCase()
+          ? token0Symbol : token1Symbol) as TokenSymbol,
+        approveToAddress: firstApproval.transaction.to,
+        approvalAmount: maxUint256.toString(),
+        needsToken0Approval,
+        needsToken1Approval,
+      } : null;
 
-      // ERC-20 approvals clear; require off-chain Permit2 batch signature when available.
+      // Prefer the signed-permit path. When v4BatchPermitData is present, return it
+      // together with any required ERC-20 approval fields (matches master's pre-sunset
+      // single-response shape so the frontend builds approval + sig + async-create steps).
       if (approvalCheck.v4BatchPermitData) {
         const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);
         const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
@@ -229,6 +244,16 @@ export default async function handler(
           approvalType: 'PERMIT2_BATCH_SIGNATURE',
           permitBatchData: v4,
           signatureDetails: { domain: v4.domain, types: v4.types, primaryType },
+          ...(erc20Fields ?? {}),
+        });
+      }
+
+      // No batch permit available — fall back to the legacy on-chain Permit2 approve flow.
+      if (erc20Fields) {
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'ERC20_TO_PERMIT2',
+          ...erc20Fields,
         });
       }
     }
