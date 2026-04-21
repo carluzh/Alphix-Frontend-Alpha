@@ -14,7 +14,6 @@
 import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import * as Sentry from '@sentry/nextjs';
 import type { Address } from 'viem';
 import type { TokenSymbol } from '@/lib/pools-config';
 import type { MintTxApiResponse } from '@/lib/liquidity/transaction/context/buildLiquidityTxContext';
@@ -159,27 +158,17 @@ export function usePrepareMintQuery(
 
   // Surface a single toast when the API rate limit survives our in-route + TanStack
   // retries (transient spike absorbed silently; sustained overload becomes visible).
+  // Sentry capture happens server-side in the route — no client capture here to avoid
+  // double-reporting and drowning Sentry with user-driven 4xx / AbortError noise.
   const lastToastAtRef = useRef(0);
-  const lastSentryAtRef = useRef(0);
   useEffect(() => {
-    if (!error) return;
-    const status = (error as any)?.status as number | undefined;
-    if (status === 429 && Date.now() - lastToastAtRef.current > 10_000) {
+    if ((error as any)?.status === 429 && Date.now() - lastToastAtRef.current > 10_000) {
       lastToastAtRef.current = Date.now();
       toast.error('Uniswap LP service is busy', {
         description: 'Refresh in a moment — your transaction is not affected.',
       });
     }
-    // Capture non-rate-limit prepare-mint failures to Sentry (rate limit is noise).
-    // Throttle to once/minute per hook instance to avoid drowning Sentry during outages.
-    if (status !== 429 && Date.now() - lastSentryAtRef.current > 60_000) {
-      lastSentryAtRef.current = Date.now();
-      Sentry.captureException(error, {
-        tags: { hook: 'usePrepareMintQuery', status: String(status ?? 'unknown') },
-        extra: { userAddress, poolId, chainId, tickLower, tickUpper, inputTokenSymbol },
-      });
-    }
-  }, [error, userAddress, poolId, chainId, tickLower, tickUpper, inputTokenSymbol]);
+  }, [error]);
 
   const gasFee = (() => {
     if (!data?.gasFee) return undefined;

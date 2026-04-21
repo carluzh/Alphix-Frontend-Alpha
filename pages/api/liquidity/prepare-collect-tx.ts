@@ -5,7 +5,7 @@ import { isAddress, getAddress } from 'viem';
 import { getAllPools } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
-import { getPositionDetails, getPositionOwner } from '@/lib/liquidity/liquidity-utils';
+import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
 
@@ -42,19 +42,12 @@ export default async function handler(
 
     if (!userAddress || !isAddress(userAddress)) return res.status(400).json({ message: 'Invalid userAddress' });
     if (!tokenId) return res.status(400).json({ message: 'Missing tokenId' });
-    if (!chainId || typeof chainId !== 'number') return res.status(400).json({ message: 'Missing or invalid chainId' });
+    if (!chainId) return res.status(400).json({ message: 'Missing chainId' });
 
     const chainIdError = validateChainId(chainId, networkMode);
     if (chainIdError) return res.status(400).json({ message: chainIdError });
 
-    const nftTokenId = BigInt(tokenId);
-    const [details, owner] = await Promise.all([
-      getPositionDetails(nftTokenId, chainId),
-      getPositionOwner(nftTokenId, chainId),
-    ]);
-    if (owner.toLowerCase() !== getAddress(userAddress).toLowerCase()) {
-      return res.status(403).json({ message: 'Wallet does not own this position.' });
-    }
+    const details = await getPositionDetails(BigInt(tokenId), chainId);
     const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
 
     if (!poolConfig) {

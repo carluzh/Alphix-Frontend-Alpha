@@ -93,24 +93,6 @@ export async function getPositionDetails(tokenId: bigint, chainId: number): Prom
     };
 }
 
-/**
- * Fetch the current on-chain owner of a V4 position NFT. Used to guard prepare
- * routes — Uniswap's LP API does NOT validate ownership; sending a foreign tokenId
- * would return a valid-looking tx that reverts on-chain and wastes the caller's gas.
- */
-export async function getPositionOwner(tokenId: bigint, chainId: number): Promise<Address> {
-    const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
-    const publicClient = createNetworkClient(networkMode);
-    const pmAddress = getPositionManagerAddress(networkMode) as Address;
-    const pmAbi: Abi = position_manager_abi as unknown as Abi;
-    const owner = await publicClient.readContract({
-        address: pmAddress,
-        abi: pmAbi,
-        functionName: 'ownerOf',
-        args: [tokenId],
-    });
-    return owner as Address;
-}
 
 export interface PoolState {
     sqrtPriceX96: bigint;
