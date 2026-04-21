@@ -50,16 +50,18 @@ export interface CheckApprovalRequest {
 }
 
 /**
- * EIP-712 typed-data envelope returned by the LP API for off-chain Permit2 batch signing.
- * Matches Uniswap's NullablePermit schema (domain/types/values).
+ * Raw v4BatchPermitData as returned by Uniswap's /lp/check_approval.
+ * Note quirks vs. standard EIP-712: each type wraps its array in `{ fields: [...] }`,
+ * and `domain.chainId` is a chain-name string ("BASE", "ARBITRUM") not a number.
+ * Use {@link normalizeV4BatchPermit} to convert before signing or surfacing to wagmi.
  */
-export interface V4BatchPermit {
+export interface V4BatchPermitRaw {
   domain: {
     name: string;
-    chainId: number;
+    chainId: string | number;
     verifyingContract: string;
   };
-  types: Record<string, Array<{ name: string; type: string }>>;
+  types: Record<string, { fields: Array<{ name: string; type: string }> }>;
   values: {
     details: Array<{
       token: string;
@@ -72,6 +74,52 @@ export interface V4BatchPermit {
   };
 }
 
+/**
+ * Standard EIP-712 typed-data shape consumed by viem/wagmi `signTypedData`.
+ */
+export interface V4BatchPermit {
+  domain: {
+    name: string;
+    chainId: number;
+    verifyingContract: string;
+  };
+  types: Record<string, Array<{ name: string; type: string }>>;
+  values: V4BatchPermitRaw['values'];
+}
+
+/**
+ * Normalize Uniswap's response shape into standard EIP-712 typed data.
+ * Pass `chainId` to override the string-typed `domain.chainId`.
+ */
+export function normalizeV4BatchPermit(raw: V4BatchPermitRaw, chainId: number): V4BatchPermit {
+  const types: Record<string, Array<{ name: string; type: string }>> = {};
+  for (const [typeName, def] of Object.entries(raw.types)) {
+    types[typeName] = def.fields;
+  }
+  return {
+    domain: { ...raw.domain, chainId },
+    types,
+    values: raw.values,
+  };
+}
+
+/**
+ * Inverse of {@link normalizeV4BatchPermit}. /lp/create and /lp/increase require
+ * the `{fields: [...]}` wrapper on each type entry; sending a flat array errors with
+ * "cannot decode message uniswap.liquidity.v1.TypeFieldArray from JSON: array".
+ */
+export function denormalizeV4BatchPermit(normalized: V4BatchPermit): V4BatchPermitRaw {
+  const types: Record<string, { fields: Array<{ name: string; type: string }> }> = {};
+  for (const [typeName, fields] of Object.entries(normalized.types)) {
+    types[typeName] = { fields };
+  }
+  return {
+    domain: normalized.domain,
+    types,
+    values: normalized.values,
+  };
+}
+
 export interface CheckApprovalResponse {
   requestId: string;
   /** Ordered list of ERC-20 approval txs (empty if no approvals needed). */
@@ -79,8 +127,8 @@ export interface CheckApprovalResponse {
     transaction: LPTransactionRequest;
     tokenAddress: string;
   }>;
-  /** Present when ERC-20 approvals are clear and a Permit2 batch must be signed off-chain. */
-  v4BatchPermitData?: V4BatchPermit | null;
+  /** Raw v4 batch permit envelope; pass through {@link normalizeV4BatchPermit} before use. */
+  v4BatchPermitData?: V4BatchPermitRaw | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,9 +170,13 @@ export interface CreatePositionRequest {
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;
-  /** Off-chain Permit2 batch typed-data (echoed from /lp/check_approval). */
-  v4BatchPermitData?: V4BatchPermit;
-  /** EIP-712 signature over v4BatchPermitData. */
+  /**
+   * Off-chain Permit2 batch typed-data echoed from /lp/check_approval.
+   * Note: /lp/create names this `batchPermitData` (not `v4BatchPermitData` like /lp/increase).
+   * Send the raw shape returned by /lp/check_approval, NOT the normalized form.
+   */
+  batchPermitData?: V4BatchPermitRaw;
+  /** EIP-712 signature over the (normalized) batchPermitData typed data. */
   signature?: string;
   simulateTransaction?: boolean;
 }
@@ -160,9 +212,9 @@ export interface IncreasePositionRequest {
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;
-  /** Off-chain Permit2 batch typed-data (echoed from /lp/check_approval). */
-  v4BatchPermitData?: V4BatchPermit;
-  /** EIP-712 signature over v4BatchPermitData. */
+  /** Off-chain Permit2 batch typed-data (echoed from /lp/check_approval). Raw shape. */
+  v4BatchPermitData?: V4BatchPermitRaw;
+  /** EIP-712 signature over the (normalized) v4BatchPermitData typed data. */
   signature?: string;
   simulateTransaction?: boolean;
 }

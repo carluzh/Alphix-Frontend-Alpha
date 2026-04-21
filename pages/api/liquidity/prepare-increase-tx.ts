@@ -15,7 +15,7 @@ import { createNetworkClient } from '@/lib/viemClient';
 import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
 import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
-import { uniswapLPAPI, UniswapLPAPIError } from '@/lib/liquidity/uniswap-api/client';
+import { uniswapLPAPI, UniswapLPAPIError, normalizeV4BatchPermit, denormalizeV4BatchPermit } from '@/lib/liquidity/uniswap-api/client';
 import { getTokenSymbolByAddress, getToken } from '@/lib/pools-config';
 import { isAddress, getAddress, maxUint256, zeroAddress, type Hex } from 'viem';
 
@@ -34,7 +34,7 @@ interface PrepareIncreaseTxRequest extends NextApiRequest {
     deadlineMinutes?: number;
     /** EIP-712 signature over the v4BatchPermitData typed data. */
     permitSignature?: string;
-    /** Echoed v4BatchPermitData from a prior check_approval response. */
+    /** Normalized batch permit data (echoed from prepare-increase-tx's first response). Denormalized before forwarding to /lp/increase. */
     permitBatchData?: import('@/lib/liquidity/uniswap-api/client').V4BatchPermit;
   };
 }
@@ -185,7 +185,7 @@ export default async function handler(
 
       // ERC-20 approvals clear; require off-chain Permit2 batch signature when available.
       if (approvalCheck.v4BatchPermitData) {
-        const v4 = approvalCheck.v4BatchPermitData;
+        const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);
         const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
         return res.status(200).json({
           needsApproval: true,
@@ -213,7 +213,7 @@ export default async function handler(
       },
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
-      ...(hasSignedPermit ? { v4BatchPermitData: permitBatchData, signature: permitSignature } : {}),
+      ...(hasSignedPermit ? { v4BatchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
       simulateTransaction: true,
     });
 

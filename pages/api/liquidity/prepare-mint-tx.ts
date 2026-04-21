@@ -21,7 +21,7 @@ import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { createNetworkClient } from '@/lib/viemClient';
 import { isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
-import { uniswapLPAPI, UniswapLPAPIError } from '@/lib/liquidity/uniswap-api/client';
+import { uniswapLPAPI, UniswapLPAPIError, normalizeV4BatchPermit, denormalizeV4BatchPermit } from '@/lib/liquidity/uniswap-api/client';
 
 interface PrepareMintTxRequest extends NextApiRequest {
   body: {
@@ -38,7 +38,7 @@ interface PrepareMintTxRequest extends NextApiRequest {
     deadlineMinutes?: number;
     /** EIP-712 signature over the v4BatchPermitData typed data. */
     permitSignature?: string;
-    /** Echoed v4BatchPermitData from a prior check_approval response. */
+    /** Normalized batch permit data (echoed from prepare-mint-tx's first response). Denormalized before forwarding to /lp/create. */
     permitBatchData?: import('@/lib/liquidity/uniswap-api/client').V4BatchPermit;
   };
 }
@@ -222,7 +222,7 @@ export default async function handler(
 
       // ERC-20 approvals clear; require off-chain Permit2 batch signature when available.
       if (approvalCheck.v4BatchPermitData) {
-        const v4 = approvalCheck.v4BatchPermitData;
+        const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);
         const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
         return res.status(200).json({
           needsApproval: true,
@@ -253,7 +253,7 @@ export default async function handler(
       tickBounds: { tickLower, tickUpper },
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
-      ...(hasSignedPermit ? { v4BatchPermitData: permitBatchData, signature: permitSignature } : {}),
+      ...(hasSignedPermit ? { batchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
       simulateTransaction: true,
     });
 
