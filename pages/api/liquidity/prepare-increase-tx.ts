@@ -168,10 +168,13 @@ export default async function handler(
     // Step 1: build the increase tx. Without a signed permit we simulate to get the
     // computed counterpart amount + gas; with a permit we skip simulation (502 bug on
     // hooked pools) and rely on the wallet for gas estimation.
-    const createResponse = await uniswapLPAPI.increase({
+    // If simulation fails with TRANSFER_FROM_FAILED (user lacks USDC→Permit2 allowance
+    // or the batch permit), we don't have gas but we still need the tx to hand off to
+    // check_approval — retry without simulation.
+    const baseReq = {
       walletAddress: getAddress(userAddress),
       chainId,
-      protocol: 'V4',
+      protocol: 'V4' as const,
       token0Address: details.poolKey.currency0,
       token1Address: details.poolKey.currency1,
       nftTokenId: nftTokenId.toString(),
@@ -182,8 +185,17 @@ export default async function handler(
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
       ...(hasSignedPermit ? { v4BatchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
-      simulateTransaction: !hasSignedPermit,
-    });
+    };
+    let createResponse;
+    try {
+      createResponse = await uniswapLPAPI.increase({ ...baseReq, simulateTransaction: !hasSignedPermit });
+    } catch (e) {
+      if (e instanceof UniswapLPAPIError && e.status === 404 && /FAILED_TO_ESTIMATE_GAS|TRANSFER_FROM_FAILED/i.test(e.message)) {
+        createResponse = await uniswapLPAPI.increase({ ...baseReq, simulateTransaction: false });
+      } else {
+        throw e;
+      }
+    }
 
     // Step 2: use the real token amounts from step 1 to check approvals. Passing real
     // amounts (instead of the user-input wei for the dependent token too) lets the API

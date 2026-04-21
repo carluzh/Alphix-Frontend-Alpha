@@ -220,10 +220,13 @@ export default async function handler(
     // Step 1: build the create tx. Without a signed permit we simulate to get amounts
     // and gas; with a permit we skip simulation (Uniswap's simulator 502s on hooked
     // pools with real permits) and trust the wallet to estimate gas before broadcast.
-    const createResponse = await uniswapLPAPI.create({
+    // If simulation reverts with TRANSFER_FROM_FAILED (user lacks ERC-20→Permit2 or
+    // the batch permit), retry without simulation — we still need the tx to hand off
+    // to check_approval for the real approval state.
+    const baseReq = {
       walletAddress: getAddress(userAddress),
       chainId,
-      protocol: 'V4',
+      protocol: 'V4' as const,
       existingPool: {
         token0Address: getAddress(token0Config.address),
         token1Address: getAddress(token1Config.address),
@@ -234,8 +237,17 @@ export default async function handler(
       slippageTolerance: slippageBps / 100,
       deadline: deadlineSeconds,
       ...(hasSignedPermit ? { batchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
-      simulateTransaction: !hasSignedPermit,
-    });
+    };
+    let createResponse;
+    try {
+      createResponse = await uniswapLPAPI.create({ ...baseReq, simulateTransaction: !hasSignedPermit });
+    } catch (e) {
+      if (e instanceof UniswapLPAPIError && e.status === 404 && /FAILED_TO_ESTIMATE_GAS|TRANSFER_FROM_FAILED/i.test(e.message)) {
+        createResponse = await uniswapLPAPI.create({ ...baseReq, simulateTransaction: false });
+      } else {
+        throw e;
+      }
+    }
 
     // Step 2: if no permit was provided yet, use the real token amounts from step 1
     // to check approvals. Passing real amounts (vs the inflated input-wei-for-both
