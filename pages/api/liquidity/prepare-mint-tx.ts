@@ -123,7 +123,8 @@ export default async function handler(
       userTickLower,
       userTickUpper,
       chainId,
-      deadlineMinutes = 20,
+      slippageBps = 50,
+      deadlineMinutes = 30,
     } = req.body;
 
     const chainIdError = validateChainId(chainId, networkMode);
@@ -202,6 +203,8 @@ export default async function handler(
       ? getAddress(token0Config.address)
       : getAddress(token1Config.address);
 
+    const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
+
     const response = await uniswapLPAPI.create({
       walletAddress: getAddress(userAddress),
       chainId,
@@ -213,6 +216,8 @@ export default async function handler(
       },
       independentToken: { tokenAddress: inputTokenAddress, amount: parsedInputAmount.toString() },
       tickBounds: { tickLower, tickUpper },
+      slippageTolerance: slippageBps / 100,
+      deadline: deadlineSeconds,
       simulateTransaction: false,
     });
 
@@ -229,8 +234,7 @@ export default async function handler(
       : ([0n, 0, 0, 0] as const);
     const curLiquidity = liquidityResult.status === 'success' ? (liquidityResult.result as bigint) : 0n;
 
-    const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
-    const deadlineBigInt = latestBlock.timestamp + BigInt(deadlineMinutes) * 60n;
+    const deadlineBigInt = BigInt(deadlineSeconds);
 
     return res.status(200).json({
       needsApproval: false,

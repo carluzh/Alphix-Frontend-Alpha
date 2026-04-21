@@ -97,7 +97,8 @@ export default async function handler(
       decreaseAmount1: inputAmount1,
       chainId,
       isFullBurn = false,
-      deadlineMinutes = 20,
+      slippageBps = 50,
+      deadlineMinutes = 30,
     } = req.body;
 
     const chainIdError = validateChainId(chainId, networkMode);
@@ -140,6 +141,8 @@ export default async function handler(
     });
 
     try {
+      const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
+
       const response = await uniswapLPAPI.decrease({
         walletAddress: getAddress(userAddress),
         chainId,
@@ -148,11 +151,12 @@ export default async function handler(
         token1Address: details.poolKey.currency1,
         nftTokenId: nftTokenId.toString(),
         liquidityPercentageToDecrease: decreasePercentage,
+        slippageTolerance: slippageBps / 100,
+        deadline: deadlineSeconds,
         simulateTransaction: false,
       });
 
-      const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
-      const deadlineBigInt = latestBlock.timestamp + BigInt(deadlineMinutes) * 60n;
+      const deadlineBigInt = BigInt(deadlineSeconds);
       const pctFraction = Math.round(decreasePercentage * 100);
       const liquidityToRemove = isFullBurn
         ? currentPosition.liquidity.toString()

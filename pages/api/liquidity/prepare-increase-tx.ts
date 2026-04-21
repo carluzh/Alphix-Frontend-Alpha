@@ -92,7 +92,8 @@ export default async function handler(
       amount0: inputAmount0,
       amount1: inputAmount1,
       chainId,
-      deadlineMinutes = 20,
+      slippageBps = 50,
+      deadlineMinutes = 30,
     } = req.body;
 
     const chainIdError = validateChainId(chainId, networkMode);
@@ -162,6 +163,8 @@ export default async function handler(
 
     // 2. Build increase tx.
     const independentIsToken0 = amountC0Raw > 0n;
+    const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
+
     const response = await uniswapLPAPI.increase({
       walletAddress: getAddress(userAddress),
       chainId,
@@ -173,6 +176,8 @@ export default async function handler(
         tokenAddress: independentIsToken0 ? details.poolKey.currency0 : details.poolKey.currency1,
         amount: (independentIsToken0 ? amountC0Raw : amountC1Raw).toString(),
       },
+      slippageTolerance: slippageBps / 100,
+      deadline: deadlineSeconds,
       simulateTransaction: false,
     });
 
@@ -189,8 +194,7 @@ export default async function handler(
       : ([0n, 0, 0, 0] as const);
     const curLiquidity = liquidityResult.status === 'success' ? (liquidityResult.result as bigint) : 0n;
 
-    const latestBlock = await publicClient.getBlock({ blockTag: 'latest' });
-    const deadlineBigInt = latestBlock.timestamp + BigInt(deadlineMinutes) * 60n;
+    const deadlineBigInt = BigInt(deadlineSeconds);
 
     return res.status(200).json({
       needsApproval: false,

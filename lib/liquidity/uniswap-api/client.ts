@@ -94,6 +94,10 @@ export interface CreatePositionRequest {
   /** Exactly one of tickBounds or priceBounds. */
   tickBounds?: TickBounds;
   priceBounds?: PriceBounds;
+  /** Decimal percent (0.5 = 0.5%). API default is 0.5 if omitted. */
+  slippageTolerance?: number;
+  /** Unix timestamp in seconds. API default is +20min if omitted. */
+  deadline?: number;
   simulateTransaction?: boolean;
 }
 
@@ -123,6 +127,10 @@ export interface IncreasePositionRequest {
   token1Address: string;
   nftTokenId: string;
   independentToken: LPToken;
+  /** Decimal percent (0.5 = 0.5%). API default is 0.5 if omitted. */
+  slippageTolerance?: number;
+  /** Unix timestamp in seconds. API default is +20min if omitted. */
+  deadline?: number;
   simulateTransaction?: boolean;
 }
 
@@ -147,6 +155,10 @@ export interface DecreasePositionRequest {
   nftTokenId: string;
   /** 1-100. */
   liquidityPercentageToDecrease: number;
+  /** Decimal percent (0.5 = 0.5%). API default is 0.5 if omitted. */
+  slippageTolerance?: number;
+  /** Unix timestamp in seconds. API default is +20min if omitted. */
+  deadline?: number;
   simulateTransaction?: boolean;
 }
 
