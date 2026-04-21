@@ -294,6 +294,18 @@ export class UniswapLPAPIError extends Error {
   }
 }
 
+/**
+ * Thrown after the retry budget is exhausted on a rate-limit response (HTTP 403
+ * with body `{"message":"Forbidden"}`). Routes translate this to a 429 to the
+ * frontend so the UI can show a "slow down" toast instead of a generic error.
+ */
+export class UniswapLPAPIRateLimitError extends UniswapLPAPIError {
+  constructor() {
+    super(403, 'rate_limited', 'Uniswap LP API rate limit exceeded. Please retry in a moment.');
+    this.name = 'UniswapLPAPIRateLimitError';
+  }
+}
+
 function getApiKey(): string {
   const key = process.env.UNISWAP_API_KEY;
   if (!key) {
@@ -302,25 +314,46 @@ function getApiKey(): string {
   return key;
 }
 
-async function post<Req, Res>(path: string, body: Req): Promise<Res> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': getApiKey(),
-      Accept: 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  let parsed: any;
-  try { parsed = JSON.parse(text); } catch { parsed = text; }
+/** Retry budget for rate-limit (HTTP 403) responses. The API enforces 6 req/sec with
+ *  no Retry-After header, so we back off with exponential delays. Three attempts lets
+ *  us ride out typical multi-user burst spikes while staying responsive. */
+const RATE_LIMIT_RETRY_DELAYS_MS = [200, 500, 1100];
 
-  if (!res.ok) {
-    const message = parsed?.message ?? (typeof parsed === 'string' ? parsed : `HTTP ${res.status}`);
-    throw new UniswapLPAPIError(res.status, parsed?.code, message, parsed?.details);
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+async function post<Req, Res>(path: string, body: Req): Promise<Res> {
+  for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_DELAYS_MS.length; attempt++) {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': getApiKey(),
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let parsed: any;
+    try { parsed = JSON.parse(text); } catch { parsed = text; }
+
+    // Rate-limited: back off and retry until budget is exhausted.
+    const isRateLimit = res.status === 403 && parsed?.message === 'Forbidden';
+    if (isRateLimit && attempt < RATE_LIMIT_RETRY_DELAYS_MS.length) {
+      await sleep(RATE_LIMIT_RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+    if (isRateLimit) {
+      throw new UniswapLPAPIRateLimitError();
+    }
+
+    if (!res.ok) {
+      const message = parsed?.message ?? (typeof parsed === 'string' ? parsed : `HTTP ${res.status}`);
+      throw new UniswapLPAPIError(res.status, parsed?.code, message, parsed?.details);
+    }
+    return parsed as Res;
   }
-  return parsed as Res;
+  // Unreachable; the loop either returns a success or throws.
+  throw new UniswapLPAPIRateLimitError();
 }
 
 // ---------------------------------------------------------------------------

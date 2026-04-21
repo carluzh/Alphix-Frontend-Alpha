@@ -23,7 +23,7 @@ import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { createNetworkClient } from '@/lib/viemClient';
 import { isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
-import { uniswapLPAPI, UniswapLPAPIError, normalizeV4BatchPermit, denormalizeV4BatchPermit } from '@/lib/liquidity/uniswap-api/client';
+import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError, normalizeV4BatchPermit, denormalizeV4BatchPermit } from '@/lib/liquidity/uniswap-api/client';
 
 interface PrepareMintTxRequest extends NextApiRequest {
   body: {
@@ -94,9 +94,8 @@ interface TransactionPreparedResponse {
   details: {
     token0: { address: string; symbol: string; amount: string };
     token1: { address: string; symbol: string; amount: string };
-    liquidity: string;
-    finalTickLower: number;
-    finalTickUpper: number;
+    tickLower: number;
+    tickUpper: number;
   };
 }
 
@@ -337,12 +336,16 @@ export default async function handler(
       details: {
         token0: { address: getAddress(token0Config.address), symbol: token0Symbol, amount: response.token0.amount },
         token1: { address: getAddress(token1Config.address), symbol: token1Symbol, amount: response.token1.amount },
-        liquidity: '0',
-        finalTickLower: response.tickLower,
-        finalTickUpper: response.tickUpper,
+        tickLower: response.tickLower,
+        tickUpper: response.tickUpper,
       },
     });
   } catch (error: any) {
+    if (error instanceof UniswapLPAPIRateLimitError) {
+      console.warn('[prepare-mint-tx] Rate limit exhausted after retries');
+      res.setHeader('Retry-After', '2');
+      return res.status(429).json({ message: 'Busy — please retry in a moment.' });
+    }
     if (error instanceof UniswapLPAPIError) {
       console.error('[prepare-mint-tx] Uniswap LP API error:', error.status, error.message);
       return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });

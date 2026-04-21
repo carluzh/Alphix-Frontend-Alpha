@@ -12,7 +12,7 @@ import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
 import { getPositionDetails, getPoolState } from '@/lib/liquidity/liquidity-utils';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
-import { uniswapLPAPI, UniswapLPAPIError } from '@/lib/liquidity/uniswap-api/client';
+import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
 import { isAddress, getAddress, zeroAddress, type Hex } from 'viem';
 
 interface PrepareDecreaseTxRequest extends NextApiRequest {
@@ -158,6 +158,11 @@ export default async function handler(
       },
     });
   } catch (error: any) {
+    if (error instanceof UniswapLPAPIRateLimitError) {
+      console.warn('[prepare-decrease-tx] Rate limit exhausted after retries');
+      res.setHeader('Retry-After', '2');
+      return res.status(429).json({ message: 'Busy — please retry in a moment.' });
+    }
     if (error instanceof UniswapLPAPIError) {
       console.error('[prepare-decrease-tx] Uniswap LP API error:', error.status, error.message);
       return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });

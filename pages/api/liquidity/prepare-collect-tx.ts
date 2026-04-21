@@ -6,7 +6,7 @@ import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
 import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
-import { uniswapLPAPI, UniswapLPAPIError } from '@/lib/liquidity/uniswap-api/client';
+import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
 
 interface PrepareCollectTxRequest extends NextApiRequest {
   body: {
@@ -71,6 +71,11 @@ export default async function handler(
         gasFee: response.gasFee,
       });
     } catch (e) {
+      if (e instanceof UniswapLPAPIRateLimitError) {
+        console.warn('[prepare-collect-tx] Rate limit exhausted after retries');
+        res.setHeader('Retry-After', '2');
+        return res.status(429).json({ message: 'Busy — please retry in a moment.' });
+      }
       if (e instanceof UniswapLPAPIError) {
         console.error('[prepare-collect-tx] Uniswap LP API error:', e.status, e.message);
         return res.status(e.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${e.message}` });

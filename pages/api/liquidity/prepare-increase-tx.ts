@@ -15,7 +15,7 @@ import { createNetworkClient } from '@/lib/viemClient';
 import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
 import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
-import { uniswapLPAPI, UniswapLPAPIError, normalizeV4BatchPermit, denormalizeV4BatchPermit } from '@/lib/liquidity/uniswap-api/client';
+import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError, normalizeV4BatchPermit, denormalizeV4BatchPermit } from '@/lib/liquidity/uniswap-api/client';
 import { getTokenSymbolByAddress, getToken } from '@/lib/pools-config';
 import { isAddress, getAddress, maxUint256, zeroAddress, type Hex } from 'viem';
 
@@ -81,7 +81,6 @@ interface TransactionPreparedResponse {
   details: {
     token0: { address: string; symbol: string; amount: string };
     token1: { address: string; symbol: string; amount: string };
-    liquidity: string;
     tickLower: number;
     tickUpper: number;
   };
@@ -277,12 +276,16 @@ export default async function handler(
       details: {
         token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
         token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },
-        liquidity: '0',
         tickLower: details.tickLower,
         tickUpper: details.tickUpper,
       },
     });
   } catch (error: any) {
+    if (error instanceof UniswapLPAPIRateLimitError) {
+      console.warn('[prepare-increase-tx] Rate limit exhausted after retries');
+      res.setHeader('Retry-After', '2');
+      return res.status(429).json({ message: 'Busy — please retry in a moment.' });
+    }
     if (error instanceof UniswapLPAPIError) {
       console.error('[prepare-increase-tx] Uniswap LP API error:', error.status, error.message);
       return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });

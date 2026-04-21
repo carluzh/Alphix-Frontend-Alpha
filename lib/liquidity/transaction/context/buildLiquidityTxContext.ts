@@ -93,9 +93,8 @@ export interface MintTxApiResponse {
   details?: {
     token0: { address: string; symbol: string; amount: string };
     token1: { address: string; symbol: string; amount: string };
-    liquidity: string;
-    finalTickLower: number;
-    finalTickUpper: number;
+    tickLower: number;
+    tickUpper: number;
   };
 }
 
