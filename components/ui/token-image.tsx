@@ -1,7 +1,6 @@
 "use client";
 
-import Image from 'next/image';
-import { useState, useEffect } from 'react';
+import { memo, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 interface TokenImageProps {
@@ -11,55 +10,30 @@ interface TokenImageProps {
   className?: string;
 }
 
+const PLACEHOLDER = '/tokens/placeholder.svg';
+
 /**
- * TokenImage component that handles external image URLs properly.
- * Uses native img tag for external URLs (like CoinGecko) to avoid
- * Next.js image optimization which gets blocked by CDNs.
- * Uses Next.js Image for local images for optimization benefits.
+ * TokenImage — renders a token icon. Uses a plain <img> for both local and external
+ * sources to avoid Next.js Image's loading-state placeholder, which causes a visible
+ * flash on every parent re-render. Falls back to a placeholder on error.
+ *
+ * Memoized so unrelated parent re-renders (settings changes, query refetches) don't
+ * cause the image to remount.
  */
-export function TokenImage({ src, alt, size = 32, className }: TokenImageProps) {
-  const [imgSrc, setImgSrc] = useState(src || '/tokens/placeholder.svg');
+function TokenImageImpl({ src, alt, size = 32, className }: TokenImageProps) {
   const [hasError, setHasError] = useState(false);
-
-  // Sync imgSrc with src prop when it changes
-  useEffect(() => {
-    setImgSrc(src || '/tokens/placeholder.svg');
-    setHasError(false);
-  }, [src]);
-
-  // Check if the URL is external (not local)
-  const isExternal = imgSrc.startsWith('http://') || imgSrc.startsWith('https://');
-
-  // Use native img for external URLs to completely bypass Next.js
-  if (isExternal && !hasError) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={imgSrc}
-        alt={alt}
-        width={size}
-        height={size}
-        className={cn("rounded-full", className)}
-        onError={() => {
-          setHasError(true);
-          setImgSrc('/tokens/placeholder.svg');
-        }}
-      />
-    );
-  }
-
-  // Use Next.js Image for local images (unoptimized to avoid cache-miss issues with small PNGs)
+  const displaySrc = !src || hasError ? PLACEHOLDER : src;
   return (
-    <Image
-      src={imgSrc}
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={displaySrc}
       alt={alt}
       width={size}
       height={size}
-      unoptimized
       className={cn("rounded-full", className)}
-      onError={() => {
-        setImgSrc('/tokens/placeholder.svg');
-      }}
+      onError={() => setHasError(true)}
     />
   );
 }
+
+export const TokenImage = memo(TokenImageImpl);
