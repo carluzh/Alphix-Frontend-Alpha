@@ -9,6 +9,7 @@ import { NavigationProgressBar } from "@/lib/navigation-progress";
 import { useToSAcceptance } from "@/hooks/useToSAcceptance";
 import { ToSAcceptanceModal } from "@/components/ui/ToSAcceptanceModal";
 import { CookieBanner } from "@/components/ui/CookieBanner";
+import { LegacyPoolNotice } from "@/components/LegacyPoolNotice";
 import { Loader2 } from "lucide-react";
 
 function VersionBadge() {
@@ -61,6 +62,9 @@ export function AppLayout({ children }: AppLayoutProps) {
 
         {/* Cookie banner - only show after TOS is resolved and accepted */}
         {(!isConnected || (tosResolved && !showToS)) && <CookieBanner />}
+
+        {/* Legacy pool notice — shown to wallets still LP'd in sunset pools */}
+        {isConnected && tosResolved && !showToS && <LegacyPoolNotice />}
       </SidebarInset>
     </>
   );

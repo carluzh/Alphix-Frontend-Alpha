@@ -31,14 +31,6 @@
       "icon": "/tokens/USDC.png",
       "color": "#2775CA"
     },
-    "USDS": {
-      "symbol": "USDS",
-      "name": "USDS",
-      "address": "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc",
-      "decimals": 18,
-      "icon": "/tokens/USDS.png",
-      "color": "#F5AC37"
-    },
     "cbBTC": {
       "symbol": "cbBTC",
       "name": "Coinbase Wrapped BTC",
@@ -57,31 +49,6 @@
     }
   },
   "pools": [
-    {
-      "slug": "usds-usdc",
-      "name": "USDS/USDC",
-      "poolId": "0xaf9168a5026bd5e398863dc1d0a0513fe21417792f9df4889571fd68d2d8cd71",
-      "currency0": {
-        "symbol": "USDS",
-        "address": "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc"
-      },
-      "currency1": {
-        "symbol": "USDC",
-        "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-      },
-      "fee": 8388608,
-      "tickSpacing": 1,
-      "hooks": "0x0e4b892Df7C5Bcf5010FAF4AA106074e555660C0",
-      "enabled": true,
-      "featured": true,
-      "type": "Stable",
-      "yieldSources": ["spark", "aave"],
-      "rehypoRange": {
-        "min": "-276325",
-        "max": "-276323",
-        "isFullRange": false
-      }
-    },
     {
       "slug": "eth-usdc",
       "name": "ETH/USDC",

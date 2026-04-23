@@ -140,6 +140,15 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const maintenanceEnabled = process.env.MAINTENANCE === 'true';
 
+  // Sunset pool redirects — send deep links to migrate.alphix.fi (frozen pre-sunset build)
+  if (pathname === '/liquidity/usds-usdc' || pathname.startsWith('/liquidity/usds-usdc/')) {
+    const migrateUrl = new URL(
+      pathname + request.nextUrl.search,
+      'https://migrate.alphix.fi',
+    );
+    return createSecureResponse('redirect', migrateUrl);
+  }
+
   if (pathname === '/' || pathname === '/brand') {
     return createSecureResponse('next');
   }

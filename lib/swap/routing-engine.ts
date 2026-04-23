@@ -1,4 +1,4 @@
-import { getAllPools, getToken, type NetworkMode } from '@/lib/pools-config';
+import { getEnabledPools, getToken, type NetworkMode } from '@/lib/pools-config';
 
 export interface SwapRoute {
   path: string[]; // Array of token symbols in order [from, intermediate1, intermediate2, ..., to]
@@ -29,7 +29,7 @@ export interface RouteResult {
  */
 function buildPoolGraph(networkMode?: NetworkMode): Map<string, PoolHop[]> {
   const graph = new Map<string, PoolHop[]>();
-  const allPools = getAllPools(networkMode);
+  const allPools = getEnabledPools(networkMode);
 
   // Initialize empty arrays for each token
   const allTokens = new Set<string>();

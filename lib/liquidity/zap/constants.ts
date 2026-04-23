@@ -44,31 +44,42 @@ function deriveZapPoolBase(poolId: string, mode: NetworkMode) {
  * Spark PSM3 configuration on Base mainnet
  *
  * PSM3 (Peg Stability Module 3) provides 1:1 swaps between USDS and USDC
- * with ZERO fees. This is used as a fallback when pool price impact exceeds
- * our threshold.
+ * with ZERO fees. Retained as a dead fallback for legacy zap call sites —
+ * the USDS/USDC pool has been sunset from alphix.fi (served on migrate.alphix.fi).
  *
  * Key function: swapExactIn(assetIn, assetOut, amountIn, minAmountOut, receiver, referralCode)
  */
-const _baseUsds = getToken('USDS', 'base')!;
-const _baseUsdc = getToken('USDC', 'base')!;
-
 export const PSM_CONFIG = {
-  /** PSM3 contract address on Base mainnet (not in pool config — external contract) */
+  /** PSM3 contract address on Base mainnet */
   address: getAddress('0x1601843c5E9bC251A3272907010AFa41Fa18347E'),
-  /** USDS token address — derived from pool config */
-  usdsAddress: getAddress(_baseUsds.address),
-  /** USDC token address — derived from pool config */
-  usdcAddress: getAddress(_baseUsdc.address),
+  /** USDS token address (hardcoded — USDS is no longer in pool config) */
+  usdsAddress: getAddress('0x820C137fa70C8691f0e44Dc420a5e53c168921Dc'),
+  /** USDC token address on Base */
+  usdcAddress: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
   /** Referral code for tracking (0 = no referral) */
   referralCode: 0,
 };
 
 // =============================================================================
-// POOL CONFIGURATIONS (derived from config JSONs)
+// POOL CONFIGURATIONS
 // =============================================================================
 
-/** USDS/USDC Unified Yield pool (Base) */
-export const USDS_USDC_POOL_CONFIG = deriveZapPoolBase('usds-usdc', 'base');
+/**
+ * USDS/USDC Unified Yield pool (Base) — SUNSET on alphix.fi.
+ *
+ * Still exported as a literal because legacy zap call sites reference it as a
+ * fallback when no `poolConfig` is passed (`poolConfig ?? USDS_USDC_POOL_CONFIG`).
+ * It is intentionally excluded from `ZAP_POOL_CONFIGS` below, so no user flow
+ * can reach it — zap eligibility resolves to null for this pool.
+ */
+export const USDS_USDC_POOL_CONFIG = {
+  poolId: 'usds-usdc',
+  hookAddress: getAddress('0x0e4b892Df7C5Bcf5010FAF4AA106074e555660C0') as Address,
+  token0: { symbol: 'USDS' as ZapToken, address: getAddress('0x820C137fa70C8691f0e44Dc420a5e53c168921Dc') as Address, decimals: 18 },
+  token1: { symbol: 'USDC' as ZapToken, address: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as Address, decimals: 6 },
+  tickSpacing: 1,
+  fee: 8388608,
+};
 
 /** USDC/USDT Unified Yield pool (Arbitrum) */
 export const USDC_USDT_ARB_POOL_CONFIG = deriveZapPoolBase('usdc-usdt', 'arbitrum');
@@ -120,14 +131,8 @@ export const PSM_PRICE_IMPACT_THRESHOLD = 0.01;
  */
 export const KYBERSWAP_PRICE_IMPACT_THRESHOLD = 0.5;
 
-/** All zap pool configs */
+/** All zap pool configs (USDS/USDC sunset on alphix.fi — handled by migrate.alphix.fi) */
 const ZAP_POOL_CONFIGS: ZapPoolConfig[] = [
-  {
-    ...USDS_USDC_POOL_CONFIG,
-    fallbackRoute: 'psm',
-    priceImpactThreshold: PSM_PRICE_IMPACT_THRESHOLD,
-    isPegged: true,
-  },
   {
     ...USDC_USDT_ARB_POOL_CONFIG,
     fallbackRoute: 'kyberswap',

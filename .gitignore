@@ -69,3 +69,4 @@ pnpm-lock.yaml
 
 # External repos
 interface/
+.vercel
