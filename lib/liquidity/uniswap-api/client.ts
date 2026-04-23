@@ -314,15 +314,22 @@ function getApiKey(): string {
   return key;
 }
 
-/** Retry budget for rate-limit (HTTP 403) responses. The API enforces 6 req/sec with
- *  no Retry-After header, so we back off with exponential delays. Three attempts lets
- *  us ride out typical multi-user burst spikes while staying responsive. */
-const RATE_LIMIT_RETRY_DELAYS_MS = [200, 500, 1100];
+/** Base retry delays (ms) for rate-limit (HTTP 403) responses. The API enforces
+ *  ~6 req/sec with no Retry-After header. Three attempts ride out typical
+ *  multi-user bursts. ±50% jitter smooths the thundering-herd when many
+ *  clients collide at the same wall-clock instant. */
+const RATE_LIMIT_RETRY_BASE_MS = [200, 500, 1100];
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+/** Returns base delay ±50% for jitter. */
+function jitter(baseMs: number): number {
+  const spread = baseMs * 0.5;
+  return Math.max(50, Math.round(baseMs + (Math.random() * 2 - 1) * spread));
+}
+
 async function post<Req, Res>(path: string, body: Req): Promise<Res> {
-  for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_DELAYS_MS.length; attempt++) {
+  for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_BASE_MS.length; attempt++) {
     const res = await fetch(`${BASE_URL}${path}`, {
       method: 'POST',
       headers: {
@@ -336,10 +343,10 @@ async function post<Req, Res>(path: string, body: Req): Promise<Res> {
     let parsed: any;
     try { parsed = JSON.parse(text); } catch { parsed = text; }
 
-    // Rate-limited: back off and retry until budget is exhausted.
+    // Rate-limited: back off with jitter and retry until budget is exhausted.
     const isRateLimit = res.status === 403 && parsed?.message === 'Forbidden';
-    if (isRateLimit && attempt < RATE_LIMIT_RETRY_DELAYS_MS.length) {
-      await sleep(RATE_LIMIT_RETRY_DELAYS_MS[attempt]);
+    if (isRateLimit && attempt < RATE_LIMIT_RETRY_BASE_MS.length) {
+      await sleep(jitter(RATE_LIMIT_RETRY_BASE_MS[attempt]));
       continue;
     }
     if (isRateLimit) {

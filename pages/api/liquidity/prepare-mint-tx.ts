@@ -56,6 +56,12 @@ interface ApprovalNeededResponse {
   erc20ApprovalNeeded: boolean;
   needsToken0Approval: boolean;
   needsToken1Approval: boolean;
+  /**
+   * Create tx pre-built by Uniswap's API via the simulate-without-sim retry.
+   * Frontend bundles it with the approve(s) — atomic on 5792 wallets,
+   * sequential otherwise.
+   */
+  create?: { to: string; from?: string; data: string; value: string; chainId: number; gasLimit?: string };
 }
 
 /**
@@ -308,9 +314,19 @@ export default async function handler(
         });
       }
       if (erc20Fields) {
+        // Existing Permit2 state still valid, no fresh batch permit needed.
+        // Pass the pre-fetched create tx through so the frontend can pair it
+        // with the approve(s) (atomically on 5792 wallets, sequential on EOAs).
         return res.status(200).json({
           needsApproval: true,
           approvalType: 'ERC20_TO_PERMIT2',
+          create: {
+            to: createResponse.create.to,
+            from: createResponse.create.from,
+            data: createResponse.create.data,
+            value: createResponse.create.value,
+            chainId,
+          },
           ...erc20Fields,
         });
       }

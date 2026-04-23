@@ -49,6 +49,13 @@ interface ApprovalNeededResponse {
   approvalAmount: string;
   needsToken0Approval: boolean;
   needsToken1Approval: boolean;
+  /**
+   * Increase tx pre-built by Uniswap's API via the simulate-without-sim retry.
+   * Allows the frontend to pair it with the approve(s) — bundled atomically on
+   * EIP-5792 wallets, sequential otherwise. Optional because some legacy paths
+   * may not include it.
+   */
+  create?: { to: string; from?: string; data: string; value: string; chainId: number; gasLimit?: string };
 }
 
 interface PermitSignatureNeededResponse {
@@ -248,9 +255,21 @@ export default async function handler(
         });
       }
       if (erc20Fields) {
+        // No fresh batch permit needed (existing Permit2 state still valid),
+        // but ERC20→Permit2 allowance is missing. Uniswap's API already returned
+        // the increase tx via the simulate-without-sim retry — pass it through so
+        // the frontend can pair it with the approve(s) (atomically via 5792 when
+        // the wallet supports it, sequentially otherwise).
         return res.status(200).json({
           needsApproval: true,
           approvalType: 'ERC20_TO_PERMIT2',
+          create: {
+            to: createResponse.increase.to,
+            from: createResponse.increase.from,
+            data: createResponse.increase.data,
+            value: createResponse.increase.value,
+            chainId,
+          },
           ...erc20Fields,
         });
       }

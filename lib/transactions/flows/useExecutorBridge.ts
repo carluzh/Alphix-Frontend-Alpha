@@ -9,14 +9,15 @@
  */
 
 import { useCallback, useMemo, type RefObject } from 'react';
-import { useAccount, useSendTransaction, useSignTypedData } from 'wagmi';
+import { useAccount, useSendCalls, useSendTransaction, useSignTypedData } from 'wagmi';
 import { useConfig } from 'wagmi';
-import { waitForTransactionReceipt } from 'wagmi/actions';
+import { waitForCallsStatus, waitForTransactionReceipt } from 'wagmi/actions';
 import type { Hex } from 'viem';
 import { BUILDER_CODE_SUFFIX } from '@/lib/builder-code';
 
 import type { StepExecutorFn } from '@/lib/transactions/useStepExecutor';
 import { TransactionStepType, type ValidatedLiquidityTxContext } from '@/lib/liquidity/types';
+import { executeBatchedIncrease } from './executeBatchedIncrease';
 import {
   executeRegisteredStep,
   handleSignatureStep,
@@ -57,6 +58,7 @@ export const LIQUIDITY_DOMAIN_STEPS: TransactionStepType[] = [
   // Position steps
   TransactionStepType.IncreasePositionTransaction,
   TransactionStepType.IncreasePositionTransactionAsync,
+  TransactionStepType.IncreasePositionTransactionBatchedAsync,
   TransactionStepType.DecreasePositionTransaction,
   TransactionStepType.CollectFeesTransactionStep,
   // Unified Yield steps
@@ -92,6 +94,7 @@ export function useExecutorBridge(
 ): Record<string, StepExecutorFn> {
   const { address, chainId } = useAccount();
   const { sendTransactionAsync } = useSendTransaction();
+  const { sendCallsAsync } = useSendCalls();
   const { signTypedDataAsync } = useSignTypedData();
   const config = useConfig();
 
@@ -151,6 +154,20 @@ export function useExecutorBridge(
       return { txHash: txHash || undefined };
     };
 
+    // IncreasePositionTransactionBatchedAsync — delegates to `executeBatchedIncrease`.
+    // Assembles [approvals..., mint] into a single `wallet_sendCalls` prompt.
+    // Signature is optional: present for the unsigned-permit flow, absent for
+    // the no-permit re-fetch flow (existing Permit2 state covers spending
+    // after the bundled approvals). `useStepExecutor` handles captureException
+    // on throw with full tags + rejection gating, so we don't wrap here.
+    const batchedAsyncExecutor: StepExecutorFn = async (step, context) =>
+      executeBatchedIncrease(step, {
+        signature: context.signature ?? '',
+        sendCalls: (args) => sendCallsAsync(args),
+        waitForCallsStatus: (args) => waitForCallsStatus(config, args),
+        builderSuffix: BUILDER_CODE_SUFFIX,
+      });
+
     // Permit2Signature — special case (signing, not transaction)
     const permit2SignatureExecutor: StepExecutorFn = async (step) => {
       const ctx = txContextRef.current;
@@ -178,6 +195,8 @@ export function useExecutorBridge(
     for (const type of stepTypes) {
       if (type === TransactionStepType.Permit2Signature) {
         result[type] = permit2SignatureExecutor;
+      } else if (type === TransactionStepType.IncreasePositionTransactionBatchedAsync) {
+        result[type] = batchedAsyncExecutor;
       } else if (isRegisteredStepType(type)) {
         result[type] = bridgeHandler;
       }

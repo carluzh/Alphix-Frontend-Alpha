@@ -137,7 +137,7 @@ export function PointsRewardsCard({
             />
           </div>
           <span className={cn("text-muted-foreground", isMobile ? "text-xs" : "text-sm")}>
-            Provide liquidity in Unified Pools to earn points
+            Provide liquidity in Custom Pools to earn points
           </span>
         </div>
 

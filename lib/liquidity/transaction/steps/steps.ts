@@ -219,15 +219,18 @@ export function createIncreasePositionAsyncStep(
       }
 
       try {
-        // Call Alphix API with signature to get the transaction
-        // Note: prepare-increase-tx expects tokenId, amount0, amount1 (not inputAmount/inputTokenSymbol)
+        // Call Alphix API. Signature may be empty for the no-permit re-fetch flow
+        // (existing Permit2→PositionManager state still valid post-approves); the
+        // backend pairs `permitSignature` with `permitBatchData`, so omit both when
+        // we have no signature.
+        const body: Record<string, unknown> = { ...increasePositionRequestArgs };
+        if (signature) body.permitSignature = signature;
+        else delete (body as any).permitBatchData;
+
         const response = await fetch('/api/liquidity/prepare-increase-tx', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...increasePositionRequestArgs,
-            permitSignature: signature,
-          }),
+          body: JSON.stringify(body),
         });
 
         if (!response.ok) {
@@ -305,14 +308,17 @@ export function createCreatePositionAsyncStep(
       }
 
       try {
-        // Call Alphix API with signature to get the transaction
+        // Call Alphix API. Signature may be empty for the no-permit re-fetch flow
+        // (existing Permit2 state still valid post-approves); the backend pairs
+        // `permitSignature` with `permitBatchData`, so omit both when no signature.
+        const body: Record<string, unknown> = { ...createPositionRequestArgs };
+        if (signature) body.permitSignature = signature;
+        else delete (body as any).permitBatchData;
+
         const response = await fetch('/api/liquidity/prepare-mint-tx', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...createPositionRequestArgs,
-            permitSignature: signature,
-          }),
+          body: JSON.stringify(body),
         });
 
         if (!response.ok) {

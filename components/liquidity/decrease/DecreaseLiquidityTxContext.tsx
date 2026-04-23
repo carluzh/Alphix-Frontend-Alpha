@@ -93,7 +93,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     () => [position.token0.symbol, position.token1.symbol].filter(Boolean),
     [position.token0.symbol, position.token1.symbol]
   );
-  const { prices } = useTokenPrices(priceSymbols);
+  const { prices } = useTokenPrices(priceSymbols, { chainId });
 
   // Get pool config for poolId (needed for pool state query)
   const poolConfig = useMemo(() => {

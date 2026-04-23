@@ -182,7 +182,7 @@ function StatsCard({ stats }: { stats: ProtocolStats }) {
   return (
     <div className="order-2 xl:order-1 flex flex-1 flex-col justify-between gap-y-4 rounded-lg bg-muted/50 surface-depth p-5 md:p-6">
       <div className="flex flex-col gap-y-1">
-        <h2 className="text-xl font-semibold text-foreground">Unified Pools</h2>
+        <h2 className="text-xl font-semibold text-foreground">Custom Pools</h2>
         <p className="text-sm text-muted-foreground">
           Explore and manage your liquidity positions.
         </p>

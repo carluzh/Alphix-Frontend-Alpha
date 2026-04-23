@@ -111,11 +111,11 @@ export function useIncreaseLiquidityFlow(params: UseIncreaseLiquidityFlowParams)
       return { txHash: hash };
     },
 
-    // V4 increase position async (needs signature to build tx)
+    // V4 increase position async. Signature is optional — present for the
+    // unsigned-permit flow, absent for the no-permit re-fetch flow (existing
+    // Permit2 state covers spending after ERC20 approves).
     [TransactionStepType.IncreasePositionTransactionAsync]: async (step, context) => {
-      const signature = context.signature;
-      if (!signature) throw new Error('Signature required for async increase position');
-
+      const signature = context.signature ?? '';
       const { txRequest } = await step.getTxRequest(signature);
       if (!txRequest) throw new Error('Failed to build transaction request');
 

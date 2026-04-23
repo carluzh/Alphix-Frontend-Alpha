@@ -190,7 +190,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     () => [token0Symbol, token1Symbol].filter(Boolean) as string[],
     [token0Symbol, token1Symbol]
   );
-  const { prices: createPrices } = useTokenPrices(createPriceSymbols);
+  const { prices: createPrices } = useTokenPrices(createPriceSymbols, { chainId });
   const token0USDPrice = token0Symbol ? (createPrices[token0Symbol] || null) : null;
   const token1USDPrice = token1Symbol ? (createPrices[token1Symbol] || null) : null;
 

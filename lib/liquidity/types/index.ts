@@ -60,6 +60,7 @@ export {
   type IncreasePositionTransactionStep,
   type IncreasePositionTransactionStepAsync,
   type IncreasePositionTransactionStepBatched,
+  type IncreasePositionTransactionStepBatchedAsync,
   type DecreasePositionTransactionStep,
   type CollectFeesTransactionStep,
   // Unified Yield step interfaces
