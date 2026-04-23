@@ -265,7 +265,7 @@ function EmptyState() {
       <p className="text-sm text-muted-foreground text-center max-w-sm">
         Start earning points by providing liquidity in{" "}
         <Link href="/liquidity" className="underline hover:text-foreground transition-colors">
-          Unified Pools
+          Custom Pools
         </Link>.
         Your earning history will appear here.
       </p>

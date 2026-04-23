@@ -25,6 +25,7 @@ export enum TransactionStepType {
   IncreasePositionTransaction = 'IncreasePositionTransaction',
   IncreasePositionTransactionAsync = 'IncreasePositionTransactionAsync',
   IncreasePositionTransactionBatched = 'IncreasePositionTransactionBatched',
+  IncreasePositionTransactionBatchedAsync = 'IncreasePositionTransactionBatchedAsync',
   DecreasePositionTransaction = 'DecreasePositionTransaction',
   CollectFeesTransactionStep = 'CollectFeesTransaction',
   // Unified Yield step types (direct ERC20 approval to Hook, no Permit2)
@@ -253,6 +254,20 @@ export interface IncreasePositionTransactionStepBatched extends OnChainTransacti
 }
 
 /**
+ * Increase Position Batched Async Step - ERC-5792 batch for API-driven unsigned flow.
+ * Bundles pending ERC20 approvals with the mint tx; the mint tx is built at execute
+ * time by calling `getTxRequest(signature)` once the Permit2 signature is available.
+ */
+export interface IncreasePositionTransactionStepBatchedAsync {
+  type: TransactionStepType.IncreasePositionTransactionBatchedAsync;
+  approvalRequests: ValidatedTransactionRequest[];
+  getTxRequest(signature: string): Promise<{
+    txRequest: ValidatedTransactionRequest | undefined;
+    sqrtRatioX96: string | undefined;
+  }>;
+}
+
+/**
  * Decrease Position Step - Matches interface/packages/uniswap/.../liquidity/steps/decreasePosition.ts
  */
 export interface DecreasePositionTransactionStep extends OnChainTransactionFields {
@@ -450,7 +465,8 @@ export type IncreaseLiquiditySteps =
   | Permit2TransactionStep
   | IncreasePositionTransactionStep
   | IncreasePositionTransactionStepAsync
-  | IncreasePositionTransactionStepBatched;
+  | IncreasePositionTransactionStepBatched
+  | IncreasePositionTransactionStepBatchedAsync;
 
 export type DecreaseLiquiditySteps =
   | TokenApprovalTransactionStep

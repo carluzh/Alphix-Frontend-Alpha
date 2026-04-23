@@ -1,149 +1,110 @@
 /**
- * prepare-increase-tx.ts - API route for preparing increase liquidity transactions
+ * prepare-increase-tx.ts — route non-UY V4 increase liquidity through Uniswap's LP API.
  *
- * Following the Uniswap pattern from prepare-mint-tx.ts:
- * 1. Checks ERC20 allowances (returns needsApproval + ERC20_TO_PERMIT2)
- * 2. Checks Permit2 allowances (returns needsApproval + PERMIT2_BATCH_SIGNATURE)
- * 3. Builds transaction calldata using V4PositionManager.addCallParameters
- *
- * @see pages/api/liquidity/prepare-mint-tx.ts
+ * Approvals are discovered via /lp/check_approval and surfaced as ERC20_TO_PERMIT2
+ * steps for the existing frontend. Once approvals clear, /lp/increase returns the
+ * final transaction.
  */
 
-import { CurrencyAmount, Percent, Ether } from '@uniswap/sdk-core';
-import { Position as V4Position, V4PositionManager } from "@uniswap/v4-sdk";
-import type { AddLiquidityOptions } from "@uniswap/v4-sdk";
-import JSBI from 'jsbi';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import * as Sentry from '@sentry/nextjs';
 
-import { getPositionManagerAddress } from "@/lib/pools-config";
-import { resolveNetworkMode } from "@/lib/network-mode";
-import { validateChainId, checkTxRateLimit } from "@/lib/tx-validation";
-import { createNetworkClient } from "@/lib/viemClient";
-import { buildPoolFromPosition } from "@/lib/liquidity/liquidity-utils";
-import { safeParseUnits } from "@/lib/liquidity/utils/parsing/amountParsing";
-import {
-  checkERC20Allowances,
-  buildPermitBatchData,
-  buildPermitBatchForSDK,
-  type TokenForPermitCheck,
-} from "@/lib/liquidity/transaction/permit2-checks";
-import {
-  isAddress,
-  getAddress,
-  maxUint256,
-  zeroAddress,
-  type Hex
-} from "viem";
+import { getAllPools } from '@/lib/pools-config';
+import { resolveNetworkMode } from '@/lib/network-mode';
+import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
+import { createNetworkClient } from '@/lib/viemClient';
+import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
+import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
+import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
+import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError, normalizeV4BatchPermit, denormalizeV4BatchPermit } from '@/lib/liquidity/uniswap-api/client';
+import { getTokenSymbolByAddress, getToken } from '@/lib/pools-config';
+import { isAddress, getAddress, maxUint256, zeroAddress, type Hex } from 'viem';
 
-import { PERMIT2_ADDRESS } from '@uniswap/permit2-sdk';
+import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from '@/lib/abis/state_view_abi';
+import { getStateViewAddress } from '@/lib/pools-config';
+import { parseAbi } from 'viem';
 
 interface PrepareIncreaseTxRequest extends NextApiRequest {
   body: {
     userAddress: string;
-    tokenId: string; // NFT token ID (numeric string)
-    amount0: string; // Amount of token0 to add
-    amount1: string; // Amount of token1 to add
+    tokenId: string;
+    amount0: string;
+    amount1: string;
     chainId: number;
-    // User settings (optional - defaults provided)
-    slippageBps?: number; // Slippage in basis points (e.g., 50 = 0.5%). Default: 50
-    deadlineMinutes?: number; // Transaction deadline in minutes. Default: 20
+    slippageBps?: number;
+    deadlineMinutes?: number;
+    /** EIP-712 signature over the v4BatchPermitData typed data. */
     permitSignature?: string;
-    permitBatchData?: {
-      domain?: {
-        name: string;
-        chainId: number;
-        verifyingContract: string;
-      };
-      types?: any;
-      values?: {
-        details: Array<{
-          token: string;
-          amount: string;
-          expiration: string;
-          nonce: string;
-        }>;
-        spender: string;
-        sigDeadline: string;
-      };
-      details?: Array<{
-        token: string;
-        amount: string;
-        expiration: string;
-        nonce: string;
-      }>;
-      spender?: string;
-      sigDeadline?: string;
-    };
+    /** Normalized batch permit data (echoed from prepare-increase-tx's first response). Denormalized before forwarding to /lp/increase. */
+    permitBatchData?: import('@/lib/liquidity/uniswap-api/client').V4BatchPermit;
   };
 }
 
-// Approval needed response
 interface ApprovalNeededResponse {
   needsApproval: true;
-  approvalType: 'ERC20_TO_PERMIT2' | 'PERMIT2_BATCH_SIGNATURE';
+  approvalType: 'ERC20_TO_PERMIT2';
+  approvalTokenAddress: string;
+  approvalTokenSymbol?: string;
+  approveToAddress: string;
+  approvalAmount: string;
+  needsToken0Approval: boolean;
+  needsToken1Approval: boolean;
+  /**
+   * Increase tx pre-built by Uniswap's API via the simulate-without-sim retry.
+   * Allows the frontend to pair it with the approve(s) — bundled atomically on
+   * EIP-5792 wallets, sequential otherwise. Optional because some legacy paths
+   * may not include it.
+   */
+  create?: { to: string; from?: string; data: string; value: string; chainId: number; gasLimit?: string };
+}
+
+interface PermitSignatureNeededResponse {
+  needsApproval: true;
+  approvalType: 'PERMIT2_BATCH_SIGNATURE';
+  permitBatchData: import('@/lib/liquidity/uniswap-api/client').V4BatchPermit;
+  signatureDetails: {
+    domain: { name: string; chainId: number; verifyingContract: string };
+    types: Record<string, Array<{ name: string; type: string }>>;
+    primaryType: string;
+  };
+  erc20ApprovalNeeded?: boolean;
   approvalTokenAddress?: string;
   approvalTokenSymbol?: string;
   approveToAddress?: string;
   approvalAmount?: string;
-  // Per-token approval flags
   needsToken0Approval?: boolean;
   needsToken1Approval?: boolean;
-  // Permit data is included for BOTH types - ERC20_TO_PERMIT2 includes it for after approval
-  permitBatchData?: any;
-  signatureDetails?: {
-    domain: {
-      name: string;
-      chainId: number;
-      verifyingContract: Hex;
-      version?: string;
-    };
-    types: Record<string, Array<{ name: string; type: string }>>;
-    primaryType: 'PermitBatch';
-  };
 }
 
-// Transaction ready response (matches prepare-mint-tx.ts format)
 interface TransactionPreparedResponse {
   needsApproval: false;
-  create: {
-    to: string;
-    from?: string;
-    data: string;
-    value: string;
-    chainId: number;
-    gasLimit?: string;
-  };
-  transaction: {
-    to: string;
-    data: string;
-    value: string;
-    gasLimit?: string;
-  };
+  create: { to: string; from?: string; data: string; value: string; chainId: number; gasLimit?: string };
+  transaction: { to: string; data: string; value: string; gasLimit?: string };
   sqrtRatioX96: string;
   currentTick: number;
   poolLiquidity: string;
   deadline: string;
+  /** Estimated gas cost in wei from API simulation. */
+  gasFee?: string;
   details: {
     token0: { address: string; symbol: string; amount: string };
     token1: { address: string; symbol: string; amount: string };
-    liquidity: string;
     tickLower: number;
     tickUpper: number;
   };
 }
 
-type PrepareIncreaseTxResponse = ApprovalNeededResponse | TransactionPreparedResponse | { message: string; error?: any };
+type PrepareIncreaseTxResponse = ApprovalNeededResponse | PermitSignatureNeededResponse | TransactionPreparedResponse | { message: string; error?: any };
 
 export default async function handler(
   req: PrepareIncreaseTxRequest,
-  res: NextApiResponse<PrepareIncreaseTxResponse>
+  res: NextApiResponse<PrepareIncreaseTxResponse>,
 ) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
   }
 
-  // Rate limiting
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket?.remoteAddress || 'unknown';
   const rateCheck = checkTxRateLimit(clientIp);
   if (!rateCheck.allowed) {
@@ -153,7 +114,7 @@ export default async function handler(
 
   const networkMode = resolveNetworkMode(req);
   const publicClient = createNetworkClient(networkMode);
-  const POSITION_MANAGER_ADDRESS = getPositionManagerAddress(networkMode);
+  const STATE_VIEW_ADDRESS = getStateViewAddress(networkMode);
 
   try {
     const {
@@ -163,230 +124,220 @@ export default async function handler(
       amount1: inputAmount1,
       chainId,
       slippageBps = 50,
-      deadlineMinutes = 20,
+      deadlineMinutes = 30,
+      permitSignature,
+      permitBatchData,
     } = req.body;
 
-    // Validate inputs
     const chainIdError = validateChainId(chainId, networkMode);
-    if (chainIdError) {
-      return res.status(400).json({ message: chainIdError });
-    }
-
-    if (!isAddress(userAddress)) {
-      return res.status(400).json({ message: "Invalid userAddress." });
-    }
-
-    if (!tokenId) {
-      return res.status(400).json({ message: "Missing tokenId." });
-    }
+    if (chainIdError) return res.status(400).json({ message: chainIdError });
+    if (!isAddress(userAddress)) return res.status(400).json({ message: 'Invalid userAddress.' });
+    if (!tokenId) return res.status(400).json({ message: 'Missing tokenId.' });
 
     const nftTokenId = BigInt(tokenId);
 
-    // Build pool + token context from on-chain position
-    const {
-      details, defC0, defC1, currency0, currency1,
-      isNativeC0, isNativeC1, pool, poolState: state,
-    } = await buildPoolFromPosition(nftTokenId, chainId, networkMode);
-
-    // Parse amounts (amounts are already in pool key order from UI)
-    let amountC0Raw = safeParseUnits(inputAmount0 || "0", defC0.decimals);
-    let amountC1Raw = safeParseUnits(inputAmount1 || "0", defC1.decimals);
-
-    // Handle out-of-range positions
-    const outOfRangeBelow = state.tick < details.tickLower;
-    const outOfRangeAbove = state.tick > details.tickUpper;
-    if (outOfRangeBelow) {
-      amountC1Raw = 0n;
-    } else if (outOfRangeAbove) {
-      amountC0Raw = 0n;
+    const details = await getPositionDetails(nftTokenId, chainId);
+    const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
+    if (!poolConfig) {
+      return res.status(400).json({ message: 'Position is not in an Alphix pool.' });
+    }
+    if (isUnifiedYieldPool(poolConfig)) {
+      return res.status(400).json({ message: 'Unified Yield positions use a separate deposit flow.' });
     }
 
+    const sym0 = getTokenSymbolByAddress(details.poolKey.currency0, networkMode);
+    const sym1 = getTokenSymbolByAddress(details.poolKey.currency1, networkMode);
+    const defC0 = sym0 ? getToken(sym0, networkMode) : null;
+    const defC1 = sym1 ? getToken(sym1, networkMode) : null;
+    if (!defC0 || !defC1) {
+      return res.status(400).json({ message: 'Token metadata missing for this position.' });
+    }
+    const isNativeC0 = getAddress(details.poolKey.currency0) === zeroAddress;
+    const isNativeC1 = getAddress(details.poolKey.currency1) === zeroAddress;
+
+    const amountC0Raw = safeParseUnits(inputAmount0 || '0', defC0.decimals);
+    const amountC1Raw = safeParseUnits(inputAmount1 || '0', defC1.decimals);
     if (amountC0Raw === 0n && amountC1Raw === 0n) {
       return res.status(400).json({ message: 'Please enter a valid amount to add.' });
     }
 
-    // Build position using SDK
-    let position: V4Position;
-    const userProvidedAmount0 = amountC0Raw > 0n;
-    const userProvidedAmount1 = amountC1Raw > 0n;
-
-    if (userProvidedAmount0 && !userProvidedAmount1) {
-      const amt0 = CurrencyAmount.fromRawAmount(currency0, amountC0Raw.toString());
-      position = V4Position.fromAmount0({
-        pool,
-        tickLower: details.tickLower,
-        tickUpper: details.tickUpper,
-        amount0: amt0.quotient,
-        useFullPrecision: true,
-      });
-    } else if (userProvidedAmount1 && !userProvidedAmount0) {
-      const amt1 = CurrencyAmount.fromRawAmount(currency1, amountC1Raw.toString());
-      position = V4Position.fromAmount1({
-        pool,
-        tickLower: details.tickLower,
-        tickUpper: details.tickUpper,
-        amount1: amt1.quotient,
-      });
-    } else {
-      const amt0 = CurrencyAmount.fromRawAmount(currency0, amountC0Raw.toString());
-      const amt1 = CurrencyAmount.fromRawAmount(currency1, amountC1Raw.toString());
-      position = V4Position.fromAmounts({
-        pool,
-        tickLower: details.tickLower,
-        tickUpper: details.tickUpper,
-        amount0: amt0.quotient,
-        amount1: amt1.quotient,
-        useFullPrecision: true,
-      });
+    // Reject partial permit payloads — indicates a client-side bug.
+    if ((permitSignature == null) !== (permitBatchData == null)) {
+      return res.status(400).json({ message: 'permitSignature and permitBatchData must be provided together.' });
     }
+    const hasSignedPermit = !!(permitSignature && permitBatchData);
 
-    // Check for zero liquidity
-    if (JSBI.equal(position.liquidity, JSBI.BigInt(0))) {
-      return res.status(400).json({ message: 'Amount too small, please try a larger amount.' });
-    }
+    const independentIsToken0 = amountC0Raw > 0n;
+    const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
+    const c0 = getAddress(details.poolKey.currency0);
+    const c1 = getAddress(details.poolKey.currency1);
 
-    // Get actual amounts from position
-    const SLIPPAGE_TOLERANCE = new Percent(slippageBps, 10_000);
-    const slippageAmounts = position.mintAmountsWithSlippage(SLIPPAGE_TOLERANCE);
-    const amount0ForPermit = BigInt(slippageAmounts.amount0.toString());
-    const amount1ForPermit = BigInt(slippageAmounts.amount1.toString());
-
-    // Extract permit data
-    const { permitSignature: batchPermitSignature, permitBatchData } = req.body;
-    const hasBatchPermit = batchPermitSignature && permitBatchData;
-
-    // Build tokens for permit checking
-    const token0Address = getAddress(details.poolKey.currency0);
-    const tokensForCheck: [TokenForPermitCheck, TokenForPermitCheck] = [
-      { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), requiredAmount: amountC0Raw, permitAmount: amount0ForPermit, symbol: defC0.symbol, isNative: isNativeC0 },
-      { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), requiredAmount: amountC1Raw, permitAmount: amount1ForPermit, symbol: defC1.symbol, isNative: isNativeC1 },
-    ];
-
-    const { erc20ApprovalNeeded, needsToken0Approval, needsToken1Approval } =
-      await checkERC20Allowances(publicClient, userAddress, tokensForCheck, token0Address);
-
-    if (!hasBatchPermit) {
-      const permitResult = await buildPermitBatchData(
-        publicClient, userAddress, tokensForCheck, token0Address,
-        POSITION_MANAGER_ADDRESS, chainId, needsToken0Approval, needsToken1Approval,
-      );
-
-      if (erc20ApprovalNeeded) {
-        return res.status(200).json({
-          needsApproval: true,
-          approvalType: 'ERC20_TO_PERMIT2' as const,
-          approvalTokenAddress: erc20ApprovalNeeded.address,
-          approvalTokenSymbol: erc20ApprovalNeeded.symbol,
-          approveToAddress: PERMIT2_ADDRESS,
-          approvalAmount: maxUint256.toString(),
-          needsToken0Approval,
-          needsToken1Approval,
-          permitBatchData: permitResult?.permitBatchData,
-          signatureDetails: permitResult?.signatureDetails,
-        });
-      }
-
-      if (permitResult) {
-        return res.status(200).json({
-          needsApproval: true,
-          approvalType: 'PERMIT2_BATCH_SIGNATURE' as const,
-          permitBatchData: permitResult.permitBatchData,
-          signatureDetails: permitResult.signatureDetails,
-        });
-      }
-    }
-
-    // Build transaction
-    const latestBlockForTx = await publicClient.getBlock({ blockTag: 'latest' });
-    if (!latestBlockForTx) throw new Error("Failed to get latest block for deadline.");
-    const deadlineSeconds = BigInt(deadlineMinutes) * 60n;
-    const deadlineBigInt = latestBlockForTx.timestamp + deadlineSeconds;
-
-    const permitBatchValues = hasBatchPermit ? (permitBatchData.values || {
-      details: permitBatchData.details || [],
-      spender: permitBatchData.spender || POSITION_MANAGER_ADDRESS,
-      sigDeadline: permitBatchData.sigDeadline || '0'
-    }) : null;
-
-    const hasNativeETH = isNativeC0 || isNativeC1;
-    let addOptions: AddLiquidityOptions = {
-      slippageTolerance: SLIPPAGE_TOLERANCE,
-      deadline: deadlineBigInt.toString(),
-      tokenId: nftTokenId.toString(),
-      hookData: '0x',
-      useNative: hasNativeETH ? Ether.onChain(chainId) : undefined,
+    // Step 1: build the increase tx. Without a signed permit we simulate to get the
+    // computed counterpart amount + gas; with a permit we skip simulation (502 bug on
+    // hooked pools) and rely on the wallet for gas estimation.
+    // If simulation fails with TRANSFER_FROM_FAILED (user lacks USDC→Permit2 allowance
+    // or the batch permit), we don't have gas but we still need the tx to hand off to
+    // check_approval — retry without simulation.
+    const baseReq = {
+      walletAddress: getAddress(userAddress),
+      chainId,
+      protocol: 'V4' as const,
+      token0Address: details.poolKey.currency0,
+      token1Address: details.poolKey.currency1,
+      nftTokenId: nftTokenId.toString(),
+      independentToken: {
+        tokenAddress: independentIsToken0 ? details.poolKey.currency0 : details.poolKey.currency1,
+        amount: (independentIsToken0 ? amountC0Raw : amountC1Raw).toString(),
+      },
+      slippageTolerance: slippageBps / 100,
+      deadline: deadlineSeconds,
+      ...(hasSignedPermit ? { v4BatchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
     };
-
-    if (permitBatchValues) {
-      const permitBatchForSDK = buildPermitBatchForSDK(permitBatchValues);
-
-      addOptions = {
-        ...addOptions,
-        batchPermit: {
-          owner: getAddress(userAddress),
-          permitBatch: permitBatchForSDK,
-          signature: batchPermitSignature as string,
-        }
-      };
-    }
-
-    const methodParameters = V4PositionManager.addCallParameters(position, addOptions);
-    const calldata = methodParameters.calldata;
-    const value = methodParameters.value ?? "0";
-
-    // Estimate gas
-    let gasLimit: string | undefined;
+    // Simulation acts as an approval/permit probe: success proves both ERC-20 allowances
+    // and the Permit2→PositionManager permit cover the required amounts. Only on
+    // revert (FAILED_TO_ESTIMATE_GAS / TRANSFER_FROM_FAILED) do we fall back to
+    // check_approval to discover what's missing.
+    let createResponse;
+    let needsApprovalDiscovery = false;
     try {
-      const estimatedGas = await publicClient.estimateGas({
-        account: getAddress(userAddress),
-        to: POSITION_MANAGER_ADDRESS as `0x${string}`,
-        data: calldata as `0x${string}`,
-        value: value ? BigInt(value) : undefined,
-      });
-      gasLimit = ((estimatedGas * 120n) / 100n).toString();
+      createResponse = await uniswapLPAPI.increase({ ...baseReq, simulateTransaction: !hasSignedPermit });
     } catch (e) {
-      console.warn('[prepare-increase-tx] Gas estimation failed:', e);
+      if (e instanceof UniswapLPAPIError && e.status === 404 && /FAILED_TO_ESTIMATE_GAS|TRANSFER_FROM_FAILED/i.test(e.message)) {
+        createResponse = await uniswapLPAPI.increase({ ...baseReq, simulateTransaction: false });
+        needsApprovalDiscovery = true;
+      } else {
+        throw e;
+      }
     }
 
-    // Final amounts
-    let finalAmount0 = BigInt(position.mintAmounts.amount0.toString());
-    let finalAmount1 = BigInt(position.mintAmounts.amount1.toString());
-    const MAX_UINT256 = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff');
-    if (finalAmount0 >= MAX_UINT256 / 2n) finalAmount0 = 0n;
-    if (finalAmount1 >= MAX_UINT256 / 2n) finalAmount1 = 0n;
+    // Only call check_approval when simulation failed (approvals/permit missing).
+    // Successful simulation = both levels cleared; return the tx directly and skip
+    // the redundant second call. Halves happy-path RPS.
+    if (!hasSignedPermit && needsApprovalDiscovery) {
+      const approvalCheck = await uniswapLPAPI.checkApproval({
+        walletAddress: getAddress(userAddress),
+        chainId,
+        protocol: 'V4',
+        lpTokens: [
+          { tokenAddress: c0, amount: createResponse.token0.amount },
+          { tokenAddress: c1, amount: createResponse.token1.amount },
+        ].filter(t => BigInt(t.amount) > 0n),
+        action: 'INCREASE',
+      });
+
+      const needsToken0Approval = approvalCheck.transactions.some(t =>
+        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c0.toLowerCase());
+      const needsToken1Approval = approvalCheck.transactions.some(t =>
+        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c1.toLowerCase());
+      const firstApproval = approvalCheck.transactions[0];
+      const decodeApproveSpender = (data: string): `0x${string}` =>
+        getAddress(`0x${data.slice(34, 74)}`);
+      const erc20Fields = firstApproval ? {
+        erc20ApprovalNeeded: true as const,
+        approvalTokenAddress: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to),
+        approvalTokenSymbol: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to).toLowerCase() === c0.toLowerCase()
+          ? defC0.symbol : defC1.symbol,
+        approveToAddress: decodeApproveSpender(firstApproval.transaction.data),
+        approvalAmount: maxUint256.toString(),
+        needsToken0Approval,
+        needsToken1Approval,
+      } : null;
+
+      if (approvalCheck.v4BatchPermitData) {
+        const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);
+        const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'PERMIT2_BATCH_SIGNATURE',
+          permitBatchData: v4,
+          signatureDetails: { domain: v4.domain, types: v4.types, primaryType },
+          ...(erc20Fields ?? {}),
+        });
+      }
+      if (erc20Fields) {
+        // No fresh batch permit needed (existing Permit2 state still valid),
+        // but ERC20→Permit2 allowance is missing. Uniswap's API already returned
+        // the increase tx via the simulate-without-sim retry — pass it through so
+        // the frontend can pair it with the approve(s) (atomically via 5792 when
+        // the wallet supports it, sequentially otherwise).
+        return res.status(200).json({
+          needsApproval: true,
+          approvalType: 'ERC20_TO_PERMIT2',
+          create: {
+            to: createResponse.increase.to,
+            from: createResponse.increase.from,
+            data: createResponse.increase.data,
+            value: createResponse.increase.value,
+            chainId,
+          },
+          ...erc20Fields,
+        });
+      }
+    }
+
+    const response = createResponse;
+
+    const stateViewAbiViem = parseAbi(STATE_VIEW_HUMAN_READABLE_ABI);
+    const [slot0Result, liquidityResult] = await publicClient.multicall({
+      contracts: [
+        { address: STATE_VIEW_ADDRESS, abi: stateViewAbiViem, functionName: 'getSlot0', args: [poolConfig.poolId as Hex] },
+        { address: STATE_VIEW_ADDRESS, abi: stateViewAbiViem, functionName: 'getLiquidity', args: [poolConfig.poolId as Hex] },
+      ],
+      allowFailure: true,
+    });
+    const slot0 = slot0Result.status === 'success'
+      ? (slot0Result.result as readonly [bigint, number, number, number])
+      : ([0n, 0, 0, 0] as const);
+    const curLiquidity = liquidityResult.status === 'success' ? (liquidityResult.result as bigint) : 0n;
+
+    const deadlineBigInt = BigInt(deadlineSeconds);
 
     return res.status(200).json({
       needsApproval: false,
       create: {
-        to: POSITION_MANAGER_ADDRESS,
-        from: getAddress(userAddress),
-        data: calldata,
-        value,
+        to: response.increase.to,
+        from: response.increase.from,
+        data: response.increase.data,
+        value: response.increase.value,
         chainId,
-        gasLimit,
       },
       transaction: {
-        to: POSITION_MANAGER_ADDRESS,
-        data: calldata,
-        value,
-        gasLimit,
+        to: response.increase.to,
+        data: response.increase.data,
+        value: response.increase.value,
       },
-      sqrtRatioX96: state.sqrtPriceX96.toString(),
-      currentTick: state.tick,
-      poolLiquidity: state.liquidity.toString(),
+      sqrtRatioX96: slot0[0].toString(),
+      currentTick: slot0[1],
+      poolLiquidity: curLiquidity.toString(),
       deadline: deadlineBigInt.toString(),
+      gasFee: response.gasFee,
       details: {
-        token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: finalAmount0.toString() },
-        token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: finalAmount1.toString() },
-        liquidity: position.liquidity.toString(),
+        token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
+        token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },
         tickLower: details.tickLower,
         tickUpper: details.tickUpper,
-      }
+      },
     });
-
   } catch (error: any) {
-    console.error("[API prepare-increase-tx] Error:", error);
-    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+    if (error instanceof UniswapLPAPIRateLimitError) {
+      console.warn('[prepare-increase-tx] Rate limit exhausted after retries');
+      res.setHeader('Retry-After', '2');
+      return res.status(429).json({ message: 'Busy — please retry in a moment.' });
+    }
+    if (error instanceof UniswapLPAPIError) {
+      console.error('[prepare-increase-tx] Uniswap LP API error:', error.status, error.message);
+      Sentry.captureException(error, {
+        tags: { route: 'prepare-increase-tx', source: 'uniswap_lp_api', uniswap_status: String(error.status) },
+        extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
+      });
+      return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
+    }
+    console.error('[API prepare-increase-tx] Error:', error);
+    Sentry.captureException(error, {
+      tags: { route: 'prepare-increase-tx', source: 'internal' },
+      extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
+    });
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return res.status(500).json({ message: errorMessage, error: process.env.NODE_ENV === 'development' ? error : undefined });
   }
 }

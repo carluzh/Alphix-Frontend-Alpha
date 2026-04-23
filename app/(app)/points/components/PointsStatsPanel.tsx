@@ -328,7 +328,7 @@ function HistoryStatsPanel({
       >
         <div className="flex items-center gap-1">
           <span className="text-xs text-muted-foreground">
-            Use Unified Pools to earn points
+            Use Custom Pools to earn points
           </span>
           <IconChevronRight
             className={cn(

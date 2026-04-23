@@ -190,7 +190,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     () => [token0Symbol, token1Symbol].filter(Boolean) as string[],
     [token0Symbol, token1Symbol]
   );
-  const { prices: createPrices } = useTokenPrices(createPriceSymbols);
+  const { prices: createPrices } = useTokenPrices(createPriceSymbols, { chainId });
   const token0USDPrice = token0Symbol ? (createPrices[token0Symbol] || null) : null;
   const token1USDPrice = token1Symbol ? (createPrices[token1Symbol] || null) : null;
 
@@ -469,7 +469,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   const queryTickLower = calculatedData?.finalTickLower ?? tickLower ?? (ticks[0] !== null ? parseInt(String(ticks[0])) : undefined);
   const queryTickUpper = calculatedData?.finalTickUpper ?? tickUpper ?? (ticks[1] !== null ? parseInt(String(ticks[1])) : undefined);
 
-  const { gasLimit: preparedGasLimit } = usePrepareMintQuery(
+  const { gasFee: preparedGasFee } = usePrepareMintQuery(
     {
       userAddress: accountAddress as Address | undefined,
       poolId: poolId || undefined,
@@ -494,9 +494,8 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   // ==========================================================================
 
   const { gasFeeFormatted, isLoading: isGasLoading } = useGasFeeEstimate({
-    gasLimit: preparedGasLimit,
-    chainId,
-    skip: !preparedGasLimit,
+    gasFeeWei: preparedGasFee,
+    skip: preparedGasFee == null,
   });
 
   // ==========================================================================

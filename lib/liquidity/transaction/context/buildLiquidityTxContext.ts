@@ -88,12 +88,13 @@ export interface MintTxApiResponse {
   poolLiquidity?: string;
   dependentAmount?: string;
   deadline?: string;
+  /** Estimated gas cost in wei from API simulation (when simulateTransaction=true). */
+  gasFee?: string;
   details?: {
     token0: { address: string; symbol: string; amount: string };
     token1: { address: string; symbol: string; amount: string };
-    liquidity: string;
-    finalTickLower: number;
-    finalTickUpper: number;
+    tickLower: number;
+    tickUpper: number;
   };
 }
 

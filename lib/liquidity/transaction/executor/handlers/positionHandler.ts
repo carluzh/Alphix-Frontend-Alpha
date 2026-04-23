@@ -144,12 +144,10 @@ export async function getLiquidityTxRequest(
     return { txRequest: step.txRequest };
   }
 
-  // Async step - requires signature
-  if (!signature) {
-    throw new Error('Signature required for async increase position transaction step');
-  }
-
-  const { txRequest, sqrtRatioX96 } = await step.getTxRequest(signature);
+  // Async step — signature is optional. The async builder calls our backend, which
+  // forwards an empty signature as `undefined` to Uniswap's API for the no-permit
+  // re-fetch path (existing Permit2 state covers spending after ERC20 approves).
+  const { txRequest, sqrtRatioX96 } = await step.getTxRequest(signature ?? '');
 
   if (!txRequest) {
     throw new Error('txRequest must be defined');

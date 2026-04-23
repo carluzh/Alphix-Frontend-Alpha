@@ -224,7 +224,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     () => [position.token0.symbol, position.token1.symbol].filter(Boolean),
     [position.token0.symbol, position.token1.symbol]
   );
-  const { prices: increasePrices } = useTokenPrices(increasePriceSymbols);
+  const { prices: increasePrices } = useTokenPrices(increasePriceSymbols, { chainId });
   const token0USDPrice = increasePrices[position.token0.symbol] || null;
   const token1USDPrice = increasePrices[position.token1.symbol] || null;
 
@@ -573,21 +573,28 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           };
         }
 
-        // Include permitBatchData in request args so async step can send it with signature
-        // Always include if API returned permit data, even if permit step fields weren't fully built
+        // Include permitBatchData in request args so async step can send it with signature.
+        // Send the FULL normalized permit (domain, types, values) — the backend's
+        // `denormalizeV4BatchPermit` reads `types` to wrap fields, so a values-only
+        // payload throws "Cannot convert undefined or null to object".
         const increasePositionRequestArgsWithPermit = permitData ? {
           ...increasePositionRequestArgs,
-          permitBatchData: permitData.values || permitData,
+          permitBatchData: permitData,
         } : increasePositionRequestArgs;
 
-        // Build context with approval step AND permit data for complete step generation
-        // The step generator will create: [approval] -> [permit signature] -> [async position tx]
+        // Build context with approval step AND permit data for complete step generation.
+        // - With permit data: [approval] -> [permit signature] -> [async position tx]
+        // - Without permit data (existing Permit2 state still valid): rely on the
+        //   pre-built `data.create` tx returned by the backend, producing
+        //   [approval] -> [sync position tx]. The signed-flow generator branch
+        //   handles both cases via `txRequest`.
         const context = buildLiquidityTxContext({
           type: LiquidityTransactionType.Increase,
           apiResponse: {
-            needsApproval: true,
+            needsApproval: !data.create,
             permitBatchData: permitData,
             signatureDetails: sigDetails,
+            create: data.create,
           } as MintTxApiResponse,
           token0: {
             address: token0Config.address as Address,
@@ -632,10 +639,12 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           values: permitData.values || permitData,
         };
 
-        // Include permitBatchData in request args so async step can send it with signature
+        // Include permitBatchData in request args so async step can send it with signature.
+        // Send the FULL normalized permit (domain, types, values) — backend's
+        // `denormalizeV4BatchPermit` reads `types` to wrap fields.
         const increasePositionRequestArgsWithPermit = {
           ...increasePositionRequestArgs,
-          permitBatchData: permitData.values || permitData,
+          permitBatchData: permitData,
         };
 
         // Build unsigned context with permit and request args for async step

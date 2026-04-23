@@ -16,12 +16,14 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { TokenImage } from '@/components/ui/token-image';
 import { useAccount, usePublicClient } from 'wagmi';
 import { AlertCircle } from 'lucide-react';
 import * as Sentry from '@sentry/nextjs';
 import { parseUnits, type Address } from 'viem';
 import { clearCachedPermit } from '@/lib/permit-types';
+import { getExplorerTxUrl } from '@/lib/wagmiConfig';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useCreatePositionTxContext } from './CreatePositionTxContext';
@@ -40,8 +42,11 @@ import {
   generateLPTransactionSteps,
   type MintTxApiResponse,
 } from '@/lib/liquidity/transaction';
+import { collapseToBatchedAsync } from '@/lib/liquidity/transaction/steps/collapseBatchedSteps';
+import { useCanBatchCalls } from '@/lib/transactions/useCanBatchCalls';
 import {
   LiquidityTransactionType,
+  type TransactionStep,
   type ValidatedLiquidityTxContext,
 } from '@/lib/liquidity/types';
 
@@ -85,6 +90,7 @@ export function ReviewExecuteModal() {
   const networkMode = poolNetworkMode ?? 'base';
   const chainId = chainIdForMode(networkMode);
   const publicClient = usePublicClient({ chainId });
+  const canBatchCalls = useCanBatchCalls(chainId);
 
   const {
     txInfo,
@@ -351,7 +357,11 @@ export function ReviewExecuteModal() {
       });
 
       txContextRef.current = context as ValidatedLiquidityTxContext;
-      return { steps: generateLPTransactionSteps(context as ValidatedLiquidityTxContext) };
+      const uyRawSteps = generateLPTransactionSteps(context as ValidatedLiquidityTxContext);
+      if (uyRawSteps.length === 0) {
+        throw new Error('Transaction context produced no executable steps. Refresh and try again.');
+      }
+      return { steps: canBatchCalls ? collapseToBatchedAsync(uyRawSteps as TransactionStep[]) : uyRawSteps };
     }
 
     // ═══ V4 CUSTOM ═══
@@ -411,9 +421,19 @@ export function ReviewExecuteModal() {
         })
       : {};
 
+    // If the backend returned a pre-built create tx alongside ERC20 approvals
+    // (no-permit re-fetch case — existing Permit2 state still valid), treat it
+    // as the tx source so the signed-flow generator branch produces
+    // [approve, sync_create]. Collapse then folds to a 5792 bundle. Matches
+    // the pattern used for increase.
+    const normalizedApiResponse: MintTxApiResponse =
+      apiResponse.needsApproval && (apiResponse as any).create
+        ? ({ ...apiResponse, needsApproval: false } as MintTxApiResponse)
+        : apiResponse;
+
     const context = buildLiquidityTxContext({
       type: LiquidityTransactionType.Create,
-      apiResponse,
+      apiResponse: normalizedApiResponse,
       token0: { address: token0.address as Address, symbol: token0.symbol, decimals: token0.decimals, chainId },
       token1: { address: token1.address as Address, symbol: token1.symbol, decimals: token1.decimals, chainId },
       amount0: getRawAmount0(),
@@ -431,7 +451,11 @@ export function ReviewExecuteModal() {
     });
 
     txContextRef.current = context as ValidatedLiquidityTxContext;
-    return { steps: generateLPTransactionSteps(context as ValidatedLiquidityTxContext) };
+    const v4RawSteps = generateLPTransactionSteps(context as ValidatedLiquidityTxContext);
+    if (v4RawSteps.length === 0) {
+      throw new Error('Transaction context produced no executable steps. Refresh and try again.');
+    }
+    return { steps: canBatchCalls ? collapseToBatchedAsync(v4RawSteps as TransactionStep[]) : v4RawSteps };
   } catch (err) {
     Sentry.captureException(err, {
       tags: { component: 'ReviewExecuteModal', operation: isZapMode ? 'zapTransaction' : 'transaction' },
@@ -439,7 +463,7 @@ export function ReviewExecuteModal() {
     });
     throw err;
   }
-  }, [pool, address, chainId, networkMode, state, txInfo, calculatedData, isUnifiedYield, depositPreview, isZapMode, zapPreviewQuery, zapApprovalsQuery, buildApprovalRequests, refetchApprovals, poolStateData, publicClient]);
+  }, [pool, address, chainId, networkMode, state, txInfo, calculatedData, isUnifiedYield, depositPreview, isZapMode, zapPreviewQuery, zapApprovalsQuery, buildApprovalRequests, refetchApprovals, poolStateData, publicClient, canBatchCalls]);
 
   // ─── Map steps to UI ──────────────────────────────────────────────────
   const mapStepsToUIFn = useCallback((steps: unknown[]): UITransactionStep[] => {
@@ -453,14 +477,33 @@ export function ReviewExecuteModal() {
   }, [chainId, ensureChain]);
 
   // ─── Success handler ──────────────────────────────────────────────────
-  const handleSuccess = useCallback(() => {
+  const handleSuccess = useCallback((results?: Map<number, { txHash?: string }>) => {
     // Clean up cached permits
     if (address && chainId && pool) {
       clearCachedPermit(address, chainId, pool.currency0.symbol, pool.currency1.symbol);
     }
+
+    // Extract last tx hash for explorer link
+    let hash: string | undefined;
+    if (results) {
+      for (const [, result] of results) {
+        if (result.txHash) hash = result.txHash;
+      }
+    }
+    if (hash) {
+      toast.success('Position created', {
+        action: {
+          label: 'View transaction',
+          onClick: () => window.open(getExplorerTxUrl(hash!, networkMode), '_blank'),
+        },
+      });
+    } else {
+      toast.success('Position created');
+    }
+
     closeReviewModal();
     router.push('/overview');
-  }, [closeReviewModal, router, address, chainId, pool]);
+  }, [closeReviewModal, router, address, chainId, pool, networkMode]);
 
   // ─── Button state ─────────────────────────────────────────────────────
   const isConfirmDisabled = isZapMode
@@ -614,7 +657,7 @@ export function ReviewExecuteModal() {
                     <TokenImage src={state.zapInputToken === 'token0' ? token0Icon : token1Icon} alt={zapInputToken || ''} size={16} />
                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5"><polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" /></svg>
                     <span className="text-xs text-muted-foreground">
-                      {zapPreviewQuery.data.route.type === 'psm' ? 'PSM' : zapPreviewQuery.data.route.type === 'kyberswap' ? 'Kyberswap' : 'Unified Pool'}
+                      {zapPreviewQuery.data.route.type === 'psm' ? 'PSM' : zapPreviewQuery.data.route.type === 'kyberswap' ? 'Kyberswap' : 'Custom Pool'}
                     </span>
                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5"><polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" /></svg>
                     <TokenImage src={state.zapInputToken === 'token0' ? token1Icon : token0Icon} alt={state.zapInputToken === 'token0' ? pool.currency1.symbol : pool.currency0.symbol} size={16} />

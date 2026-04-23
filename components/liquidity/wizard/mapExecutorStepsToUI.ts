@@ -56,6 +56,7 @@ export function mapExecutorStepsToUI(
 
       case 'IncreasePositionTransaction':
       case 'IncreasePositionTransactionAsync':
+      case 'IncreasePositionTransactionBatchedAsync':
       case 'UnifiedYieldDeposit': // UY deposit maps to create position UI
         return {
           type: UIStepType.CreatePositionTransaction,

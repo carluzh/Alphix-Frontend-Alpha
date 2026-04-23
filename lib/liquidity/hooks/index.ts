@@ -48,7 +48,6 @@ export {
 // Gas fee estimation hooks
 export {
   useGasFeeEstimate,
-  useMultiStepGasFeeEstimate,
   type GasFeeEstimateResult,
   type UseGasFeeEstimateParams,
 } from './useGasFeeEstimate'

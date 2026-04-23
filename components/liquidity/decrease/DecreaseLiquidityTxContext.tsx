@@ -93,7 +93,7 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     () => [position.token0.symbol, position.token1.symbol].filter(Boolean),
     [position.token0.symbol, position.token1.symbol]
   );
-  const { prices } = useTokenPrices(priceSymbols);
+  const { prices } = useTokenPrices(priceSymbols, { chainId });
 
   // Get pool config for poolId (needed for pool state query)
   const poolConfig = useMemo(() => {
@@ -387,16 +387,16 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     // =========================================================================
     const tokenId = parseTokenId(position.positionId);
 
-    // Check if this is a full burn
+    // Compute percentage from withdrawn amounts vs. position max.
     const amt0 = parseFloat(withdrawAmount0 || "0");
     const amt1 = parseFloat(withdrawAmount1 || "0");
     const max0 = parseFloat(position.token0.amount || "0");
     const max1 = parseFloat(position.token1.amount || "0");
     const pct0 = max0 > 0 ? amt0 / max0 : 0;
     const pct1 = max1 > 0 ? amt1 / max1 : 0;
-    const nearFull0 = max0 > 0 ? pct0 >= 0.99 : true;
-    const nearFull1 = max1 > 0 ? pct1 >= 0.99 : true;
-    const isFullBurn = position.isInRange ? nearFull0 && nearFull1 : pct0 >= 0.99 || pct1 >= 0.99;
+    const rawPct = Math.max(pct0, pct1) * 100;
+    // ≥99% snaps to full burn for clean exits
+    const decreasePercentage = rawPct >= 99 ? 100 : Math.max(1, Math.min(100, Math.round(rawPct)));
 
     // Get user settings
     const userSettings = getStoredUserSettings();
@@ -411,10 +411,8 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         body: JSON.stringify({
           userAddress: accountAddress,
           tokenId,
-          decreaseAmount0: withdrawAmount0 || "0",
-          decreaseAmount1: withdrawAmount1 || "0",
+          decreasePercentage,
           chainId,
-          isFullBurn,
           slippageBps,
           deadlineMinutes,
         }),

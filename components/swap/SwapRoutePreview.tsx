@@ -44,7 +44,7 @@ interface SwapRoutePreviewProps {
   networkMode?: NetworkMode
 }
 
-const ALPHIX_FLOW_COLOR = "#9ca3af" // neutral grey for Alphix Unified Pool flows
+const ALPHIX_FLOW_COLOR = "#9ca3af" // neutral grey for Alphix Custom Pool flows
 
 const ROUTE_COLORS = [
   "#6366f1", // indigo
@@ -77,8 +77,8 @@ function buildExchangeColorMap(routes: ParsedSplitRoute[]): Map<string, string> 
     for (const ex of r.exchanges) {
       const key = ex.toLowerCase()
       if (!map.has(key)) {
-        // Alphix Unified Pool always gets the warm amber color
-        map.set(key, key === "unified pool" ? ALPHIX_FLOW_COLOR : ROUTE_COLORS[idx % ROUTE_COLORS.length])
+        // Alphix Custom Pool always gets the consistent Alphix flow color
+        map.set(key, key === "custom pool" ? ALPHIX_FLOW_COLOR : ROUTE_COLORS[idx % ROUTE_COLORS.length])
         idx++
       }
     }
@@ -259,8 +259,8 @@ export function SwapRoutePreview({
       return [{
         percentage: 100,
         path: routeInfo.path,
-        // All Alphix pool hops show as "Unified Pool" with a single consistent color
-        exchanges: routeInfo.pools.map(() => "Unified Pool"),
+        // All Alphix pool hops show as "Custom Pool" with a single consistent color
+        exchanges: routeInfo.pools.map(() => "Custom Pool"),
       }] as ParsedSplitRoute[]
     }
     return [] as ParsedSplitRoute[]

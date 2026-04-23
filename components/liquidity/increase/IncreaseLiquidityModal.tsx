@@ -50,6 +50,8 @@ import { isNativeToken } from "@/lib/aggregators/types";
 // Liquidity executors (handles ALL step types including zap)
 import { useLiquidityExecutors } from "@/lib/transactions/flows/useLiquidityExecutors";
 import { generateLPTransactionSteps } from "@/lib/liquidity/transaction";
+import { collapseToBatchedAsync } from "@/lib/liquidity/transaction/steps/collapseBatchedSteps";
+import { useCanBatchCalls } from "@/lib/transactions/useCanBatchCalls";
 import type { ValidatedLiquidityTxContext, TransactionStep } from "@/lib/liquidity/types";
 import { TransactionStepType as UIStepType, type TransactionStep as UITransactionStep } from "@/lib/transactions/types";
 import type { StepGenerationResult, StepExecutorFn } from "@/lib/transactions/useStepExecutor";
@@ -119,6 +121,7 @@ function mapStepsToUI(
         };
       case "IncreasePositionTransaction":
       case "IncreasePositionTransactionAsync":
+      case "IncreasePositionTransactionBatchedAsync":
       case "UnifiedYieldDeposit":
       case "ZapDynamicDeposit":
       default:
@@ -210,6 +213,7 @@ function IncreaseLiquidityInner({
   const publicClient = usePublicClient({ chainId });
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const { formattedAmounts } = derivedIncreaseLiquidityInfo;
+  const canBatchCalls = useCanBatchCalls(chainId);
 
   // Zap refetch countdown timer
   const [zapRefetchCountdown, setZapRefetchCountdown] = useState(10);
@@ -334,13 +338,17 @@ function IncreaseLiquidityInner({
     const context = await fetchAndBuildContext();
     if (!context) throw new Error("Failed to build transaction context");
     txContextRef.current = context;
-    const steps = generateLPTransactionSteps(context);
+    const rawSteps = generateLPTransactionSteps(context);
+    if (rawSteps.length === 0) {
+      throw new Error("Transaction context produced no executable steps. Refresh and try again.");
+    }
+    const steps = canBatchCalls ? collapseToBatchedAsync(rawSteps as TransactionStep[]) : rawSteps;
     return { steps };
   }, [
     isZapMode, zapPreview, zapApprovals, refetchZapPreview,
     position, networkMode, chainId, address, publicClient,
     tokenDefinitions, token0USDPrice, token1USDPrice,
-    fetchAndBuildContext,
+    fetchAndBuildContext, canBatchCalls,
   ]);
 
   // ─── Map steps to UI ──────────────────────────────────────────────────
@@ -550,7 +558,7 @@ function IncreaseLiquidityInner({
                           <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
                         </svg>
                         <span className="text-xs text-muted-foreground">
-                          {zapPreview.route.type === 'psm' ? 'PSM' : zapPreview.route.type === 'kyberswap' ? 'Kyberswap' : 'Unified Pool'}
+                          {zapPreview.route.type === 'psm' ? 'PSM' : zapPreview.route.type === 'kyberswap' ? 'Kyberswap' : 'Custom Pool'}
                         </span>
                         <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
                           <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />

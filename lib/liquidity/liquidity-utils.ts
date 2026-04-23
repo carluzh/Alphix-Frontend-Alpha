@@ -1,17 +1,14 @@
-import { type Address, type Hex, getAddress, zeroAddress, encodeAbiParameters, keccak256 } from 'viem';
+import { type Address, type Hex, getAddress } from 'viem';
 import { PERMIT2_TYPES } from '@/lib/permit-types';
 
 import { createNetworkClient } from '@/lib/viemClient';
-import { getPositionManagerAddress, getStateViewAddress, getToken, getTokenSymbolByAddress } from '@/lib/pools-config';
+import { getPositionManagerAddress, getStateViewAddress } from '@/lib/pools-config';
 import { modeForChainId, type NetworkMode } from '@/lib/network-mode';
 import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
 import { parseAbi } from 'viem';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import type { Abi } from 'viem';
 import { PERMIT2_ADDRESS, PERMIT2_DOMAIN_NAME, Permit2Abi_allowance, PERMIT_EXPIRATION_DURATION_SECONDS } from '@/lib/swap/swap-constants';
-import { Token, Ether } from '@uniswap/sdk-core';
-import { Pool as V4Pool } from '@uniswap/v4-sdk';
-import JSBI from 'jsbi';
 
 // Position details helpers
 
@@ -95,6 +92,7 @@ export async function getPositionDetails(tokenId: bigint, chainId: number): Prom
         poolKey,
     };
 }
+
 
 export interface PoolState {
     sqrtPriceX96: bigint;
@@ -249,84 +247,5 @@ export function calculateUnclaimedFeesV4(
         token0Fees: (delta0 * liquidity) / Q128,
         token1Fees: (delta1 * liquidity) / Q128,
     };
-}
-
-// ---------------------------------------------------------------------------
-// Build pool + token context from an on-chain position
-// ---------------------------------------------------------------------------
-
-export interface PositionPoolContext {
-  details: PositionDetails;
-  defC0: NonNullable<ReturnType<typeof getToken>>;
-  defC1: NonNullable<ReturnType<typeof getToken>>;
-  currency0: Token | Ether;
-  currency1: Token | Ether;
-  isNativeC0: boolean;
-  isNativeC1: boolean;
-  pool: V4Pool;
-  poolState: PoolState;
-}
-
-/**
- * Given an NFT tokenId, resolves on-chain position data, token definitions,
- * pool state, and builds a V4Pool — the shared setup that both
- * prepare-decrease-tx and prepare-increase-tx need.
- */
-export async function buildPoolFromPosition(
-  nftTokenId: bigint,
-  chainId: number,
-  networkMode: NetworkMode,
-): Promise<PositionPoolContext> {
-  const details = await getPositionDetails(nftTokenId, chainId);
-
-  const symC0 = getTokenSymbolByAddress(getAddress(details.poolKey.currency0), networkMode);
-  const symC1 = getTokenSymbolByAddress(getAddress(details.poolKey.currency1), networkMode);
-  if (!symC0 || !symC1) throw new Error('Token symbols not found for pool currencies');
-
-  const defC0 = getToken(symC0, networkMode);
-  const defC1 = getToken(symC1, networkMode);
-  if (!defC0 || !defC1) throw new Error('Token definitions not found');
-
-  const isNativeC0 = getAddress(details.poolKey.currency0) === zeroAddress;
-  const isNativeC1 = getAddress(details.poolKey.currency1) === zeroAddress;
-  const currency0 = isNativeC0
-    ? Ether.onChain(chainId)
-    : new Token(chainId, getAddress(defC0.address), defC0.decimals, defC0.symbol);
-  const currency1 = isNativeC1
-    ? Ether.onChain(chainId)
-    : new Token(chainId, getAddress(defC1.address), defC1.decimals, defC1.symbol);
-
-  const keyTuple = [{
-    currency0: getAddress(details.poolKey.currency0),
-    currency1: getAddress(details.poolKey.currency1),
-    fee: Number(details.poolKey.fee),
-    tickSpacing: Number(details.poolKey.tickSpacing),
-    hooks: getAddress(details.poolKey.hooks),
-  }];
-  const encoded = encodeAbiParameters([{
-    type: 'tuple',
-    components: [
-      { name: 'currency0', type: 'address' },
-      { name: 'currency1', type: 'address' },
-      { name: 'fee', type: 'uint24' },
-      { name: 'tickSpacing', type: 'int24' },
-      { name: 'hooks', type: 'address' },
-    ],
-  }], keyTuple as any);
-  const poolId = keccak256(encoded) as Hex;
-  const poolState = await getPoolState(poolId, chainId);
-
-  const pool = new V4Pool(
-    currency0 as any,
-    currency1,
-    details.poolKey.fee,
-    details.poolKey.tickSpacing,
-    details.poolKey.hooks,
-    JSBI.BigInt(poolState.sqrtPriceX96.toString()),
-    JSBI.BigInt(poolState.liquidity.toString()),
-    poolState.tick,
-  );
-
-  return { details, defC0, defC1, currency0, currency1, isNativeC0, isNativeC1, pool, poolState };
 }
 

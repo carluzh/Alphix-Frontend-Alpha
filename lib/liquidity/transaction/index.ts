@@ -1,25 +1,10 @@
 /**
  * Transaction Module
  *
- * Transaction builders and step management for liquidity operations.
+ * Step management + handlers for liquidity operations. V4 tx-building primitives
+ * (mint/increase/decrease/collect + Permit2 logic) have been sunsetted in favor
+ * of the Uniswap Liquidity API (see @/lib/liquidity/uniswap-api/client).
  */
-
-// Transaction builders
-export {
-  buildIncreaseLiquidityTx,
-  parseTokenIdFromPosition,
-  type IncreasePositionData,
-  type BuildIncreaseOptions,
-  type BuildIncreaseTxResult,
-  type BuildIncreaseTxContext,
-  type PrepareIncreasePermitParams,
-  buildDecreaseLiquidityTx,
-  buildCollectFeesTx,
-  type DecreasePositionData,
-  type BuildDecreaseOptions,
-  type BuildDecreaseTxResult,
-  type BuildDecreaseTxContext,
-} from './builders'
 
 // Step factory functions - COPIED FROM UNISWAP
 export {
@@ -67,16 +52,6 @@ export {
   type ExecutionState,
   type ExecutionStore,
 } from './executor'
-
-// Permit2 shared utilities
-export {
-  checkERC20Allowances,
-  buildPermitBatchData,
-  buildPermitBatchForSDK,
-  type TokenForPermitCheck,
-  type ERC20ApprovalResult,
-  type PermitBatchDataResult,
-} from './permit2-checks'
 
 // Context builders
 export {

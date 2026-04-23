@@ -11,7 +11,9 @@
  * @see interface/apps/web/src/pages/CreatePosition/CreatePositionTxContext.tsx
  */
 
+import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import type { Address } from 'viem';
 import type { TokenSymbol } from '@/lib/pools-config';
 import type { MintTxApiResponse } from '@/lib/liquidity/transaction/context/buildLiquidityTxContext';
@@ -43,8 +45,8 @@ export interface PrepareMintQueryResult {
   error: Error | null;
   /** Refetch function */
   refetch: () => void;
-  /** Gas limit from response (in wei as bigint) */
-  gasLimit: bigint | undefined;
+  /** Estimated gas cost in wei from API simulation. */
+  gasFee: bigint | undefined;
 }
 
 // =============================================================================
@@ -138,7 +140,9 @@ export function usePrepareMintQuery(
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to prepare transaction');
+        const err = new Error(errorData.message || 'Failed to prepare transaction') as Error & { status?: number };
+        err.status = response.status;
+        throw err;
       }
 
       return response.json();
@@ -146,16 +150,30 @@ export function usePrepareMintQuery(
     enabled: isEnabled,
     refetchInterval: options?.refetchInterval ?? 5000, // Match Uniswap's 5 second polling
     staleTime: options?.staleTime ?? 5000,
-    retry: false, // Don't retry on failure (Uniswap pattern)
+    // Retry only on 429 (Uniswap rate limit propagated from our route) with a longer
+    // backoff than the in-route retry. Other failures surface immediately.
+    retry: (failureCount, error) => (error as any)?.status === 429 && failureCount < 2,
+    retryDelay: (failureCount) => [1500, 4000][failureCount] ?? 4000,
   });
 
-  // Extract gasLimit from response
-  const gasLimit = (() => {
-    if (!data) return undefined;
-    const gasLimitStr = data.create?.gasLimit || data.transaction?.gasLimit;
-    if (!gasLimitStr) return undefined;
+  // Surface a single toast when the API rate limit survives our in-route + TanStack
+  // retries (transient spike absorbed silently; sustained overload becomes visible).
+  // Sentry capture happens server-side in the route — no client capture here to avoid
+  // double-reporting and drowning Sentry with user-driven 4xx / AbortError noise.
+  const lastToastAtRef = useRef(0);
+  useEffect(() => {
+    if ((error as any)?.status === 429 && Date.now() - lastToastAtRef.current > 10_000) {
+      lastToastAtRef.current = Date.now();
+      toast.error('Uniswap LP service is busy', {
+        description: 'Refresh in a moment — your transaction is not affected.',
+      });
+    }
+  }, [error]);
+
+  const gasFee = (() => {
+    if (!data?.gasFee) return undefined;
     try {
-      return BigInt(gasLimitStr);
+      return BigInt(data.gasFee);
     } catch {
       return undefined;
     }
@@ -166,6 +184,6 @@ export function usePrepareMintQuery(
     isLoading,
     error: error as Error | null,
     refetch,
-    gasLimit,
+    gasFee,
   };
 }
