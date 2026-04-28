@@ -142,6 +142,7 @@ export interface BuildLiquidityContextParams {
     tokenId: string;
     amount0: string;
     amount1: string;
+    inputSide?: 'token0' | 'token1';
     chainId: number;
     slippageBps?: number;
     deadlineMinutes?: number;

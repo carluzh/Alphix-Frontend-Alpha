@@ -102,6 +102,8 @@ export interface IncreaseLPPositionRequestArgs {
   tokenId: string;
   amount0: string;
   amount1: string;
+  /** Which side the user is entering. The other side is recomputed by Uniswap. */
+  inputSide?: 'token0' | 'token1';
   chainId: number;
   slippageBps?: number;
   deadlineMinutes?: number;

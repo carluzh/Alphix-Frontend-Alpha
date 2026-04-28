@@ -31,6 +31,14 @@ interface PrepareIncreaseTxRequest extends NextApiRequest {
     amount0: string;
     amount1: string;
     chainId: number;
+    /**
+     * Which side the user is entering — the OTHER side is recomputed by Uniswap.
+     * MUST be sent by clients that auto-fill the dependent amount client-side, otherwise
+     * Uniswap is told "independent = token0" any time amount0 > 0 (legacy heuristic),
+     * recomputes a token1 that drifts from the user's typed value, and `MAX` deposits
+     * fail simulation with TRANSFER_FROM_FAILED.
+     */
+    inputSide?: 'token0' | 'token1';
     slippageBps?: number;
     deadlineMinutes?: number;
     /** EIP-712 signature over the v4BatchPermitData typed data. */
@@ -56,6 +64,11 @@ interface ApprovalNeededResponse {
    * may not include it.
    */
   create?: { to: string; from?: string; data: string; value: string; chainId: number; gasLimit?: string };
+  /** Raw token amounts Uniswap will actually transfer — used by the UI to keep the dependent input in sync with the wallet popup. */
+  details?: {
+    token0: { address: string; symbol: string; amount: string };
+    token1: { address: string; symbol: string; amount: string };
+  };
 }
 
 interface PermitSignatureNeededResponse {
@@ -74,6 +87,11 @@ interface PermitSignatureNeededResponse {
   approvalAmount?: string;
   needsToken0Approval?: boolean;
   needsToken1Approval?: boolean;
+  /** Raw token amounts Uniswap will actually transfer — used by the UI to keep the dependent input in sync with the permit values. */
+  details?: {
+    token0: { address: string; symbol: string; amount: string };
+    token1: { address: string; symbol: string; amount: string };
+  };
 }
 
 interface TransactionPreparedResponse {
@@ -123,6 +141,7 @@ export default async function handler(
       amount0: inputAmount0,
       amount1: inputAmount1,
       chainId,
+      inputSide,
       slippageBps = 50,
       deadlineMinutes = 30,
       permitSignature,
@@ -167,7 +186,19 @@ export default async function handler(
     }
     const hasSignedPermit = !!(permitSignature && permitBatchData);
 
-    const independentIsToken0 = amountC0Raw > 0n;
+    // Pick the independent token from the explicit `inputSide` when provided. The
+    // `amountC0Raw > 0n` fallback exists only for clients that haven't been updated
+    // to send `inputSide`; with auto-filled dependent amounts (the normal UI path)
+    // both sides are always > 0 and the heuristic locks the independent to token0,
+    // which makes Uniswap recompute token1 and breaks `MAX` deposits.
+    const independentIsToken0 =
+      inputSide === 'token0' ? true :
+      inputSide === 'token1' ? false :
+      amountC0Raw > 0n;
+    const independentAmount = independentIsToken0 ? amountC0Raw : amountC1Raw;
+    if (independentAmount === 0n) {
+      return res.status(400).json({ message: 'Please enter a valid amount to add.' });
+    }
     const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
     const c0 = getAddress(details.poolKey.currency0);
     const c1 = getAddress(details.poolKey.currency1);
@@ -243,6 +274,15 @@ export default async function handler(
         needsToken1Approval,
       } : null;
 
+      // Surface Uniswap-computed amounts on every branch so the UI can show what
+      // the user is actually about to sign instead of the FE-computed dependent.
+      const detailsField = {
+        details: {
+          token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: createResponse.token0.amount },
+          token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: createResponse.token1.amount },
+        },
+      };
+
       if (approvalCheck.v4BatchPermitData) {
         const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);
         const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
@@ -252,6 +292,7 @@ export default async function handler(
           permitBatchData: v4,
           signatureDetails: { domain: v4.domain, types: v4.types, primaryType },
           ...(erc20Fields ?? {}),
+          ...detailsField,
         });
       }
       if (erc20Fields) {
@@ -271,6 +312,7 @@ export default async function handler(
             chainId,
           },
           ...erc20Fields,
+          ...detailsField,
         });
       }
     }

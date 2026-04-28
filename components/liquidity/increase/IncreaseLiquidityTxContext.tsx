@@ -15,8 +15,9 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount, useBalance } from "wagmi";
-import { parseUnits, type Address } from "viem";
+import { parseUnits, formatUnits, type Address } from "viem";
 import * as Sentry from "@sentry/nextjs";
+import { formatTokenDisplayAmount } from "@/lib/utils";
 import { getTokenDefinitions, getPoolBySlug, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
@@ -498,6 +499,36 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     const slippageBps = Math.round(userSettings.slippage * 100);
     const deadlineMinutes = userSettings.deadline;
 
+    // Tell the backend which side the user is entering — the dependent amount in
+    // `formattedAmounts` is FE-computed and will drift slightly from Uniswap's
+    // recomputation. Without this, Uniswap is told "independent = token0" by
+    // default and recomputes a token1 amount that breaks `MAX` deposits.
+    const inputSide: 'token0' | 'token1' = exactField === 'TOKEN1' ? 'token1' : 'token0';
+
+    // After the API responds, replace the FE-computed dependent in `formattedAmounts`
+    // with the Uniswap-computed amount so the input field matches what the wallet popup
+    // is about to sign. Leaves the user's input side untouched.
+    const syncDependentDisplay = (apiDetails: { token0?: { amount?: string }; token1?: { amount?: string } } | undefined) => {
+      if (!apiDetails) return;
+      const dependentRaw = inputSide === 'token0' ? apiDetails.token1?.amount : apiDetails.token0?.amount;
+      if (!dependentRaw) return;
+      let formatted: string;
+      try {
+        const dependentDecimals = inputSide === 'token0' ? token1Config.decimals : token0Config.decimals;
+        const dependentSymbol = (inputSide === 'token0' ? token1Config.symbol : token0Config.symbol) as TokenSymbol;
+        formatted = formatTokenDisplayAmount(formatUnits(BigInt(dependentRaw), dependentDecimals), dependentSymbol, networkMode);
+      } catch {
+        return;
+      }
+      setDerivedInfo((prev) => ({
+        ...prev,
+        formattedAmounts: {
+          ...prev.formattedAmounts,
+          [inputSide === 'token0' ? 'TOKEN1' : 'TOKEN0']: formatted,
+        },
+      }));
+    };
+
     try {
       // Call API to check approvals and get permit/tx data
       const response = await fetch("/api/liquidity/prepare-increase-tx", {
@@ -508,6 +539,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           tokenId,
           amount0: amount0 || "0",
           amount1: amount1 || "0",
+          inputSide,
           chainId,
           slippageBps,
           deadlineMinutes,
@@ -527,10 +559,16 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         tokenId,
         amount0: amount0 || "0",
         amount1: amount1 || "0",
+        inputSide,
         chainId,
         slippageBps,
         deadlineMinutes,
       };
+
+      // Sync the dependent input field to Uniswap's computed amount so the UI
+      // matches what the user is about to sign. No-op when the response omits
+      // `details` (older deployments).
+      syncDependentDisplay(data.details);
 
       // Handle ERC20 approval needed (API now includes permit data for complete step generation)
       if (data.needsApproval && data.approvalType === 'ERC20_TO_PERMIT2') {
@@ -542,9 +580,15 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           (data.approvalTokenAddress?.toLowerCase() === token1Config.address.toLowerCase());
 
         // Build approval transaction request using shared modular helper
-        // Respects user's approval mode setting (exact vs infinite)
-        const rawAmount0 = parseUnits(amount0 || "0", token0Config.decimals);
-        const rawAmount1 = parseUnits(amount1 || "0", token1Config.decimals);
+        // Respects user's approval mode setting (exact vs infinite). Prefer the
+        // Uniswap-computed amounts when present so approval display, permit
+        // values, and the actual transfer all agree.
+        const rawAmount0 = data.details?.token0?.amount
+          ? BigInt(data.details.token0.amount)
+          : parseUnits(amount0 || "0", token0Config.decimals);
+        const rawAmount1 = data.details?.token1?.amount
+          ? BigInt(data.details.token1.amount)
+          : parseUnits(amount1 || "0", token1Config.decimals);
         const approvals = buildApprovalRequests({
           needsToken0,
           needsToken1,
@@ -667,8 +711,8 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
             decimals: token1Config.decimals,
             chainId,
           },
-          amount0: parseUnits(amount0 || "0", token0Config.decimals).toString(),
-          amount1: parseUnits(amount1 || "0", token1Config.decimals).toString(),
+          amount0: data.details?.token0?.amount || parseUnits(amount0 || "0", token0Config.decimals).toString(),
+          amount1: data.details?.token1?.amount || parseUnits(amount1 || "0", token1Config.decimals).toString(),
           chainId,
           permit,
           increasePositionRequestArgs: increasePositionRequestArgsWithPermit,
@@ -728,7 +772,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       setIsLoading(false);
       return null;
     }
-  }, [accountAddress, chainId, position, derivedIncreaseLiquidityInfo.formattedAmounts, tokenDefinitions, parseTokenId, isUnifiedYield, poolConfig, unifiedYieldDeposit, refetchApprovals, poolStateData]);
+  }, [accountAddress, chainId, position, exactField, derivedIncreaseLiquidityInfo.formattedAmounts, tokenDefinitions, parseTokenId, isUnifiedYield, poolConfig, unifiedYieldDeposit, refetchApprovals, poolStateData]);
 
   const refetchBalances = useCallback(() => {
     refetchToken0Balance();
