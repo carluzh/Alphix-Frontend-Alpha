@@ -683,6 +683,38 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           values: permitData.values || permitData,
         };
 
+        // Backend signals via `erc20ApprovalNeeded` when /lp/check_approval
+        // returned BOTH a fresh batch permit AND outstanding ERC20→Permit2
+        // allowances. Without these approval steps, Permit2's `transferFrom`
+        // reverts on-chain with TRANSFER_FROM_FAILED even though the permit
+        // signature is valid.
+        const rawAmount0 = data.details?.token0?.amount
+          ? BigInt(data.details.token0.amount)
+          : parseUnits(amount0 || "0", token0Config.decimals);
+        const rawAmount1 = data.details?.token1?.amount
+          ? BigInt(data.details.token1.amount)
+          : parseUnits(amount1 || "0", token1Config.decimals);
+        const needsToken0Approval = data.erc20ApprovalNeeded && (
+          data.needsToken0Approval ??
+          (data.approvalTokenAddress?.toLowerCase() === token0Config.address.toLowerCase())
+        );
+        const needsToken1Approval = data.erc20ApprovalNeeded && (
+          data.needsToken1Approval ??
+          (data.approvalTokenAddress?.toLowerCase() === token1Config.address.toLowerCase())
+        );
+        const approvals = (needsToken0Approval || needsToken1Approval)
+          ? buildApprovalRequests({
+              needsToken0: !!needsToken0Approval,
+              needsToken1: !!needsToken1Approval,
+              token0Address: token0Config.address as Address,
+              token1Address: token1Config.address as Address,
+              spender: PERMIT2_ADDRESS,
+              amount0: rawAmount0,
+              amount1: rawAmount1,
+              chainId,
+            })
+          : { token0: undefined, token1: undefined };
+
         // Include permitBatchData in request args so async step can send it with signature.
         // Send the FULL normalized permit (domain, types, values) — backend's
         // `denormalizeV4BatchPermit` reads `types` to wrap fields.
@@ -711,9 +743,11 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
             decimals: token1Config.decimals,
             chainId,
           },
-          amount0: data.details?.token0?.amount || parseUnits(amount0 || "0", token0Config.decimals).toString(),
-          amount1: data.details?.token1?.amount || parseUnits(amount1 || "0", token1Config.decimals).toString(),
+          amount0: rawAmount0.toString(),
+          amount1: rawAmount1.toString(),
           chainId,
+          approveToken0Request: approvals.token0,
+          approveToken1Request: approvals.token1,
           permit,
           increasePositionRequestArgs: increasePositionRequestArgsWithPermit,
         });
