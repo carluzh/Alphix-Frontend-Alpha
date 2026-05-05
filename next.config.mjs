@@ -103,6 +103,10 @@ const nextConfig = {
 export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   silent: true,
   hideSourceMaps: true,
+  // Route Sentry events through our own domain so adblockers / Brave shields /
+  // privacy DNS don't silently drop them. Crypto-savvy users frequently block
+  // *.ingest.sentry.io directly.
+  tunnelRoute: '/monitoring',
 
   // Webpack-level Sentry options (new API)
   webpack: {

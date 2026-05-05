@@ -234,8 +234,23 @@ export function createIncreasePositionAsyncStep(
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || 'Failed to prepare increase position transaction');
+          // Read raw text first so we keep diagnostics even when the response
+          // isn't JSON (e.g., Vercel 504s return HTML and `.json()` throws).
+          const rawText = await response.text().catch(() => '');
+          let parsed: any = null;
+          try { parsed = rawText ? JSON.parse(rawText) : null; } catch { /* not JSON */ }
+          const apiMessage = typeof parsed?.message === 'string' ? parsed.message : '';
+          const userMessage = apiMessage
+            ? `${apiMessage} (HTTP ${response.status})`
+            : `Failed to prepare increase position transaction (HTTP ${response.status})`;
+          const err = new Error(userMessage) as Error & { diagnostics?: Record<string, unknown> };
+          err.diagnostics = {
+            httpStatus: response.status,
+            apiMessage: apiMessage || null,
+            responseBody: rawText.slice(0, 1500),
+            hasSignature: Boolean(signature),
+          };
+          throw err;
         }
 
         const data = await response.json();
@@ -274,13 +289,17 @@ export function createIncreasePositionAsyncStep(
 
         return { txRequest, sqrtRatioX96: data.sqrtRatioX96 };
       } catch (e) {
-        console.error('createIncreasePositionAsyncStep error:', e);
+        const diagnostics = (e && typeof e === 'object' && 'diagnostics' in e)
+          ? (e as { diagnostics?: Record<string, unknown> }).diagnostics
+          : undefined;
+        console.error('createIncreasePositionAsyncStep error:', e, diagnostics);
         Sentry.captureException(e, {
           tags: { flow: 'lp_increase', stage: 'async_build_with_signature' },
           extra: {
             userAddress: increasePositionRequestArgs.userAddress,
             tokenId: increasePositionRequestArgs.tokenId,
             chainId: increasePositionRequestArgs.chainId,
+            ...(diagnostics ?? {}),
           },
         });
         throw e;
@@ -322,8 +341,21 @@ export function createCreatePositionAsyncStep(
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || 'Failed to prepare create position transaction');
+          const rawText = await response.text().catch(() => '');
+          let parsed: any = null;
+          try { parsed = rawText ? JSON.parse(rawText) : null; } catch { /* not JSON */ }
+          const apiMessage = typeof parsed?.message === 'string' ? parsed.message : '';
+          const userMessage = apiMessage
+            ? `${apiMessage} (HTTP ${response.status})`
+            : `Failed to prepare create position transaction (HTTP ${response.status})`;
+          const err = new Error(userMessage) as Error & { diagnostics?: Record<string, unknown> };
+          err.diagnostics = {
+            httpStatus: response.status,
+            apiMessage: apiMessage || null,
+            responseBody: rawText.slice(0, 1500),
+            hasSignature: Boolean(signature),
+          };
+          throw err;
         }
 
         const data = await response.json();
@@ -362,13 +394,17 @@ export function createCreatePositionAsyncStep(
 
         return { txRequest, sqrtRatioX96: data.sqrtRatioX96 };
       } catch (e) {
-        console.error('createCreatePositionAsyncStep error:', e);
+        const diagnostics = (e && typeof e === 'object' && 'diagnostics' in e)
+          ? (e as { diagnostics?: Record<string, unknown> }).diagnostics
+          : undefined;
+        console.error('createCreatePositionAsyncStep error:', e, diagnostics);
         Sentry.captureException(e, {
           tags: { flow: 'lp_create', stage: 'async_build_with_signature' },
           extra: {
             userAddress: createPositionRequestArgs.userAddress,
             poolId: createPositionRequestArgs.poolId,
             chainId: createPositionRequestArgs.chainId,
+            ...(diagnostics ?? {}),
           },
         });
         throw e;
