@@ -10,7 +10,7 @@
 import { nearestUsableTick, TickMath } from '@uniswap/v3-sdk';
 import * as Sentry from '@sentry/nextjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { isAddress, getAddress, maxUint256, parseUnits, parseAbi, type Hex } from 'viem';
+import { isAddress, getAddress, parseUnits, parseAbi, type Hex } from 'viem';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from '@/lib/abis/state_view_abi';
 import {
@@ -46,16 +46,15 @@ interface PrepareMintTxRequest extends NextApiRequest {
   };
 }
 
+/** Approval transaction forwarded verbatim from Uniswap's /lp/check_approval response. */
+type ApprovalTx = { to: string; from?: string; data: string; value: string; chainId: number };
+
 interface ApprovalNeededResponse {
   needsApproval: true;
   approvalType: 'ERC20_TO_PERMIT2';
-  approvalTokenAddress: string;
-  approvalTokenSymbol: TokenSymbol;
-  approveToAddress: string;
-  approvalAmount: string;
-  erc20ApprovalNeeded: boolean;
-  needsToken0Approval: boolean;
-  needsToken1Approval: boolean;
+  /** Approval txs from /lp/check_approval, keyed by which pool token they target. */
+  approveToken0Tx?: ApprovalTx;
+  approveToken1Tx?: ApprovalTx;
   /**
    * Create tx pre-built by Uniswap's API via the simulate-without-sim retry.
    * Frontend bundles it with the approve(s) — atomic on 5792 wallets,
@@ -66,9 +65,8 @@ interface ApprovalNeededResponse {
 
 /**
  * Returned when an off-chain Permit2 batch signature is required. May ALSO carry
- * ERC-20 approval fields when `erc20ApprovalNeeded` is true — the frontend then
- * builds steps for both the on-chain approve(s) AND the off-chain signature in a
- * single context (matches master's pre-sunset shape).
+ * ERC-20 approval txs when /lp/check_approval surfaced them — the frontend then
+ * builds steps for both the on-chain approve(s) AND the off-chain signature.
  */
 interface PermitSignatureNeededResponse {
   needsApproval: true;
@@ -79,13 +77,8 @@ interface PermitSignatureNeededResponse {
     types: Record<string, Array<{ name: string; type: string }>>;
     primaryType: string;
   };
-  erc20ApprovalNeeded?: boolean;
-  approvalTokenAddress?: string;
-  approvalTokenSymbol?: TokenSymbol;
-  approveToAddress?: string;
-  approvalAmount?: string;
-  needsToken0Approval?: boolean;
-  needsToken1Approval?: boolean;
+  approveToken0Tx?: ApprovalTx;
+  approveToken1Tx?: ApprovalTx;
 }
 
 interface TransactionPreparedResponse {
@@ -107,28 +100,6 @@ interface TransactionPreparedResponse {
 }
 
 type PrepareMintTxResponse = ApprovalNeededResponse | PermitSignatureNeededResponse | TransactionPreparedResponse | { message: string; error?: any };
-
-function normalizeAmountString(raw: string): string {
-  let s = (raw ?? '').toString().trim().replace(/,/g, '.');
-  if (!/e|E/.test(s)) return s;
-  const match = s.match(/^([+-]?)(\d*\.?\d+)[eE]([+-]?\d+)$/);
-  if (!match) return s;
-  const sign = match[1] || '';
-  const num = match[2];
-  const exp = parseInt(match[3], 10);
-  const parts = num.split('.');
-  const intPart = parts[0] || '0';
-  const fracPart = parts[1] || '';
-  const digits = (intPart + fracPart).replace(/^0+/, '') || '0';
-  const pointIndex = intPart.length;
-  const newPoint = pointIndex + exp;
-  if (exp >= 0) {
-    if (newPoint >= digits.length) return sign + digits + '0'.repeat(newPoint - digits.length);
-    return sign + digits.slice(0, newPoint) + '.' + digits.slice(newPoint);
-  }
-  if (newPoint <= 0) return sign + '0.' + '0'.repeat(-newPoint) + digits;
-  return sign + digits.slice(0, newPoint) + '.' + digits.slice(newPoint);
-}
 
 export default async function handler(
   req: PrepareMintTxRequest,
@@ -209,8 +180,7 @@ export default async function handler(
       return res.status(400).json({ message: 'inputTokenSymbol must match token0Symbol or token1Symbol.' });
     }
 
-    const normalizedInput = normalizeAmountString(inputAmount);
-    const parsedInputAmount = parseUnits(normalizedInput, inputTokenConfig.decimals);
+    const parsedInputAmount = parseUnits(inputAmount, inputTokenConfig.decimals);
 
     // Reject partial permit payloads — indicates a client-side bug.
     if ((permitSignature == null) !== (permitBatchData == null)) {
@@ -280,27 +250,18 @@ export default async function handler(
         action: 'CREATE',
       });
 
-      const needsToken0Approval = approvalCheck.transactions.some(t =>
-        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === t0Addr.toLowerCase());
-      const needsToken1Approval = approvalCheck.transactions.some(t =>
-        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === t1Addr.toLowerCase());
-      const firstApproval = approvalCheck.transactions[0];
-      // Decode the real spender (Permit2) from approve(address,uint256) calldata.
-      // `transaction.to` is the token contract — using it as the spender would call
-      // approve(token, max) on the token itself (a no-op), leaving Permit2 at zero
-      // allowance and reverting the mint with TRANSFER_FROM_FAILED.
-      const decodeApproveSpender = (data: string): `0x${string}` =>
-        getAddress(`0x${data.slice(34, 74)}`);
-      const erc20Fields = firstApproval ? {
-        erc20ApprovalNeeded: true as const,
-        approvalTokenAddress: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to),
-        approvalTokenSymbol: (getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to).toLowerCase() === t0Addr.toLowerCase()
-          ? token0Symbol : token1Symbol) as TokenSymbol,
-        approveToAddress: decodeApproveSpender(firstApproval.transaction.data),
-        approvalAmount: maxUint256.toString(),
-        needsToken0Approval,
-        needsToken1Approval,
-      } : null;
+      // Forward Uniswap's approval transactions verbatim — no local re-encoding.
+      const findApprovalFor = (currency: string): ApprovalTx | undefined => {
+        const match = approvalCheck.transactions.find(t =>
+          getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === currency.toLowerCase()
+        );
+        return match?.transaction;
+      };
+      const approveToken0Tx = findApprovalFor(t0Addr);
+      const approveToken1Tx = findApprovalFor(t1Addr);
+      const erc20Fields = (approveToken0Tx || approveToken1Tx)
+        ? { approveToken0Tx, approveToken1Tx }
+        : null;
 
       if (approvalCheck.v4BatchPermitData) {
         const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);

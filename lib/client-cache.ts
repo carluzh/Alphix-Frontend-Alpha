@@ -47,13 +47,6 @@ export function invalidateUserPositionIdsCache(ownerAddress: string, networkMode
   try { SafeStorage.remove(getUserPositionIdsCacheKey(ownerAddress, networkMode)); } catch {}
 }
 
-/** Invalidate user position IDs cache across ALL chains */
-export function invalidateAllChainsPositionIdsCache(ownerAddress: string): void {
-  for (const mode of ALL_MODES) {
-    invalidateUserPositionIdsCache(ownerAddress, mode);
-  }
-}
-
 /** Time window (ms) to preserve optimistic entries that aren't in subgraph yet */
 const OPTIMISTIC_ENTRY_TTL_MS = 10 * 60 * 1000; // 10 minutes
 

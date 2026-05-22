@@ -77,6 +77,20 @@ const ERC20_BALANCE_ABI = [
   },
 ] as const;
 
+/** Adapt an Uniswap-supplied approval transaction to the wagmi/viem request shape. */
+function toApproveRequest(
+  tx: { to: string; data: string; value: string } | undefined,
+  chainId: number,
+) {
+  if (!tx) return undefined;
+  return {
+    to: tx.to as Address,
+    data: tx.data as `0x${string}`,
+    value: BigInt(tx.value ?? '0'),
+    chainId,
+  };
+}
+
 // =============================================================================
 // COMPONENT
 // =============================================================================
@@ -407,20 +421,6 @@ export function ReviewExecuteModal() {
       try { return parseUnits(state.amount1 || '0', token1.decimals).toString(); } catch { return '0'; }
     };
 
-    const needsToken0 = apiResponse.needsToken0Approval ??
-      (apiResponse.approvalTokenAddress?.toLowerCase() === token0.address.toLowerCase());
-    const needsToken1 = apiResponse.needsToken1Approval ??
-      (apiResponse.approvalTokenAddress?.toLowerCase() === token1.address.toLowerCase());
-
-    const v4Approvals = apiResponse.erc20ApprovalNeeded && apiResponse.approveToAddress
-      ? buildApprovalRequests({
-          needsToken0, needsToken1,
-          token0Address: token0.address as Address, token1Address: token1.address as Address,
-          spender: apiResponse.approveToAddress as Address,
-          amount0: BigInt(getRawAmount0()), amount1: BigInt(getRawAmount1()),
-        })
-      : {};
-
     // If the backend returned a pre-built create tx alongside ERC20 approvals
     // (no-permit re-fetch case — existing Permit2 state still valid), treat it
     // as the tx source so the signed-flow generator branch produces
@@ -439,8 +439,8 @@ export function ReviewExecuteModal() {
       amount0: getRawAmount0(),
       amount1: getRawAmount1(),
       chainId,
-      approveToken0Request: v4Approvals.token0,
-      approveToken1Request: v4Approvals.token1,
+      approveToken0Request: toApproveRequest(apiResponse.approveToken0Tx, chainId),
+      approveToken1Request: toApproveRequest(apiResponse.approveToken1Tx, chainId),
       createPositionRequestArgs: {
         userAddress: address, poolId: state.poolId!, token0Symbol, token1Symbol,
         inputAmount, inputTokenSymbol,
@@ -657,7 +657,7 @@ export function ReviewExecuteModal() {
                     <TokenImage src={state.zapInputToken === 'token0' ? token0Icon : token1Icon} alt={zapInputToken || ''} size={16} />
                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5"><polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" /></svg>
                     <span className="text-xs text-muted-foreground">
-                      {zapPreviewQuery.data.route.type === 'psm' ? 'PSM' : zapPreviewQuery.data.route.type === 'kyberswap' ? 'Kyberswap' : 'Custom Pool'}
+                      {zapPreviewQuery.data.route.type === 'kyberswap' ? 'Kyberswap' : 'Custom Pool'}
                     </span>
                     <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5"><polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" /></svg>
                     <TokenImage src={state.zapInputToken === 'token0' ? token1Icon : token0Icon} alt={state.zapInputToken === 'token0' ? pool.currency1.symbol : pool.currency0.symbol} size={16} />

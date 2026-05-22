@@ -4,7 +4,6 @@
 
 export {
   handleZapSwapApprovalStep,
-  handleZapPSMSwapStep,
   handleZapPoolSwapStep,
   handleZapDynamicDepositStep,
   ZAP_STEP_HANDLERS,

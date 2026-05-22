@@ -46,8 +46,3 @@ export const ALL_MODES: NetworkMode[] = Object.keys(CHAIN_REGISTRY) as NetworkMo
 
 /** All supported chain IDs, derived from the registry */
 export const ALL_CHAIN_IDS: number[] = ALL_MODES.map(m => CHAIN_REGISTRY[m].chainId);
-
-/** Lookup chain config by chainId */
-export function getChainConfigByChainId(chainId: number): ChainConfig | undefined {
-  return ALL_MODES.map(m => CHAIN_REGISTRY[m]).find(c => c.chainId === chainId);
-}

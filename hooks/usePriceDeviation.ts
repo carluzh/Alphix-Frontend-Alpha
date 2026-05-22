@@ -195,10 +195,3 @@ export function usePriceDeviation({
 export function requiresDeviationAcknowledgment(severity: DeviationSeverity): boolean {
   return severity === 'high';
 }
-
-/**
- * Check if deviation should show a warning (any severity above 'none')
- */
-export function shouldShowDeviationWarning(severity: DeviationSeverity): boolean {
-  return severity !== 'none';
-}

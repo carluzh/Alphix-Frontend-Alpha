@@ -7,7 +7,7 @@
  */
 
 import { type PublicClient, type Address, formatUnits, parseUnits } from 'viem';
-import { selectSwapRoute, getPoolQuote, getPoolMidPrice } from '../routing/selectSwapRoute';
+import { getPoolQuote, getPoolMidPrice } from '../routing/selectSwapRoute';
 import { calculatePriceImpactFromMidPrice } from './calculatePriceImpact';
 import {
   previewAddFromAmount0,
@@ -65,7 +65,6 @@ export interface FindOptimalSwapParams {
 
 const CONVERGENCE_THRESHOLD_DIVISOR = 10000n;
 const MIN_REDUCTION_BPS = 1n;
-const DEFAULT_DECIMAL_FACTOR = 10n ** 12n;
 
 // =============================================================================
 // MAIN FUNCTION
@@ -97,15 +96,17 @@ export async function findOptimalSwapAmount(
     networkMode,
   } = params;
 
-  const isInputToken1 = poolConfig
-    ? inputToken === poolConfig.token1.symbol
-    : inputToken === 'USDC';
+  if (!poolConfig) {
+    throw new Error('[findOptimalSwapAmount] poolConfig is required');
+  }
+
+  const isInputToken1 = inputToken === poolConfig.token1.symbol;
 
   if (inputAmount <= 0n) {
     return {
       swapAmount: 0n,
       swapOutput: 0n,
-      route: { type: 'psm', priceImpact: 0, feeBps: 0 },
+      route: { type: 'pool', priceImpact: 0, feeBps: 0, sqrtPriceX96: 0n },
       remainingInput: 0n,
       requiredOther: 0n,
       expectedShares: 0n,
@@ -116,16 +117,14 @@ export async function findOptimalSwapAmount(
   const convergenceThreshold = inputAmount / CONVERGENCE_THRESHOLD_DIVISOR;
 
   // ---- DETERMINE ROUTE ONCE ----
-  // For non-pegged pools: quote pool with half input, check price impact, decide pool vs kyberswap
-  // For pegged pools: use selectSwapRoute per iteration (cheap, handles PSM decision)
+  // Quote pool with half input, check price impact, decide pool vs kyberswap.
+  // Pool path uses local quoter per iteration; aggregator path uses a single
+  // Kyberswap quote upfront via server-side API proxy (avoids CSP issues).
 
   let getSwapQuote: (amount: bigint) => Promise<{ amountOut: bigint; route: RouteDetails }>;
   let midPrice = 0;
 
-  // Route decision: pools using kyberswap fallback (ETH/USDC, USDC/USDT) get a single
-  // Kyberswap quote upfront via server-side API proxy (avoids CSP issues).
-  // PSM-backed pools (USDS/USDC) use selectSwapRoute per iteration (cheap, handles PSM decision).
-  if (poolConfig && poolConfig.fallbackRoute !== 'psm') {
+  {
     const { getQuoterAddress } = await import('@/lib/pools-config');
     const quoterAddress = getQuoterAddress(networkMode);
 
@@ -177,20 +176,6 @@ export async function findOptimalSwapAmount(
         };
       };
     }
-  } else {
-    // Pegged pool (USDS/USDC): selectSwapRoute handles PSM vs pool per iteration
-    getSwapQuote = async (amount: bigint) => {
-      const result = await selectSwapRoute({
-        inputToken,
-        swapAmount: amount,
-        publicClient,
-        poolConfig,
-        userAddress,
-        slippageBps,
-        networkMode,
-      });
-      return { amountOut: result.outputAmount, route: result.route };
-    };
   }
 
   // ---- BINARY SEARCH ----
@@ -328,27 +313,18 @@ export async function findOptimalSwapAmount(
 // HELPERS
 // =============================================================================
 
-function normalizeToInputDecimals(dust: bigint, inputToken: ZapToken, poolConfig?: ZapPoolConfig): bigint {
-  if (poolConfig) {
-    const isInputToken1 = inputToken === poolConfig.token1.symbol;
-    const inputDecimals = isInputToken1 ? poolConfig.token1.decimals : poolConfig.token0.decimals;
-    const outputDecimals = isInputToken1 ? poolConfig.token0.decimals : poolConfig.token1.decimals;
-    const decimalDiff = outputDecimals - inputDecimals;
+function normalizeToInputDecimals(dust: bigint, inputToken: ZapToken, poolConfig: ZapPoolConfig): bigint {
+  const isInputToken1 = inputToken === poolConfig.token1.symbol;
+  const inputDecimals = isInputToken1 ? poolConfig.token1.decimals : poolConfig.token0.decimals;
+  const outputDecimals = isInputToken1 ? poolConfig.token0.decimals : poolConfig.token1.decimals;
+  const decimalDiff = outputDecimals - inputDecimals;
 
-    if (decimalDiff > 0) {
-      return dust / (10n ** BigInt(decimalDiff));
-    } else if (decimalDiff < 0) {
-      return dust * (10n ** BigInt(-decimalDiff));
-    }
-    return dust;
+  if (decimalDiff > 0) {
+    return dust / (10n ** BigInt(decimalDiff));
+  } else if (decimalDiff < 0) {
+    return dust * (10n ** BigInt(-decimalDiff));
   }
-
-  // Fallback for backward compat (USDS/USDC hardcoded)
-  if (inputToken === 'USDC') {
-    return dust / DEFAULT_DECIMAL_FACTOR;
-  } else {
-    return dust * DEFAULT_DECIMAL_FACTOR;
-  }
+  return dust;
 }
 
 /**

@@ -28,16 +28,10 @@ export interface MintTxApiResponse {
   needsApproval: boolean;
   approvalType?: 'ERC20_TO_PERMIT2' | 'PERMIT2_BATCH_SIGNATURE';
 
-  // ERC20 approval data (for ERC20_TO_PERMIT2 type or when erc20ApprovalNeeded is true)
-  approvalTokenAddress?: string;
-  approvalTokenSymbol?: string;
-  approveToAddress?: string;
-  approvalAmount?: string;
-  // Flag indicating ERC20 approval to Permit2 is needed (included with PERMIT2_BATCH_SIGNATURE)
-  erc20ApprovalNeeded?: boolean;
-  // Explicit flags for which tokens need approval (handles both tokens needing approval)
-  needsToken0Approval?: boolean;
-  needsToken1Approval?: boolean;
+  // ERC20 approval transactions, forwarded verbatim from Uniswap's
+  // /lp/check_approval response (keyed by pool token).
+  approveToken0Tx?: { to: string; from?: string; data: string; value: string; chainId: number };
+  approveToken1Tx?: { to: string; from?: string; data: string; value: string; chainId: number };
 
   // Permit batch data
   permitBatchData?: {

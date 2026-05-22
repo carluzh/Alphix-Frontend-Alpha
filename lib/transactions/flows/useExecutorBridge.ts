@@ -40,7 +40,6 @@ export const SWAP_DOMAIN_STEPS: TransactionStepType[] = [
   TransactionStepType.Permit2Signature,
   // Zap swap-specific
   TransactionStepType.ZapSwapApproval,
-  TransactionStepType.ZapPSMSwap,
   TransactionStepType.ZapPoolSwap,
 ];
 

@@ -1,23 +1,13 @@
 /**
  * Zap Routing Module
  *
- * Route selection between PSM3 and pool swap.
+ * Route selection between pool swap and Kyberswap aggregator.
  */
-
-export {
-  getPSMQuote,
-  previewPSMSwap,
-  buildPSMSwapCalldata,
-  getPSMApprovalInfo,
-  calculateMinOutputWithSlippage,
-  type PSMQuoteResult,
-} from './psmQuoter';
 
 export {
   selectSwapRoute,
   getPoolQuote,
   getPoolMidPrice,
-  compareRoutes,
   type RouteSelectionParams,
   type RouteSelectionResult,
   type PoolQuoteResult,

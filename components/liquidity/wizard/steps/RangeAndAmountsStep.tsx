@@ -10,7 +10,6 @@
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import Link from 'next/link';
 import { ChevronLeft } from 'lucide-react';
 import { IconCircleInfo, IconTriangleWarningFilled, IconRefreshClockwise } from 'nucleo-micro-bold-essential';
 import { cn } from '@/lib/utils';
@@ -382,7 +381,7 @@ export function RangeAndAmountsStep() {
   const isStablePool = poolConfig?.type === 'Stable';
   const isRehypoMode = state.mode === 'rehypo';
 
-  // Zap is only available for USDS/USDC pool (PSM only supports those tokens)
+  // Zap is only available for pools configured in ZAP_POOL_CONFIGS
   const zapEnabled = isZapEligiblePool(state.poolId);
 
   // Select strategies based on pool type
@@ -1444,15 +1443,6 @@ export function RangeAndAmountsStep() {
               Enter how much liquidity to provide
             </p>
           </div>
-          {/* Swap to USDS link - Only shown for USDS/USDC pool when zap is disabled */}
-          {state.poolId === 'usds-usdc' && !zapEnabled && (
-            <Link
-              href="/swap?to=USDS"
-              className="text-sm text-muted-foreground underline hover:text-white transition-colors"
-            >
-              Swap to USDS
-            </Link>
-          )}
           {/* Deposit mode toggle - Only shown for Unified Yield zap-eligible pools */}
           {isRehypoMode && zapEnabled && (
             <DepositModeToggle

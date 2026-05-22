@@ -1,8 +1,7 @@
 /**
  * Unified Yield Zap Constants
  *
- * Configuration for the Zap feature including PSM addresses,
- * thresholds, and safety parameters.
+ * Configuration for the Zap feature including thresholds and safety parameters.
  *
  * Pool-specific data (addresses, decimals, tick spacing, fees) is derived
  * from the canonical pool config JSONs via lib/pools-config.ts.
@@ -37,49 +36,8 @@ function deriveZapPoolBase(poolId: string, mode: NetworkMode) {
 }
 
 // =============================================================================
-// PSM (PEG STABILITY MODULE) CONFIGURATION
-// =============================================================================
-
-/**
- * Spark PSM3 configuration on Base mainnet
- *
- * PSM3 (Peg Stability Module 3) provides 1:1 swaps between USDS and USDC
- * with ZERO fees. Retained as a dead fallback for legacy zap call sites —
- * the USDS/USDC pool has been sunset from alphix.fi (served on migrate.alphix.fi).
- *
- * Key function: swapExactIn(assetIn, assetOut, amountIn, minAmountOut, receiver, referralCode)
- */
-export const PSM_CONFIG = {
-  /** PSM3 contract address on Base mainnet */
-  address: getAddress('0x1601843c5E9bC251A3272907010AFa41Fa18347E'),
-  /** USDS token address (hardcoded — USDS is no longer in pool config) */
-  usdsAddress: getAddress('0x820C137fa70C8691f0e44Dc420a5e53c168921Dc'),
-  /** USDC token address on Base */
-  usdcAddress: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
-  /** Referral code for tracking (0 = no referral) */
-  referralCode: 0,
-};
-
-// =============================================================================
 // POOL CONFIGURATIONS
 // =============================================================================
-
-/**
- * USDS/USDC Unified Yield pool (Base) — SUNSET on alphix.fi.
- *
- * Still exported as a literal because legacy zap call sites reference it as a
- * fallback when no `poolConfig` is passed (`poolConfig ?? USDS_USDC_POOL_CONFIG`).
- * It is intentionally excluded from `ZAP_POOL_CONFIGS` below, so no user flow
- * can reach it — zap eligibility resolves to null for this pool.
- */
-export const USDS_USDC_POOL_CONFIG = {
-  poolId: 'usds-usdc',
-  hookAddress: getAddress('0x0e4b892Df7C5Bcf5010FAF4AA106074e555660C0') as Address,
-  token0: { symbol: 'USDS' as ZapToken, address: getAddress('0x820C137fa70C8691f0e44Dc420a5e53c168921Dc') as Address, decimals: 18 },
-  token1: { symbol: 'USDC' as ZapToken, address: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as Address, decimals: 6 },
-  tickSpacing: 1,
-  fee: 8388608,
-};
 
 /** USDC/USDT Unified Yield pool (Arbitrum) */
 export const USDC_USDT_ARB_POOL_CONFIG = deriveZapPoolBase('usdc-usdt', 'arbitrum');
@@ -100,11 +58,9 @@ export interface ZapPoolConfig {
   tickSpacing: number;
   fee: number;
   /** Which fallback route to use when price impact exceeds threshold */
-  fallbackRoute: 'psm' | 'kyberswap';
+  fallbackRoute: 'kyberswap';
   /** Price impact threshold for switching to fallback (as percentage) */
   priceImpactThreshold: number;
-  /** Whether the pair is pegged (stablecoins) - affects price impact calculation */
-  isPegged: boolean;
 }
 
 // =============================================================================
@@ -112,14 +68,14 @@ export interface ZapPoolConfig {
 // =============================================================================
 
 /**
- * Price impact threshold for PSM fallback (as percentage)
+ * Price impact threshold for pegged pool fallback (as percentage)
  *
- * If pool swap would cause price impact >= this threshold,
- * we use PSM (1:1 swap) instead.
+ * For pegged pools (USDC/USDT), if pool swap price impact >= this threshold,
+ * we route through the Kyberswap aggregator instead.
  *
  * 0.01 = 0.01% price impact
  */
-export const PSM_PRICE_IMPACT_THRESHOLD = 0.01;
+export const PEGGED_POOL_PRICE_IMPACT_THRESHOLD = 0.01;
 
 /**
  * Price impact threshold for Kyberswap fallback (as percentage)
@@ -136,8 +92,7 @@ const ZAP_POOL_CONFIGS: ZapPoolConfig[] = [
   {
     ...USDC_USDT_ARB_POOL_CONFIG,
     fallbackRoute: 'kyberswap',
-    priceImpactThreshold: PSM_PRICE_IMPACT_THRESHOLD,
-    isPegged: true,
+    priceImpactThreshold: PEGGED_POOL_PRICE_IMPACT_THRESHOLD,
   },
 ];
 
@@ -185,8 +140,7 @@ export function getZapPoolConfigByTokens(tokenA: Address, tokenB: Address): ZapP
 /**
  * Maximum acceptable price impact for pool swap (as percentage)
  *
- * If price impact exceeds this, we reject the transaction entirely
- * (even PSM won't help if the deposit itself would cause issues).
+ * If price impact exceeds this, we reject the transaction entirely.
  *
  * 1.0 = 1% price impact
  */
@@ -248,33 +202,14 @@ export const DEFAULT_ZAP_SLIPPAGE = 0.5;
 export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as Address;
 
 // =============================================================================
-// DECIMAL CONVERSION
-// =============================================================================
-
-/**
- * Decimal difference between USDS (18) and USDC (6)
- */
-export const USDS_USDC_DECIMAL_DIFF = 12;
-
-/**
- * Multiplier for USDC -> USDS conversion (10^12)
- */
-export const USDC_TO_USDS_MULTIPLIER = 10n ** 12n;
-
-/**
- * Divisor for USDS -> USDC conversion (10^12)
- */
-export const USDS_TO_USDC_DIVISOR = 10n ** 12n;
-
-// =============================================================================
 // ZAP ELIGIBILITY
 // =============================================================================
 
 /**
  * Check if a pool supports the Zap feature.
  *
- * Enabled for Stable Unified Yield pools (USDS/USDC, USDC/USDT).
- * Accepts either pool config id ('usds-usdc') or poolId (bytes32 hash)
+ * Enabled for Stable Unified Yield pools (USDC/USDT on Arbitrum).
+ * Accepts either pool config id ('usdc-usdt') or poolId (bytes32 hash)
  * since positions may use either format.
  *
  * @param poolId - The pool ID to check (can be config id or poolId)

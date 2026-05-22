@@ -29,18 +29,7 @@ export type TokenPosition = 'token0' | 'token1';
 /**
  * Available swap routes for zap
  */
-export type ZapSwapRoute = 'psm' | 'pool' | 'kyberswap';
-
-/**
- * PSM route details (1:1 swap)
- */
-export interface PSMRouteDetails {
-  type: 'psm';
-  /** PSM always has 0 price impact (for stablecoins) */
-  priceImpact: number;
-  /** Fee in basis points (typically 0 for PSM) */
-  feeBps: number;
-}
+export type ZapSwapRoute = 'pool' | 'kyberswap';
 
 /**
  * Pool route details (AMM swap)
@@ -69,7 +58,7 @@ export interface KyberswapRouteDetails {
 /**
  * Union of route details
  */
-export type RouteDetails = PSMRouteDetails | PoolRouteDetails | KyberswapRouteDetails;
+export type RouteDetails = PoolRouteDetails | KyberswapRouteDetails;
 
 // =============================================================================
 // CALCULATION TYPES
@@ -161,7 +150,7 @@ export interface ZapPreviewResult extends ZapCalculationResult {
  * Approval status for zap operations
  */
 export interface ZapApprovalStatus {
-  /** Input token approved for swap (to PSM or Permit2) */
+  /** Input token approved for swap (to Permit2 or aggregator router) */
   inputTokenApprovedForSwap: boolean;
   /** Token0 approved for Hook deposit */
   token0ApprovedForHook: boolean;
@@ -190,10 +179,8 @@ export interface ZapApprovalStatus {
  * These extend the existing TransactionStepType enum
  */
 export enum ZapTransactionStepType {
-  /** Approve input token for swap (to PSM or Permit2) */
+  /** Approve input token for swap (to Permit2 or aggregator router) */
   ZapSwapApproval = 'ZapSwapApproval',
-  /** Execute PSM swap (1:1) */
-  ZapPSMSwap = 'ZapPSMSwap',
   /** Execute pool swap via Universal Router */
   ZapPoolSwap = 'ZapPoolSwap',
 }
@@ -213,35 +200,10 @@ export interface ZapSwapApprovalStep extends BaseZapStep {
   /** Token being approved */
   tokenAddress: Address;
   tokenSymbol: ZapToken;
-  /** Spender (PSM address or Permit2 address) */
+  /** Spender (Permit2 or aggregator router address) */
   spender: Address;
   /** Amount to approve */
   amount: bigint;
-}
-
-/**
- * PSM swap step
- */
-export interface ZapPSMSwapStep extends BaseZapStep {
-  type: ZapTransactionStepType.ZapPSMSwap;
-  /** Direction of swap */
-  direction: 'USDS_TO_USDC' | 'USDC_TO_USDS';
-  /** Input amount (in wei) */
-  inputAmount: bigint;
-  /** Expected output amount (in wei) */
-  expectedOutputAmount: bigint;
-  /** Input token address */
-  inputTokenAddress: Address;
-  /** Output token address */
-  outputTokenAddress: Address;
-  /** Hook address for just-in-time swap recalculation */
-  hookAddress?: Address;
-  /** Total zap input amount (for recalculating optimal swap fresh) */
-  totalInputAmount?: bigint;
-  /** Input token symbol */
-  inputToken?: ZapToken;
-  /** Max swap amount covered by approval (caps recalculation) */
-  approvedSwapAmount?: bigint;
 }
 
 /**
@@ -270,7 +232,7 @@ export interface ZapPoolSwapStep extends BaseZapStep {
 /**
  * Union of all zap-specific steps
  */
-export type ZapStep = ZapSwapApprovalStep | ZapPSMSwapStep | ZapPoolSwapStep;
+export type ZapStep = ZapSwapApprovalStep | ZapPoolSwapStep;
 
 // =============================================================================
 // HOOK TYPES
@@ -305,7 +267,6 @@ export enum ZapErrorCode {
   INSUFFICIENT_BALANCE = 'INSUFFICIENT_BALANCE',
   SLIPPAGE_EXCEEDED = 'SLIPPAGE_EXCEEDED',
   PRICE_IMPACT_TOO_HIGH = 'PRICE_IMPACT_TOO_HIGH',
-  PSM_UNAVAILABLE = 'PSM_UNAVAILABLE',
   POOL_LIQUIDITY_LOW = 'POOL_LIQUIDITY_LOW',
   APPROVAL_FAILED = 'APPROVAL_FAILED',
   SWAP_FAILED = 'SWAP_FAILED',

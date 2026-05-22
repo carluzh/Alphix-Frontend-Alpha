@@ -20,7 +20,7 @@ import {
     NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
 // State overrides for rehypothecated pools (Pool Manager has limited on-chain balance)
-import { needsUsdsStateOverride, getSwapSimulationStateOverrides } from '../../../lib/swap/quote-state-override';
+import { getSwapSimulationStateOverrides } from '../../../lib/swap/quote-state-override';
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
 import { getUniversalRouterAddress } from '../../../lib/pools-config';
 import { findBestRoute, SwapRoute } from '@/lib/swap/routing-engine';
@@ -867,36 +867,25 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         // before the swap executes, allowing hooks to access them during the swap.
         //
         // Rehypothecated pools (Unified Yield): Pool Manager has limited on-chain balance
-        // because liquidity is deposited in yield vaults (Sky for USDS, Aave for ETH).
+        // because liquidity is deposited in yield vaults (e.g. Aave for native ETH).
         // We use state overrides to give Pool Manager virtual token balances during simulation.
         // The actual on-chain swap works because the hook brings tokens back during execution.
-        //
-        // USDS ExactOut: Skip simulation entirely. The rehypothecated liquidity hook has complex
-        // interactions with the Sky vault that can't be fully replicated via state overrides.
-        // The quote was already verified, and on-chain execution works with SETTLE first.
-        const isUsdsInput = needsUsdsStateOverride(INPUT_TOKEN.address);
-        const isUsdsExactOut = isUsdsInput && swapType === 'ExactOut';
+        const poolHooks = poolConfig?.pool?.hooks;
+        const stateOverride = getSwapSimulationStateOverrides(
+            INPUT_TOKEN.address,
+            OUTPUT_TOKEN.address,
+            poolHooks
+        );
 
-        if (!isUsdsExactOut) {
-            // Generate state overrides for rehypothecated pools (USDS balance, native ETH balance)
-            const poolHooks = poolConfig?.pool?.hooks;
-            const stateOverride = getSwapSimulationStateOverrides(
-                INPUT_TOKEN.address,
-                OUTPUT_TOKEN.address,
-                poolHooks
-            );
-
-            await publicClient.simulateContract({
-                account: getAddress(userAddress),
-                address: getUniversalRouterAddress(networkMode),
-                abi: UniversalRouterAbi,
-                functionName: 'execute',
-                args: [routePlanner.commands as Hex, routePlanner.inputs as Hex[], txDeadline],
-                value: txValue,
-                stateOverride,
-            });
-        }
-        // For USDS ExactOut: simulation skipped, quote already verified by quoter
+        await publicClient.simulateContract({
+            account: getAddress(userAddress),
+            address: getUniversalRouterAddress(networkMode),
+            abi: UniversalRouterAbi,
+            functionName: 'execute',
+            args: [routePlanner.commands as Hex, routePlanner.inputs as Hex[], txDeadline],
+            value: txValue,
+            stateOverride,
+        });
 
         // Derive touched pools (slug + poolId hash) for downstream cache invalidation
         const touchedPools: Array<{ slug: string; poolId?: string }> = [];

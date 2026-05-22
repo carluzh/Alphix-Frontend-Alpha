@@ -24,11 +24,7 @@ export { useShouldHeaderBeCompact } from "./useShouldHeaderBeCompact";
 export { useOverviewPageData } from "./useOverviewPageData";
 
 // Chart data hooks
-export {
-  useOverviewChartData,
-  type ChartPeriod,
-  type OverviewChartPoint,
-} from "./useOverviewChartData";
+export { type ChartPeriod } from "./useOverviewChartData";
 
 export {
   usePositionsChartData,

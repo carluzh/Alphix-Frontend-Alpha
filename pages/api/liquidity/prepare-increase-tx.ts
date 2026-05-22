@@ -18,7 +18,7 @@ import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError, normalizeV4BatchPermit, denormalizeV4BatchPermit } from '@/lib/liquidity/uniswap-api/client';
 import { getTokenSymbolByAddress, getToken } from '@/lib/pools-config';
-import { isAddress, getAddress, maxUint256, zeroAddress, type Hex } from 'viem';
+import { isAddress, getAddress, zeroAddress, type Hex } from 'viem';
 
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from '@/lib/abis/state_view_abi';
 import { getStateViewAddress } from '@/lib/pools-config';
@@ -48,15 +48,15 @@ interface PrepareIncreaseTxRequest extends NextApiRequest {
   };
 }
 
+/** Approval transaction forwarded verbatim from Uniswap's /lp/check_approval response. */
+type ApprovalTx = { to: string; from?: string; data: string; value: string; chainId: number };
+
 interface ApprovalNeededResponse {
   needsApproval: true;
   approvalType: 'ERC20_TO_PERMIT2';
-  approvalTokenAddress: string;
-  approvalTokenSymbol?: string;
-  approveToAddress: string;
-  approvalAmount: string;
-  needsToken0Approval: boolean;
-  needsToken1Approval: boolean;
+  /** Approval txs from /lp/check_approval, keyed by which pool token they target. */
+  approveToken0Tx?: ApprovalTx;
+  approveToken1Tx?: ApprovalTx;
   /**
    * Increase tx pre-built by Uniswap's API via the simulate-without-sim retry.
    * Allows the frontend to pair it with the approve(s) — bundled atomically on
@@ -80,13 +80,9 @@ interface PermitSignatureNeededResponse {
     types: Record<string, Array<{ name: string; type: string }>>;
     primaryType: string;
   };
-  erc20ApprovalNeeded?: boolean;
-  approvalTokenAddress?: string;
-  approvalTokenSymbol?: string;
-  approveToAddress?: string;
-  approvalAmount?: string;
-  needsToken0Approval?: boolean;
-  needsToken1Approval?: boolean;
+  /** Present when /lp/check_approval returned both a fresh batch permit AND outstanding ERC20→Permit2 approvals. */
+  approveToken0Tx?: ApprovalTx;
+  approveToken1Tx?: ApprovalTx;
   /** Raw token amounts Uniswap will actually transfer — used by the UI to keep the dependent input in sync with the permit values. */
   details?: {
     token0: { address: string; symbol: string; amount: string };
@@ -186,15 +182,10 @@ export default async function handler(
     }
     const hasSignedPermit = !!(permitSignature && permitBatchData);
 
-    // Pick the independent token from the explicit `inputSide` when provided. The
-    // `amountC0Raw > 0n` fallback exists only for clients that haven't been updated
-    // to send `inputSide`; with auto-filled dependent amounts (the normal UI path)
-    // both sides are always > 0 and the heuristic locks the independent to token0,
-    // which makes Uniswap recompute token1 and breaks `MAX` deposits.
-    const independentIsToken0 =
-      inputSide === 'token0' ? true :
-      inputSide === 'token1' ? false :
-      amountC0Raw > 0n;
+    if (inputSide !== 'token0' && inputSide !== 'token1') {
+      return res.status(400).json({ message: 'inputSide must be "token0" or "token1".' });
+    }
+    const independentIsToken0 = inputSide === 'token0';
     const independentAmount = independentIsToken0 ? amountC0Raw : amountC1Raw;
     if (independentAmount === 0n) {
       return res.status(400).json({ message: 'Please enter a valid amount to add.' });
@@ -256,23 +247,18 @@ export default async function handler(
         action: 'INCREASE',
       });
 
-      const needsToken0Approval = approvalCheck.transactions.some(t =>
-        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c0.toLowerCase());
-      const needsToken1Approval = approvalCheck.transactions.some(t =>
-        getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === c1.toLowerCase());
-      const firstApproval = approvalCheck.transactions[0];
-      const decodeApproveSpender = (data: string): `0x${string}` =>
-        getAddress(`0x${data.slice(34, 74)}`);
-      const erc20Fields = firstApproval ? {
-        erc20ApprovalNeeded: true as const,
-        approvalTokenAddress: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to),
-        approvalTokenSymbol: getAddress(firstApproval.tokenAddress ?? firstApproval.transaction.to).toLowerCase() === c0.toLowerCase()
-          ? defC0.symbol : defC1.symbol,
-        approveToAddress: decodeApproveSpender(firstApproval.transaction.data),
-        approvalAmount: maxUint256.toString(),
-        needsToken0Approval,
-        needsToken1Approval,
-      } : null;
+      // Forward Uniswap's approval transactions verbatim — no local re-encoding.
+      const findApprovalFor = (currency: string): ApprovalTx | undefined => {
+        const match = approvalCheck.transactions.find(t =>
+          getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === currency.toLowerCase()
+        );
+        return match?.transaction;
+      };
+      const approveToken0Tx = findApprovalFor(c0);
+      const approveToken1Tx = findApprovalFor(c1);
+      const erc20Fields = (approveToken0Tx || approveToken1Tx)
+        ? { approveToken0Tx, approveToken1Tx }
+        : null;
 
       // Surface Uniswap-computed amounts on every branch so the UI can show what
       // the user is actually about to sign instead of the FE-computed dependent.

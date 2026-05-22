@@ -10,7 +10,6 @@ import { formatUnits, encodeFunctionData } from 'viem';
 import { createNetworkClient } from '@/lib/viemClient';
 import type {
   ZapSwapApprovalStep,
-  ZapPSMSwapStep,
   ZapPoolSwapStep,
 } from '../../types';
 import type {
@@ -22,10 +21,9 @@ import type {
   TransactionStepHandler,
 } from '../../../transaction/executor/handlers/registry';
 import { getStoredUserSettings } from '@/hooks/useUserSettings';
-import { USDS_USDC_POOL_CONFIG, getZapPoolConfigByHook, getZapPoolConfigByTokens } from '../../constants';
+import { getZapPoolConfigByHook, getZapPoolConfigByTokens } from '../../constants';
 import { UNIFIED_YIELD_HOOK_ABI } from '../../../unified-yield/abi/unifiedYieldHookABI';
 import { reportZapDust } from '../../utils/reportZapDust';
-import { buildPSMSwapCalldata } from '../../routing/psmQuoter';
 import type { ZapToken } from '../../types';
 import { isNativeToken } from '@/lib/aggregators/types';
 import { getKyberswapRouterAddress } from '@/lib/aggregators/kyberswap';
@@ -38,7 +36,7 @@ import { modeForChainId } from '@/lib/network-mode';
 /**
  * Handle ZapSwapApproval step.
  *
- * Approves input token for swap (to PSM or Permit2).
+ * Approves input token for swap (to Permit2 or aggregator router).
  */
 export const handleZapSwapApprovalStep: TransactionStepHandler = async (
   step,
@@ -65,152 +63,6 @@ export const handleZapSwapApprovalStep: TransactionStepHandler = async (
 
   if (receipt.status !== 'success') {
     throw new Error(`Swap approval failed: ${hash}`);
-  }
-
-  return hash;
-};
-
-// =============================================================================
-// PSM SWAP HANDLER
-// =============================================================================
-
-/**
- * Handle ZapPSMSwap step.
- *
- * Executes a 1:1 swap via the PSM contract.
- *
- * When hookAddress and totalInputAmount are provided, the handler recalculates
- * the optimal swap amount at execution time using the pool's CURRENT ratio.
- * This compensates for pool ratio drift between preview and execution
- * (e.g., other users' trades during wallet confirmation).
- */
-export const handleZapPSMSwapStep: TransactionStepHandler = async (
-  step,
-  context,
-  txFunctions
-): Promise<`0x${string}`> => {
-  const typedStep = step as unknown as ZapPSMSwapStep;
-
-  // Determine the actual swap amount (recalculate if possible, fallback to preview)
-  let actualSwapAmount = typedStep.inputAmount;
-  let swapCalldata = typedStep.txRequest.data as Hex;
-
-  if (typedStep.hookAddress && typedStep.totalInputAmount && typedStep.inputToken) {
-    try {
-      // Use cached network client — same RPC connection as the rest of the app
-      const targetMode = context.chainId ? modeForChainId(context.chainId) : null;
-      if (!targetMode) {
-        throw new Error(`[ZapPSMSwap] Unknown chainId ${context.chainId} — cannot determine network`);
-      }
-      const publicClient = createNetworkClient(targetMode);
-
-      // Query the Hook's CURRENT ratio to calculate fresh optimal swap amount
-      const inputToken = typedStep.inputToken;
-      const totalInput = typedStep.totalInputAmount;
-      const hookAddress = typedStep.hookAddress;
-
-      // Use a reasonable probe amount to get the current ratio
-      // (same approach as the analytical formula in calculateOptimalSwapAmount)
-      let freshSwapAmount: bigint;
-
-      if (inputToken === 'USDS') {
-        // Probe: for totalInput/2 USDS, how much USDC is needed?
-        const probeAmount = totalInput / 2n;
-        const [requiredUSDC] = await publicClient.readContract({
-          address: hookAddress,
-          abi: UNIFIED_YIELD_HOOK_ABI,
-          functionName: 'previewAddFromAmount0',
-          args: [probeAmount],
-        }) as [bigint, bigint];
-        // Required USDC for probeAmount USDS → need this much from swap
-        // Remaining after swap = totalInput - S, needs (totalInput - S) * ratio USDC
-        // Swap output = S (PSM 1:1 adjusted for decimals, S USDS → S/10^12 USDC)
-        // Balance: S / 10^12 = (totalInput - S) * (requiredUSDC / probeAmount / 10^12)
-        // Simplify: S = (totalInput - S) * requiredUSDC / probeAmount
-        // S * probeAmount = totalInput * requiredUSDC - S * requiredUSDC
-        // S * (probeAmount + requiredUSDC) = totalInput * requiredUSDC
-        // But requiredUSDC is in 6 decimals, probeAmount in 18... need to normalize
-        const requiredNorm = requiredUSDC * (10n ** 12n); // normalize to 18 dec
-        freshSwapAmount = (totalInput * requiredNorm) / (probeAmount + requiredNorm);
-      } else {
-        // USDC input: probe totalInput/2 USDC, how much USDS is needed?
-        const probeAmount = totalInput / 2n;
-        const [requiredUSDS] = await publicClient.readContract({
-          address: hookAddress,
-          abi: UNIFIED_YIELD_HOOK_ABI,
-          functionName: 'previewAddFromAmount1',
-          args: [probeAmount],
-        }) as [bigint, bigint];
-        // Required USDS for probeAmount USDC
-        // Swap: S USDC → S * 10^12 USDS (PSM 1:1)
-        // Balance: S * 10^12 = (totalInput - S) * (requiredUSDS / probeAmount * 10^12)
-        // Simplify: S = (totalInput - S) * requiredUSDS / probeAmount
-        // S * probeAmount = totalInput * requiredUSDS - S * requiredUSDS
-        // S * (probeAmount + requiredUSDS) = totalInput * requiredUSDS
-        // But requiredUSDS is in 18 decimals, probeAmount in 6... normalize
-        const requiredNorm = requiredUSDS / (10n ** 12n); // normalize to 6 dec
-        freshSwapAmount = (totalInput * requiredNorm) / (probeAmount + requiredNorm);
-      }
-
-      // Apply minimal reduction (1 bps) for rounding
-      freshSwapAmount = freshSwapAmount - (freshSwapAmount / 10000n);
-
-      // Cap to approved amount
-      const maxAllowed = typedStep.approvedSwapAmount ?? typedStep.inputAmount;
-      if (freshSwapAmount > maxAllowed) {
-        freshSwapAmount = maxAllowed;
-      }
-
-      // Floor at 0
-      if (freshSwapAmount < 0n) freshSwapAmount = 0n;
-
-      const delta = freshSwapAmount > actualSwapAmount
-        ? freshSwapAmount - actualSwapAmount
-        : actualSwapAmount - freshSwapAmount;
-      const deltaPercent = Number(delta * 10000n / actualSwapAmount) / 100;
-
-      console.log(`[ZapPSMSwap] Just-in-time recalculation:`, {
-        originalSwap: actualSwapAmount.toString(),
-        freshSwap: freshSwapAmount.toString(),
-        delta: `${deltaPercent.toFixed(2)}%`,
-        direction: freshSwapAmount > actualSwapAmount ? 'UP' : 'DOWN',
-      });
-
-      // Use the fresh amount and rebuild calldata
-      actualSwapAmount = freshSwapAmount;
-      swapCalldata = buildPSMSwapCalldata(
-        inputToken,
-        freshSwapAmount,
-        // PSM output is 1:1 with decimal adjustment, apply 0.1% slippage
-        inputToken === 'USDS'
-          ? (freshSwapAmount / (10n ** 12n)) * 999n / 1000n
-          : (freshSwapAmount * (10n ** 12n)) * 999n / 1000n,
-        context.address
-      );
-    } catch (recalcError) {
-      // If recalculation fails, proceed with original amount
-      console.warn('[ZapPSMSwap] Just-in-time recalculation failed, using original:', recalcError);
-    }
-  }
-
-  // Signal step is starting
-  context.setCurrentStep({ step, accepted: false });
-
-  // Send PSM swap transaction (with potentially recalculated calldata)
-  const hash = await txFunctions.sendTransaction({
-    to: typedStep.txRequest.to as `0x${string}`,
-    data: swapCalldata,
-    value: typedStep.txRequest.value,
-  });
-
-  // Signal transaction was accepted
-  context.setCurrentStep({ step, accepted: true });
-
-  // Wait for confirmation
-  const receipt = await txFunctions.waitForReceipt({ hash });
-
-  if (receipt.status !== 'success') {
-    throw new Error(`PSM swap failed: ${hash}`);
   }
 
   return hash;
@@ -743,9 +595,6 @@ export const ZAP_STEP_HANDLERS = {
   ZapSwapApproval: {
     handler: handleZapSwapApprovalStep,
   },
-  ZapPSMSwap: {
-    handler: handleZapPSMSwapStep,
-  },
   ZapPoolSwap: {
     handler: handleZapPoolSwapStep,
   },
@@ -764,7 +613,6 @@ export const ZAP_STEP_HANDLERS = {
 export function isZapStep(stepType: string): boolean {
   return (
     stepType === 'ZapSwapApproval' ||
-    stepType === 'ZapPSMSwap' ||
     stepType === 'ZapPoolSwap' ||
     stepType === 'ZapDynamicDeposit'
   );

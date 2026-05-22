@@ -202,14 +202,6 @@ export function formatTotalApy(breakdown: APYBreakdownInput): string {
 // =============================================================================
 // BACKWARDS COMPAT — old names re-exported for gradual migration
 // =============================================================================
-/** @deprecated Use APYBreakdownInput */
-export type APRBreakdownInput = APYBreakdownInput;
-/** @deprecated Use calculateTotalApy */
-export const calculateTotalApr = calculateTotalApy;
-/** @deprecated Use formatTotalApy */
-export const formatTotalApr = formatTotalApy;
-/** @deprecated Use calculatePositionApy */
-export const calculatePositionApr = calculatePositionApy;
 /** @deprecated Use calculateRealizedApy */
 export const calculateRealizedApr = calculateRealizedApy;
 /** @deprecated Use formatApy */

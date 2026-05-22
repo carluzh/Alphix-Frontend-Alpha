@@ -96,19 +96,6 @@ export function mapExecutorStepsToUI(
         };
       }
 
-      case 'ZapPSMSwap': {
-        const zapStep = step as any;
-        const isToken0Input = zapStep.direction === 'USDS_TO_USDC';
-        return {
-          type: UIStepType.SwapTransaction,
-          inputTokenSymbol: isToken0Input ? pool.currency0.symbol : pool.currency1.symbol,
-          outputTokenSymbol: isToken0Input ? pool.currency1.symbol : pool.currency0.symbol,
-          inputTokenIcon: isToken0Input ? token0Icon : token1Icon,
-          outputTokenIcon: isToken0Input ? token1Icon : token0Icon,
-          routeType: 'psm' as const,
-        };
-      }
-
       case 'ZapPoolSwap': {
         const zapStep = step as any;
         const isToken0Input = zapStep.inputToken === 'USDS';

@@ -2,10 +2,10 @@
  * Price Impact Calculation for Zap
  *
  * Calculates the price impact of a swap to determine whether
- * to use the pool swap or PSM (1:1) fallback.
+ * to use the pool swap or Kyberswap aggregator fallback.
  */
 
-import { PSM_PRICE_IMPACT_THRESHOLD, MAX_ACCEPTABLE_PRICE_IMPACT, PRICE_IMPACT_WARNING_THRESHOLD } from '../constants';
+import { PEGGED_POOL_PRICE_IMPACT_THRESHOLD, MAX_ACCEPTABLE_PRICE_IMPACT, PRICE_IMPACT_WARNING_THRESHOLD } from '../constants';
 
 // =============================================================================
 // PRICE IMPACT CALCULATION
@@ -98,7 +98,7 @@ export interface PriceImpactAnalysis {
   impact: number;
   /** Absolute value of impact */
   absoluteImpact: number;
-  /** Whether the fallback route should be used (PSM for stablecoins, Kyberswap for volatile) */
+  /** Whether the fallback route should be used (Kyberswap aggregator) */
   shouldUseFallback: boolean;
   /** Whether to show warning to user */
   showWarning: boolean;
@@ -114,14 +114,14 @@ export interface PriceImpactAnalysis {
  * Analyze price impact and determine recommended action.
  *
  * @param priceImpact - Price impact percentage
- * @param fallbackThreshold - Threshold for switching to fallback route (defaults to PSM_PRICE_IMPACT_THRESHOLD)
- * @param fallbackLabel - Label for the fallback route in messages (defaults to 'PSM')
+ * @param fallbackThreshold - Threshold for switching to fallback route (defaults to PEGGED_POOL_PRICE_IMPACT_THRESHOLD)
+ * @param fallbackLabel - Label for the fallback route in messages (defaults to 'Kyberswap')
  * @returns Analysis with recommendations
  */
 export function analyzePriceImpact(
   priceImpact: number,
-  fallbackThreshold: number = PSM_PRICE_IMPACT_THRESHOLD,
-  fallbackLabel: string = 'PSM',
+  fallbackThreshold: number = PEGGED_POOL_PRICE_IMPACT_THRESHOLD,
+  fallbackLabel: string = 'Kyberswap',
 ): PriceImpactAnalysis {
   const absoluteImpact = Math.abs(priceImpact);
 

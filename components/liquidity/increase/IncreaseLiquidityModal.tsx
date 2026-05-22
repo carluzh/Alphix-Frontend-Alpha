@@ -105,13 +105,6 @@ function mapStepsToUI(
       }
       case "Permit2Signature":
         return { type: UIStepType.Permit2Signature };
-      case "ZapPSMSwap":
-        return {
-          type: UIStepType.SwapTransaction,
-          inputTokenSymbol: (step as any).inputToken || token0Symbol,
-          outputTokenSymbol: (step as any).outputToken || token1Symbol,
-          routeType: 'psm' as const,
-        };
       case "ZapPoolSwap":
         return {
           type: UIStepType.SwapTransaction,
@@ -558,7 +551,7 @@ function IncreaseLiquidityInner({
                           <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
                         </svg>
                         <span className="text-xs text-muted-foreground">
-                          {zapPreview.route.type === 'psm' ? 'PSM' : zapPreview.route.type === 'kyberswap' ? 'Kyberswap' : 'Custom Pool'}
+                          {zapPreview.route.type === 'kyberswap' ? 'Kyberswap' : 'Custom Pool'}
                         </span>
                         <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 12 12" className="-mx-0.5">
                           <polyline points="4 8 7 6 4 4" fill="none" stroke="#71717A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
@@ -612,7 +605,7 @@ function IncreaseLiquidityInner({
         )}
 
         {/* Deposit mode toggle */}
-        {isUnifiedYield && isZapEligible && !hasValidAmounts && (
+        {isUnifiedYield && isZapEligible && (
           <div className="flex justify-end">
             <DepositModeToggle depositMode={depositMode} onModeChange={setDepositMode} />
           </div>

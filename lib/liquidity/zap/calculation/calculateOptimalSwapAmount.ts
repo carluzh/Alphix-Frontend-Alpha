@@ -9,7 +9,7 @@
  * minimal error.
  */
 
-import { SWAP_AMOUNT_HAIRCUT, USDC_TO_USDS_MULTIPLIER, USDS_TO_USDC_DIVISOR } from '../constants';
+import { SWAP_AMOUNT_HAIRCUT } from '../constants';
 import type { TokenPosition, ZapToken } from '../types';
 
 // =============================================================================
@@ -35,7 +35,7 @@ import type { TokenPosition, ZapToken } from '../types';
  * @param inputPosition - Which token user is depositing ('token0' or 'token1')
  * @param inputAmount - Amount of input token (in wei)
  * @param poolRatio - Pool's token1/token0 ratio (from preview)
- * @param swapRate - Expected output/input rate (1.0 for PSM, ~0.999 for pool)
+ * @param swapRate - Expected output/input rate (~0.999 for pool)
  * @returns Optimal amount to swap (in wei of input token)
  */
 export function calculateOptimalSwapAmount(
@@ -200,38 +200,6 @@ export function calculatePostSwapAmounts(
 }
 
 // =============================================================================
-// PSM OUTPUT CALCULATION
-// =============================================================================
-
-/**
- * Calculate PSM swap output (1:1 with decimal adjustment).
- *
- * PSM swaps are 1:1 in USD terms, but we need to adjust for decimals:
- * - USDS has 18 decimals
- * - USDC has 6 decimals
- *
- * @param inputToken - Which token we're swapping from
- * @param inputAmount - Amount to swap (in wei)
- * @returns Expected output amount (in wei of other token)
- */
-export function calculatePSMOutput(
-  inputToken: ZapToken,
-  inputAmount: bigint
-): bigint {
-  if (inputAmount <= 0n) {
-    return 0n;
-  }
-
-  if (inputToken === 'USDS') {
-    // USDS (18 dec) -> USDC (6 dec): divide by 10^12
-    return inputAmount / USDS_TO_USDC_DIVISOR;
-  } else {
-    // USDC (6 dec) -> USDS (18 dec): multiply by 10^12
-    return inputAmount * USDC_TO_USDS_MULTIPLIER;
-  }
-}
-
-// =============================================================================
 // LEFTOVER ESTIMATION
 // =============================================================================
 
@@ -259,42 +227,3 @@ export function estimateLeftover(
   return { leftover0, leftover1 };
 }
 
-/**
- * Calculate leftover as percentage of input value.
- *
- * @param leftover0 - Leftover token0 (in wei)
- * @param leftover1 - Leftover token1 (in wei)
- * @param inputAmount - Original input amount (in wei)
- * @param inputToken - Which token was input
- * @returns Leftover as percentage (e.g., 0.01 = 0.01%)
- */
-export function calculateLeftoverPercent(
-  leftover0: bigint,
-  leftover1: bigint,
-  inputAmount: bigint,
-  inputToken: ZapToken
-): number {
-  if (inputAmount <= 0n) {
-    return 0;
-  }
-
-  // Convert both leftovers to input token terms
-  let totalLeftoverInInputTerms: bigint;
-
-  if (inputToken === 'USDS') {
-    // leftover0 is already in USDS terms
-    // Convert leftover1 (USDC) to USDS terms (multiply by 10^12)
-    const leftover1InUsds = leftover1 * USDC_TO_USDS_MULTIPLIER;
-    totalLeftoverInInputTerms = leftover0 + leftover1InUsds;
-  } else {
-    // leftover1 is already in USDC terms
-    // Convert leftover0 (USDS) to USDC terms (divide by 10^12)
-    const leftover0InUsdc = leftover0 / USDS_TO_USDC_DIVISOR;
-    totalLeftoverInInputTerms = leftover1 + leftover0InUsdc;
-  }
-
-  // Calculate percentage
-  const percent = (Number(totalLeftoverInInputTerms) / Number(inputAmount)) * 100;
-
-  return percent;
-}

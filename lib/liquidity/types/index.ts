@@ -70,7 +70,6 @@ export {
   // Zap step interfaces
   type ZapTokenSymbol,
   type ZapSwapApprovalStep,
-  type ZapPSMSwapStep,
   type ZapPoolSwapStep,
   type ZapDynamicDepositStep,
   // Composite step types

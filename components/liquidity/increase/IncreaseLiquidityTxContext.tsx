@@ -38,10 +38,10 @@ import {
   type ValidatedTransactionRequest,
   type SignTypedDataStepFields,
 } from "@/lib/liquidity/types";
-import { PERMIT2_ADDRESS } from "../liquidity-form-utils";
-
-// Shared approval utilities
-import { buildApprovalRequests, buildApprovalCalldata } from "@/lib/liquidity/hooks/approval";
+// Shared approval utilities — buildApprovalCalldata is only used for the
+// Unified Yield hook approval; non-UY V4 approvals come from Uniswap's
+// /lp/check_approval response and are forwarded verbatim by the backend.
+import { buildApprovalCalldata } from "@/lib/liquidity/hooks/approval";
 
 // Pool state for slippage protection (sqrtPriceX96)
 import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
@@ -101,6 +101,20 @@ interface IncreaseLiquidityTxContextType {
 
   // Execution state — pauses zap refetch during tx execution
   setExecuting: (executing: boolean) => void;
+}
+
+/** Adapt an Uniswap-supplied approval transaction to the wagmi/viem request shape. */
+function toApproveRequest(
+  tx: { to: string; data: string; value: string } | undefined,
+  chainId: number,
+): ValidatedTransactionRequest | undefined {
+  if (!tx) return undefined;
+  return {
+    to: tx.to as Address,
+    data: tx.data as `0x${string}`,
+    value: BigInt(tx.value ?? '0'),
+    chainId,
+  };
 }
 
 const IncreaseLiquidityTxContext = createContext<IncreaseLiquidityTxContextType | null>(null);
@@ -572,33 +586,12 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
 
       // Handle ERC20 approval needed (API now includes permit data for complete step generation)
       if (data.needsApproval && data.approvalType === 'ERC20_TO_PERMIT2') {
-        // Use the new needsToken0Approval/needsToken1Approval flags from API to handle both tokens
-        // Fallback to legacy address comparison for backwards compatibility
-        const needsToken0 = data.needsToken0Approval ??
-          (data.approvalTokenAddress?.toLowerCase() === token0Config.address.toLowerCase());
-        const needsToken1 = data.needsToken1Approval ??
-          (data.approvalTokenAddress?.toLowerCase() === token1Config.address.toLowerCase());
-
-        // Build approval transaction request using shared modular helper
-        // Respects user's approval mode setting (exact vs infinite). Prefer the
-        // Uniswap-computed amounts when present so approval display, permit
-        // values, and the actual transfer all agree.
         const rawAmount0 = data.details?.token0?.amount
           ? BigInt(data.details.token0.amount)
           : parseUnits(amount0 || "0", token0Config.decimals);
         const rawAmount1 = data.details?.token1?.amount
           ? BigInt(data.details.token1.amount)
           : parseUnits(amount1 || "0", token1Config.decimals);
-        const approvals = buildApprovalRequests({
-          needsToken0,
-          needsToken1,
-          token0Address: token0Config.address as Address,
-          token1Address: token1Config.address as Address,
-          spender: PERMIT2_ADDRESS,
-          amount0: rawAmount0,
-          amount1: rawAmount1,
-          chainId,
-        });
 
         // Build permit step fields from API response (API now includes this with ERC20_TO_PERMIT2)
         const permitData = data.permitBatchData;
@@ -655,8 +648,8 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           amount0: rawAmount0.toString(),
           amount1: rawAmount1.toString(),
           chainId,
-          approveToken0Request: approvals.token0,
-          approveToken1Request: approvals.token1,
+          approveToken0Request: toApproveRequest(data.approveToken0Tx, chainId),
+          approveToken1Request: toApproveRequest(data.approveToken1Tx, chainId),
           permit,
           increasePositionRequestArgs: increasePositionRequestArgsWithPermit,
         });
@@ -683,37 +676,12 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           values: permitData.values || permitData,
         };
 
-        // Backend signals via `erc20ApprovalNeeded` when /lp/check_approval
-        // returned BOTH a fresh batch permit AND outstanding ERC20→Permit2
-        // allowances. Without these approval steps, Permit2's `transferFrom`
-        // reverts on-chain with TRANSFER_FROM_FAILED even though the permit
-        // signature is valid.
         const rawAmount0 = data.details?.token0?.amount
           ? BigInt(data.details.token0.amount)
           : parseUnits(amount0 || "0", token0Config.decimals);
         const rawAmount1 = data.details?.token1?.amount
           ? BigInt(data.details.token1.amount)
           : parseUnits(amount1 || "0", token1Config.decimals);
-        const needsToken0Approval = data.erc20ApprovalNeeded && (
-          data.needsToken0Approval ??
-          (data.approvalTokenAddress?.toLowerCase() === token0Config.address.toLowerCase())
-        );
-        const needsToken1Approval = data.erc20ApprovalNeeded && (
-          data.needsToken1Approval ??
-          (data.approvalTokenAddress?.toLowerCase() === token1Config.address.toLowerCase())
-        );
-        const approvals = (needsToken0Approval || needsToken1Approval)
-          ? buildApprovalRequests({
-              needsToken0: !!needsToken0Approval,
-              needsToken1: !!needsToken1Approval,
-              token0Address: token0Config.address as Address,
-              token1Address: token1Config.address as Address,
-              spender: PERMIT2_ADDRESS,
-              amount0: rawAmount0,
-              amount1: rawAmount1,
-              chainId,
-            })
-          : { token0: undefined, token1: undefined };
 
         // Include permitBatchData in request args so async step can send it with signature.
         // Send the FULL normalized permit (domain, types, values) — backend's
@@ -746,8 +714,8 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           amount0: rawAmount0.toString(),
           amount1: rawAmount1.toString(),
           chainId,
-          approveToken0Request: approvals.token0,
-          approveToken1Request: approvals.token1,
+          approveToken0Request: toApproveRequest(data.approveToken0Tx, chainId),
+          approveToken1Request: toApproveRequest(data.approveToken1Tx, chainId),
           permit,
           increasePositionRequestArgs: increasePositionRequestArgsWithPermit,
         });

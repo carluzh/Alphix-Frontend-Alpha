@@ -13,7 +13,7 @@ import { usePublicClient } from 'wagmi';
 import { chainIdForMode } from '@/lib/network-mode';
 
 import { findOptimalSwapAmount } from '../calculation';
-import { USDS_USDC_POOL_CONFIG, MAX_PREVIEW_AGE_MS, getZapPoolConfigByHook } from '../constants';
+import { MAX_PREVIEW_AGE_MS, getZapPoolConfigByHook } from '../constants';
 import type { ZapToken, ZapPreviewResult, UseZapPreviewParams } from '../types';
 import { ZapError, ZapErrorCode } from '../types';
 import { UNIFIED_YIELD_HOOK_ABI } from '../../unified-yield/abi/unifiedYieldHookABI';
@@ -49,12 +49,13 @@ export function useZapPreview(params: UseZapPreviewParams) {
       }
 
       // Resolve pool config from hook address
-      const poolConfig = getZapPoolConfigByHook(hookAddress) ?? {
-        ...USDS_USDC_POOL_CONFIG,
-        fallbackRoute: 'psm' as const,
-        priceImpactThreshold: 0.01,
-        isPegged: true,
-      };
+      const poolConfig = getZapPoolConfigByHook(hookAddress);
+      if (!poolConfig) {
+        throw new ZapError(
+          ZapErrorCode.INVALID_INPUT,
+          `No zap pool config found for hook ${hookAddress}`,
+        );
+      }
 
       // Resolve token decimals from pool config
       const isInputToken0 = inputToken === poolConfig.token0.symbol;

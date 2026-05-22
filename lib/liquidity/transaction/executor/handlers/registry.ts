@@ -35,7 +35,6 @@ import {
 } from './unifiedYieldHandler';
 import {
   handleZapSwapApprovalStep,
-  handleZapPSMSwapStep,
   handleZapPoolSwapStep,
   handleZapDynamicDepositStep,
 } from '../../../../liquidity/zap/execution/handlers';
@@ -268,9 +267,6 @@ export const STEP_HANDLER_REGISTRY: Partial<Record<TransactionStepType, StepHand
   // Zap steps (single-token deposit with swap)
   [TransactionStepType.ZapSwapApproval]: {
     handler: handleZapSwapApprovalStep,
-  },
-  [TransactionStepType.ZapPSMSwap]: {
-    handler: handleZapPSMSwapStep,
   },
   [TransactionStepType.ZapPoolSwap]: {
     handler: handleZapPoolSwapStep,

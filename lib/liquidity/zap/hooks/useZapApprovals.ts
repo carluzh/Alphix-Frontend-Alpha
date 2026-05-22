@@ -3,7 +3,7 @@
  *
  * Checks and tracks approval status for all tokens involved in a zap deposit.
  * This includes:
- * - Input token approval for swap (PSM or Universal Router)
+ * - Input token approval for swap (Permit2 or aggregator router)
  * - Both tokens approval for Hook deposit
  */
 
@@ -14,7 +14,7 @@ import { type Address, erc20Abi } from 'viem';
 import { usePublicClient } from 'wagmi';
 import { chainIdForMode, type NetworkMode } from '@/lib/network-mode';
 
-import { PSM_CONFIG, USDS_USDC_POOL_CONFIG, PERMIT2_ADDRESS, getZapPoolConfigByHook } from '../constants';
+import { PERMIT2_ADDRESS, getZapPoolConfigByHook } from '../constants';
 import type { ZapToken, ZapSwapRoute, ZapApprovalStatus, RouteDetails } from '../types';
 import { getKyberswapRouterAddress } from '@/lib/aggregators/kyberswap';
 import { isNativeToken } from '@/lib/aggregators/types';
@@ -99,12 +99,10 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
       }
 
       // Resolve pool config
-      const poolConfig = getZapPoolConfigByHook(hookAddress) ?? {
-        ...USDS_USDC_POOL_CONFIG,
-        fallbackRoute: 'psm' as const,
-        priceImpactThreshold: 0.01,
-        isPegged: true,
-      };
+      const poolConfig = getZapPoolConfigByHook(hookAddress);
+      if (!poolConfig) {
+        throw new Error(`No zap pool config found for hook ${hookAddress}`);
+      }
 
       const isInputToken0 = inputToken === poolConfig.token0.symbol;
       const inputTokenAddress = isInputToken0 ? poolConfig.token0.address : poolConfig.token1.address;
@@ -114,9 +112,7 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
 
       // Determine swap spender based on route type
       let swapSpender: Address;
-      if (route.type === 'psm') {
-        swapSpender = PSM_CONFIG.address;
-      } else if (route.type === 'kyberswap') {
+      if (route.type === 'kyberswap') {
         swapSpender = getKyberswapRouterAddress(networkMode) as Address;
       } else {
         swapSpender = PERMIT2_ADDRESS;

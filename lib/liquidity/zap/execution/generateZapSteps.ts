@@ -3,16 +3,15 @@
  *
  * Generates the ordered transaction steps for a zap deposit operation.
  * Steps are:
- * 1. Approve input token for swap (to PSM or Permit2)
- * 2. Execute swap (PSM or Pool)
+ * 1. Approve input token for swap (to Permit2 or aggregator router)
+ * 2. Execute swap (pool via Universal Router, or Kyberswap aggregator)
  * 3. Approve tokens to Hook (if needed)
  * 4. Deposit to Hook
  */
 
 import { type Address, encodeFunctionData, getAddress, maxUint256 } from 'viem';
 import type { ZapCalculationResult, ZapApprovalStatus, ZapToken } from '../types';
-import { PSM_CONFIG, PERMIT2_ADDRESS, USDS_USDC_POOL_CONFIG, type ZapPoolConfig } from '../constants';
-import { buildPSMSwapCalldata } from '../routing/psmQuoter';
+import { PERMIT2_ADDRESS, type ZapPoolConfig } from '../constants';
 import { calculateMinOutput } from '../calculation';
 import { getKyberswapRouterAddress } from '@/lib/aggregators/kyberswap';
 import { isNativeToken } from '@/lib/aggregators/types';
@@ -21,7 +20,6 @@ import type {
   TransactionStep,
   UnifiedYieldApprovalStep,
   ZapSwapApprovalStep,
-  ZapPSMSwapStep,
   ZapPoolSwapStep,
   ZapDynamicDepositStep,
 } from '../../types';
@@ -139,7 +137,10 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
     targetChainId,
   } = params;
 
-  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+  if (!poolConfig) {
+    throw new Error('[generateZapSteps] poolConfig is required');
+  }
+  const config = poolConfig;
   const isInputToken0 = inputToken === config.token0.symbol;
   const inputTokenAddress = isInputToken0 ? config.token0.address : config.token1.address;
   const isInputNative = isNativeToken(inputTokenAddress);
@@ -171,38 +172,19 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
   // =========================================================================
 
   if (calculation.swapAmount > 0n) {
-    if (calculation.route.type === 'psm') {
-      // Calculate the approved swap amount (matches approval step logic)
-      const psmApprovalBuffer = calculation.swapAmount / 10n;
-      const approvedPsmAmount = approvalMode === 'infinite'
-        ? calculation.swapAmount * 2n // effectively unlimited
-        : calculation.swapAmount + (psmApprovalBuffer > 1n ? psmApprovalBuffer : 1n);
-
-      const psmSwapStep = createPSMSwapStep(
-        inputToken,
-        calculation.swapAmount,
-        calculation.swapOutputAmount,
-        userAddress,
-        hookAddress,
-        calculation.swapAmount + calculation.remainingInputAmount,
-        approvedPsmAmount
-      );
-      steps.push(psmSwapStep);
-    } else {
-      // Pool swap or Kyberswap - same step type with swapSource field
-      const swapSource = calculation.route.type === 'kyberswap' ? 'kyberswap' : 'pool';
-      const poolSwapStep = createPoolSwapStep(
-        inputToken,
-        calculation.swapAmount,
-        calculation.swapOutputAmount,
-        slippageTolerance,
-        userAddress,
-        swapSource,
-        poolConfig,
-        targetChainId
-      );
-      steps.push(poolSwapStep);
-    }
+    // Pool swap or Kyberswap - same step type with swapSource field
+    const swapSource = calculation.route.type === 'kyberswap' ? 'kyberswap' : 'pool';
+    const poolSwapStep = createPoolSwapStep(
+      inputToken,
+      calculation.swapAmount,
+      calculation.swapOutputAmount,
+      slippageTolerance,
+      userAddress,
+      swapSource,
+      poolConfig,
+      targetChainId
+    );
+    steps.push(poolSwapStep);
     swapStepCount++;
   }
 
@@ -326,28 +308,25 @@ function createSwapApprovalStep(
   poolConfig?: ZapPoolConfig,
   targetChainId?: number
 ): ZapSwapApprovalStep {
-  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+  if (!poolConfig) {
+    throw new Error('[createSwapApprovalStep] poolConfig is required');
+  }
+  const config = poolConfig;
   const isInputToken0 = inputToken === config.token0.symbol;
   const tokenAddress = getAddress(isInputToken0 ? config.token0.address : config.token1.address);
 
   // Spender based on route type
   let spender: Address;
-  if (routeType === 'psm') {
-    spender = getAddress(PSM_CONFIG.address);
-  } else if (routeType === 'kyberswap') {
+  if (routeType === 'kyberswap') {
     const networkMode = targetChainId ? modeForChainId(targetChainId) : undefined;
     spender = getAddress(getKyberswapRouterAddress(networkMode ?? undefined));
   } else {
     spender = PERMIT2_ADDRESS;
   }
 
-  const usePSM = routeType === 'psm';
-  const psmBuffer = amount / 10n;
   const approvalAmount = approvalMode === 'infinite'
     ? maxUint256
-    : usePSM
-      ? amount + (psmBuffer > 1n ? psmBuffer : 1n)
-      : amount + 1n;
+    : amount + 1n;
 
   const calldata = encodeFunctionData({
     abi: ERC20_APPROVE_ABI,
@@ -370,47 +349,6 @@ function createSwapApprovalStep(
 }
 
 /**
- * Create PSM swap step.
- */
-function createPSMSwapStep(
-  inputToken: ZapToken,
-  inputAmount: bigint,
-  expectedOutputAmount: bigint,
-  recipient: Address,
-  hookAddress?: Address,
-  totalInputAmount?: bigint,
-  approvedSwapAmount?: bigint
-): ZapPSMSwapStep {
-  const direction = inputToken === 'USDS' ? 'USDS_TO_USDC' : 'USDC_TO_USDS';
-  // For PSM3, apply minimal slippage (0.1%) since it's 1:1
-  const minOutputAmount = (expectedOutputAmount * 999n) / 1000n;
-  const calldata = buildPSMSwapCalldata(inputToken, inputAmount, minOutputAmount, recipient);
-
-  return {
-    type: TransactionStepType.ZapPSMSwap,
-    direction,
-    inputAmount,
-    expectedOutputAmount,
-    inputTokenAddress: inputToken === 'USDS'
-      ? getAddress(USDS_USDC_POOL_CONFIG.token0.address)
-      : getAddress(USDS_USDC_POOL_CONFIG.token1.address),
-    outputTokenAddress: inputToken === 'USDS'
-      ? getAddress(USDS_USDC_POOL_CONFIG.token1.address)
-      : getAddress(USDS_USDC_POOL_CONFIG.token0.address),
-    txRequest: {
-      to: getAddress(PSM_CONFIG.address),
-      data: calldata,
-      value: 0n,
-    },
-    // Data for just-in-time recalculation at execution time
-    hookAddress,
-    totalInputAmount,
-    inputToken,
-    approvedSwapAmount,
-  };
-}
-
-/**
  * Create pool swap step (also used for Kyberswap route).
  *
  * Note: This creates a placeholder - actual calldata is built
@@ -426,7 +364,10 @@ function createPoolSwapStep(
   poolConfig?: ZapPoolConfig,
   targetChainId?: number
 ): ZapPoolSwapStep {
-  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+  if (!poolConfig) {
+    throw new Error('[createPoolSwapStep] poolConfig is required');
+  }
+  const config = poolConfig;
   const isInputToken0 = inputToken === config.token0.symbol;
   const outputToken: ZapToken = isInputToken0 ? config.token1.symbol : config.token0.symbol;
   const minOutputAmount = calculateMinOutput(expectedOutputAmount, slippageTolerance);
@@ -521,7 +462,10 @@ function createZapDynamicDepositStep(
   token1Price?: number,
   poolConfig?: ZapPoolConfig
 ): ZapDynamicDepositStep {
-  const config = poolConfig ?? USDS_USDC_POOL_CONFIG;
+  if (!poolConfig) {
+    throw new Error('[createZapDynamicDepositStep] poolConfig is required');
+  }
+  const config = poolConfig;
 
   return {
     type: TransactionStepType.ZapDynamicDeposit,

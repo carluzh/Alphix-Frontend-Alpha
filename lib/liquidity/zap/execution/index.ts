@@ -12,7 +12,6 @@ export {
 
 export {
   handleZapSwapApprovalStep,
-  handleZapPSMSwapStep,
   handleZapPoolSwapStep,
   ZAP_STEP_HANDLERS,
   isZapStep,

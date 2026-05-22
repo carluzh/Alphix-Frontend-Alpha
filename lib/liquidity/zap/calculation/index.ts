@@ -10,9 +10,7 @@ export {
   calculatePoolRatio,
   calculatePoolRatioFromToken1,
   calculatePostSwapAmounts,
-  calculatePSMOutput,
   estimateLeftover,
-  calculateLeftoverPercent,
 } from './calculateOptimalSwapAmount';
 
 export {

@@ -42,7 +42,6 @@ interface TransactionPreparedResponse {
   details: {
     token0: { address: string; symbol: string; amount: string };
     token1: { address: string; symbol: string; amount: string };
-    liquidityToRemove: string;
     tickLower: number;
     tickUpper: number;
   };
@@ -126,10 +125,6 @@ export default async function handler(
       getPoolState(poolConfig.poolId as Hex, chainId),
     ]);
 
-    const liquidityToRemove = pct === 100
-      ? details.liquidity.toString()
-      : ((details.liquidity * BigInt(pct)) / 100n).toString();
-
     return res.status(200).json({
       needsApproval: false,
       create: {
@@ -153,7 +148,6 @@ export default async function handler(
       details: {
         token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
         token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },
-        liquidityToRemove,
         tickLower: details.tickLower,
         tickUpper: details.tickUpper,
       },

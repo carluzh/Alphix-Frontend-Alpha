@@ -34,7 +34,6 @@ export enum TransactionStepType {
   UnifiedYieldWithdrawTransaction = 'UnifiedYieldWithdraw',
   // Zap step types (single-token deposit with swap)
   ZapSwapApproval = 'ZapSwapApproval',
-  ZapPSMSwap = 'ZapPSMSwap',
   ZapPoolSwap = 'ZapPoolSwap',
   // Zap dynamic deposit - queries actual balances at execution time
   ZapDynamicDeposit = 'ZapDynamicDeposit',
@@ -346,7 +345,7 @@ export interface UnifiedYieldWithdrawStep extends OnChainTransactionFields {
 export type ZapTokenSymbol = 'USDS' | 'USDC' | 'ETH' | 'USDT';
 
 /**
- * Zap Swap Approval Step - Approve input token for swap (to PSM or Permit2)
+ * Zap Swap Approval Step - Approve input token for swap (to Permit2 or aggregator router)
  */
 export interface ZapSwapApprovalStep extends OnChainTransactionFields {
   type: TransactionStepType.ZapSwapApproval;
@@ -354,35 +353,10 @@ export interface ZapSwapApprovalStep extends OnChainTransactionFields {
   tokenAddress: Address;
   /** Token symbol */
   tokenSymbol: ZapTokenSymbol;
-  /** Spender address (PSM or Permit2) */
+  /** Spender address (Permit2 or aggregator router) */
   spender: Address;
   /** Amount to approve */
   amount: bigint;
-}
-
-/**
- * Zap PSM Swap Step - Execute 1:1 swap via PSM
- */
-export interface ZapPSMSwapStep extends OnChainTransactionFields {
-  type: TransactionStepType.ZapPSMSwap;
-  /** Swap direction */
-  direction: 'USDS_TO_USDC' | 'USDC_TO_USDS';
-  /** Input amount (in wei) */
-  inputAmount: bigint;
-  /** Expected output amount (in wei) */
-  expectedOutputAmount: bigint;
-  /** Input token address */
-  inputTokenAddress: Address;
-  /** Output token address */
-  outputTokenAddress: Address;
-  /** Hook address for just-in-time swap recalculation */
-  hookAddress?: Address;
-  /** Total zap input amount (for recalculating optimal swap fresh) */
-  totalInputAmount?: bigint;
-  /** Input token symbol */
-  inputToken?: ZapTokenSymbol;
-  /** Max swap amount covered by approval (caps recalculation) */
-  approvedSwapAmount?: bigint;
 }
 
 /**
@@ -486,7 +460,6 @@ export type UnifiedYieldWithdrawSteps = UnifiedYieldWithdrawStep;
 // Zap step unions
 export type ZapSwapSteps =
   | ZapSwapApprovalStep
-  | ZapPSMSwapStep
   | ZapPoolSwapStep;
 
 export type ZapDepositSteps =

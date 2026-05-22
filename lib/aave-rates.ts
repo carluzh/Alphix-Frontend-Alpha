@@ -116,13 +116,6 @@ function getAaveKey(tokenSymbol: string): string | null {
 }
 
 /**
- * Check if a token is supported by Aave or Spark
- */
-export function isAaveSupported(tokenSymbol: string): boolean {
-  return getTokenProtocol(tokenSymbol) !== null;
-}
-
-/**
  * Get yield sources for a token pair
  * Derives which lending protocols (aave, spark) are used based on the tokens.
  * Returns unique protocols in consistent order: aave first, then spark.
@@ -462,13 +455,6 @@ export function getLendingApyBySource(
 
   return result;
 }
-
-/**
- * Hook-friendly wrapper that includes loading/error state
- * For use with React Query or SWR
- */
-export const aaveRatesQueryKey = (networkMode?: NetworkMode) =>
-  ['aave', 'rates', networkMode ?? 'default'] as const;
 
 // Backwards compat
 /** @deprecated Use getLendingApyForPair */
