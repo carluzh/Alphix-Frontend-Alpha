@@ -29,9 +29,10 @@ export interface MintTxApiResponse {
   approvalType?: 'ERC20_TO_PERMIT2' | 'PERMIT2_BATCH_SIGNATURE';
 
   // ERC20 approval transactions, forwarded verbatim from Uniswap's
-  // /lp/check_approval response (keyed by pool token).
-  approveToken0Tx?: { to: string; from?: string; data: string; value: string; chainId: number };
-  approveToken1Tx?: { to: string; from?: string; data: string; value: string; chainId: number };
+  // /lp/check_approval response (keyed by pool token). `value` is omitted
+  // because `toApproveRequest` hardcodes `0n` (ERC20 approve is never payable).
+  approveToken0Tx?: { to: string; from?: string; data: string; chainId: number };
+  approveToken1Tx?: { to: string; from?: string; data: string; chainId: number };
 
   // Permit batch data
   permitBatchData?: {
@@ -71,24 +72,12 @@ export interface MintTxApiResponse {
     chainId: number;
     gasLimit?: string;
   };
-  transaction?: {
-    to: string;
-    data: string;
-    value: string;
-    gasLimit?: string;
-  };
-  sqrtRatioX96?: string;
-  currentTick?: number;
-  poolLiquidity?: string;
   dependentAmount?: string;
-  deadline?: string;
   /** Estimated gas cost in wei from API simulation (when simulateTransaction=true). */
   gasFee?: string;
   details?: {
-    token0: { address: string; symbol: string; amount: string };
-    token1: { address: string; symbol: string; amount: string };
-    tickLower: number;
-    tickUpper: number;
+    token0: { amount: string };
+    token1: { amount: string };
   };
 }
 
@@ -136,7 +125,7 @@ export interface BuildLiquidityContextParams {
     tokenId: string;
     amount0: string;
     amount1: string;
-    inputSide?: 'token0' | 'token1';
+    inputSide: 'token0' | 'token1';
     chainId: number;
     slippageBps?: number;
     deadlineMinutes?: number;
@@ -199,7 +188,7 @@ function buildTxRequest(
   apiResponse: MintTxApiResponse,
   chainId: number,
 ): ValidatedTransactionRequest | undefined {
-  const txData = apiResponse.create || apiResponse.transaction;
+  const txData = apiResponse.create;
   if (!txData || apiResponse.needsApproval) {
     return undefined;
   }
@@ -294,7 +283,6 @@ export function buildCreatePositionContext(
     unsigned: !!permitData && !txRequest,
     // Pass request args for async step - needed to call API with signature after permit
     createPositionRequestArgs,
-    sqrtRatioX96: apiResponse.sqrtRatioX96,
     // Unified Yield specific fields
     isUnifiedYield,
     hookAddress,
@@ -348,7 +336,6 @@ export function buildIncreasePositionContext(
     txRequest,
     unsigned: !!permitData && !txRequest,
     increasePositionRequestArgs,
-    sqrtRatioX96: apiResponse.sqrtRatioX96,
     // Unified Yield specific fields
     isUnifiedYield,
     hookAddress,
@@ -397,7 +384,6 @@ export function buildDecreasePositionContext(
     revokeToken0Request: undefined,
     revokeToken1Request: undefined,
     txRequest,
-    sqrtRatioX96: apiResponse.sqrtRatioX96,
     // Unified Yield specific fields
     isUnifiedYield,
     hookAddress,

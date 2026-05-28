@@ -54,7 +54,7 @@ export function buildAddressSymbolMap(
   map[toToken.address.toLowerCase()] = toToken.symbol
 
   // Known addresses from pools-config
-  const knownSymbols = ["ETH", "USDC", "USDS", "WETH"]
+  const knownSymbols = ["ETH", "USDC", "WETH"]
   for (const sym of knownSymbols) {
     const t = getToken(sym, networkMode)
     if (t) map[t.address.toLowerCase()] = t.symbol

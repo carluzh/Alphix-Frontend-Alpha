@@ -20,8 +20,7 @@ import { DeltaArrow, DeltaText, calculateDelta } from "./Delta";
 import { TimeFrameSelector } from "./TimeFrameSelector";
 import { PatternOverlay } from "./PatternOverlay";
 import { ChartSkeleton } from "./ChartSkeleton";
-import { type ChartPeriod } from "../../hooks/useOverviewChartData";
-import { usePositionsChartData } from "../../hooks/usePositionsChartData";
+import { usePositionsChartData, type ChartPeriod } from "../../hooks/usePositionsChartData";
 
 const CHART_HEIGHT = 300;
 

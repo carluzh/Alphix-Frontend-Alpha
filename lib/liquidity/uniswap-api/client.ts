@@ -331,6 +331,7 @@ function jitter(baseMs: number): number {
 }
 
 async function post<Req, Res>(path: string, body: Req): Promise<Res> {
+  // N+1 iterations: N retry-sleeps + 1 final attempt without sleep.
   for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_BASE_MS.length; attempt++) {
     const res = await fetch(`${BASE_URL}${path}`, {
       method: 'POST',
@@ -345,10 +346,11 @@ async function post<Req, Res>(path: string, body: Req): Promise<Res> {
     let parsed: any;
     try { parsed = JSON.parse(text); } catch { parsed = text; }
 
-    // Rate-limited: back off with jitter and retry until budget is exhausted.
-    // Empirically Uniswap returns 403+`{"message":"Forbidden"}` (no Retry-After header).
-    // Docs say 429 is spec-compliant; accept either so we survive a future migration.
-    const isRateLimit = (res.status === 403 && parsed?.message === 'Forbidden') || res.status === 429;
+    // Treat any 403 or 429 as rate-limit and retry with backoff.
+    // Empirically Uniswap returns 403+`{"message":"Forbidden"}` (no Retry-After header), but
+    // coupling to the body string is fragile — accept either status code so we survive
+    // a future migration to spec-compliant 429s or any body-shape change.
+    const isRateLimit = res.status === 403 || res.status === 429;
     if (isRateLimit && attempt < RATE_LIMIT_RETRY_BASE_MS.length) {
       await sleep(jitter(RATE_LIMIT_RETRY_BASE_MS[attempt]));
       continue;

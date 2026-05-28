@@ -87,7 +87,10 @@ export function mapExecutorStepsToUI(
       // Zap (single-token deposit) steps
       case 'ZapSwapApproval': {
         const zapStep = step as any;
-        const isToken0 = zapStep.inputToken === 'USDS' || zapStep.tokenSymbol === pool.currency0.symbol;
+        const tokenAddr: string | undefined = zapStep.tokenAddress;
+        const isToken0 = tokenAddr
+          ? tokenAddr.toLowerCase() === pool.currency0.address.toLowerCase()
+          : zapStep.tokenSymbol === pool.currency0.symbol;
         return {
           type: UIStepType.TokenApprovalTransaction,
           tokenSymbol: zapStep.tokenSymbol || (isToken0 ? pool.currency0.symbol : pool.currency1.symbol),
@@ -98,7 +101,9 @@ export function mapExecutorStepsToUI(
 
       case 'ZapPoolSwap': {
         const zapStep = step as any;
-        const isToken0Input = zapStep.inputToken === 'USDS';
+        const isToken0Input =
+          (zapStep.inputTokenAddress as string | undefined)?.toLowerCase() ===
+          pool.currency0.address.toLowerCase();
         return {
           type: UIStepType.SwapTransaction,
           inputTokenSymbol: isToken0Input ? pool.currency0.symbol : pool.currency1.symbol,

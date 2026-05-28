@@ -51,9 +51,9 @@ async function fetchBatchPrices(
  * Fetch USD prices for multiple tokens with automatic polling.
  *
  * @example
- * const { prices } = useTokenPrices(['ETH', 'USDS', 'USDC']);
+ * const { prices } = useTokenPrices(['ETH', 'USDC']);
  * const ethPrice = prices.ETH; // 2737.54
- * const usdsPrice = prices.USDS; // 1
+ * const usdcPrice = prices.USDC; // 1
  */
 export function useTokenPrices(
   symbols: string[],

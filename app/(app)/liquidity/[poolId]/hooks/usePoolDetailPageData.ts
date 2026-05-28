@@ -59,7 +59,7 @@ export interface PoolConfig {
   tickSpacing: number;
   type?: string;
   hooks?: string;
-  yieldSources?: Array<'aave' | 'spark'>;
+  yieldSources?: Array<'aave'>;
   proMeta?: ProMeta;
 }
 
@@ -74,7 +74,7 @@ export interface PoolStats {
   aprRaw: number;
   /** Swap-only APY — use when passing to components that add lending separately */
   swapApyRaw: number;
-  /** Lending-only APY — from Aave/Spark via backend */
+  /** Lending-only APY — from Aave via backend */
   lendingApyRaw: number;
   dynamicFeeBps: number | null;
   // Formatted strings for display

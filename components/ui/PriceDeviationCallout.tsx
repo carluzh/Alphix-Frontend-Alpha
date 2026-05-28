@@ -167,4 +167,104 @@ export function PriceDeviationCallout({
   );
 }
 
+// ============================================================================
+// Pool Out Of Range Callout
+// ============================================================================
+
+interface PoolOutOfRangeCalloutProps {
+  className?: string;
+  variant?: 'inline' | 'card' | 'large';
+}
+
+const OUT_OF_RANGE_COLOR = '#FF593C';
+const OUT_OF_RANGE_BG = 'rgba(255, 89, 60, 0.08)';
+const OUT_OF_RANGE_BORDER = 'rgba(255, 89, 60, 0.2)';
+const OUT_OF_RANGE_BORDER_HOVER = 'rgba(255, 89, 60, 0.4)';
+const OUT_OF_RANGE_ICON_BG = 'rgba(255, 89, 60, 0.12)';
+
+/**
+ * Out-of-range callout for unified yield positions whose pool tick has moved
+ * outside the active range. Same red triangle styling as the high-severity
+ * price-deviation callout, but a distinct message because the price-vs-market
+ * comparison is meaningless when the pool sqrtRatio is clamped to a boundary.
+ */
+export function PoolOutOfRangeCallout({
+  className,
+  variant = 'card',
+}: PoolOutOfRangeCalloutProps) {
+  const message = 'Position is currently out of range';
+
+  if (variant === 'inline') {
+    return (
+      <div className={cn('flex flex-row items-center gap-1', className)}>
+        <IconTriangleWarningFilled
+          className="w-4 h-4 shrink-0"
+          style={{ color: OUT_OF_RANGE_COLOR }}
+        />
+        <span className="text-sm" style={{ color: OUT_OF_RANGE_COLOR }}>
+          {message}
+        </span>
+      </div>
+    );
+  }
+
+  if (variant === 'large') {
+    return (
+      <div
+        className={cn(
+          'flex flex-row items-center gap-3 rounded-lg border p-3 transition-colors',
+          className
+        )}
+        style={{
+          backgroundColor: OUT_OF_RANGE_BG,
+          borderColor: OUT_OF_RANGE_BORDER,
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.borderColor = OUT_OF_RANGE_BORDER_HOVER; }}
+        onMouseLeave={(e) => { e.currentTarget.style.borderColor = OUT_OF_RANGE_BORDER; }}
+      >
+        <div
+          className="flex items-center justify-center p-2 rounded-md shrink-0"
+          style={{ backgroundColor: OUT_OF_RANGE_ICON_BG }}
+        >
+          <IconTriangleWarningFilled
+            className="w-5 h-5"
+            style={{ color: OUT_OF_RANGE_COLOR }}
+          />
+        </div>
+        <span className="text-sm font-medium" style={{ color: OUT_OF_RANGE_COLOR }}>
+          {message}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        'flex flex-row items-center gap-2 rounded-lg border p-2 transition-colors',
+        className
+      )}
+      style={{
+        backgroundColor: OUT_OF_RANGE_BG,
+        borderColor: OUT_OF_RANGE_BORDER,
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = OUT_OF_RANGE_BORDER_HOVER; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = OUT_OF_RANGE_BORDER; }}
+    >
+      <div
+        className="flex items-center justify-center p-1.5 rounded-md shrink-0"
+        style={{ backgroundColor: OUT_OF_RANGE_ICON_BG }}
+      >
+        <IconTriangleWarningFilled
+          className="w-3.5 h-3.5"
+          style={{ color: OUT_OF_RANGE_COLOR }}
+        />
+      </div>
+      <span className="text-xs font-medium" style={{ color: OUT_OF_RANGE_COLOR }}>
+        {message}
+      </span>
+    </div>
+  );
+}
+
 export default PriceDeviationCallout;

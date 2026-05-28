@@ -144,7 +144,7 @@ export function generateLPTransactionSteps(txContext: LiquidityTxAndGasInfo): Tr
         // V4 decrease - standard flow with position approval
         return orderDecreaseLiquiditySteps({
           approvalPositionToken,
-          decreasePosition: createDecreasePositionStep(txContext.txRequest, txContext.sqrtRatioX96),
+          decreasePosition: createDecreasePositionStep(txContext.txRequest),
         });
 
       case 'create':
@@ -224,7 +224,7 @@ export function generateLPTransactionSteps(txContext: LiquidityTxAndGasInfo): Tr
             permit: undefined,
             token0PermitTransaction: token0PermitTransactionStep,
             token1PermitTransaction: token1PermitTransactionStep,
-            increasePosition: createIncreasePositionStep(txContext.txRequest, txContext.sqrtRatioX96),
+            increasePosition: createIncreasePositionStep(txContext.txRequest),
           });
 
           // If batching is supported, combine all transactions into one batched step
@@ -232,7 +232,7 @@ export function generateLPTransactionSteps(txContext: LiquidityTxAndGasInfo): Tr
             const txRequests = steps
               .filter((step): step is IncreaseLiquiditySteps & OnChainTransactionFields => 'txRequest' in step)
               .map((step) => step.txRequest);
-            return [createIncreasePositionStepBatched(txRequests, txContext.sqrtRatioX96)];
+            return [createIncreasePositionStepBatched(txRequests)];
           }
 
           return steps;

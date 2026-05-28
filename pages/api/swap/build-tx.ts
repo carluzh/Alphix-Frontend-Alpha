@@ -17,8 +17,10 @@ import {
     createTokenSDK,
     createPoolKeyFromConfig,
     getToken,
+    getPoolBySlug,
     NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
+import { isProPool } from '../../../lib/liquidity/utils/pool-type-guards';
 // State overrides for rehypothecated pools (Pool Manager has limited on-chain balance)
 import { getSwapSimulationStateOverrides } from '../../../lib/swap/quote-state-override';
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
@@ -147,11 +149,12 @@ export function encodeMultihopExactOutPath(
 // All V4 swap functions use the action order: SETTLE → SWAP → TAKE
 //
 // Why SETTLE first (instead of SWAP → SETTLE → TAKE)?
-// - The USDS/USDC pool uses rehypothecated liquidity (USDS deposited in Sky vault)
-// - Pool Manager only holds ~375 USDS on-chain
-// - With SWAP first, the hook can't access enough USDS during beforeSwap
-// - With SETTLE first, user's tokens are in Pool Manager BEFORE the swap executes
-// - This allows hooks to access the settled tokens during the swap
+// - Rehypothecated pools (e.g. ETH/USDC on Base) deposit liquidity into yield
+//   vaults, so the Pool Manager holds only a fraction of the actual balance.
+// - With SWAP first, the hook can't access enough of the rehypothecated token
+//   during beforeSwap.
+// - With SETTLE first, the user's tokens are in Pool Manager BEFORE the swap
+//   executes, allowing hooks to access them during the swap.
 //
 // For ExactOut: We add a 4th action (TAKE_ALL input remainder) because:
 // - We settle maxAmountIn (worst case with slippage)
@@ -634,17 +637,29 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
                 });
             }
 
-            // At this point both routeResponse and buildResponse are guaranteed non-error
-            // (error paths returned above). Extract the gas limit from the build response.
+            // If routeResponse is still an error after the build-retry branch refetched
+            // it, fail fast — we cannot trust amountIn/amountOut from a partial build
+            // response payload.
+            if (isKyberswapError(routeResponse)) {
+                return res.status(502).json({
+                    ok: false,
+                    message: `Kyberswap route refresh failed: ${routeResponse.message}`,
+                    kyberswapError: { code: routeResponse.code, kind: routeResponse.kind, retryable: routeResponse.retryable },
+                });
+            }
+
+            // Extract the gas limit from the build response.
             const kyberGasLimit = buildResponse.data.gas
               ? BigInt(buildResponse.data.gas) + BigInt(buildResponse.data.gas) / 5n  // 20% buffer per Kyberswap docs
               : undefined;
 
-            // Validate router address matches
+            // Validate router address matches. The build response or the route response
+            // must return the exact same router we will dispatch the swap to. If either
+            // is missing or mismatched, reject the request.
             const kyberRouter = getKyberswapRouterAddress(networkMode);
             const responseRouter = buildResponse.data.routerAddress
-              || (!isKyberswapError(routeResponse) ? routeResponse.data.routerAddress : kyberRouter);
-            if (getAddress(responseRouter) !== getAddress(kyberRouter)) {
+              || routeResponse.data.routerAddress;
+            if (!responseRouter || getAddress(responseRouter) !== getAddress(kyberRouter)) {
                 return res.status(400).json({
                     ok: false,
                     message: 'Invalid Kyberswap router address returned from API'
@@ -652,10 +667,7 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             }
 
             const freshEncodedData = buildResponse.data.data;
-            // routeResponse may have been reassigned during retry — narrow safely
-            const freshRouteSummary = !isKyberswapError(routeResponse)
-              ? routeResponse.data.routeSummary
-              : buildResponse.data as any; // Fallback: build response has amountIn/amountOut
+            const freshRouteSummary = routeResponse.data.routeSummary;
 
             // Step 3: Simulate the transaction to catch real reverts before user signs.
             // NOTE: By this point the user has already approved the Kyberswap router.
@@ -866,16 +878,22 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         // Action order is now SETTLE → SWAP → TAKE, which ensures tokens are in Pool Manager
         // before the swap executes, allowing hooks to access them during the swap.
         //
-        // Rehypothecated pools (Unified Yield): Pool Manager has limited on-chain balance
-        // because liquidity is deposited in yield vaults (e.g. Aave for native ETH).
-        // We use state overrides to give Pool Manager virtual token balances during simulation.
-        // The actual on-chain swap works because the hook brings tokens back during execution.
-        const poolHooks = poolConfig?.pool?.hooks;
-        const stateOverride = getSwapSimulationStateOverrides(
-            INPUT_TOKEN.address,
-            OUTPUT_TOKEN.address,
-            poolHooks
-        );
+        // Rehypothecated pools: Pool Manager has limited on-chain balance because
+        // liquidity is deposited in yield vaults (e.g. Aave for native ETH). We use
+        // state overrides to give Pool Manager virtual native ETH balances during
+        // simulation. The actual on-chain swap works because the hook brings tokens
+        // back during execution.
+        //
+        // Predicate: native-ETH-touching swap whose route contains at least one
+        // Alphix pool that is NOT a Pro pool (AlphixPro pools like ETH/ZFI use a
+        // separate hook and do not rehypothecate).
+        const routeTouchesRehypothecatedNativeEthPool =
+            (isNativeInput || OUTPUT_TOKEN.address === NATIVE_TOKEN_ADDRESS) &&
+            route.pools.some(p => {
+                const cfg = getPoolBySlug(p.poolId, networkMode) ?? getPoolBySlug(p.slug, networkMode);
+                return !!cfg && !isProPool(cfg);
+            });
+        const stateOverride = getSwapSimulationStateOverrides(routeTouchesRehypothecatedNativeEthPool);
 
         await publicClient.simulateContract({
             account: getAddress(userAddress),

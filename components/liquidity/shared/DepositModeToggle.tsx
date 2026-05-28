@@ -5,7 +5,7 @@
  * - RangeAndAmountsStep (create position flow)
  * - IncreaseLiquidityForm (increase liquidity flow)
  *
- * Only shown for zap-eligible Unified Yield pools (USDS/USDC).
+ * Only shown for zap-eligible Unified Yield pools.
  */
 
 'use client';

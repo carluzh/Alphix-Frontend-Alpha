@@ -137,9 +137,7 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
   // Get wizard state from AddLiquidityContext
   const {
     state,
-    depositState,
     poolStateData,
-    derivedPositionInfo,
     ticks,
     poolNetworkMode,
   } = useAddLiquidityContext();

@@ -1,144 +1,72 @@
 /**
- * Unified Yield Zap Types
+ * Zap Types
  *
- * Type definitions for the Zap feature that enables single-token deposits
- * into Unified Yield pools (USDS/USDC, ETH/USDC).
+ * Type definitions for the Zap feature (single-token deposits into the
+ * USDC/USDT Unified Yield pool).
  */
 
 import type { Address } from 'viem';
-import type { ValidatedTransactionRequest } from '../types';
 
 // =============================================================================
 // TOKEN TYPES
 // =============================================================================
 
-/**
- * Supported tokens for zap deposits
- */
-export type ZapToken = 'USDS' | 'USDC' | 'ETH' | 'USDT';
-
-/**
- * Token position in pool (matches Uniswap convention)
- */
-export type TokenPosition = 'token0' | 'token1';
+export type ZapToken = 'USDC' | 'ETH' | 'USDT';
 
 // =============================================================================
-// SWAP ROUTE TYPES
+// ROUTE TYPES
 // =============================================================================
 
 /**
- * Available swap routes for zap
- */
-export type ZapSwapRoute = 'pool' | 'kyberswap';
-
-/**
- * Pool route details (AMM swap)
- */
-export interface PoolRouteDetails {
-  type: 'pool';
-  /** Price impact as percentage (e.g., 0.005 = 0.005%) */
-  priceImpact: number;
-  /** Dynamic fee in basis points */
-  feeBps: number;
-  /** Current pool sqrt price */
-  sqrtPriceX96: bigint;
-}
-
-/**
- * Kyberswap route details (aggregator swap)
+ * Route details surfaced to the UI. The live zap pool only ever uses
+ * Kyberswap, but we keep `type` so the UI can label it and `priceImpact`
+ * so the UI can show a warning when Kyberswap reports a bad rate.
  */
 export interface KyberswapRouteDetails {
   type: 'kyberswap';
-  /** Price impact as percentage */
   priceImpact: number;
-  /** Expected output amount from Kyberswap quote (in wei) */
   outputAmount: bigint;
 }
 
-/**
- * Union of route details
- */
-export type RouteDetails = PoolRouteDetails | KyberswapRouteDetails;
+export type RouteDetails = KyberswapRouteDetails;
 
 // =============================================================================
-// CALCULATION TYPES
+// CALCULATION RESULT
 // =============================================================================
 
-/**
- * Input for zap calculation
- */
-export interface ZapCalculationInput {
-  /** Which token the user is depositing */
-  inputToken: ZapToken;
-  /** Amount of input token (in wei) */
-  inputAmount: bigint;
-  /** Current pool ratio (token1/token0 from preview) */
-  poolRatio: number;
-  /** User's slippage tolerance (percentage, e.g., 0.5 = 0.5%) */
-  slippageTolerance: number;
-}
-
-/**
- * Result of zap calculation
- */
+/** Result of a zap calculation, fed into `generateZapSteps`. */
 export interface ZapCalculationResult {
-  /** Amount to swap (in wei of input token) */
   swapAmount: bigint;
-  /** Expected output from swap (in wei of other token) */
   swapOutputAmount: bigint;
-  /** Remaining input token after swap (for deposit) */
   remainingInputAmount: bigint;
-  /** Selected swap route */
   route: RouteDetails;
-  /** Expected shares to receive from deposit */
   expectedShares: bigint;
-  /** Estimated leftover amounts (dust) */
-  estimatedLeftover: {
-    token0: bigint;
-    token1: bigint;
-  };
-  /** Total value of leftover as percentage of input */
-  leftoverPercent: number;
 }
 
-/**
- * Zap preview result for UI display
- */
+/** Preview result returned by `useZapPreview` for UI display. */
 export interface ZapPreviewResult extends ZapCalculationResult {
-  /** Formatted amounts for display */
   formatted: {
     inputAmount: string;
     swapAmount: string;
-    swapOutputAmount: string;
-    remainingInputAmount: string;
     expectedShares: string;
-    leftoverToken0: string;
-    leftoverToken1: string;
   };
-  /** Input token metadata */
   inputTokenInfo: {
     symbol: ZapToken;
     decimals: number;
     address: Address;
   };
-  /** Output token metadata (the one we swap to) */
   outputTokenInfo: {
     symbol: ZapToken;
     decimals: number;
     address: Address;
   };
-  /** Share valuation from on-chain preview (what shares are worth) */
+  /** What the minted shares are worth (from on-chain previewRemove…). */
   shareValue?: {
-    /** Amount of token0 (USDS) the shares represent */
     amount0: bigint;
-    /** Amount of token1 (USDC) the shares represent */
     amount1: bigint;
-    /** Formatted amount0 */
     formatted0: string;
-    /** Formatted amount1 */
     formatted1: string;
   };
-  /** Timestamp of preview calculation */
   timestamp: number;
 }
 
@@ -146,23 +74,15 @@ export interface ZapPreviewResult extends ZapCalculationResult {
 // APPROVAL TYPES
 // =============================================================================
 
-/**
- * Approval status for zap operations
- */
 export interface ZapApprovalStatus {
-  /** Input token approved for swap (to Permit2 or aggregator router) */
   inputTokenApprovedForSwap: boolean;
-  /** Token0 approved for Hook deposit */
   token0ApprovedForHook: boolean;
-  /** Token1 approved for Hook deposit */
   token1ApprovedForHook: boolean;
-  /** Current allowances */
   allowances: {
     inputTokenForSwap: bigint;
     token0ForHook: bigint;
     token1ForHook: bigint;
   };
-  /** Required amounts */
   required: {
     inputTokenForSwap: bigint;
     token0ForHook: bigint;
@@ -171,88 +91,16 @@ export interface ZapApprovalStatus {
 }
 
 // =============================================================================
-// TRANSACTION STEP TYPES
+// HOOK PARAMS
 // =============================================================================
 
-/**
- * Step type enum values for zap operations
- * These extend the existing TransactionStepType enum
- */
-export enum ZapTransactionStepType {
-  /** Approve input token for swap (to Permit2 or aggregator router) */
-  ZapSwapApproval = 'ZapSwapApproval',
-  /** Execute pool swap via Universal Router */
-  ZapPoolSwap = 'ZapPoolSwap',
-}
-
-/**
- * Base step interface
- */
-interface BaseZapStep {
-  txRequest: ValidatedTransactionRequest;
-}
-
-/**
- * Swap approval step
- */
-export interface ZapSwapApprovalStep extends BaseZapStep {
-  type: ZapTransactionStepType.ZapSwapApproval;
-  /** Token being approved */
-  tokenAddress: Address;
-  tokenSymbol: ZapToken;
-  /** Spender (Permit2 or aggregator router address) */
-  spender: Address;
-  /** Amount to approve */
-  amount: bigint;
-}
-
-/**
- * Pool swap step
- */
-export interface ZapPoolSwapStep extends BaseZapStep {
-  type: ZapTransactionStepType.ZapPoolSwap;
-  /** Input token */
-  inputToken: ZapToken;
-  inputTokenAddress: Address;
-  /** Output token */
-  outputToken: ZapToken;
-  outputTokenAddress: Address;
-  /** Input amount (in wei) */
-  inputAmount: bigint;
-  /** Minimum output amount after slippage (in wei) */
-  minOutputAmount: bigint;
-  /** Transaction deadline */
-  deadline: bigint;
-  /** Swap source - pool (Universal Router) or kyberswap (aggregator) */
-  swapSource?: 'pool' | 'kyberswap';
-  /** Target chain ID for the swap (pool's chain, not wallet's chain) */
-  targetChainId?: number;
-}
-
-/**
- * Union of all zap-specific steps
- */
-export type ZapStep = ZapSwapApprovalStep | ZapPoolSwapStep;
-
-// =============================================================================
-// HOOK TYPES
-// =============================================================================
-
-/**
- * Parameters for useZapPreview hook
- */
 export interface UseZapPreviewParams {
-  /** Which token user is depositing */
   inputToken: ZapToken | null;
-  /** Amount as string (user input) */
   inputAmount: string;
-  /** Hook contract address */
   hookAddress: Address;
-  /** Whether to enable the query */
   enabled?: boolean;
-  /** Whether to enable auto-refetch (disable during execution) */
+  /** Disable auto-refetch during execution. */
   refetchEnabled?: boolean;
-  /** Network mode for chain-specific routing */
   networkMode?: import('@/lib/network-mode').NetworkMode;
 }
 
@@ -260,25 +108,11 @@ export interface UseZapPreviewParams {
 // ERROR TYPES
 // =============================================================================
 
-/**
- * Zap-specific error codes
- */
 export enum ZapErrorCode {
-  INSUFFICIENT_BALANCE = 'INSUFFICIENT_BALANCE',
-  SLIPPAGE_EXCEEDED = 'SLIPPAGE_EXCEEDED',
-  PRICE_IMPACT_TOO_HIGH = 'PRICE_IMPACT_TOO_HIGH',
   POOL_LIQUIDITY_LOW = 'POOL_LIQUIDITY_LOW',
-  APPROVAL_FAILED = 'APPROVAL_FAILED',
-  SWAP_FAILED = 'SWAP_FAILED',
-  DEPOSIT_FAILED = 'DEPOSIT_FAILED',
-  USER_REJECTED = 'USER_REJECTED',
-  STALE_PREVIEW = 'STALE_PREVIEW',
   INVALID_INPUT = 'INVALID_INPUT',
 }
 
-/**
- * Zap error with code and details
- */
 export class ZapError extends Error {
   constructor(
     public readonly code: ZapErrorCode,

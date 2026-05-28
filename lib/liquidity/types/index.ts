@@ -72,14 +72,10 @@ export {
   type ZapSwapApprovalStep,
   type ZapPoolSwapStep,
   type ZapDynamicDepositStep,
-  // Composite step types
+  // Composite step types — used internally by step generators/orderers.
   type IncreaseLiquiditySteps,
   type DecreaseLiquiditySteps,
   type CollectFeesSteps,
-  type UnifiedYieldDepositSteps,
-  type UnifiedYieldWithdrawSteps,
-  type ZapSwapSteps,
-  type ZapDepositSteps,
   type TransactionStep,
   // Liquidity action (CurrencyAmount is from @uniswap/sdk-core)
   type LiquidityAction,
@@ -93,13 +89,10 @@ export {
   type ValidatedLiquidityTxContext,
   // Validation functions
   isValidLiquidityTxContext,
-  // Flow state
+  // Flow state — used by useStepExecutor + executionStore
   type FlowStatus,
   type StepState,
-  type LiquidityFlowState,
   // Approval status
   type TokenApprovalStatus,
   type ApprovalCheckResult,
-  // Stepper UI
-  type StepperStep,
 } from './transaction';

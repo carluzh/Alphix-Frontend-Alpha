@@ -337,7 +337,6 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
               value: txResult.value?.toString() || "0",
               gasLimit: txResult.gasLimit?.toString(),
             },
-            sqrtRatioX96: undefined,
           } as MintTxApiResponse,
           token0: {
             address: token0Config.address as Address,
@@ -430,7 +429,6 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         apiResponse: {
           needsApproval: false,
           create: data.create,
-          sqrtRatioX96: data.sqrtRatioX96,
         } as MintTxApiResponse,
         token0: {
           address: token0Config.address as Address,

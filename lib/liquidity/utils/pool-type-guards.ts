@@ -11,7 +11,7 @@
 
 import type { PoolConfig } from '@/lib/pools-config';
 
-/** Stable pool — correlated assets with tight tick spacing (e.g., USDS/USDC) */
+/** Stable pool — correlated assets with tight tick spacing */
 export function isStablePool(pool: PoolConfig): boolean {
   return pool.type === 'Stable';
 }

@@ -9,7 +9,6 @@
 import { SafeStorage } from './safe-storage';
 import { RetryUtility } from './retry-utility';
 import type { NetworkMode } from './network-mode';
-import { ALL_MODES } from './chain-registry';
 
 // Request deduplication: track ongoing requests to prevent duplicates
 const ongoingRequests = new Map<string, Promise<any>>();

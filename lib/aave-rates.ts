@@ -1,10 +1,10 @@
 /**
  * Unified Yield Rates Client
- * Fetches lending rates from Aave/Spark via AlphixBackend.
+ * Fetches lending rates from Aave via AlphixBackend.
  * Pool-level yield factors configured in POOL_YIELD_FACTORS.
  *
  * Network-aware: pass networkMode to fetch rates from the correct chain's
- * Aave deployment (Base vs Arbitrum). Spark is Base-only.
+ * Aave deployment (Base vs Arbitrum).
  */
 
 import type { NetworkMode } from './network-mode';
@@ -18,7 +18,6 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localh
 
 /** Pool yield factors: key = sorted symbols joined by '/', value = multiplier (0.70 = 30% fee) */
 const POOL_YIELD_FACTORS: Record<string, number> = {
-  // 'USDC/USDS': 0.70,
   // 'ATDAI/ATUSDC': 0.70,
 };
 
@@ -36,7 +35,8 @@ export function applyPoolYieldFactor(rawYield: number, token0Symbol: string, tok
 
 // ============================================================================
 
-type ProtocolSource = 'aave' | 'spark';
+/** Lending protocol source. Only Aave is supported. */
+type ProtocolSource = 'aave';
 
 interface TokenMapping {
   key: string;        // Backend key (e.g., 'USDC', 'DAI')
@@ -47,19 +47,15 @@ interface TokenMapping {
  * Token symbol to protocol/key mapping
  * Maps frontend token symbols to their lending protocol and backend key.
  *
- * Aave: USDC, WETH, GHO (via /aave/rates)
- * Spark: DAI, USDS (via /spark/rates)
+ * Aave: USDC, USDT, WETH, GHO, DAI (via /aave/rates)
  */
 const TOKEN_TO_PROTOCOL: Record<string, TokenMapping> = {
-  // Aave tokens (Base + Arbitrum)
   'USDC': { key: 'USDC', protocol: 'aave' },
   'USDT': { key: 'USDT', protocol: 'aave' },
   'WETH': { key: 'WETH', protocol: 'aave' },
   'ETH': { key: 'WETH', protocol: 'aave' },
   'GHO': { key: 'GHO', protocol: 'aave' },
-  // Spark tokens (Base only — Spark has no Arbitrum deployment)
-  'DAI': { key: 'DAI', protocol: 'spark' },
-  'USDS': { key: 'USDS', protocol: 'spark' },
+  'DAI': { key: 'DAI', protocol: 'aave' },
 };
 
 /**
@@ -116,15 +112,14 @@ function getAaveKey(tokenSymbol: string): string | null {
 }
 
 /**
- * Get yield sources for a token pair
- * Derives which lending protocols (aave, spark) are used based on the tokens.
- * Returns unique protocols in consistent order: aave first, then spark.
+ * Get yield sources for a token pair.
+ * Only Aave is supported.
  */
 export function getYieldSourcesForTokens(
   token0Symbol?: string,
   token1Symbol?: string
-): Array<'aave' | 'spark'> {
-  const sources = new Set<'aave' | 'spark'>();
+): Array<'aave'> {
+  const sources = new Set<'aave'>();
 
   if (token0Symbol) {
     const mapping = getTokenProtocol(token0Symbol);
@@ -136,10 +131,8 @@ export function getYieldSourcesForTokens(
     if (mapping) sources.add(mapping.protocol);
   }
 
-  // Return in consistent order: aave first, then spark
-  const result: Array<'aave' | 'spark'> = [];
+  const result: Array<'aave'> = [];
   if (sources.has('aave')) result.push('aave');
-  if (sources.has('spark')) result.push('spark');
 
   return result.length > 0 ? result : ['aave']; // Default to aave if no tokens matched
 }
@@ -153,12 +146,11 @@ function getCacheKey(networkMode?: NetworkMode): string {
 }
 
 /**
- * Fetch current rates from Aave (and Spark on Base)
- * Combines rates into a unified response.
+ * Fetch current rates from Aave.
  * Uses per-network in-memory cache to avoid excessive API calls.
  *
  * @param networkMode - Optional network. 'arbitrum' fetches Arbitrum Aave rates,
- *                      'base'/undefined fetches Base Aave + Spark rates.
+ *                      'base'/undefined fetches Base Aave rates.
  */
 export async function fetchAaveRates(networkMode?: NetworkMode): Promise<AaveRatesResponse> {
   const cacheKey = getCacheKey(networkMode);
@@ -175,26 +167,10 @@ export async function fetchAaveRates(networkMode?: NetworkMode): Promise<AaveRat
       ? `${BACKEND_URL}/aave/rates?network=${getNetworkParam(networkMode)}`
       : `${BACKEND_URL}/aave/rates`;
 
-    // Spark is Base-only — skip for Arbitrum
-    const fetchSpark = networkMode !== 'arbitrum';
-
-    const fetches: Promise<Response | null>[] = [
-      fetch(aaveUrl, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      }).catch(() => null),
-    ];
-
-    if (fetchSpark) {
-      fetches.push(
-        fetch(`${BACKEND_URL}/spark/rates`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-        }).catch(() => null)
-      );
-    }
-
-    const [aaveResponse, sparkResponse] = await Promise.all(fetches);
+    const aaveResponse = await fetch(aaveUrl, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    }).catch(() => null);
 
     const combinedData: Record<string, AaveTokenRate> = {};
 
@@ -204,22 +180,6 @@ export async function fetchAaveRates(networkMode?: NetworkMode): Promise<AaveRat
       if (aaveData.success && aaveData.data) {
         for (const [key, value] of Object.entries(aaveData.data)) {
           combinedData[key] = value as AaveTokenRate;
-        }
-      }
-    }
-
-    // Process Spark response - store RAW rates (no discount applied)
-    if (sparkResponse?.ok) {
-      const sparkData = await sparkResponse.json();
-      if (sparkData.success && sparkData.data) {
-        for (const [key, value] of Object.entries(sparkData.data)) {
-          // Spark returns { apy, conversionRate, timestamp } - normalize to AaveTokenRate
-          const sparkRate = value as { apy: number; conversionRate?: string; timestamp: number };
-          combinedData[key] = {
-            apy: sparkRate.apy,
-            utilization: 0, // Spark doesn't return utilization
-            timestamp: sparkRate.timestamp,
-          };
         }
       }
     }
@@ -422,18 +382,17 @@ export function getLendingApyForPair(
 
 /**
  * Per-source lending APY breakdown for a token pair.
- * Groups tokens by their yield source (aave vs spark) and returns the average APY per source.
+ * Groups tokens by their yield source and returns the average APY per source.
  * Applies pool-level yield factor to each source's average.
  *
- * Example: USDS/USDC → { spark: sparkApy(USDS), aave: aaveApy(USDC) }
  * Example: WETH/USDC → { aave: avg(aaveApy(WETH), aaveApy(USDC)) }
  */
 export function getLendingApyBySource(
   ratesData: AaveRatesResponse | undefined,
   token0Symbol: string,
   token1Symbol: string
-): Record<'aave' | 'spark', number> {
-  const result: Record<'aave' | 'spark', number> = { aave: 0, spark: 0 };
+): Record<'aave', number> {
+  const result: Record<'aave', number> = { aave: 0 };
   if (!ratesData?.success) return result;
 
   const tokens = [token0Symbol, token1Symbol];
@@ -450,7 +409,7 @@ export function getLendingApyBySource(
 
   for (const [source, apys] of Object.entries(bySource)) {
     const avg = apys.reduce((a, b) => a + b, 0) / apys.length;
-    result[source as 'aave' | 'spark'] = applyPoolYieldFactor(avg, token0Symbol, token1Symbol);
+    result[source as 'aave'] = applyPoolYieldFactor(avg, token0Symbol, token1Symbol);
   }
 
   return result;

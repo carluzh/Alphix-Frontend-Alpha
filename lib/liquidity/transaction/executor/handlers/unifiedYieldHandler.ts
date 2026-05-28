@@ -26,11 +26,6 @@ import { ERC20_ABI } from '@/lib/abis/erc20';
 // TYPES
 // =============================================================================
 
-export type UnifiedYieldStep =
-  | UnifiedYieldApprovalStep
-  | UnifiedYieldDepositStep
-  | UnifiedYieldWithdrawStep;
-
 export interface HandleUnifiedYieldApprovalParams {
   address: `0x${string}`;
   step: UnifiedYieldApprovalStep;
@@ -47,86 +42,6 @@ export interface HandleUnifiedYieldWithdrawParams {
   address: `0x${string}`;
   step: UnifiedYieldWithdrawStep;
   setCurrentStep: (params: { step: UnifiedYieldWithdrawStep; accepted: boolean }) => void;
-}
-
-// =============================================================================
-// TRANSACTION INFO TYPES - For transaction tracking
-// =============================================================================
-
-export interface UnifiedYieldApprovalInfo {
-  type: 'UnifiedYieldApproval';
-  tokenAddress: string;
-  tokenSymbol: string;
-  hookAddress: string;
-  amount: string;
-}
-
-export interface UnifiedYieldDepositInfo {
-  type: 'UnifiedYieldDeposit';
-  hookAddress: string;
-  poolId: string;
-  sharesToMint: string;
-  token0Symbol: string;
-  token1Symbol: string;
-}
-
-export interface UnifiedYieldWithdrawInfo {
-  type: 'UnifiedYieldWithdraw';
-  hookAddress: string;
-  poolId: string;
-  sharesToWithdraw: string;
-  token0Symbol: string;
-  token1Symbol: string;
-}
-
-export type UnifiedYieldTransactionInfo =
-  | UnifiedYieldApprovalInfo
-  | UnifiedYieldDepositInfo
-  | UnifiedYieldWithdrawInfo;
-
-// =============================================================================
-// INFO GETTERS - For transaction tracking
-// =============================================================================
-
-/**
- * Gets approval transaction info from step
- */
-export function getUnifiedYieldApprovalInfo(step: UnifiedYieldApprovalStep): UnifiedYieldApprovalInfo {
-  return {
-    type: 'UnifiedYieldApproval',
-    tokenAddress: step.tokenAddress,
-    tokenSymbol: step.tokenSymbol,
-    hookAddress: step.hookAddress,
-    amount: step.amount.toString(),
-  };
-}
-
-/**
- * Gets deposit transaction info from step
- */
-export function getUnifiedYieldDepositInfo(step: UnifiedYieldDepositStep): UnifiedYieldDepositInfo {
-  return {
-    type: 'UnifiedYieldDeposit',
-    hookAddress: step.hookAddress,
-    poolId: step.poolId,
-    sharesToMint: step.sharesToMint.toString(),
-    token0Symbol: step.token0Symbol,
-    token1Symbol: step.token1Symbol,
-  };
-}
-
-/**
- * Gets withdraw transaction info from step
- */
-export function getUnifiedYieldWithdrawInfo(step: UnifiedYieldWithdrawStep): UnifiedYieldWithdrawInfo {
-  return {
-    type: 'UnifiedYieldWithdraw',
-    hookAddress: step.hookAddress,
-    poolId: step.poolId,
-    sharesToWithdraw: step.sharesToWithdraw.toString(),
-    token0Symbol: step.token0Symbol,
-    token1Symbol: step.token1Symbol,
-  };
 }
 
 // =============================================================================

@@ -102,7 +102,7 @@ export interface IncreaseLPPositionRequestArgs {
   amount0: string;
   amount1: string;
   /** Which side the user is entering. The other side is recomputed by Uniswap. */
-  inputSide?: 'token0' | 'token1';
+  inputSide: 'token0' | 'token1';
   chainId: number;
   slippageBps?: number;
   deadlineMinutes?: number;
@@ -137,7 +137,6 @@ export interface LPPositionTransactionResponse {
     value: string;
     chainId: number;
   };
-  sqrtRatioX96?: string;
 }
 
 // =============================================================================
@@ -232,7 +231,6 @@ export interface Permit2TransactionStep extends OnChainTransactionFields {
  */
 export interface IncreasePositionTransactionStep extends OnChainTransactionFields {
   type: TransactionStepType.IncreasePositionTransaction;
-  sqrtRatioX96: string | undefined;
 }
 
 /**
@@ -242,7 +240,6 @@ export interface IncreasePositionTransactionStepAsync {
   type: TransactionStepType.IncreasePositionTransactionAsync;
   getTxRequest(signature: string): Promise<{
     txRequest: ValidatedTransactionRequest | undefined;
-    sqrtRatioX96: string | undefined;
   }>;
 }
 
@@ -251,7 +248,6 @@ export interface IncreasePositionTransactionStepAsync {
  */
 export interface IncreasePositionTransactionStepBatched extends OnChainTransactionFieldsBatched {
   type: TransactionStepType.IncreasePositionTransactionBatched;
-  sqrtRatioX96: string | undefined;
 }
 
 /**
@@ -264,7 +260,6 @@ export interface IncreasePositionTransactionStepBatchedAsync {
   approvalRequests: ValidatedTransactionRequest[];
   getTxRequest(signature: string): Promise<{
     txRequest: ValidatedTransactionRequest | undefined;
-    sqrtRatioX96: string | undefined;
   }>;
 }
 
@@ -273,7 +268,6 @@ export interface IncreasePositionTransactionStepBatchedAsync {
  */
 export interface DecreasePositionTransactionStep extends OnChainTransactionFields {
   type: TransactionStepType.DecreasePositionTransaction;
-  sqrtRatioX96?: string;
 }
 
 /**
@@ -342,7 +336,7 @@ export interface UnifiedYieldWithdrawStep extends OnChainTransactionFields {
 // =============================================================================
 
 /** Zap token types */
-export type ZapTokenSymbol = 'USDS' | 'USDC' | 'ETH' | 'USDT';
+export type ZapTokenSymbol = 'USDC' | 'ETH' | 'USDT';
 
 /**
  * Zap Swap Approval Step - Approve input token for swap (to Permit2 or aggregator router)
@@ -455,8 +449,6 @@ export type UnifiedYieldDepositSteps =
   | UnifiedYieldApprovalStep
   | UnifiedYieldDepositStep;
 
-export type UnifiedYieldWithdrawSteps = UnifiedYieldWithdrawStep;
-
 // Zap step unions
 export type ZapSwapSteps =
   | ZapSwapApprovalStep
@@ -473,7 +465,7 @@ export type TransactionStep =
   | DecreaseLiquiditySteps
   | CollectFeesSteps
   | UnifiedYieldDepositSteps
-  | UnifiedYieldWithdrawSteps
+  | UnifiedYieldWithdrawStep
   | ZapDepositSteps;
 
 // =============================================================================
@@ -510,7 +502,6 @@ export interface IncreasePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo 
   type: LiquidityTransactionType.Increase;
   unsigned: boolean;
   increasePositionRequestArgs: IncreaseLPPositionRequestArgs | undefined;
-  sqrtRatioX96: string | undefined;
   /** Unified Yield specific fields (optional - only for UY positions) */
   isUnifiedYield?: boolean;
   hookAddress?: Address;
@@ -522,7 +513,6 @@ export interface CreatePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
   type: LiquidityTransactionType.Create;
   unsigned: boolean;
   createPositionRequestArgs: CreateLPPositionRequestArgs | undefined;
-  sqrtRatioX96: string | undefined;
   /** Unified Yield specific fields (optional - only for UY positions) */
   isUnifiedYield?: boolean;
   hookAddress?: Address;
@@ -532,7 +522,6 @@ export interface CreatePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
 
 export interface DecreasePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
   type: LiquidityTransactionType.Decrease;
-  sqrtRatioX96: string | undefined;
   /** Unified Yield specific fields (optional - only for UY positions) */
   isUnifiedYield?: boolean;
   hookAddress?: Address;
@@ -567,7 +556,6 @@ type ValidatedIncreasePositionTxAndGasInfo = Required<IncreasePositionTxAndGasIn
         unsigned: false;
         permit: undefined;
         txRequest: ValidatedTransactionRequest;
-        sqrtRatioX96: string | undefined;
       }
   );
 
@@ -582,7 +570,6 @@ type ValidatedCreatePositionTxAndGasInfo = Required<CreatePositionTxAndGasInfo> 
         unsigned: false;
         permit: undefined;
         txRequest: ValidatedTransactionRequest;
-        sqrtRatioX96: string | undefined;
       }
   );
 
@@ -660,14 +647,6 @@ export interface StepState {
   error?: string;
 }
 
-export interface LiquidityFlowState {
-  operationType: LiquidityTransactionType;
-  steps: StepState[];
-  currentStepIndex: number;
-  isComplete: boolean;
-  error?: string;
-}
-
 // =============================================================================
 // APPROVAL STATUS - For approval check hooks
 // =============================================================================
@@ -694,14 +673,4 @@ export interface ApprovalCheckResult {
   error?: string;
 }
 
-// =============================================================================
-// STEPPER UI TYPES - For rendering transaction progress
-// =============================================================================
-
-export interface StepperStep {
-  id: string;
-  label: string;
-  status: 'pending' | 'loading' | 'completed' | 'error';
-  count?: { completed: number; total: number };
-}
 

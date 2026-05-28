@@ -169,7 +169,7 @@ export interface WSPositionData {
 export interface WSPoolData {
   /** Pool ID (bytes32 hex) */
   poolId: string;
-  /** Pool name (e.g., "USDS/USDC") */
+  /** Pool name (e.g., "ETH/USDC") */
   name: string;
   /** Network identifier */
   network: string;
@@ -179,7 +179,7 @@ export interface WSPoolData {
   volume24hUsd: number;
   /** 24h swap fees in USD (from poolDayDatas) */
   fees24hUsd: number;
-  /** 24h lending yield in USD (from Aave/Spark for UY pools) */
+  /** 24h lending yield in USD (from Aave for UY pools) */
   lendingYield24hUsd?: number;
   /** 24h total fees in USD (swap fees + lending yield) */
   totalFees24hUsd?: number;

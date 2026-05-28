@@ -15,7 +15,7 @@ import { usePublicClient } from 'wagmi';
 import { chainIdForMode, type NetworkMode } from '@/lib/network-mode';
 
 import { PERMIT2_ADDRESS, getZapPoolConfigByHook } from '../constants';
-import type { ZapToken, ZapSwapRoute, ZapApprovalStatus, RouteDetails } from '../types';
+import type { ZapToken, ZapApprovalStatus, RouteDetails } from '../types';
 import { getKyberswapRouterAddress } from '@/lib/aggregators/kyberswap';
 import { isNativeToken } from '@/lib/aggregators/types';
 
@@ -26,7 +26,7 @@ import { isNativeToken } from '@/lib/aggregators/types';
 export interface UseZapApprovalsParams {
   /** User's wallet address */
   userAddress: Address | undefined;
-  /** Token being deposited (USDS or USDC) */
+  /** Token being deposited */
   inputToken: ZapToken | undefined;
   /** Amount to swap (in wei) */
   swapAmount: bigint | undefined;
@@ -88,7 +88,6 @@ export function useZapApprovals(params: UseZapApprovalsParams): UseZapApprovalsR
       userAddress,
       inputToken,
       swapAmount?.toString(),
-      // Serialize route to avoid BigInt in query key (sqrtPriceX96)
       route ? `${route.type}-${route.priceImpact}-${'feeBps' in route ? route.feeBps : 'n/a'}` : undefined,
       hookAddress,
       inputAmount?.toString(),

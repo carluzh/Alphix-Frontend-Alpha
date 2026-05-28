@@ -1,11 +1,12 @@
 /**
- * Zap Step Handlers Index
+ * Zap Step Handlers
+ *
+ * Handler functions for the three zap step types — wired into the LP
+ * transaction registry by `lib/liquidity/transaction/executor/handlers/registry.ts`.
  */
 
 export {
   handleZapSwapApprovalStep,
   handleZapPoolSwapStep,
   handleZapDynamicDepositStep,
-  ZAP_STEP_HANDLERS,
-  isZapStep,
 } from './zapStepHandlers';

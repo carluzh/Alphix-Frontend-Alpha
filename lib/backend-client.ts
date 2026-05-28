@@ -31,7 +31,7 @@ export function buildBackendUrl(
 /**
  * Build a backend URL WITHOUT network param (for base-only endpoints)
  *
- * Used for: /aave/rates, /spark/rates, /points/*, /referral/*
+ * Used for: /aave/rates, /points/*, /referral/*
  */
 export function buildBackendUrlNoNetwork(
   path: string,
@@ -589,86 +589,6 @@ export async function fetchPoolPricesHistory(
 }
 
 // =============================================================================
-// SPARK RATES (MAINNET-ONLY)
-// =============================================================================
-
-/**
- * Spark rate data (sUSDS yield)
- */
-interface SparkRateData {
-  apy: number;
-  timestamp: number;
-}
-
-/**
- * Spark rates response
- */
-interface SparkRatesResponse {
-  success: boolean;
-  data: SparkRateData | null;
-  error?: string;
-}
-
-/**
- * Spark historical rate point
- */
-interface SparkHistoryPoint {
-  timestamp: number;
-  apy: number;
-}
-
-/**
- * Spark rates history response
- */
-interface SparkHistoryResponse {
-  success: boolean;
-  token: string;
-  period: string;
-  points: SparkHistoryPoint[];
-  error?: string;
-}
-
-/**
- * Fetch historical Spark rates for a token
- *
- * Note: This is Base-only - no network param needed
- *
- * @param token - Token symbol (e.g., 'DAI', 'USDS')
- * @param period - Time period (DAY, WEEK, MONTH)
- */
-export async function fetchSparkRatesHistory(
-  token: string,
-  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK'
-): Promise<SparkHistoryResponse> {
-  try {
-    const url = new URL('/spark/rates/history', BACKEND_URL);
-    url.searchParams.set('token', token);
-    url.searchParams.set('period', period);
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    // Return RAW rates - pool factor applied at display time via applyPoolYieldFactor()
-    return await response.json() as SparkHistoryResponse;
-  } catch (error) {
-    return {
-      success: false,
-      token,
-      period,
-      points: [],
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-// =============================================================================
 // UNIFIED YIELD COMPOUNDED FEES
 // =============================================================================
 
@@ -786,7 +706,7 @@ export interface PoolMetrics {
   tvlUsd: number;
   volume24hUsd: number;
   fees24hUsd: number;
-  /** 24h lending yield in USD (from Aave/Spark for UY pools) */
+  /** 24h lending yield in USD (from Aave for UY pools) */
   lendingYield24hUsd?: number;
   /** 24h total fees in USD (swap fees + lending yield) */
   totalFees24hUsd?: number;

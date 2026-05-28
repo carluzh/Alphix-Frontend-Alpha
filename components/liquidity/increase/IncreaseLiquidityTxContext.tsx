@@ -38,10 +38,11 @@ import {
   type ValidatedTransactionRequest,
   type SignTypedDataStepFields,
 } from "@/lib/liquidity/types";
-// Shared approval utilities — buildApprovalCalldata is only used for the
-// Unified Yield hook approval; non-UY V4 approvals come from Uniswap's
-// /lp/check_approval response and are forwarded verbatim by the backend.
+// buildApprovalCalldata is only used for the Unified Yield hook approval;
+// non-UY V4 approvals come from Uniswap's /lp/check_approval response and are
+// forwarded verbatim by the backend (see toApproveRequest).
 import { buildApprovalCalldata } from "@/lib/liquidity/hooks/approval";
+import { toApproveRequest } from "@/lib/liquidity/utils/toApproveRequest";
 
 // Pool state for slippage protection (sqrtPriceX96)
 import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
@@ -101,20 +102,6 @@ interface IncreaseLiquidityTxContextType {
 
   // Execution state — pauses zap refetch during tx execution
   setExecuting: (executing: boolean) => void;
-}
-
-/** Adapt an Uniswap-supplied approval transaction to the wagmi/viem request shape. */
-function toApproveRequest(
-  tx: { to: string; data: string; value: string } | undefined,
-  chainId: number,
-): ValidatedTransactionRequest | undefined {
-  if (!tx) return undefined;
-  return {
-    to: tx.to as Address,
-    data: tx.data as `0x${string}`,
-    value: BigInt(tx.value ?? '0'),
-    chainId,
-  };
 }
 
 const IncreaseLiquidityTxContext = createContext<IncreaseLiquidityTxContextType | null>(null);
@@ -183,7 +170,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   );
 
   // =========================================================================
-  // ZAP MODE HOOKS - Single-token deposit with auto-swap (USDS/USDC only)
+  // ZAP MODE HOOKS - Single-token deposit with auto-swap (zap-eligible pools only)
   // =========================================================================
 
   // Execution state — when true, pauses zap refetch to avoid stale quotes overwriting
@@ -457,7 +444,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
               gasLimit: depositTx.gasLimit?.toString(),
               chainId,
             },
-            sqrtRatioX96: undefined,
           } as MintTxApiResponse,
           token0: {
             address: token0Config.address as Address,
@@ -732,7 +718,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           apiResponse: {
             needsApproval: false,
             create: data.create,
-            sqrtRatioX96: data.sqrtRatioX96,
           } as MintTxApiResponse,
           token0: {
             address: token0Config.address as Address,

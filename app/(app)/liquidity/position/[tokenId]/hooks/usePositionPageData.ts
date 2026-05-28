@@ -95,10 +95,18 @@ export interface PositionPageData {
   tokenBSymbol: string | undefined;
   isFullRange: boolean | undefined;
   isInRange: boolean;
+  /**
+   * True when the pool's current tick is outside the active UY range.
+   * Only meaningful for Unified Yield positions — the underlying pool's
+   * sqrtRatio gets clamped to the range boundary, making the derived pool
+   * price degenerate. Consumers should suppress pool-price-vs-market
+   * comparisons and the numeric current price when this is true.
+   */
+  poolOutsideRange: boolean;
   // APR data
   poolApr: number | null;
   aaveApr: number | null;
-  aprBySource?: Record<'aave' | 'spark', number>;
+  aprBySource?: Record<'aave', number>;
   totalApr: number | null;
   // LP Type
   lpType: LPType;
@@ -550,6 +558,21 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
     return currentTick >= tickLower && currentTick < tickUpper;
   }, [isUnifiedYieldPosition, pool, tickLower, tickUpper]);
 
+  // For Unified Yield: detect when the pool's current tick has moved outside the
+  // active rehypoRange. When this happens the pool's sqrtRatio is effectively
+  // clamped to the range boundary, so the derived pool price becomes degenerate
+  // (astronomically high or near-zero). Used to suppress misleading price
+  // comparisons and the numeric "current price" display.
+  const poolOutsideRange = useMemo(() => {
+    if (!isUnifiedYieldPosition) return false;
+    if (!poolState || !poolConfig?.rehypoRange) return false;
+    if (poolConfig.rehypoRange.isFullRange) return false;
+    const rehypoLower = parseInt(poolConfig.rehypoRange.min, 10);
+    const rehypoUpper = parseInt(poolConfig.rehypoRange.max, 10);
+    if (!Number.isFinite(rehypoLower) || !Number.isFinite(rehypoUpper)) return false;
+    return poolState.tick < rehypoLower || poolState.tick >= rehypoUpper;
+  }, [isUnifiedYieldPosition, poolState, poolConfig]);
+
   // Fetch pool APR from backend (fallback for pool-wide APR)
   const { data: poolStatsData } = useQuery({
     queryKey: ["poolStats", poolConfig?.poolId, networkMode],
@@ -692,6 +715,7 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
     tokenBSymbol,
     isFullRange,
     isInRange,
+    poolOutsideRange,
     // APR data
     poolApr,
     aaveApr,

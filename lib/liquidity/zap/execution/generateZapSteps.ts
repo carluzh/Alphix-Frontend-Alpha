@@ -12,7 +12,6 @@
 import { type Address, encodeFunctionData, getAddress, maxUint256 } from 'viem';
 import type { ZapCalculationResult, ZapApprovalStatus, ZapToken } from '../types';
 import { PERMIT2_ADDRESS, type ZapPoolConfig } from '../constants';
-import { calculateMinOutput } from '../calculation';
 import { getKyberswapRouterAddress } from '@/lib/aggregators/kyberswap';
 import { isNativeToken } from '@/lib/aggregators/types';
 import { modeForChainId } from '@/lib/network-mode';
@@ -264,27 +263,6 @@ export function generateZapSteps(params: GenerateZapStepsParams): GenerateZapSte
   steps.push(depositStep);
   depositStepCount++;
 
-  // Calculate approval amounts for logging
-  const swapApprovalAmount = approvalMode === 'infinite' ? 'INFINITE' : `${calculation.swapAmount + 1n}`;
-  const token0ApprovalAmount = approvalMode === 'infinite' ? 'INFINITE' : `${token0Amount + 1n}`;
-  const token1ApprovalAmount = approvalMode === 'infinite' ? 'INFINITE' : `${token1Amount + 1n}`;
-
-  // Comprehensive summary log for flow verification
-  console.log(`[generateZapSteps] === ZAP FLOW SUMMARY ===`);
-  console.log(`[generateZapSteps] Input: ${totalInputAmount.toString()} ${inputToken} (~$${inputAmountUSD?.toFixed(2) ?? '?'} USD)`);
-  console.log(`[generateZapSteps] Route: ${calculation.route.type.toUpperCase()}`);
-  const outputToken = isInputToken0 ? config.token1.symbol : config.token0.symbol;
-  console.log(`[generateZapSteps] Swap: ${calculation.swapAmount.toString()} ${inputToken} → ${calculation.swapOutputAmount.toString()} ${outputToken}`);
-  console.log(`[generateZapSteps] Keep: ${calculation.remainingInputAmount.toString()} ${inputToken} (for deposit)`);
-  console.log(`[generateZapSteps] Deposit amounts: token0=${token0Amount.toString()}, token1=${token1Amount.toString()}`);
-  console.log(`[generateZapSteps] Expected shares: ${sharesToMint.toString()}`);
-  console.log(`[generateZapSteps] --- APPROVALS ---`);
-  console.log(`[generateZapSteps] Swap approval needed: ${!approvals.inputTokenApprovedForSwap} ${!approvals.inputTokenApprovedForSwap ? `(amount: ${swapApprovalAmount})` : ''}`);
-  console.log(`[generateZapSteps] Hook token0 approval needed: ${needsToken0Approval} ${needsToken0Approval ? `(amount: ${token0ApprovalAmount}, current: ${currentToken0Allowance.toString()})` : `(current: ${currentToken0Allowance.toString()})`}`);
-  console.log(`[generateZapSteps] Hook token1 approval needed: ${needsToken1Approval} ${needsToken1Approval ? `(amount: ${token1ApprovalAmount}, current: ${currentToken1Allowance.toString()})` : `(current: ${currentToken1Allowance.toString()})`}`);
-  console.log(`[generateZapSteps] Steps: ${steps.length} total (${swapStepCount} swap-related, ${depositStepCount} deposit-related)`);
-  console.log(`[generateZapSteps] ========================`);
-
   return {
     steps,
     swapStepCount,
@@ -370,7 +348,11 @@ function createPoolSwapStep(
   const config = poolConfig;
   const isInputToken0 = inputToken === config.token0.symbol;
   const outputToken: ZapToken = isInputToken0 ? config.token1.symbol : config.token0.symbol;
-  const minOutputAmount = calculateMinOutput(expectedOutputAmount, slippageTolerance);
+  // Min output after slippage. slippageTolerance is a percentage (e.g. 0.5 = 0.5%).
+  const slippageBps = BigInt(Math.max(0, Math.floor(slippageTolerance * 100)));
+  const minOutputAmount = expectedOutputAmount > 0n
+    ? (expectedOutputAmount * (10000n - slippageBps)) / 10000n
+    : 0n;
 
   // Deadline 20 minutes from now
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 20 * 60);

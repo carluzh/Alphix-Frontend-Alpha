@@ -69,7 +69,7 @@ interface ChartSectionProps {
   poolId?: string;
   token0Symbol?: string;
   token1Symbol?: string;
-  yieldSources?: Array<'aave' | 'spark'>;
+  yieldSources?: Array<'aave'>;
   currentSwapApr?: number;
   networkMode?: string;
   /** Pool type — drives fee chart rendering (Volatile: per-event, Stable: daily with Activity/Target) */
@@ -226,16 +226,15 @@ export const ChartSection = memo(function ChartSection({
     }));
   }, [yieldChartRaw]);
 
-  // Yield chart labels and colors — derived from token protocols
+  // Yield chart labels and colors — derived from token protocols (Aave only)
   const { c0YieldLabel, c1YieldLabel, c0YieldColor, c1YieldColor } = useMemo(() => {
-    const protocolName = (p?: 'aave' | 'spark') => p === 'spark' ? 'Spark' : 'Aave';
     const c0Proto = token0Symbol ? getTokenProtocol(token0Symbol)?.protocol : undefined;
     const c1Proto = token1Symbol ? getTokenProtocol(token1Symbol)?.protocol : undefined;
-    const c0Label = c0Proto ? `${protocolName(c0Proto)} ${token0Symbol}` : `Yield ${token0Symbol ?? ''}`;
-    const c1Label = c1Proto ? `${protocolName(c1Proto)} ${token1Symbol}` : `Yield ${token1Symbol ?? ''}`;
+    const c0Label = c0Proto ? `Aave ${token0Symbol}` : `Yield ${token0Symbol ?? ''}`;
+    const c1Label = c1Proto ? `Aave ${token1Symbol}` : `Yield ${token1Symbol ?? ''}`;
     const bothAave = c0Proto === 'aave' && c1Proto === 'aave';
-    const c0Color = c0Proto === 'spark' ? "#F5AC37" : "#9896FF";
-    const c1Color = c1Proto === 'spark' ? "#F5AC37" : (bothAave ? "#C4C2FF" : "#9896FF");
+    const c0Color = "#9896FF";
+    const c1Color = bothAave ? "#C4C2FF" : "#9896FF";
     return { c0YieldLabel: c0Label, c1YieldLabel: c1Label, c0YieldColor: c0Color, c1YieldColor: c1Color };
   }, [token0Symbol, token1Symbol]);
 

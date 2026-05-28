@@ -139,7 +139,7 @@ export const DEFAULT_WIZARD_STATE: WizardState = {
   amount0: '',
   amount1: '',
   inputSide: 'token0',
-  // Default to balanced mode (zap available only for USDS/USDC pool)
+  // Default to balanced mode (zap available only on zap-eligible pools)
   depositMode: 'balanced',
   zapInputToken: null,
   isReviewModalOpen: false,

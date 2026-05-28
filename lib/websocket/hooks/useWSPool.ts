@@ -47,7 +47,7 @@ export interface PoolData {
   tvlUsd: number;
   volume24hUsd: number;
   fees24hUsd: number;
-  /** 24h lending yield in USD (from Aave/Spark for UY pools) */
+  /** 24h lending yield in USD (from Aave for UY pools) */
   lendingYield24hUsd?: number;
   /** 24h total fees in USD (swap fees + lending yield) */
   totalFees24hUsd?: number;

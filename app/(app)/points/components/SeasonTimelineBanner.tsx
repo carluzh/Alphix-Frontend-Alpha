@@ -3,7 +3,7 @@
 import { memo, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { SeasonIcon } from "@/components/PointsIcons";
-import { IconCircleInfo } from "nucleo-micro-bold-essential";
+import { IconCircleInfo, IconCheck } from "nucleo-micro-bold-essential";
 import {
   Tooltip,
   TooltipContent,
@@ -93,6 +93,7 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
     seasonRemainingMs,
     weekRemainingMs,
     isSeasonActive,
+    isSeasonConcluded,
     isBeforeSeason,
     msUntilStart,
   } = useMemo(() => {
@@ -155,8 +156,13 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
     // Time remaining calculations
     const seasonRemMs = Math.max(0, seasonEnd.getTime() - now.getTime());
 
-    // Season is active if we're between start and end
-    const isActive = now >= effectiveSeasonStart && now <= seasonEnd;
+    // Season has concluded once we've reached or passed the end date
+    // (and not still before it). Uses >= to close the 1-second edge at
+    // the exact end timestamp.
+    const concluded = !beforeSeason && now >= seasonEnd;
+    // Active is strictly the open interval [start, end) so that active
+    // and concluded are mutually exclusive at the boundary instant.
+    const isActive = now >= effectiveSeasonStart && !concluded;
 
     return {
       seasonProgress: seasonProg,
@@ -166,6 +172,7 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
       seasonRemainingMs: seasonRemMs,
       weekRemainingMs: weekRemMs,
       isSeasonActive: isActive,
+      isSeasonConcluded: concluded,
       isBeforeSeason: beforeWeek1, // Use week1 for "before" display
       msUntilStart: msUntilWeek1, // Raw ms for proper formatting
     };
@@ -228,12 +235,22 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="text-xs text-muted-foreground flex items-center gap-1 cursor-default">
-                  <span className="text-sidebar-primary font-bold">{formatPoints(pointsPerWeek)}</span> pts/week
+                  {isSeasonConcluded ? (
+                    <span className="text-sidebar-primary font-bold">Season concluded</span>
+                  ) : (
+                    <>
+                      <span className="text-sidebar-primary font-bold">{formatPoints(pointsPerWeek)}</span> pts/week
+                    </>
+                  )}
                   <IconCircleInfo className="w-3 h-3 text-muted-foreground/60" />
                 </div>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-[220px]">
-                <p className="text-xs">Distributed every Thursday at 02:00 UTC</p>
+                <p className="text-xs">
+                  {isSeasonConcluded
+                    ? "For more information, follow our Discord."
+                    : "Distributed every Thursday at 02:00 UTC"}
+                </p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -245,15 +262,20 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground">Season Progress</span>
-              <span className="text-foreground font-medium" style={{ fontFamily: "Consolas, monospace" }}>
+              <span className="text-foreground font-medium flex items-center gap-1" style={{ fontFamily: "Consolas, monospace" }}>
                 {isBeforeSeason ? (
                   <span className="text-sidebar-primary">starting in {formatWeekRemaining(msUntilStart)}</span>
+                ) : isSeasonConcluded ? (
+                  <>
+                    Done
+                    <IconCheck className="w-3 h-3 text-foreground" />
+                  </>
                 ) : (
                   formatSeasonRemaining(seasonRemainingMs)
                 )}
               </span>
             </div>
-            <SeasonProgressBar progress={seasonProgress} />
+            <SeasonProgressBar progress={isSeasonConcluded ? 100 : seasonProgress} />
           </div>
 
           {/* Week Progress Bar */}
@@ -261,17 +283,19 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
             <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground">
                 Current Week{" "}
-                <span className="text-foreground font-medium">S0W{currentWeek}</span>
+                <span className="text-foreground font-medium">
+                  S0W{isSeasonConcluded ? totalWeeks : currentWeek}
+                </span>
               </span>
               <span className="text-foreground font-medium" style={{ fontFamily: "Consolas, monospace" }}>
-                {isBeforeSeason ? (
-                  <span className="text-muted-foreground">—</span>
+                {isBeforeSeason || isSeasonConcluded ? (
+                  <span className="text-muted-foreground">-</span>
                 ) : (
                   formatWeekRemaining(weekRemainingMs)
                 )}
               </span>
             </div>
-            <WeekProgressBar progress={weekProgress} />
+            <WeekProgressBar progress={isSeasonConcluded ? 100 : weekProgress} />
           </div>
         </div>
       </div>

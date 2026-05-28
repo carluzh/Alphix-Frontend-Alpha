@@ -13,7 +13,7 @@ export interface ChainConfig {
   explorerUrl: string;
   quoteToken: string;        // Symbol of the USD stablecoin used for pricing
   isL2: boolean;
-  protocols: ('aave' | 'spark')[];
+  protocols: ('aave')[];
 }
 
 export const CHAIN_REGISTRY: Record<NetworkMode, ChainConfig> = {
@@ -26,7 +26,7 @@ export const CHAIN_REGISTRY: Record<NetworkMode, ChainConfig> = {
     explorerUrl: 'https://basescan.org',
     quoteToken: 'USDC',
     isL2: true,
-    protocols: ['aave', 'spark'],
+    protocols: ['aave'],
   },
   arbitrum: {
     networkMode: 'arbitrum',

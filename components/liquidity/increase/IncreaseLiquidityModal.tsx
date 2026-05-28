@@ -604,7 +604,9 @@ function IncreaseLiquidityInner({
           />
         )}
 
-        {/* Deposit mode toggle */}
+        {/* Deposit mode toggle — always visible for zap-eligible UY positions;
+            switching modes calls setDepositMode which clears formattedAmounts,
+            so there's no stale-amount risk from showing this with valid input. */}
         {isUnifiedYield && isZapEligible && (
           <div className="flex justify-end">
             <DepositModeToggle depositMode={depositMode} onModeChange={setDepositMode} />

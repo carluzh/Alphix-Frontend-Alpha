@@ -25,6 +25,3 @@ export const UNISWAP_DATA_API_HEADERS = {
   'Accept': 'application/json',
   'Connect-Protocol-Version': '1',
 } as const
-
-// Data API (v2) — portfolio chart
-export const UNISWAP_DATA_API_PORTFOLIO_CHART = 'https://interface.gateway.uniswap.org/v2/data.v1.DataApiService/GetPortfolioChart'

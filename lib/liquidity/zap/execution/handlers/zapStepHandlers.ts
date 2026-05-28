@@ -5,26 +5,20 @@
  * These integrate with the existing step executor registry.
  */
 
-import type { Hex, Address, PublicClient } from 'viem';
+import type { Hex, Address } from 'viem';
 import { formatUnits, encodeFunctionData } from 'viem';
 import { createNetworkClient } from '@/lib/viemClient';
 import type {
   ZapSwapApprovalStep,
   ZapPoolSwapStep,
-} from '../../types';
-import type {
   ZapDynamicDepositStep,
 } from '../../../types';
 import type {
-  TransactionFunctions,
-  StepExecutionContext,
   TransactionStepHandler,
 } from '../../../transaction/executor/handlers/registry';
 import { getStoredUserSettings } from '@/hooks/useUserSettings';
 import { getZapPoolConfigByHook, getZapPoolConfigByTokens } from '../../constants';
 import { UNIFIED_YIELD_HOOK_ABI } from '../../../unified-yield/abi/unifiedYieldHookABI';
-import { reportZapDust } from '../../utils/reportZapDust';
-import type { ZapToken } from '../../types';
 import { isNativeToken } from '@/lib/aggregators/types';
 import { getKyberswapRouterAddress } from '@/lib/aggregators/kyberswap';
 import { modeForChainId } from '@/lib/network-mode';
@@ -96,15 +90,12 @@ export const handleZapPoolSwapStep: TransactionStepHandler = async (
     typedStep.inputTokenAddress as Address,
     typedStep.outputTokenAddress as Address
   );
-  const inputIsToken0 = poolConfig
-    ? typedStep.inputToken === poolConfig.token0.symbol
-    : typedStep.inputToken !== 'USDC'; // USDC is always token1
-  const inputDecimals = poolConfig
-    ? (inputIsToken0 ? poolConfig.token0.decimals : poolConfig.token1.decimals)
-    : (typedStep.inputToken === 'USDC' ? 6 : 18);
-  const outputDecimals = poolConfig
-    ? (inputIsToken0 ? poolConfig.token1.decimals : poolConfig.token0.decimals)
-    : (typedStep.outputToken === 'USDC' ? 6 : 18);
+  if (!poolConfig) {
+    throw new Error('[ZapPoolSwap] No zap pool config for token pair');
+  }
+  const inputIsToken0 = typedStep.inputToken === poolConfig.token0.symbol;
+  const inputDecimals = inputIsToken0 ? poolConfig.token0.decimals : poolConfig.token1.decimals;
+  const outputDecimals = inputIsToken0 ? poolConfig.token1.decimals : poolConfig.token0.decimals;
 
   // Detect swap source from step data
   const swapSource = typedStep.swapSource ?? 'pool';
@@ -373,9 +364,10 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
 
     // Determine if input is token0 or token1
     const poolCfg = getZapPoolConfigByHook(typedStep.hookAddress);
-    const isInputToken0 = poolCfg
-      ? typedStep.inputToken === poolCfg.token0.symbol
-      : typedStep.inputToken === 'USDS';
+    if (!poolCfg) {
+      throw new Error('[ZapDynamicDeposit] No zap pool config for hook');
+    }
+    const isInputToken0 = typedStep.inputToken === poolCfg.token0.symbol;
 
     if (isInputToken0) {
       // Input is token0: after swap, bal0 < init0 (spent on swap).
@@ -412,8 +404,8 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
   // Try both deposit directions and pick the one with less dust
   // This helps when the pool ratio shifted between preview and execution
   //
-  // Option A: Constrain by token0 (USDS) - may leave token1 (USDC) dust
-  // Option B: Constrain by token1 (USDC) - may leave token0 (USDS) dust
+  // Option A: Constrain by token0 - may leave token1 dust
+  // Option B: Constrain by token1 - may leave token0 dust
 
   // Get previews for both directions
   const [previewFrom0, previewFrom1] = await Promise.all([
@@ -542,78 +534,6 @@ export const handleZapDynamicDepositStep: TransactionStepHandler = async (
     throw new Error(`Dynamic deposit failed: ${hash}`);
   }
 
-  // =========================================================================
-  // DUST CALCULATION AND REPORTING
-  // =========================================================================
-  // Use pre-tx known values (available - deposited) instead of post-tx balance
-  // deltas. Balance deltas are unreliable for native tokens because gas costs
-  // make the final balance lower than initial, hiding actual dust.
-  const dust0 = cappedBalance0 > amount0 ? cappedBalance0 - amount0 : 0n;
-  const dust1 = cappedBalance1 > amount1 ? cappedBalance1 - amount1 : 0n;
-
-  const inputUSD = typedStep.inputAmountUSD ?? 0;
-  const p0 = typedStep.token0Price ?? 1;
-  const p1 = typedStep.token1Price ?? 1;
-  const dust0USD = Number(formatUnits(dust0, typedStep.token0Decimals)) * p0;
-  const dust1USD = Number(formatUnits(dust1, typedStep.token1Decimals)) * p1;
-  const totalDustUSD = dust0USD + dust1USD;
-  const dustPercent = inputUSD > 0 ? ((totalDustUSD / inputUSD) * 100).toFixed(4) : '0';
-
-  console.log(`[ZapDynamicDeposit] === ZAP EXECUTION COMPLETE ===`);
-  console.log(`[ZapDynamicDeposit] Deposited: ${formatUnits(amount0, typedStep.token0Decimals)} ${typedStep.token0Symbol} + ${formatUnits(amount1, typedStep.token1Decimals)} ${typedStep.token1Symbol}`);
-  console.log(`[ZapDynamicDeposit] Dust: ${formatUnits(dust0, typedStep.token0Decimals)} ${typedStep.token0Symbol} + ${formatUnits(dust1, typedStep.token1Decimals)} ${typedStep.token1Symbol}`);
-  console.log(`[ZapDynamicDeposit] Dust %: ${dustPercent}% of input`);
-  console.log(`[ZapDynamicDeposit] ==============================`);
-
-  reportZapDust({
-    token0Dust: dust0,
-    token1Dust: dust1,
-    token0Symbol: typedStep.token0Symbol,
-    token1Symbol: typedStep.token1Symbol,
-    token0Decimals: typedStep.token0Decimals,
-    token1Decimals: typedStep.token1Decimals,
-    inputAmountUSD: typedStep.inputAmountUSD ?? 0,
-    inputToken: typedStep.inputToken,
-    token0Price: typedStep.token0Price,
-    token1Price: typedStep.token1Price,
-  });
-
   return hash;
 };
 
-// =============================================================================
-// REGISTRY ENTRIES
-// =============================================================================
-
-/**
- * Zap step handler entries for the registry.
- *
- * Import and spread these into STEP_HANDLER_REGISTRY to enable
- * zap step execution.
- */
-export const ZAP_STEP_HANDLERS = {
-  ZapSwapApproval: {
-    handler: handleZapSwapApprovalStep,
-  },
-  ZapPoolSwap: {
-    handler: handleZapPoolSwapStep,
-  },
-  ZapDynamicDeposit: {
-    handler: handleZapDynamicDepositStep,
-  },
-} as const;
-
-// =============================================================================
-// TYPE GUARD
-// =============================================================================
-
-/**
- * Check if a step type is a zap step.
- */
-export function isZapStep(stepType: string): boolean {
-  return (
-    stepType === 'ZapSwapApproval' ||
-    stepType === 'ZapPoolSwap' ||
-    stepType === 'ZapDynamicDeposit'
-  );
-}

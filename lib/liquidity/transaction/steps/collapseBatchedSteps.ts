@@ -81,7 +81,6 @@ export function collapseToBatchedAsync(steps: TransactionStep[]): TransactionSte
     ? asyncStep.getTxRequest
     : async () => ({
         txRequest: syncStep!.txRequest,
-        sqrtRatioX96: syncStep!.sqrtRatioX96,
       });
 
   const batched: IncreasePositionTransactionStepBatchedAsync = {

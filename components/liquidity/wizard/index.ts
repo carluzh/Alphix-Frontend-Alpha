@@ -14,8 +14,6 @@ export {
   AddLiquidityProvider,
   useAddLiquidityContext,
   type WizardEntryConfig,
-  type PriceRangeState,
-  type DepositState,
 } from './AddLiquidityContext';
 
 // Types

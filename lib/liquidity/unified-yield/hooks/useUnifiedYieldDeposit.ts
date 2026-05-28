@@ -30,7 +30,6 @@ import {
   previewDeposit,
 } from '../buildUnifiedYieldDepositTx';
 import type { UnifiedYieldDepositParams, DepositPreviewResult } from '../types';
-import { NATIVE_TOKEN_ADDRESS } from '@/lib/pools-config';
 import { BUILDER_CODE_SUFFIX } from '@/lib/builder-code';
 import { useNetwork } from '@/lib/network-context';
 import { chainIdForMode } from '@/lib/network-mode';
@@ -138,7 +137,7 @@ export interface UseUnifiedYieldDepositResult {
  *   token1Address: '0x...',
  *   token0Decimals: 18,
  *   token1Decimals: 6,
- *   poolId: 'usds-usdc',
+ *   poolId: 'eth-usdc',
  *   chainId: 8453,
  * });
  *

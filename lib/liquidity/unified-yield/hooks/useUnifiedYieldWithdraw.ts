@@ -113,7 +113,7 @@ export interface UseUnifiedYieldWithdrawResult {
  *   hookAddress: '0x...',
  *   token0Decimals: 18,
  *   token1Decimals: 6,
- *   poolId: 'usds-usdc',
+ *   poolId: 'eth-usdc',
  *   chainId: 8453,
  * });
  *

@@ -12,7 +12,7 @@ export interface IncreaseLiquidityState {
   position: ProcessedPosition;
   exactField: PositionField;
   exactAmount: string;
-  // Zap mode state (for USDS/USDC Unified Yield positions)
+  // Zap mode state (for zap-eligible Unified Yield positions)
   depositMode: UnifiedYieldDepositMode;
   zapInputToken: 'token0' | 'token1' | null;
 }
@@ -40,7 +40,7 @@ interface IncreaseLiquidityContextType {
   isOverBalance1: boolean;
   /** Whether this is a Unified Yield position */
   isUnifiedYield: boolean;
-  /** Whether this position is zap-eligible (USDS/USDC Unified Yield) */
+  /** Whether this position is zap-eligible (zap-eligible Unified Yield pool) */
   isZapEligible: boolean;
   /** Current deposit mode */
   depositMode: UnifiedYieldDepositMode;
@@ -99,7 +99,7 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
     setIncreaseLiquidityState((prev) => ({
       ...prev,
       depositMode: mode,
-      // When switching to zap mode, default to token1 (USDC) if not already set
+      // When switching to zap mode, default to token1 if not already set
       zapInputToken: mode === 'zap' && !prev.zapInputToken ? 'token1' : prev.zapInputToken,
     }));
     // Clear amounts when switching modes

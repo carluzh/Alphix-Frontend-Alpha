@@ -260,7 +260,7 @@ function PoolBalanceSection({
 
 // ─── Earning on cards ─────────────────────────────────────────────────────────
 
-const EARNING_SOURCE_CONFIG: Record<'aave' | 'spark', {
+const EARNING_SOURCE_CONFIG: Record<'aave', {
   name: string;
   logo: string;
   pillBg: string;
@@ -272,15 +272,9 @@ const EARNING_SOURCE_CONFIG: Record<'aave' | 'spark', {
     pillBg: 'rgba(152, 150, 255, 0.25)',
     pillText: '#BDBBFF',
   },
-  spark: {
-    name: 'Spark',
-    logo: '/spark/Spark-Logomark-RGB.svg',
-    pillBg: 'rgba(250, 67, 189, 0.2)',
-    pillText: '#FA7BD4',
-  },
 };
 
-function EarningOnCard({ source, apr }: { source: 'aave' | 'spark'; apr?: number }) {
+function EarningOnCard({ source, apr }: { source: 'aave'; apr?: number }) {
   const cfg = EARNING_SOURCE_CONFIG[source];
 
   return (
@@ -488,7 +482,7 @@ interface PoolDetailSidebarProps {
   poolConfig: PoolConfig;
   poolApr?: number;
   aaveApr?: number;
-  aprBySource?: Record<'aave' | 'spark', number>;
+  aprBySource?: Record<'aave', number>;
   tvlUsd?: number;
   tvlToken0Usd?: number;
   tvlToken1Usd?: number;
@@ -536,8 +530,8 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
             />
           ))}
 
-          {/* Earning Points — not shown for Pro pools */}
-          {!isPro && <EarningPointsCard />}
+          {/* Earning Points — suppressed while Season 0 is concluded.
+              Re-add `{!isPro && <EarningPointsCard />}` when next season launches. */}
 
           {/* Pool Balance */}
           <PoolBalanceSection poolConfig={poolConfig} tvlUsd={tvlUsd} tvlToken0Usd={tvlToken0Usd} tvlToken1Usd={tvlToken1Usd} networkMode={networkMode} />

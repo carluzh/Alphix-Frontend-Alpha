@@ -115,7 +115,7 @@ function calculateQuoteDifference(
  * We apply a fixed 100bps (1%) Alphix preference. This means Alphix pools are
  * chosen unless Kyberswap returns more than 1% better output.
  *
- * Rationale: Alphix multi-hop routes (e.g. ETH→USDC→USDS) accumulate fees
+ * Rationale: Alphix multi-hop routes (e.g. ETH→USDC→atUSDC) accumulate fees
  * across 2 hops, making them appear marginally worse than an aggregator's
  * optimised single-hop route.  A 1% preference keeps small/medium swaps
  * on-protocol while still falling through to Kyberswap for genuinely better

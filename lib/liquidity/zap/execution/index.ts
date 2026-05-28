@@ -1,7 +1,7 @@
 /**
  * Zap Execution Module
  *
- * Step generation and handlers for zap transactions.
+ * Step generation and handlers for zap deposits.
  */
 
 export {
@@ -13,6 +13,5 @@ export {
 export {
   handleZapSwapApprovalStep,
   handleZapPoolSwapStep,
-  ZAP_STEP_HANDLERS,
-  isZapStep,
+  handleZapDynamicDepositStep,
 } from './handlers';

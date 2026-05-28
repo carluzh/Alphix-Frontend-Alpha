@@ -14,8 +14,6 @@ export {
   handlePermitTransactionStep,
   type HandleApprovalStepParams,
   type HandlePermitTransactionParams,
-  type ApproveTransactionInfo,
-  type Permit2ApproveTransactionInfo,
 } from './approvalHandler';
 
 // Permit signature handler
@@ -27,16 +25,9 @@ export {
 // Position transaction handlers
 export {
   handlePositionTransactionStep,
-  handlePositionTransactionBatchedStep,
   getLiquidityTxRequest,
   type HandlePositionStepParams,
-  type HandleBatchedPositionStepParams,
   type PositionStep,
-  type BatchedPositionStep,
-  type LiquidityTransactionInfo,
-  type LiquidityIncreaseTransactionInfo,
-  type LiquidityDecreaseTransactionInfo,
-  type CollectFeesTransactionInfo,
 } from './positionHandler';
 
 // Unified Yield transaction handlers
@@ -47,8 +38,6 @@ export {
   type HandleUnifiedYieldApprovalParams,
   type HandleUnifiedYieldDepositParams,
   type HandleUnifiedYieldWithdrawParams,
-  type UnifiedYieldStep,
-  type UnifiedYieldTransactionInfo,
 } from './unifiedYieldHandler';
 
 // Step handler registry for extensible step execution

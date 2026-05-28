@@ -9,7 +9,6 @@
 
 import { useMemo } from 'react'
 import type { UTCTimestamp } from 'lightweight-charts'
-import useIsWindowVisible from '@/hooks/useIsWindowVisible'
 import { usePollingIntervalByChain } from '@/hooks/usePollingIntervalByChain'
 import { apolloChainForMode } from '@/lib/network-mode'
 import {
@@ -60,12 +59,15 @@ export function usePoolPriceChartData({
   const { poolId, duration = HistoryDuration.WEEK } = variables ?? {}
   const enabled = !!poolId && poolId.length > 0 && !!networkMode
 
-  // skip chart data requests if the window is not focused
-  const isWindowVisible = useIsWindowVisible()
-
   // Chain-based polling interval (L2 = 3s base, x100 for chart = 300s/5 min)
   const chainPollingInterval = usePollingIntervalByChain()
 
+  // Note: we intentionally do NOT gate `skip` on document.visibilityState here.
+  // Previously this hook skipped the query when the browser tab was hidden,
+  // which forced Apollo to re-enter the cache-and-network fetch cycle on every
+  // tab return — making the chart appear to reload and, when the refetch came
+  // back malformed, briefly fall back to a flat-line domain. The poll interval
+  // (~5 min) already keeps bandwidth in check.
   const { data, loading } = useGetPoolPriceHistoryQuery({
     variables: {
       chain: chain!,
@@ -73,7 +75,7 @@ export function usePoolPriceChartData({
       duration: duration as GqlHistoryDuration,
     },
     context: { networkMode: networkMode! },
-    skip: !enabled || !isWindowVisible,
+    skip: !enabled,
     fetchPolicy: 'cache-and-network',
     pollInterval: chainPollingInterval * 100, // ~5 minutes - chart data doesn't need frequent updates
   })
@@ -98,6 +100,9 @@ export function usePoolPriceChartData({
           close: value,
         }
       })
+      // Drop entries with degenerate values (null, NaN, non-positive). A bad
+      // GraphQL response otherwise leads to a flat-line chart at 0 or 1.
+      .filter((entry) => Number.isFinite(entry.value) && entry.value > 0)
 
     // Apply IQR outlier removal
     const filteredEntries = removeOutliers(entries)

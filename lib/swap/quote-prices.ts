@@ -13,7 +13,7 @@ import { priceKeys } from '@/lib/cache/redis-keys'
 const PRICE_TTL = { fresh: 60, stale: 300 }
 
 // Stablecoins that are always priced at $1.00
-const STABLECOINS_USD = new Set(['USDC', 'USDS', 'USDT'])
+const STABLECOINS_USD = new Set(['USDC', 'USDT'])
 
 // CoinGecko token ID mapping for fallback pricing
 const COINGECKO_IDS: Record<string, string> = {

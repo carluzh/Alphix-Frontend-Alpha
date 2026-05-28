@@ -6,43 +6,11 @@
  * of the Uniswap Liquidity API (see @/lib/liquidity/uniswap-api/client).
  */
 
-// Step factory functions - COPIED FROM UNISWAP
-export {
-  parseERC20ApproveCalldata,
-  createApprovalTransactionStep,
-  createRevocationTransactionStep,
-  createPermit2SignatureStep,
-  createPermit2TransactionStep,
-  createIncreasePositionStep,
-  createIncreasePositionAsyncStep,
-  createIncreasePositionStepBatched,
-  createDecreasePositionStep,
-  createCollectFeesStep,
-  orderIncreaseLiquiditySteps,
-  orderDecreaseLiquiditySteps,
-  orderCollectFeesSteps,
-  generateStepperSteps,
-  createInitialFlowState,
-  getNextStep,
-  isFlowComplete,
-  hasFlowError,
-  type IncreaseLiquidityFlow,
-  type DecreaseLiquidityFlow,
-  type CollectFeesFlow,
-  type ValidatedPermit,
-} from './steps'
-
 // Main step generator - COPIED FROM UNISWAP
 export { generateLPTransactionSteps } from './steps'
 
 // Step handlers and execution store
 export {
-  handleApprovalTransactionStep,
-  handlePermitTransactionStep,
-  handleSignatureStep,
-  handlePositionTransactionStep,
-  handlePositionTransactionBatchedStep,
-  getLiquidityTxRequest,
   // Execution store
   useExecutionStore,
   selectIsLocked,

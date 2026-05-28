@@ -5,7 +5,7 @@
  *
  * For UY positions, we show:
  * - Swap APR (pool-level, from backend)
- * - Per-token yield source APRs (e.g., "Aave ETH", "Aave USDC", "Spark USDS")
+ * - Per-token yield source APRs (e.g., "Aave ETH", "Aave USDC")
  *
  * Unlike V4 positions, UY positions don't show individual fees (they auto-compound).
  *
@@ -15,10 +15,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import {
-  fetchUnifiedYieldPoolAprHistory,
-  fetchSparkRatesHistory,
-} from "@/lib/backend-client";
+import { fetchUnifiedYieldPoolAprHistory } from "@/lib/backend-client";
 import { fetchAaveHistory, getTokenProtocol, getPoolYieldFactor } from "@/lib/aave-rates";
 import type { YieldSource, NetworkMode } from "@/lib/pools-config";
 
@@ -28,7 +25,7 @@ export interface UnifiedYieldChartPoint {
   timestamp: number;
   /** Swap APR from pool trading fees (%) */
   swapApr: number;
-  /** Yield APY for currency0 (from its yield source, e.g., Aave ETH or Spark USDS) */
+  /** Yield APY for currency0 (from its yield source, e.g., Aave ETH) */
   currency0Apy?: number;
   /** Yield APY for currency1 (from its yield source, e.g., Aave USDC) */
   currency1Apy?: number;
@@ -54,9 +51,9 @@ interface UseUnifiedYieldChartDataParams {
 interface UseUnifiedYieldChartDataResult {
   data: UnifiedYieldChartPoint[] | undefined;
   /** Protocol used for currency0 yield (for label/color in chart) */
-  currency0Protocol?: 'aave' | 'spark';
+  currency0Protocol?: 'aave';
   /** Protocol used for currency1 yield (for label/color in chart) */
-  currency1Protocol?: 'aave' | 'spark';
+  currency1Protocol?: 'aave';
   isLoading: boolean;
   isPending: boolean;
   isError: boolean;
@@ -77,24 +74,15 @@ function mapPeriodToBackend(period: ChartPeriod): 'DAY' | 'WEEK' | 'MONTH' {
 }
 
 /**
- * Fetch yield history for a single token from its protocol (Aave or Spark)
+ * Fetch yield history for a single token from Aave.
  */
 async function fetchTokenYieldHistory(
   tokenSymbol: string,
-  protocol: 'aave' | 'spark',
   frontendPeriod: ChartPeriod,
-  backendPeriod: 'DAY' | 'WEEK' | 'MONTH',
   networkMode?: NetworkMode,
 ): Promise<Array<{ timestamp: number; apy: number }>> {
-  if (protocol === 'spark') {
-    const mapping = getTokenProtocol(tokenSymbol);
-    const key = mapping?.key ?? tokenSymbol;
-    const result = await fetchSparkRatesHistory(key, backendPeriod);
-    return result.success ? result.points.map(p => ({ timestamp: p.timestamp, apy: p.apy })) : [];
-  } else {
-    const result = await fetchAaveHistory(tokenSymbol, frontendPeriod, networkMode);
-    return result.success ? result.points.map(p => ({ timestamp: p.timestamp, apy: p.apy })) : [];
-  }
+  const result = await fetchAaveHistory(tokenSymbol, frontendPeriod, networkMode);
+  return result.success ? result.points.map(p => ({ timestamp: p.timestamp, apy: p.apy })) : [];
 }
 
 /**
@@ -143,12 +131,12 @@ export function useUnifiedYieldChartData({
     staleTime: 5 * 60 * 1000,
   });
 
-  // Fetch yield history for token0 (e.g., Aave ETH or Spark USDS)
+  // Fetch yield history for token0 (e.g., Aave ETH)
   const token0YieldQuery = useQuery({
     queryKey: ["token-yield-history", token0Symbol, token0Protocol, period, networkMode],
     queryFn: async () => {
       if (!token0Symbol || !token0Protocol) return null;
-      return fetchTokenYieldHistory(token0Symbol, token0Protocol, period, backendPeriod, networkMode);
+      return fetchTokenYieldHistory(token0Symbol, period, networkMode);
     },
     enabled: enabled && token0HasYield && !!token0Symbol,
     staleTime: 5 * 60 * 1000,
@@ -159,7 +147,7 @@ export function useUnifiedYieldChartData({
     queryKey: ["token-yield-history", token1Symbol, token1Protocol, period, networkMode],
     queryFn: async () => {
       if (!token1Symbol || !token1Protocol) return null;
-      return fetchTokenYieldHistory(token1Symbol, token1Protocol, period, backendPeriod, networkMode);
+      return fetchTokenYieldHistory(token1Symbol, period, networkMode);
     },
     enabled: enabled && token1HasYield && !!token1Symbol,
     staleTime: 5 * 60 * 1000,

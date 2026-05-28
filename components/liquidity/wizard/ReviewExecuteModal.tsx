@@ -52,6 +52,7 @@ import {
 
 import { buildUnifiedYieldDepositTx, buildDepositParamsFromPreview } from '@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx';
 import { buildApprovalRequests as buildApprovalRequestsUtil } from '@/lib/liquidity/hooks/approval';
+import { toApproveRequest } from '@/lib/liquidity/utils/toApproveRequest';
 
 // Zap support
 import { useZapPreview, useZapApprovals, generateZapSteps, isPreviewFresh, isZapEligiblePool, type ZapToken } from '@/lib/liquidity/zap';
@@ -76,20 +77,6 @@ const ERC20_BALANCE_ABI = [
     outputs: [{ name: '', type: 'uint256' }],
   },
 ] as const;
-
-/** Adapt an Uniswap-supplied approval transaction to the wagmi/viem request shape. */
-function toApproveRequest(
-  tx: { to: string; data: string; value: string } | undefined,
-  chainId: number,
-) {
-  if (!tx) return undefined;
-  return {
-    to: tx.to as Address,
-    data: tx.data as `0x${string}`,
-    value: BigInt(tx.value ?? '0'),
-    chainId,
-  };
-}
 
 // =============================================================================
 // COMPONENT
@@ -355,7 +342,6 @@ export function ReviewExecuteModal() {
         apiResponse: {
           needsApproval: false,
           create: { to: depositTx.to, data: depositTx.calldata, value: depositTx.value?.toString() || '0', gasLimit: depositTx.gasLimit?.toString(), chainId },
-          sqrtRatioX96: undefined,
         } as MintTxApiResponse,
         token0: { address: token0.address as Address, symbol: token0.symbol, decimals: token0.decimals, chainId },
         token1: { address: token1.address as Address, symbol: token1.symbol, decimals: token1.decimals, chainId },

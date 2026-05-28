@@ -1,8 +1,12 @@
 /**
- * LiquidityPositionStatusIndicator
+ * Liquidity position status constants + helpers.
  *
- * Displays position status (In Range, Out of Range, Closed) with colored indicator.
- * Mirrors Uniswap's implementation from:
+ * Despite the filename, this module exports primitives (StatusIndicatorCircle,
+ * lpStatusConfig, FULL_RANGE_CONFIG, label/color helpers) — there is no
+ * `LiquidityPositionStatusIndicator` component. Cards compose the primitives
+ * themselves (see PositionCardCompact, UnifiedYieldPositionCard).
+ *
+ * Filename retained to match Uniswap's source:
  * - interface/apps/web/src/components/Liquidity/LiquidityPositionStatusIndicator.tsx
  * - interface/apps/web/src/components/Liquidity/constants.ts (lpStatusConfig)
  */
@@ -84,10 +88,6 @@ export function StatusIndicatorCircle({ className }: StatusIndicatorCircleProps)
     </svg>
   );
 }
-
-// =============================================================================
-// LOADING STATE
-// =============================================================================
 
 // =============================================================================
 // UTILITY FUNCTIONS

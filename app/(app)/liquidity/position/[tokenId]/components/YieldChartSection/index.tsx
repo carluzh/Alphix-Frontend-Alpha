@@ -37,7 +37,7 @@ interface ChartDataPoint {
   feesUsd: number;
   accumulatedFeesUsd: number;
   apr: number;
-  /** Yield APY for currency0 (e.g., Aave ETH or Spark USDS) */
+  /** Yield APY for currency0 (e.g., Aave ETH) */
   currency0Apy?: number;
   /** Yield APY for currency1 (e.g., Aave USDC) */
   currency1Apy?: number;
@@ -54,7 +54,7 @@ interface YieldChartSectionProps {
   onTimePeriodChange: (period: TimePeriod) => void;
   /** If true, this is a Unified Yield position - hide fee-related items */
   isUnifiedYield?: boolean;
-  /** Label for currency0 yield line (e.g., "Aave ETH", "Spark USDS") */
+  /** Label for currency0 yield line (e.g., "Aave ETH") */
   currency0YieldLabel?: string;
   /** Label for currency1 yield line (e.g., "Aave USDC") */
   currency1YieldLabel?: string;
@@ -87,7 +87,6 @@ const CHART_COLORS = {
   aprMuted: "#a0a0a0", // Muted gray for Fees breakdown (UY positions)
   aave: "#9896FF", // Aave purple (default for currency0 yield)
   aaveLighter: "#C4C2FF", // Lighter Aave purple (second Aave token)
-  spark: "#F5AC37", // Spark golden yellow (default for currency1 yield)
   feesUsd: "hsl(var(--chart-3))", // Current unclaimed fees
   accumulatedFeesUsd: "hsl(var(--chart-2))", // Total accumulated fees
 };
@@ -222,7 +221,7 @@ const ChartLegend = memo(function ChartLegend({
   currency0Label = "Yield (0)",
   currency1Label = "Yield (1)",
   currency0Color = CHART_COLORS.aave,
-  currency1Color = CHART_COLORS.spark,
+  currency1Color = CHART_COLORS.aaveLighter,
 }: ChartLegendProps) {
   const items: LegendItem[] = useMemo(() => {
     const base: LegendItem[] = [];
@@ -403,7 +402,7 @@ export const YieldChartSection = memo(function YieldChartSection({
   currency0YieldLabel = "Yield (0)",
   currency1YieldLabel = "Yield (1)",
   currency0YieldColor = CHART_COLORS.aave,
-  currency1YieldColor = CHART_COLORS.spark,
+  currency1YieldColor = CHART_COLORS.aaveLighter,
 }: YieldChartSectionProps) {
   const [hoverData, setHoverData] = useState<HoverData | null>(null);
   const [visibleSeries, setVisibleSeries] = useState<Set<SeriesKey>>(

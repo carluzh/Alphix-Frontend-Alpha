@@ -42,10 +42,13 @@ function buildRouteTokenMetadata(
 const quoteCache = new Map<string, { result: any; timestamp: number }>();
 const QUOTE_CACHE_TTL = 15_000;
 
-function getCacheKey(body: any): string {
-  // Include userAddress to differentiate aggregator quotes (which need user for calldata)
+function getCacheKey(body: any, networkMode: NetworkMode): string {
+  // Include userAddress to differentiate aggregator quotes (which need user for calldata).
+  // Key on the resolved networkMode (canonical encoding) so quotes for different
+  // chains never share a cache slot regardless of whether the client sent `network`,
+  // `chainId`, or neither.
   const userPart = body.userAddress ? `-user:${body.userAddress.slice(0, 10)}` : '-nouser';
-  return `${body.fromTokenSymbol}-${body.toTokenSymbol}-${body.amountDecimalsStr}-${body.swapType || 'ExactIn'}-${body.chainId}${userPart}`;
+  return `${body.fromTokenSymbol}-${body.toTokenSymbol}-${body.amountDecimalsStr}-${body.swapType || 'ExactIn'}-${networkMode}${userPart}`;
 }
 
 // Retry only network errors, not contract reverts (liquidity errors should fail fast)
@@ -514,7 +517,7 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     }
 
     // Check cache first (15s TTL) - skip for binding requests (need fresh data for execution)
-    const cacheKey = getCacheKey(req.body);
+    const cacheKey = getCacheKey(req.body, networkMode);
     const isBindingRequest = req.body.binding === true;
     if (!isBindingRequest) {
       const cached = quoteCache.get(cacheKey);
@@ -605,8 +608,9 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
           toToken: toTokenSymbol,
           gasEstimate: kyberQuote.gasEstimate.toString(),
           priceImpact: kyberQuote.priceImpact?.toString(),
-          // Kyberswap aggregator handles fees internally - use 0 to indicate no Alphix protocol fee
-          dynamicFeeBps: kyberQuote.dynamicFeeBps ?? 0,
+          // Kyberswap aggregator handles fees internally - 0 indicates no Alphix protocol fee.
+          // dynamicFeeBps is an "Alphix only" field on AggregatorQuote, so literal 0 here.
+          dynamicFeeBps: 0,
           route: {
             path: kyberQuote.routeDisplay || [fromTokenSymbol, toTokenSymbol],
             hops: (kyberQuote.routeDisplay?.length || 2) - 1,
@@ -675,7 +679,12 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
     const { userAddress, slippageBps = 50, fromTokenAddress, toTokenAddress } = req.body;
 
     if (!routeResult.bestRoute) {
-      // No Alphix pool for this pair — fall through to Kyberswap if addresses available
+      // No Alphix pool for this pair — fall through to Kyberswap if addresses available.
+      // `getKyberswapQuote` catches its own errors and returns null on failure, so we
+      // don't need a try/catch here. A null result just means "no quote"; we report it
+      // along with `kyberswapAttempted: true` so the UI can distinguish "no liquidity"
+      // from "Kyberswap unreachable" if it wants to.
+      let kyberswapAttempted = false;
       if (swapType === 'ExactIn' && fromTokenAddress && toTokenAddress) {
         await ensureTokenListLoaded(networkMode).catch(() => {});
         const kyberRequest: QuoteRequest = {
@@ -689,41 +698,39 @@ export default async function handler(req: GetQuoteRequest, res: NextApiResponse
           isExactIn: true,
           networkMode,
         };
-        try {
-          const kyberQuote = await getKyberswapQuote(kyberRequest);
-          if (kyberQuote) {
-            const responseData = {
-              success: true,
-              swapType,
-              fromAmount: amountDecimalsStr,
-              fromToken: fromTokenSymbol,
-              toAmount: kyberQuote.outputAmount,
-              toToken: toTokenSymbol,
-              gasEstimate: String(kyberQuote.gasEstimate || 0),
-              priceImpact: '0',
-              midPrice: null,
-              dynamicFeeBps: 0,
-              route: { path: [fromTokenSymbol, toTokenSymbol], hops: 1, isDirectRoute: false, pools: [] },
-              source: 'kyberswap' as AggregatorSource,
-              selectionReason: 'no_alphix_pool',
-              kyberswapData: {
-                routerAddress: kyberQuote.routerAddress,
-                encodedSwapData: kyberQuote.encodedSwapData,
-                routeSummary: kyberQuote.routeSummary,
-                tokenMetadata: buildRouteTokenMetadata(kyberQuote.routeSummary, networkMode),
-              },
-            };
-            quoteCache.set(cacheKey, { result: responseData, timestamp: Date.now() });
-            return res.status(200).json(responseData);
-          }
-        } catch (err: any) {
-          console.warn('[Kyberswap fallback] Quote failed:', err?.message || err);
+        kyberswapAttempted = true;
+        const kyberQuote = await getKyberswapQuote(kyberRequest);
+        if (kyberQuote) {
+          const responseData = {
+            success: true,
+            swapType,
+            fromAmount: amountDecimalsStr,
+            fromToken: fromTokenSymbol,
+            toAmount: kyberQuote.outputAmount,
+            toToken: toTokenSymbol,
+            gasEstimate: String(kyberQuote.gasEstimate || 0),
+            priceImpact: '0',
+            midPrice: null,
+            dynamicFeeBps: 0,
+            route: { path: [fromTokenSymbol, toTokenSymbol], hops: 1, isDirectRoute: false, pools: [] },
+            source: 'kyberswap' as AggregatorSource,
+            selectionReason: 'no_alphix_pool',
+            kyberswapData: {
+              routerAddress: kyberQuote.routerAddress,
+              encodedSwapData: kyberQuote.encodedSwapData,
+              routeSummary: kyberQuote.routeSummary,
+              tokenMetadata: buildRouteTokenMetadata(kyberQuote.routeSummary, networkMode),
+            },
+          };
+          quoteCache.set(cacheKey, { result: responseData, timestamp: Date.now() });
+          return res.status(200).json(responseData);
         }
       }
 
       return res.status(400).json({
         message: `No route found for token pair: ${fromTokenSymbol} → ${toTokenSymbol}`,
-        error: 'No available pools to complete this swap'
+        error: 'No available pools to complete this swap',
+        kyberswapAttempted,
       });
     }
 

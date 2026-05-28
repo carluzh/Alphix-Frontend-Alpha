@@ -42,7 +42,6 @@ interface APYBreakdownTooltipProps extends APYBreakdownData {
 // =============================================================================
 
 const AAVE_TEXT_COLOR = "#B8B6FF";
-const SPARK_TEXT_COLOR = "#FAA43B";
 
 // =============================================================================
 // SUB-COMPONENTS
@@ -73,21 +72,8 @@ function TokenPairLogo({ token0Symbol, token1Symbol }: TokenPairLogoProps) {
   );
 }
 
-export function LendingSourceIcons({ sources }: { sources: Array<'aave' | 'spark'> }) {
-  const hasAave = sources.includes('aave');
-  const hasSpark = sources.includes('spark');
-
-  if (hasAave && hasSpark) {
-    return (
-      <div className="relative flex items-center" style={{ width: 22, height: 14 }}>
-        <Image src={YIELD_SOURCES.spark.logo} alt="Spark" width={14} height={14} className="absolute left-0 rounded-full" style={{ zIndex: 1 }} loading="eager" />
-        <Image src={YIELD_SOURCES.aave.logo} alt="Aave" width={14} height={14} className="absolute left-2 rounded-full" style={{ zIndex: 2 }} loading="eager" />
-      </div>
-    );
-  }
-
-  const source = hasSpark ? 'spark' : 'aave';
-  return <Image src={YIELD_SOURCES[source].logo} alt={YIELD_SOURCES[source].name} width={14} height={14} className="rounded-full" loading="eager" />;
+export function LendingSourceIcons(_props: { sources: Array<'aave'> }) {
+  return <Image src={YIELD_SOURCES.aave.logo} alt={YIELD_SOURCES.aave.name} width={14} height={14} className="rounded-full" loading="eager" />;
 }
 
 interface TooltipRowProps {
@@ -123,9 +109,8 @@ export function APYBreakdownTooltip({
     () => getYieldSourcesForTokens(token0Symbol, token1Symbol),
     [token0Symbol, token1Symbol]
   );
-  const hasBothSources = yieldSources.includes('aave') && yieldSources.includes('spark');
   const labelStyle = { color: AAVE_TEXT_COLOR };
-  const valueStyle = hasBothSources ? { color: SPARK_TEXT_COLOR } : { color: AAVE_TEXT_COLOR };
+  const valueStyle = { color: AAVE_TEXT_COLOR };
 
   return (
     <div className="flex flex-col py-1 min-w-[180px]">
@@ -136,15 +121,7 @@ export function APYBreakdownTooltip({
       />
 
       {(unifiedYieldApy ?? 0) > 0 && (
-        <div
-          className={cn(
-            "flex items-center justify-between px-2.5 py-1.5 gap-3 rounded-lg mx-1 mt-1",
-            !hasBothSources && "bg-[#9896FF]/15"
-          )}
-          style={hasBothSources ? {
-            background: "linear-gradient(90deg, rgba(152, 150, 255, 0.15) 0%, rgba(250, 164, 59, 0.15) 100%)"
-          } : undefined}
-        >
+        <div className={cn("flex items-center justify-between px-2.5 py-1.5 gap-3 rounded-lg mx-1 mt-1 bg-[#9896FF]/15")}>
           <div className="flex items-center gap-2 flex-1">
             <div className="flex-shrink-0">
               <LendingSourceIcons sources={yieldSources} />
