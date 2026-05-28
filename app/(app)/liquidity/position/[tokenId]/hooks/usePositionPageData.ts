@@ -95,13 +95,6 @@ export interface PositionPageData {
   tokenBSymbol: string | undefined;
   isFullRange: boolean | undefined;
   isInRange: boolean;
-  /**
-   * True when the pool's current tick is outside the active UY range.
-   * Only meaningful for Unified Yield positions — the underlying pool's
-   * sqrtRatio gets clamped to the range boundary, making the derived pool
-   * price degenerate. Consumers should suppress pool-price-vs-market
-   * comparisons and the numeric current price when this is true.
-   */
   poolOutsideRange: boolean;
   // APR data
   poolApr: number | null;
@@ -558,19 +551,11 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
     return currentTick >= tickLower && currentTick < tickUpper;
   }, [isUnifiedYieldPosition, pool, tickLower, tickUpper]);
 
-  // For Unified Yield: detect when the pool's current tick has moved outside the
-  // active rehypoRange. When this happens the pool's sqrtRatio is effectively
-  // clamped to the range boundary, so the derived pool price becomes degenerate
-  // (astronomically high or near-zero). Used to suppress misleading price
-  // comparisons and the numeric "current price" display.
   const poolOutsideRange = useMemo(() => {
-    if (!isUnifiedYieldPosition) return false;
-    if (!poolState || !poolConfig?.rehypoRange) return false;
-    if (poolConfig.rehypoRange.isFullRange) return false;
-    const rehypoLower = parseInt(poolConfig.rehypoRange.min, 10);
-    const rehypoUpper = parseInt(poolConfig.rehypoRange.max, 10);
-    if (!Number.isFinite(rehypoLower) || !Number.isFinite(rehypoUpper)) return false;
-    return poolState.tick < rehypoLower || poolState.tick >= rehypoUpper;
+    if (!isUnifiedYieldPosition || !poolState || !poolConfig?.rehypoRange || poolConfig.rehypoRange.isFullRange) return false;
+    const lo = parseInt(poolConfig.rehypoRange.min, 10);
+    const hi = parseInt(poolConfig.rehypoRange.max, 10);
+    return Number.isFinite(lo) && Number.isFinite(hi) && (poolState.tick < lo || poolState.tick >= hi);
   }, [isUnifiedYieldPosition, poolState, poolConfig]);
 
   // Fetch pool APR from backend (fallback for pool-wide APR)

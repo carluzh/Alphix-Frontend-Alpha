@@ -530,8 +530,7 @@ export const PoolDetailSidebar = memo(function PoolDetailSidebar({
             />
           ))}
 
-          {/* Earning Points — suppressed while Season 0 is concluded.
-              Re-add `{!isPro && <EarningPointsCard />}` when next season launches. */}
+          {/* Re-add {!isPro && <EarningPointsCard />} on next season. */}
 
           {/* Pool Balance */}
           <PoolBalanceSection poolConfig={poolConfig} tvlUsd={tvlUsd} tvlToken0Usd={tvlToken0Usd} tvlToken1Usd={tvlToken1Usd} networkMode={networkMode} />

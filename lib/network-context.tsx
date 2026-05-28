@@ -22,8 +22,6 @@ interface NetworkContextValue {
   // Legacy: still available for components that haven't been migrated yet.
   // Defaults to 'base'. Components should derive chain from data instead.
   networkMode: NetworkMode;
-  /** @deprecated No-op. Chain is derived from data, not user selection. */
-  setNetworkMode: (mode: NetworkMode) => void;
   isBase: boolean;
   isArbitrum: boolean;
   chainId: number;
@@ -60,11 +58,6 @@ export function NetworkProvider({ children, initialNetworkMode }: NetworkProvide
     }
   }, [walletChainId]);
 
-  // setNetworkMode is a no-op — chain is derived from data, not user selection
-  const setNetworkMode = useCallback((_mode: NetworkMode) => {
-    // No-op. Kept for API compatibility during migration.
-  }, []);
-
   // ensureChain: auto-switch wallet before transaction
   const ensureChain = useCallback(async (requiredChainId: number): Promise<boolean> => {
     if (walletChainId === requiredChainId) return true;
@@ -88,7 +81,6 @@ export function NetworkProvider({ children, initialNetworkMode }: NetworkProvide
 
   const value: NetworkContextValue = {
     networkMode,
-    setNetworkMode,
     isBase: networkMode === 'base',
     isArbitrum: networkMode === 'arbitrum',
     chainId: chainIdForMode(networkMode),

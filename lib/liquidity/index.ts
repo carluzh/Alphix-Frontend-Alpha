@@ -24,26 +24,6 @@ export {
   type UseDerivedPositionInfoParams,
 } from './hooks/position';
 
-// Approval hooks
-export {
-  useLiquidityApprovals,
-  useCheckMintApprovals,
-  useCheckIncreaseApprovals,
-  type UseApprovalsParams,
-  type UseApprovalsOptions,
-  type UseApprovalsResult,
-  type CheckMintApprovalsParams,
-  type CheckIncreaseApprovalsParams,
-  type LegacyApprovalResponse,
-  // Mode-aware approval hook (supports both V4 and Unified Yield)
-  useModeAwareApprovals,
-  useCheckMintApprovalsWithMode,
-  type UseModeAwareApprovalsParams,
-  type UseModeAwareApprovalsOptions,
-  type UseModeAwareApprovalsResult,
-  type ModeAwareApprovalResult,
-} from './hooks/approval';
-
 // Range hooks - SDK-based tick limit and range utilities
 export {
   Bound,

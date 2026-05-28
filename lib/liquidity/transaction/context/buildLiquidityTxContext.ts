@@ -9,7 +9,6 @@ import { CurrencyAmount, Token, Ether, type Currency } from '@uniswap/sdk-core';
 import type { Address, Hex } from 'viem';
 import type {
   LiquidityTxAndGasInfo,
-  ValidatedLiquidityTxContext,
   CreatePositionTxAndGasInfo,
   IncreasePositionTxAndGasInfo,
   DecreasePositionTxAndGasInfo,

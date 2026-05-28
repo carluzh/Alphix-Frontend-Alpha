@@ -67,11 +67,6 @@ export {
   type UnifiedYieldApprovalStep,
   type UnifiedYieldDepositStep,
   type UnifiedYieldWithdrawStep,
-  // Zap step interfaces
-  type ZapTokenSymbol,
-  type ZapSwapApprovalStep,
-  type ZapPoolSwapStep,
-  type ZapDynamicDepositStep,
   // Composite step types — used internally by step generators/orderers.
   type IncreaseLiquiditySteps,
   type DecreaseLiquiditySteps,

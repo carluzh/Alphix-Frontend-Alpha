@@ -12,8 +12,6 @@ const VOLATILE_QUERY_PREFIXES: string[] = [
   'token-prices-batch',
   'positionApr',
   'gasPrice',
-  'zap-preview',
-  'zap-approvals',
   'prepareMint',
   'balance',
   'unifiedYieldCompoundedFees',

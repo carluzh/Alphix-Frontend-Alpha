@@ -37,7 +37,7 @@ These become the foundation for the unified system.
 ├─────────────────────────────────────────────────────────┤
 │  Layer 3: Flow Definitions (~50-100 LOC each)           │
 │  useSwapFlow, useCreatePositionFlow, useIncreaseFlow,   │
-│  useDecreaseFlow, useCollectFeesFlow, useZapFlow        │
+│  useDecreaseFlow, useCollectFeesFlow                    │
 │  Each defines: generateSteps + executors map + review   │
 ├─────────────────────────────────────────────────────────┤
 │  Layer 2: useStepExecutor (generic orchestrator)        │
@@ -168,7 +168,6 @@ function useSwapFlow(trade: SwapTrade) {
 | Increase Liquidity | `useIncreaseFlow.ts` | approval(s)? → permit? → increase |
 | Decrease Liquidity | `useDecreaseFlow.ts` | decrease (single step) |
 | Collect Fees | `useCollectFeesFlow.ts` | collect (single step) |
-| Zap Deposit | `useZapFlow.ts` | approval? → swap → approval? → deposit |
 | UY Deposit | `useUYDepositFlow.ts` | approval? → deposit |
 | UY Withdraw | `useUYWithdrawFlow.ts` | withdraw (single step) |
 
@@ -210,7 +209,7 @@ interface TransactionModalProps {
   renderSuccess?: (txHash: string) => React.ReactNode;
   /** Optional back button — presence enables 2-column button layout */
   onBack?: () => void;
-  /** Extra content rendered below ProgressIndicator during execution (e.g., zap countdown) */
+  /** Extra content rendered below ProgressIndicator during execution */
   renderExecutingExtra?: React.ReactNode;
 }
 ```
@@ -313,7 +312,7 @@ function CollectFeesModal({ position, open, onClose }) {
 2. **DecreaseLiquidityReview** — single step, has success view
 3. **IncreaseLiquidityReview** — multi-step with permit flow
 4. **SwapExecuteModal** — multi-step with quote refresh
-5. **ReviewExecuteModal** — most complex (V4 + UY + Zap modes)
+5. **ReviewExecuteModal** — most complex (V4 + UY modes)
 
 **Per migration:**
 - Create flow definition hook (`useCollectFeesFlow.ts`, etc.)
@@ -351,7 +350,7 @@ function CollectFeesModal({ position, open, onClose }) {
 | `IncreaseLiquidityReview.tsx` | ~450 | ~80 (thin wrapper) |
 | `DecreaseLiquidityReview.tsx` | ~400 | ~80 (thin wrapper) |
 | `CollectFeesModal.tsx` | ~350 | ~50 (thin wrapper) |
-| Flow definitions (8 total) | — | ~600 (new, 75 avg each) |
+| Flow definitions (7 total) | — | ~525 (new, 75 avg each) |
 
 **Net:** ~4,750 LOC → ~1,450 LOC. Elimination of ~3,300 LOC of duplicated execution logic.
 
@@ -369,7 +368,7 @@ function CollectFeesModal({ position, open, onClose }) {
 ## Resolved Design Decisions
 
 1. **Success view:** `successBehavior: 'close' | 'navigate' | 'show'` + `renderSuccess` prop. Increase/Decrease use `'show'` with their custom success content. Others use `'close'`.
-2. **Executing extras:** `renderExecutingExtra?: ReactNode` slot below ProgressIndicator. Only zap uses it (countdown timer).
+2. **Executing extras:** `renderExecutingExtra?: ReactNode` slot below ProgressIndicator (used by flows needing a countdown timer or similar).
 3. **Back button:** `onBack?: () => void` prop. Present = 2-column grid (Back + Confirm). Absent = single button.
 4. **Step display metadata:** Each `TransactionStep` carries its own `label`, `icon`, `subtitle` for UI rendering. No separate `mapExecutorStepsToUI` needed — ProgressIndicator reads directly from step metadata. This eliminates per-flow mapper functions entirely.
 

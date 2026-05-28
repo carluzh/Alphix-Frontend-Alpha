@@ -8,7 +8,7 @@ export const MIN_AUTO_SLIPPAGE_TOLERANCE = 0.5;       // 0.5%
 export const MAX_AUTO_SLIPPAGE_TOLERANCE = 5.5;       // 5.5%
 
 // Safe auto-slippage cap (tighter than MAX_AUTO_SLIPPAGE_TOLERANCE)
-// Used in useSlippage hook to cap auto-calculated values for zap & swap safety
+// Used in useSlippage hook to cap auto-calculated values for swap safety
 export const MAX_AUTO_SLIPPAGE_SAFE = 5.0;            // 5.0%
 
 // Custom slippage bounds

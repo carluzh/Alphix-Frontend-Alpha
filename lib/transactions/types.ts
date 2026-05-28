@@ -34,7 +34,7 @@ export enum TransactionStepType {
   // Alphix-specific
   CreatePositionTransaction = 'CreatePositionTransaction',
 
-  // Swap operations (for Zap flow)
+  // Swap operations
   SwapTransaction = 'SwapTransaction',
 
   // Faucet
@@ -97,7 +97,7 @@ export interface FaucetMintStep extends TransactionStepBase {
 }
 
 /**
- * Swap step - for Zap flow (pool or Kyberswap aggregator)
+ * Swap step (pool or Kyberswap aggregator)
  */
 export interface SwapStep extends TransactionStepBase {
   type: TransactionStepType.SwapTransaction

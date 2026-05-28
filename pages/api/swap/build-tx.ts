@@ -17,12 +17,8 @@ import {
     createTokenSDK,
     createPoolKeyFromConfig,
     getToken,
-    getPoolBySlug,
     NATIVE_TOKEN_ADDRESS,
 } from '../../../lib/pools-config';
-import { isProPool } from '../../../lib/liquidity/utils/pool-type-guards';
-// State overrides for rehypothecated pools (Pool Manager has limited on-chain balance)
-import { getSwapSimulationStateOverrides } from '../../../lib/swap/quote-state-override';
 import { UniversalRouterAbi, TX_DEADLINE_SECONDS, PERMIT2_ADDRESS, Permit2Abi_allowance } from '@/lib/swap/swap-constants';
 import { getUniversalRouterAddress } from '../../../lib/pools-config';
 import { findBestRoute, SwapRoute } from '@/lib/swap/routing-engine';
@@ -149,7 +145,7 @@ export function encodeMultihopExactOutPath(
 // All V4 swap functions use the action order: SETTLE → SWAP → TAKE
 //
 // Why SETTLE first (instead of SWAP → SETTLE → TAKE)?
-// - Rehypothecated pools (e.g. ETH/USDC on Base) deposit liquidity into yield
+// - Rehypothecated pools (USDC/USDT on Arbitrum) deposit liquidity into yield
 //   vaults, so the Pool Manager holds only a fraction of the actual balance.
 // - With SWAP first, the hook can't access enough of the rehypothecated token
 //   during beforeSwap.
@@ -875,26 +871,8 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
         const txDeadline = currentTimestamp + BigInt(TX_DEADLINE_SECONDS);
 
         // 4. Simulate Transaction
-        // Action order is now SETTLE → SWAP → TAKE, which ensures tokens are in Pool Manager
+        // Action order is SETTLE → SWAP → TAKE, which ensures tokens are in Pool Manager
         // before the swap executes, allowing hooks to access them during the swap.
-        //
-        // Rehypothecated pools: Pool Manager has limited on-chain balance because
-        // liquidity is deposited in yield vaults (e.g. Aave for native ETH). We use
-        // state overrides to give Pool Manager virtual native ETH balances during
-        // simulation. The actual on-chain swap works because the hook brings tokens
-        // back during execution.
-        //
-        // Predicate: native-ETH-touching swap whose route contains at least one
-        // Alphix pool that is NOT a Pro pool (AlphixPro pools like ETH/ZFI use a
-        // separate hook and do not rehypothecate).
-        const routeTouchesRehypothecatedNativeEthPool =
-            (isNativeInput || OUTPUT_TOKEN.address === NATIVE_TOKEN_ADDRESS) &&
-            route.pools.some(p => {
-                const cfg = getPoolBySlug(p.poolId, networkMode) ?? getPoolBySlug(p.slug, networkMode);
-                return !!cfg && !isProPool(cfg);
-            });
-        const stateOverride = getSwapSimulationStateOverrides(routeTouchesRehypothecatedNativeEthPool);
-
         await publicClient.simulateContract({
             account: getAddress(userAddress),
             address: getUniversalRouterAddress(networkMode),
@@ -902,7 +880,6 @@ export default async function handler(req: BuildSwapTxRequest, res: NextApiRespo
             functionName: 'execute',
             args: [routePlanner.commands as Hex, routePlanner.inputs as Hex[], txDeadline],
             value: txValue,
-            stateOverride,
         });
 
         // Derive touched pools (slug + poolId hash) for downstream cache invalidation

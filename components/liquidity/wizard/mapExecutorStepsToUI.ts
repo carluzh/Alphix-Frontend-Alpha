@@ -84,47 +84,6 @@ export function mapExecutorStepsToUI(
           token1Icon,
         };
 
-      // Zap (single-token deposit) steps
-      case 'ZapSwapApproval': {
-        const zapStep = step as any;
-        const tokenAddr: string | undefined = zapStep.tokenAddress;
-        const isToken0 = tokenAddr
-          ? tokenAddr.toLowerCase() === pool.currency0.address.toLowerCase()
-          : zapStep.tokenSymbol === pool.currency0.symbol;
-        return {
-          type: UIStepType.TokenApprovalTransaction,
-          tokenSymbol: zapStep.tokenSymbol || (isToken0 ? pool.currency0.symbol : pool.currency1.symbol),
-          tokenAddress: zapStep.tokenAddress || '',
-          tokenIcon: isToken0 ? token0Icon : token1Icon,
-        };
-      }
-
-      case 'ZapPoolSwap': {
-        const zapStep = step as any;
-        const isToken0Input =
-          (zapStep.inputTokenAddress as string | undefined)?.toLowerCase() ===
-          pool.currency0.address.toLowerCase();
-        return {
-          type: UIStepType.SwapTransaction,
-          inputTokenSymbol: isToken0Input ? pool.currency0.symbol : pool.currency1.symbol,
-          outputTokenSymbol: isToken0Input ? pool.currency1.symbol : pool.currency0.symbol,
-          inputTokenIcon: isToken0Input ? token0Icon : token1Icon,
-          outputTokenIcon: isToken0Input ? token1Icon : token0Icon,
-          routeType: 'pool' as const,
-        };
-      }
-
-      case 'ZapDynamicDeposit': {
-        // Dynamic deposit step - shows as a deposit/create position step
-        return {
-          type: UIStepType.CreatePositionTransaction,
-          token0Symbol: pool.currency0.symbol,
-          token1Symbol: pool.currency1.symbol,
-          token0Icon,
-          token1Icon,
-        };
-      }
-
       default:
         return {
           type: UIStepType.CreatePositionTransaction,

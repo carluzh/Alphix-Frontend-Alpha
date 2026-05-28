@@ -3,8 +3,7 @@
  *
  * Composes swap-domain and liquidity-domain executors into a single
  * Record<string, StepExecutorFn>. Backward-compatible wrapper used by
- * components that need full coverage (e.g., zap flows that compose
- * swap steps + liquidity deposit steps).
+ * components that need full coverage.
  *
  * @see useExecutorBridge.ts — shared factory
  */

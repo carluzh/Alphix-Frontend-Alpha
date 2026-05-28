@@ -4,7 +4,7 @@
  * TransactionModal — Shared modal shell for ALL transaction flows
  *
  * One modal used by every flow: swap, create position, increase, decrease,
- * collect fees, zap deposit, UY deposit/withdraw.
+ * collect fees, UY deposit/withdraw.
  *
  * Each flow provides:
  * - Review content (children) — the token amounts, price display, etc.

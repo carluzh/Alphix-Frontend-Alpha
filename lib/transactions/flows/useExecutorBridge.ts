@@ -32,21 +32,18 @@ import {
 
 /**
  * Swap domain — steps that perform token swaps.
- * Used by: main swap flow (via useSwapFlow), zap swap portion.
+ * Used by: main swap flow (via useSwapFlow).
  */
 export const SWAP_DOMAIN_STEPS: TransactionStepType[] = [
   // Shared primitives (also in liquidity domain)
   TransactionStepType.TokenApprovalTransaction,
   TransactionStepType.Permit2Signature,
-  // Zap swap-specific
-  TransactionStepType.ZapSwapApproval,
-  TransactionStepType.ZapPoolSwap,
 ];
 
 /**
  * Liquidity domain — steps that touch positions (create, increase, decrease,
- * collect, UY deposit/withdraw, zap deposit).
- * Used by: all liquidity flows, zap deposit portion.
+ * collect, UY deposit/withdraw).
+ * Used by: all liquidity flows.
  */
 export const LIQUIDITY_DOMAIN_STEPS: TransactionStepType[] = [
   // Shared primitives (also in swap domain)
@@ -64,13 +61,10 @@ export const LIQUIDITY_DOMAIN_STEPS: TransactionStepType[] = [
   TransactionStepType.UnifiedYieldApprovalTransaction,
   TransactionStepType.UnifiedYieldDepositTransaction,
   TransactionStepType.UnifiedYieldWithdrawTransaction,
-  // Zap deposit (liquidity domain portion of zap)
-  TransactionStepType.ZapDynamicDeposit,
 ];
 
 /**
  * All step types — union of both domains.
- * Used by: zap flows that compose swap + liquidity steps.
  */
 export const ALL_DOMAIN_STEPS: TransactionStepType[] = [
   ...new Set([...SWAP_DOMAIN_STEPS, ...LIQUIDITY_DOMAIN_STEPS]),

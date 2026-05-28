@@ -4,7 +4,7 @@
  * Pure functions and calculations for liquidity operations.
  */
 
-// Calculation utilities (priceConversion.ts DELETED - use Uniswap SDK)
+// Calculation utilities
 export {
   getDependentAmountFromV4Position,
   getDependentAmount,

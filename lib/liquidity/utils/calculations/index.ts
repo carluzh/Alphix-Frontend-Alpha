@@ -40,5 +40,3 @@ export {
 } from './getPriceDifference';
 
 export { calculateTicksFromPercentage } from './calculateTicksFromPercentage';
-
-// priceConversion.ts DELETED - use Uniswap SDK's tickToPrice instead

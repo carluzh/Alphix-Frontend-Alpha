@@ -1,19 +1,7 @@
 "use client";
 
-/**
- * DecreaseLiquidityModal - Uses shared TransactionModal
- *
- * Wraps context providers around TransactionModal. The form content
- * (percentage selector, "you will receive", position display) is
- * rendered as TransactionModal children. All execution logic is
- * delegated to TransactionModal + useDecreaseLiquidityFlow.
- *
- * @see components/transactions/TransactionModal.tsx
- * @see lib/transactions/flows/useDecreaseLiquidityFlow.ts
- */
-
-import React, { useState, useCallback, useMemo, useRef, useLayoutEffect } from "react";
-import { useAccount } from "wagmi";
+import React, { useState, useCallback, useEffect, useMemo, useRef, useLayoutEffect } from "react";
+import { formatUnits } from "viem";
 import { TokenImage } from "@/components/ui/token-image";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -23,16 +11,12 @@ import { getTokenIcon } from "../liquidity-form-utils";
 import { PositionAmountsDisplay } from "../shared/PositionAmountsDisplay";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
-import { getPoolBySlug } from "@/lib/pools-config";
+import { getPoolBySlug, getTokenDefinitions } from "@/lib/pools-config";
 
 import { TransactionModal } from "@/components/transactions/TransactionModal";
 import { DecreaseLiquidityContextProvider, useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
 import { DecreaseLiquidityTxContextProvider, useDecreaseLiquidityTxContext } from "./DecreaseLiquidityTxContext";
 import { useDecreaseLiquidityFlow } from "@/lib/transactions/flows/useDecreaseLiquidityFlow";
-
-// =============================================================================
-// TYPES
-// =============================================================================
 
 interface DecreaseLiquidityModalProps {
   position: ProcessedPosition;
@@ -41,15 +25,7 @@ interface DecreaseLiquidityModalProps {
   onSuccess?: (options?: { isFullBurn?: boolean }) => void;
 }
 
-// =============================================================================
-// PERCENTAGE OPTIONS
-// =============================================================================
-
 const PERCENTAGE_OPTIONS = [25, 50, 75, 100];
-
-// =============================================================================
-// INNER COMPONENT (uses contexts)
-// =============================================================================
 
 function DecreaseLiquidityInner({
   isOpen,
@@ -60,34 +36,25 @@ function DecreaseLiquidityInner({
   onClose: () => void;
   onSuccess?: (options?: { isFullBurn?: boolean }) => void;
 }) {
-  const { address } = useAccount();
-
   const {
-    decreaseLiquidityState,
-    derivedDecreaseInfo,
+    position,
     setWithdrawAmount0,
     setWithdrawAmount1,
-    setIsFullWithdraw,
     hasValidAmounts,
     isUnifiedYield,
   } = useDecreaseLiquidityContext();
 
-  const {
-    isLoading,
-    token0USDPrice,
-    token1USDPrice,
-    fetchAndBuildContext,
-  } = useDecreaseLiquidityTxContext();
+  const { isLoading, fetchAndBuildContext, receive } = useDecreaseLiquidityTxContext();
 
-  const { position } = decreaseLiquidityState;
   const networkMode = position.networkMode;
+  const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
+  const token0Decimals = tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals ?? 18;
+  const token1Decimals = tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals ?? 18;
 
-  // Percentage state
   const [percent, setPercent] = useState<number>(0);
   const percentRef = useRef<number>(0);
   const [percentStr, setPercentStr] = useState<string>("");
 
-  // Dynamic width measurement for percentage input
   const hiddenSpanRef = useRef<HTMLSpanElement>(null);
   const [inputWidth, setInputWidth] = useState<number>(0);
 
@@ -98,32 +65,42 @@ function DecreaseLiquidityInner({
     }
   }, [percentStr]);
 
-  // Position balances
   const positionBalance0 = parseFloat(position.token0.amount || "0");
   const positionBalance1 = parseFloat(position.token1.amount || "0");
 
-  // Computed amounts
-  const amount0 = (positionBalance0 * percent) / 100;
-  const amount1 = (positionBalance1 * percent) / 100;
-  const projectedToken0Amount = Math.max(0, positionBalance0 - amount0);
-  const projectedToken1Amount = Math.max(0, positionBalance1 - amount1);
+  const projectedToken0Amount = Math.max(0, positionBalance0 * (1 - percent / 100));
+  const projectedToken1Amount = Math.max(0, positionBalance1 * (1 - percent / 100));
   const showProjected = percent > 0;
 
-  // Handle percentage selection
+  const applyPercent = useCallback((selectedPercent: number) => {
+    const clamped = Math.max(0, Math.min(100, selectedPercent));
+    setPercent(clamped);
+    percentRef.current = clamped;
+    setPercentStr(clamped === 0 ? "" : clamped.toString());
+    setWithdrawAmount0(((positionBalance0 * clamped) / 100).toString());
+    setWithdrawAmount1(((positionBalance1 * clamped) / 100).toString());
+  }, [positionBalance0, positionBalance1, setWithdrawAmount0, setWithdrawAmount1]);
+
+  const prevOpenRef = useRef(false);
+  useEffect(() => {
+    if (isOpen && !prevOpenRef.current) {
+      applyPercent(0);
+    }
+    prevOpenRef.current = isOpen;
+  }, [isOpen, applyPercent]);
+
+  const useApi = !isUnifiedYield && !!receive && receive.percent === Math.round(percent);
+  const receive0 = useApi
+    ? formatTokenDisplayAmount(formatUnits(BigInt(receive!.amount0), token0Decimals), position.token0.symbol as TokenSymbol)
+    : formatTokenDisplayAmount(((positionBalance0 * percent) / 100).toString(), position.token0.symbol as TokenSymbol);
+  const receive1 = useApi
+    ? formatTokenDisplayAmount(formatUnits(BigInt(receive!.amount1), token1Decimals), position.token1.symbol as TokenSymbol)
+    : formatTokenDisplayAmount(((positionBalance1 * percent) / 100).toString(), position.token1.symbol as TokenSymbol);
+
   const handlePercentageSelect = useCallback((selectedPercent: number) => {
-    setPercent(selectedPercent);
-    percentRef.current = selectedPercent;
-    setPercentStr(selectedPercent.toString());
+    applyPercent(selectedPercent);
+  }, [applyPercent]);
 
-    const calcAmount0 = (positionBalance0 * selectedPercent) / 100;
-    const calcAmount1 = (positionBalance1 * selectedPercent) / 100;
-
-    setWithdrawAmount0(calcAmount0.toString());
-    setWithdrawAmount1(calcAmount1.toString());
-    setIsFullWithdraw(selectedPercent >= 99);
-  }, [positionBalance0, positionBalance1, setWithdrawAmount0, setWithdrawAmount1, setIsFullWithdraw]);
-
-  // Flow definition
   const { generateSteps, executors, mapStepsToUI } = useDecreaseLiquidityFlow({
     fetchAndBuildContext,
     token0Symbol: position.token0.symbol,
@@ -132,12 +109,10 @@ function DecreaseLiquidityInner({
     token1Icon: getTokenIcon(position.token1.symbol, networkMode),
   });
 
-  // Success handler
   const handleSuccess = useCallback((results: Map<number, { txHash?: string }>) => {
     const isFullBurn = percentRef.current >= 99;
     const msg = isFullBurn ? "Position closed" : "Liquidity withdrawn";
 
-    // Extract last tx hash for explorer link
     let hash: string | undefined;
     for (const [, result] of results) {
       if (result.txHash) hash = result.txHash;
@@ -169,7 +144,6 @@ function DecreaseLiquidityInner({
       onSuccess={handleSuccess}
     >
       <div className="space-y-4">
-        {/* Header - Token pair with badges */}
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
@@ -203,7 +177,6 @@ function DecreaseLiquidityInner({
           </div>
         </div>
 
-        {/* Percentage Selector */}
         <div className="rounded-xl border border-sidebar-border/60 bg-surface overflow-hidden">
           <div className="px-4 pt-6 pb-4">
             <div className="relative flex items-center justify-center w-full">
@@ -214,18 +187,8 @@ function DecreaseLiquidityInner({
                   value={percentStr}
                   onChange={(e) => {
                     const val = e.target.value.replace(/[^0-9]/g, "");
-                    if (val === "" || (parseInt(val, 10) <= 100)) {
-                      setPercentStr(val);
-                      const num = val === "" ? 0 : parseInt(val, 10);
-                      if (num === 0) {
-                        setPercent(0);
-                        percentRef.current = 0;
-                        setWithdrawAmount0("0");
-                        setWithdrawAmount1("0");
-                        setIsFullWithdraw(false);
-                      } else {
-                        handlePercentageSelect(num);
-                      }
+                    if (val === "" || parseInt(val, 10) <= 100) {
+                      applyPercent(val === "" ? 0 : parseInt(val, 10));
                     }
                   }}
                   placeholder="0"
@@ -281,7 +244,6 @@ function DecreaseLiquidityInner({
             </div>
           </div>
 
-          {/* You Will Receive */}
           <AnimatePresence>
             {percent > 0 && (
               <motion.div
@@ -300,8 +262,8 @@ function DecreaseLiquidityInner({
                         <TokenImage src={getTokenIcon(position.token0.symbol, networkMode)} alt={position.token0.symbol} size={20} />
                         <span className="text-sm font-medium">{position.token0.symbol}</span>
                       </div>
-                      <span className={cn("text-sm font-medium tabular-nums", amount0 === 0 && "text-muted-foreground")}>
-                        {formatTokenDisplayAmount(amount0.toString(), position.token0.symbol as TokenSymbol)}
+                      <span className={cn("text-sm font-medium tabular-nums", parseFloat(receive0) === 0 && "text-muted-foreground")}>
+                        {receive0}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
@@ -309,8 +271,8 @@ function DecreaseLiquidityInner({
                         <TokenImage src={getTokenIcon(position.token1.symbol, networkMode)} alt={position.token1.symbol} size={20} />
                         <span className="text-sm font-medium">{position.token1.symbol}</span>
                       </div>
-                      <span className={cn("text-sm font-medium tabular-nums", amount1 === 0 && "text-muted-foreground")}>
-                        {formatTokenDisplayAmount(amount1.toString(), position.token1.symbol as TokenSymbol)}
+                      <span className={cn("text-sm font-medium tabular-nums", parseFloat(receive1) === 0 && "text-muted-foreground")}>
+                        {receive1}
                       </span>
                     </div>
                   </div>
@@ -320,7 +282,6 @@ function DecreaseLiquidityInner({
           </AnimatePresence>
         </div>
 
-        {/* Position Segment */}
         <PositionAmountsDisplay
           token0={{
             symbol: position.token0.symbol,
@@ -336,10 +297,6 @@ function DecreaseLiquidityInner({
     </TransactionModal>
   );
 }
-
-// =============================================================================
-// MAIN EXPORT (wraps providers)
-// =============================================================================
 
 export function DecreaseLiquidityModal({
   position,

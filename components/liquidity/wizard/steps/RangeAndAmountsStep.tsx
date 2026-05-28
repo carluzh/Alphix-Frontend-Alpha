@@ -11,7 +11,7 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { ChevronLeft } from 'lucide-react';
-import { IconCircleInfo, IconTriangleWarningFilled, IconRefreshClockwise } from 'nucleo-micro-bold-essential';
+import { IconCircleInfo, IconTriangleWarningFilled } from 'nucleo-micro-bold-essential';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,7 +37,6 @@ import { PriceDeviationCallout } from '@/components/ui/PriceDeviationCallout';
 import { HighRiskConfirmModal, createPriceDeviationWarning } from '@/components/ui/HighRiskConfirmModal';
 import { TokenInputCard, TokenInputStyles } from '@/components/liquidity/TokenInputCard';
 import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
-import { DepositModeToggle } from '@/components/liquidity/shared/DepositModeToggle';
 import { formatCalculatedAmount } from '@/components/liquidity/liquidity-form-utils';
 import { calculateTicksFromPercentage, getFieldsDisabled, PositionField, isInvalidRange } from '@/lib/liquidity/utils/calculations';
 import { DEFAULT_TICK_SPACING } from '@/lib/liquidity/utils/validation/feeTiers';
@@ -53,7 +52,6 @@ import { HistoryDuration, usePoolPriceChartData } from '@/lib/chart';
 import { useLiquidityChartData } from '@/hooks/useLiquidityChartData';
 import { getPoolId } from '@/lib/pools-config';
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
-import { isZapEligiblePool } from '@/lib/liquidity/zap';
 
 // Price Strategy configurations - pool-type dependent
 interface PriceStrategyConfig {
@@ -306,8 +304,6 @@ export function RangeAndAmountsStep() {
     setAmounts,
     setInputSide,
     setMode,
-    setDepositMode,
-    setZapInputToken,
     openReviewModal,
     goBack,
     // NEW: Get pool data from context (Uniswap pattern)
@@ -380,9 +376,6 @@ export function RangeAndAmountsStep() {
   const poolConfig = state.poolId ? getPoolBySlug(state.poolId, networkMode) : null;
   const isStablePool = poolConfig?.type === 'Stable';
   const isRehypoMode = state.mode === 'rehypo';
-
-  // Zap is only available for pools configured in ZAP_POOL_CONFIGS
-  const zapEnabled = isZapEligiblePool(state.poolId);
 
   // Select strategies based on pool type
   const priceStrategies = useMemo(() => getStrategiesForPoolType(isStablePool), [isStablePool]);
@@ -501,7 +494,7 @@ export function RangeAndAmountsStep() {
     networkMode,
   });
 
-  const { entries: priceChartEntries, loading: isPriceLoading } = usePoolPriceChartData({
+  const { entries: priceChartEntries } = usePoolPriceChartData({
     variables: {
       poolId: subgraphPoolId,
       token0: token0Symbol,
@@ -1209,28 +1202,14 @@ export function RangeAndAmountsStep() {
     const amt0Valid = !deposit0Disabled && amount0 && parseFloat(amount0) > 0;
     const amt1Valid = !deposit1Disabled && amount1 && parseFloat(amount1) > 0;
 
-    // Zap mode: Only the selected token needs a valid amount
-    if (isRehypoMode && state.depositMode === 'zap') {
-      if (state.zapInputToken === 'token0') return !!amt0Valid;
-      if (state.zapInputToken === 'token1') return !!amt1Valid;
-      return false; // No token selected
-    }
-
-    // Balanced mode: Both tokens need valid amounts (original logic)
     if (deposit0Disabled) return amt1Valid;
     if (deposit1Disabled) return amt0Valid;
     return amt0Valid && amt1Valid;
-  }, [amount0, amount1, deposit0Disabled, deposit1Disabled, isRehypoMode, state.depositMode, state.zapInputToken]);
+  }, [amount0, amount1, deposit0Disabled, deposit1Disabled]);
 
-  // In zap mode, only check balance for the selected token
   const hasInsufficientBalance = useMemo(() => {
-    if (isRehypoMode && state.depositMode === 'zap') {
-      if (state.zapInputToken === 'token0') return isAmount0OverBalance;
-      if (state.zapInputToken === 'token1') return isAmount1OverBalance;
-      return false;
-    }
     return isAmount0OverBalance || isAmount1OverBalance;
-  }, [isRehypoMode, state.depositMode, state.zapInputToken, isAmount0OverBalance, isAmount1OverBalance]);
+  }, [isAmount0OverBalance, isAmount1OverBalance]);
 
   const canReview = isValidRange && hasValidAmount && !hasInsufficientBalance && !isCalculating && !inputError;
 
@@ -1436,87 +1415,35 @@ export function RangeAndAmountsStep() {
 
       {/* Section 2: Deposit Amounts */}
       <div className="flex flex-col gap-4">
-        <div className="flex flex-row items-center justify-between">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-lg font-semibold text-white">Deposit Amounts</h2>
-            <p className="text-sm text-muted-foreground">
-              Enter how much liquidity to provide
-            </p>
-          </div>
-          {/* Deposit mode toggle - Only shown for Unified Yield zap-eligible pools */}
-          {isRehypoMode && zapEnabled && (
-            <DepositModeToggle
-              depositMode={state.depositMode}
-              onModeChange={setDepositMode}
-            />
-          )}
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-semibold text-white">Deposit Amounts</h2>
+          <p className="text-sm text-muted-foreground">
+            Enter how much liquidity to provide
+          </p>
         </div>
-
-        {/* Zap mode info callout - neutral style */}
-        {isRehypoMode && zapEnabled && state.depositMode === 'zap' && (
-          <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent hover:border-muted-foreground/30 transition-colors">
-            <IconCircleInfo className="w-4 h-4 text-muted-foreground shrink-0" />
-            <span className="text-sm text-muted-foreground">
-              Your {state.zapInputToken === 'token0' ? poolConfig.currency0.symbol : poolConfig.currency1.symbol} will be automatically swapped to provide balanced liquidity
-            </span>
-          </div>
-        )}
 
         {/* Token inputs */}
         <div className="flex flex-col gap-3">
-          {/* Zap mode: Single token input with switch capability (only for zap-eligible pools) */}
-          {isRehypoMode && zapEnabled && state.depositMode === 'zap' && (
-            <TokenInputCard
-              id="wizard-zap-input"
-              tokenSymbol={state.zapInputToken === 'token0' ? poolConfig.currency0.symbol : poolConfig.currency1.symbol}
-              networkMode={networkMode}
-              value={state.zapInputToken === 'token0' ? amount0 : amount1}
-              onChange={state.zapInputToken === 'token0' ? handleAmount0Change : handleAmount1Change}
-              label="Add"
-              maxAmount={state.zapInputToken === 'token0'
-                ? (token0BalanceData?.formatted || "0")
-                : (token1BalanceData?.formatted || "0")}
-              usdPrice={state.zapInputToken === 'token0' ? (token0USDPrice || 0) : (token1USDPrice || 0)}
-              formatUsdAmount={formatCalculatedAmount}
-              isOverBalance={state.zapInputToken === 'token0' ? isAmount0OverBalance : isAmount1OverBalance}
-              isLoading={false}
-              animationControls={state.zapInputToken === 'token0' ? wiggleControls0 : wiggleControls1}
-              onPercentageClick={(percentage) =>
-                state.zapInputToken === 'token0'
-                  ? handleToken0Percentage(percentage)
-                  : handleToken1Percentage(percentage)
-              }
-              onTokenClick={() => setZapInputToken(state.zapInputToken === 'token0' ? 'token1' : 'token0')}
-              tokenClickIcon={<IconRefreshClockwise className="w-3.5 h-3.5 text-muted-foreground group-hover/token:text-white transition-colors" />}
-            />
-          )}
+          <TokenInputCard
+            id="wizard-amount0"
+            tokenSymbol={poolConfig.currency0.symbol}
+            value={amount0}
+            onChange={handleAmount0Change}
+            label="Add"
+            maxAmount={token0BalanceData?.formatted || "0"}
+            usdPrice={token0USDPrice || 0}
+            formatUsdAmount={formatCalculatedAmount}
+            isOverBalance={isAmount0OverBalance}
+            isLoading={amount0Loading}
+            animationControls={wiggleControls0}
+            onPercentageClick={(percentage) => handleToken0Percentage(percentage)}
+            disabled={deposit0Disabled}
+          />
 
-          {/* Balanced mode: Token 0 Input */}
-          {!(isRehypoMode && zapEnabled && state.depositMode === 'zap') && (
-            <TokenInputCard
-              id="wizard-amount0"
-              tokenSymbol={poolConfig.currency0.symbol}
-              networkMode={networkMode}
-              value={amount0}
-              onChange={handleAmount0Change}
-              label="Add"
-              maxAmount={token0BalanceData?.formatted || "0"}
-              usdPrice={token0USDPrice || 0}
-              formatUsdAmount={formatCalculatedAmount}
-              isOverBalance={isAmount0OverBalance}
-              isLoading={amount0Loading}
-              animationControls={wiggleControls0}
-              onPercentageClick={(percentage) => handleToken0Percentage(percentage)}
-              disabled={deposit0Disabled}
-            />
-          )}
-
-          {/* Balanced mode: Token 1 Input */}
-          {!(isRehypoMode && zapEnabled && state.depositMode === 'zap') && !deposit1Disabled && (
+          {!deposit1Disabled && (
             <TokenInputCard
               id="wizard-amount1"
               tokenSymbol={poolConfig.currency1.symbol}
-              networkMode={networkMode}
               value={amount1}
               onChange={handleAmount1Change}
               label="Add"

@@ -191,9 +191,3 @@ export async function batchQuotePrices(
     uniqueSymbols.map((symbol, i) => [symbol, prices[i]])
   )
 }
-
-// Alias for backwards compatibility
-export async function getTokenPrice(symbol: string): Promise<number | null> {
-  const price = await getQuotePrice(symbol)
-  return price > 0 ? price : null
-}

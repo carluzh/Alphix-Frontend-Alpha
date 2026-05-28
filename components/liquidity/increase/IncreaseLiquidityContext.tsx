@@ -2,8 +2,6 @@
 
 import React, { createContext, useContext, useState, useMemo, useCallback, type Dispatch, type SetStateAction, type PropsWithChildren } from "react";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
-import { isZapEligiblePool } from "@/lib/liquidity/zap";
-import type { UnifiedYieldDepositMode } from "../wizard/types";
 
 export enum IncreaseLiquidityStep { Input = 0, Review = 1 }
 export type PositionField = "TOKEN0" | "TOKEN1";
@@ -12,9 +10,6 @@ export interface IncreaseLiquidityState {
   position: ProcessedPosition;
   exactField: PositionField;
   exactAmount: string;
-  // Zap mode state (for zap-eligible Unified Yield positions)
-  depositMode: UnifiedYieldDepositMode;
-  zapInputToken: 'token0' | 'token1' | null;
 }
 
 export interface IncreaseLiquidityDerivedInfo {
@@ -38,19 +33,7 @@ interface IncreaseLiquidityContextType {
   hasValidAmounts: boolean;
   isOverBalance0: boolean;
   isOverBalance1: boolean;
-  /** Whether this is a Unified Yield position */
   isUnifiedYield: boolean;
-  /** Whether this position is zap-eligible (zap-eligible Unified Yield pool) */
-  isZapEligible: boolean;
-  /** Current deposit mode */
-  depositMode: UnifiedYieldDepositMode;
-  /** Token selected for zap deposit */
-  zapInputToken: 'token0' | 'token1' | null;
-  /** Set deposit mode (balanced vs zap) */
-  setDepositMode: (mode: UnifiedYieldDepositMode) => void;
-  /** Set zap input token */
-  setZapInputToken: (token: 'token0' | 'token1' | null) => void;
-  /** Reset form state (amounts, deposit mode) back to initial values */
   resetForm: () => void;
 }
 
@@ -65,20 +48,12 @@ export interface IncreaseLiquidityContextProviderProps extends PropsWithChildren
 export function IncreaseLiquidityContextProvider({ children, position, initialAmount0 = "", initialAmount1 = "" }: IncreaseLiquidityContextProviderProps) {
   const [step, setStep] = useState(IncreaseLiquidityStep.Input);
 
-  // Detect if this is a Unified Yield position and if zap is eligible
   const isUnifiedYield = position.isUnifiedYield ?? false;
-  const isZapEligible = isUnifiedYield && isZapEligiblePool(position.poolId);
-
-  // Default to balanced (dual token) mode; user can switch to zap (single token) via toggle
-  const initialDepositMode: UnifiedYieldDepositMode = 'balanced';
-  const initialZapInputToken: 'token0' | 'token1' | null = null;
 
   const [increaseLiquidityState, setIncreaseLiquidityState] = useState<IncreaseLiquidityState>({
     position,
     exactField: "TOKEN0",
     exactAmount: initialAmount0,
-    depositMode: initialDepositMode,
-    zapInputToken: initialZapInputToken,
   });
   const [derivedInfo, setDerivedInfo] = useState<IncreaseLiquidityDerivedInfo>({ formattedAmounts: { TOKEN0: initialAmount0, TOKEN1: initialAmount1 }, currencyAmounts: {}, currencyAmountsUSDValue: {}, currencyBalances: {} });
 
@@ -94,51 +69,21 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
 
   const setExactField = (field: PositionField) => setIncreaseLiquidityState((prev) => ({ ...prev, exactField: field }));
 
-  // Zap mode setters
-  const setDepositMode = useCallback((mode: UnifiedYieldDepositMode) => {
-    setIncreaseLiquidityState((prev) => ({
-      ...prev,
-      depositMode: mode,
-      // When switching to zap mode, default to token1 if not already set
-      zapInputToken: mode === 'zap' && !prev.zapInputToken ? 'token1' : prev.zapInputToken,
-    }));
-    // Clear amounts when switching modes
-    setDerivedInfo((prev) => ({
-      ...prev,
-      formattedAmounts: { TOKEN0: '', TOKEN1: '' },
-    }));
-  }, []);
-
-  const setZapInputToken = useCallback((token: 'token0' | 'token1' | null) => {
-    setIncreaseLiquidityState((prev) => ({
-      ...prev,
-      zapInputToken: token,
-    }));
-    // Clear amounts when switching tokens
-    setDerivedInfo((prev) => ({
-      ...prev,
-      formattedAmounts: { TOKEN0: '', TOKEN1: '' },
-    }));
-  }, []);
-
   const resetForm = useCallback(() => {
     setStep(IncreaseLiquidityStep.Input);
     setIncreaseLiquidityState({
       position,
       exactField: "TOKEN0",
       exactAmount: initialAmount0,
-      depositMode: initialDepositMode,
-      zapInputToken: initialZapInputToken,
     });
-    // Preserve currencyBalances — clearing them causes false "Insufficient Balance"
-    // because the balance-populating effect in TxContext won't re-run (deps unchanged)
+    // Preserve currencyBalances — clearing them causes false "Insufficient Balance".
     setDerivedInfo((prev) => ({
       formattedAmounts: { TOKEN0: initialAmount0, TOKEN1: initialAmount1 },
       currencyAmounts: {},
       currencyAmountsUSDValue: {},
       currencyBalances: prev.currencyBalances,
     }));
-  }, [position, initialAmount0, initialAmount1, initialDepositMode, initialZapInputToken]);
+  }, [position, initialAmount0, initialAmount1]);
 
   const hasValidAmounts = useMemo(() => {
     const amt0 = parseFloat(derivedInfo.formattedAmounts?.TOKEN0 || "0");
@@ -172,14 +117,8 @@ export function IncreaseLiquidityContextProvider({ children, position, initialAm
     isOverBalance0,
     isOverBalance1,
     isUnifiedYield,
-    // Zap mode
-    isZapEligible,
-    depositMode: increaseLiquidityState.depositMode,
-    zapInputToken: increaseLiquidityState.zapInputToken,
-    setDepositMode,
-    setZapInputToken,
     resetForm,
-  }), [step, increaseLiquidityState, derivedInfo, hasValidAmounts, isOverBalance0, isOverBalance1, isUnifiedYield, isZapEligible, setDepositMode, setZapInputToken, resetForm]);
+  }), [step, increaseLiquidityState, derivedInfo, hasValidAmounts, isOverBalance0, isOverBalance1, isUnifiedYield, resetForm]);
 
   return <IncreaseLiquidityContext.Provider value={value}>{children}</IncreaseLiquidityContext.Provider>;
 }

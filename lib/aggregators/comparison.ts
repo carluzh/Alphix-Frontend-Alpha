@@ -92,24 +92,6 @@ export function compareQuotes(
 }
 
 /**
- * Calculate the percentage difference between two quotes
- * Returns positive if kyber is better, negative if alphix is better
- */
-function calculateQuoteDifference(
-  alphixOutput: bigint,
-  kyberOutput: bigint
-): number {
-  if (alphixOutput === 0n && kyberOutput === 0n) return 0;
-  if (alphixOutput === 0n) return 100;
-
-  // (kyber - alphix) / alphix * 100
-  const diff = Number(kyberOutput - alphixOutput);
-  const base = Number(alphixOutput);
-
-  return (diff / base) * 100;
-}
-
-/**
  * Simple wrapper for selecting the best quote
  *
  * We apply a fixed 100bps (1%) Alphix preference. This means Alphix pools are

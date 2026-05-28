@@ -131,7 +131,6 @@ export interface PositionDetailProps {
   tokenBSymbol?: string;
   isFullRange?: boolean;
   isInRange: boolean;
-  /** Pool tick has drifted outside the UY active range — derived pool price is degenerate. */
   poolOutsideRange: boolean;
   // APR data
   poolApr: number | null;
@@ -491,10 +490,7 @@ function PriceRangeSection({
 
   // Format current price using the same approach as Step 2 (Add Liquidity wizard)
   const formattedCurrentPrice = useMemo(() => {
-    // When the pool tick is outside the UY range the derived price is degenerate
-    // (e.g. $340T). Show a placeholder instead of a misleading number.
-    if (poolOutsideRange) return "-";
-    if (currentPriceNumeric === null) return "-";
+    if (poolOutsideRange || currentPriceNumeric === null) return "-";
     const displayPrice = priceInverted ? 1 / currentPriceNumeric : currentPriceNumeric;
     if (!isFinite(displayPrice) || displayPrice <= 0) return "-";
     // tokenASymbol is the denomination/quote token (e.g., "USDC" in "USDC per ETH")
@@ -765,9 +761,7 @@ function EarningSourcesSection({
       {yieldSources.map((source) => (
         <EarningOnCard key={source} source={source} apr={aprBySource?.[source]} />
       ))}
-      {/* "Earning Points / Active" suppressed while Season 0 is concluded —
-          no points are being distributed. Re-add <EarningPointsCard /> when
-          the next season launches. */}
+      {/* Re-add <EarningPointsCard /> on next season. */}
     </div>
   );
 }
@@ -1099,11 +1093,8 @@ export const PositionDetail = memo(function PositionDetail({
           networkMode={networkMode}
         />
 
-        {/* Price Deviation Warning — swapped for pool-out-of-range message when
-             the UY pool's tick has drifted off the active range, since the
-             deviation percentage would be astronomical and misleading. */}
         {poolOutsideRange ? (
-          <PoolOutOfRangeCallout variant="card" />
+          <PoolOutOfRangeCallout />
         ) : priceDeviation.severity !== 'none' && poolConfig && (
           <PriceDeviationCallout
             deviation={priceDeviation}
@@ -1239,9 +1230,8 @@ export const PositionDetail = memo(function PositionDetail({
             networkMode={networkMode}
           />
 
-          {/* Price Deviation Warning — see mobile note above. */}
           {poolOutsideRange ? (
-            <PoolOutOfRangeCallout variant="card" />
+            <PoolOutOfRangeCallout />
           ) : priceDeviation.severity !== 'none' && poolConfig && (
             <PriceDeviationCallout
               deviation={priceDeviation}

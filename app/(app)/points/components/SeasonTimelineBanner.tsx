@@ -156,12 +156,7 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
     // Time remaining calculations
     const seasonRemMs = Math.max(0, seasonEnd.getTime() - now.getTime());
 
-    // Season has concluded once we've reached or passed the end date
-    // (and not still before it). Uses >= to close the 1-second edge at
-    // the exact end timestamp.
     const concluded = !beforeSeason && now >= seasonEnd;
-    // Active is strictly the open interval [start, end) so that active
-    // and concluded are mutually exclusive at the boundary instant.
     const isActive = now >= effectiveSeasonStart && !concluded;
 
     return {

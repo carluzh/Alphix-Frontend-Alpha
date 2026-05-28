@@ -23,6 +23,24 @@ const WETH_ADDRESSES: Record<string, { address: string; chainId: number }> = {
   arbitrum: { address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', chainId: 42161 },
 };
 
+// Canonical-by-symbol overrides per chain. When the CoinGecko list contains
+// multiple tokens with the same symbol, pick this one.
+const CANONICAL_TOKEN_ADDRESSES: Record<string, Record<string, string>> = {
+  base: {
+    USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+  },
+  arbitrum: {},
+};
+
+// Fallback metadata used only when the CoinGecko payload doesn't include the
+// canonical address, so we can still add a registry entry for it.
+const CANONICAL_TOKEN_FALLBACK: Record<string, Record<string, { name: string; decimals: number; logoURI: string }>> = {
+  base: {
+    USDT: { name: 'Tether USD', decimals: 6, logoURI: '/tokens/USDT.png' },
+  },
+  arbitrum: {},
+};
+
 function getTokenMapForChain(mode?: NetworkMode): Map<string, TokenInfo> {
   const networkMode = mode ?? getStoredNetworkMode();
   let map = chainTokenMaps.get(networkMode);
@@ -103,9 +121,17 @@ export async function ensureTokenListLoaded(mode?: NetworkMode): Promise<void> {
       const data = await res.json() as { tokens?: Array<{ address: string; symbol: string; name: string; decimals: number; logoURI?: string }> };
       if (!Array.isArray(data.tokens)) return;
 
+      const canonicalForChain = CANONICAL_TOKEN_ADDRESSES[networkMode] || {};
+      const canonicalAddressBySymbol = new Map<string, string>(
+        Object.entries(canonicalForChain).map(([sym, addr]) => [sym, normalizeAddress(addr)])
+      );
+
       let added = 0;
       for (const t of data.tokens) {
         const addr = normalizeAddress(t.address);
+        const canonicalAddr = canonicalAddressBySymbol.get(t.symbol);
+        // Symbol has a canonical override and this isn't it — skip the impostor.
+        if (canonicalAddr && canonicalAddr !== addr) continue;
         if (!map.has(addr)) {
           map.set(addr, {
             chainId,
@@ -119,6 +145,22 @@ export async function ensureTokenListLoaded(mode?: NetworkMode): Promise<void> {
         }
       }
 
+      // CoinGecko didn't include the canonical address — synthesize an entry.
+      const fallbacks = CANONICAL_TOKEN_FALLBACK[networkMode] || {};
+      for (const [sym, canonicalAddr] of canonicalAddressBySymbol) {
+        if (map.has(canonicalAddr)) continue;
+        const fb = fallbacks[sym];
+        if (!fb) continue;
+        map.set(canonicalAddr, {
+          chainId,
+          address: canonicalForChain[sym],
+          name: fb.name,
+          symbol: sym,
+          decimals: fb.decimals,
+          logoURI: fb.logoURI,
+        });
+      }
+
       tokenListFetchedAt[networkMode] = Date.now();
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
@@ -130,20 +172,6 @@ export async function ensureTokenListLoaded(mode?: NetworkMode): Promise<void> {
   })();
 
   return tokenListPromise;
-}
-
-/**
- * Initialize the token registry (no-op, kept for API compatibility)
- */
-function initTokenRegistry(): void {
-  // No-op
-}
-
-/**
- * Get full token info by address
- */
-async function getTokenInfo(address: string, mode?: NetworkMode): Promise<TokenInfo | null> {
-  return getTokenInfoSync(address, mode);
 }
 
 /**
@@ -169,44 +197,6 @@ export function getTokenSymbol(address: string, mode?: NetworkMode): string {
 }
 
 /**
- * Get token logo URL by address
- */
-function getTokenLogoURI(address: string, mode?: NetworkMode): string | undefined {
-  const info = getTokenInfoSync(address, mode);
-  return info?.logoURI;
-}
-
-/**
- * Get token decimals by address
- * Returns null for unknown tokens (caller should default to 18)
- */
-function getTokenDecimals(address: string, mode?: NetworkMode): number | null {
-  const info = getTokenInfoSync(address, mode);
-  return info?.decimals ?? null;
-}
-
-/**
- * Convert route addresses to symbols for display
- */
-function routeAddressesToSymbols(addresses: string[], mode?: NetworkMode): string[] {
-  return addresses.map(addr => getTokenSymbol(addr, mode));
-}
-
-/**
- * Check if we have metadata for a token
- */
-function hasTokenInfo(address: string, mode?: NetworkMode): boolean {
-  return getTokenInfoSync(address, mode) !== null;
-}
-
-/**
- * Get the token count
- */
-function getTokenCacheSize(mode?: NetworkMode): number {
-  return getTokenMapForChain(mode).size;
-}
-
-/**
  * Popular token addresses per chain — derived from pool config + WETH.
  * Pool tokens come from config, WETH is chain-specific and not a pool token.
  */
@@ -223,9 +213,6 @@ const POPULAR_ADDRESSES_BY_CHAIN: Record<string, string[]> = {
   base: buildPopularAddresses('base'),
   arbitrum: buildPopularAddresses('arbitrum'),
 };
-
-// Legacy export
-const POPULAR_TOKEN_ADDRESSES = POPULAR_ADDRESSES_BY_CHAIN.base;
 
 export function getPopularTokens(mode?: NetworkMode): TokenInfo[] {
   const networkMode = mode ?? getStoredNetworkMode();
@@ -289,11 +276,4 @@ export function getAllTokens(mode?: NetworkMode): TokenInfo[] {
   }
 
   return tokens;
-}
-
-/**
- * Get token count
- */
-async function getTokenCount(mode?: NetworkMode): Promise<number> {
-  return getTokenMapForChain(mode).size;
 }

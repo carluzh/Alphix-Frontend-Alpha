@@ -32,11 +32,6 @@ export enum TransactionStepType {
   UnifiedYieldApprovalTransaction = 'UnifiedYieldApproval',
   UnifiedYieldDepositTransaction = 'UnifiedYieldDeposit',
   UnifiedYieldWithdrawTransaction = 'UnifiedYieldWithdraw',
-  // Zap step types (single-token deposit with swap)
-  ZapSwapApproval = 'ZapSwapApproval',
-  ZapPoolSwap = 'ZapPoolSwap',
-  // Zap dynamic deposit - queries actual balances at execution time
-  ZapDynamicDeposit = 'ZapDynamicDeposit',
 }
 
 // =============================================================================
@@ -332,99 +327,6 @@ export interface UnifiedYieldWithdrawStep extends OnChainTransactionFields {
 }
 
 // =============================================================================
-// ZAP STEP INTERFACES - Single-token deposit with automatic swap
-// =============================================================================
-
-/** Zap token types */
-export type ZapTokenSymbol = 'USDC' | 'ETH' | 'USDT';
-
-/**
- * Zap Swap Approval Step - Approve input token for swap (to Permit2 or aggregator router)
- */
-export interface ZapSwapApprovalStep extends OnChainTransactionFields {
-  type: TransactionStepType.ZapSwapApproval;
-  /** Token being approved */
-  tokenAddress: Address;
-  /** Token symbol */
-  tokenSymbol: ZapTokenSymbol;
-  /** Spender address (Permit2 or aggregator router) */
-  spender: Address;
-  /** Amount to approve */
-  amount: bigint;
-}
-
-/**
- * Zap Pool Swap Step - Execute swap via Universal Router
- */
-export interface ZapPoolSwapStep extends OnChainTransactionFields {
-  type: TransactionStepType.ZapPoolSwap;
-  /** Input token */
-  inputToken: ZapTokenSymbol;
-  inputTokenAddress: Address;
-  /** Output token */
-  outputToken: ZapTokenSymbol;
-  outputTokenAddress: Address;
-  /** Input amount (in wei) */
-  inputAmount: bigint;
-  /** Minimum output after slippage (in wei) */
-  minOutputAmount: bigint;
-  /** Transaction deadline */
-  deadline: bigint;
-  /** Swap source - pool (Universal Router) or kyberswap (aggregator) */
-  swapSource?: 'pool' | 'kyberswap';
-  /** Target chain ID for the swap (pool's chain, not wallet's chain) */
-  targetChainId?: number;
-}
-
-/**
- * Zap Dynamic Deposit Step - Rebuilds deposit tx at execution time
- *
- * Unlike the pre-built UnifiedYieldDepositStep, this step queries
- * actual token balances after the swap and calculates the correct
- * shares to mint. This prevents "insufficient balance" errors when
- * swap output differs slightly from the preview estimate.
- */
-export interface ZapDynamicDepositStep {
-  type: TransactionStepType.ZapDynamicDeposit;
-  /** Hook contract address */
-  hookAddress: Address;
-  /** Pool identifier */
-  poolId: string;
-  /** Token0 address */
-  token0Address: Address;
-  /** Token1 address */
-  token1Address: Address;
-  /** Token symbols for display */
-  token0Symbol: string;
-  token1Symbol: string;
-  /** Token decimals for balance queries */
-  token0Decimals: number;
-  token1Decimals: number;
-  /** Fallback shares if balance query fails (from preview) */
-  fallbackSharesEstimate: bigint;
-  /** The input token used for zap (to determine which balance to use for preview) */
-  inputToken: ZapTokenSymbol;
-  /** Whether token0 is native ETH (use getBalance instead of balanceOf, send as msg.value) */
-  isToken0Native?: boolean;
-  /** Token0 price in USD (for non-stablecoin dust calculation) */
-  token0Price?: number;
-  /** Token1 price in USD (for non-stablecoin dust calculation) */
-  token1Price?: number;
-  /** Initial token0 balance before Zap started (for dust calculation) */
-  initialBalance0?: bigint;
-  /** Initial token1 balance before Zap started (for dust calculation) */
-  initialBalance1?: bigint;
-  /** Total input amount in USD (for dust percentage calculation) */
-  inputAmountUSD?: number;
-  /** Total input amount in wei (for accurate dust calculation) */
-  inputAmount?: bigint;
-  /** Expected token0 amount to deposit (caps actual deposit to avoid over-spending allowance) */
-  expectedDepositAmount0: bigint;
-  /** Expected token1 amount to deposit (caps actual deposit to avoid over-spending allowance) */
-  expectedDepositAmount1: bigint;
-}
-
-// =============================================================================
 // COMPOSITE STEP TYPES - Matches Uniswap's union types
 // =============================================================================
 
@@ -449,24 +351,12 @@ export type UnifiedYieldDepositSteps =
   | UnifiedYieldApprovalStep
   | UnifiedYieldDepositStep;
 
-// Zap step unions
-export type ZapSwapSteps =
-  | ZapSwapApprovalStep
-  | ZapPoolSwapStep;
-
-export type ZapDepositSteps =
-  | ZapSwapSteps
-  | UnifiedYieldApprovalStep
-  | UnifiedYieldDepositStep
-  | ZapDynamicDepositStep;
-
 export type TransactionStep =
   | IncreaseLiquiditySteps
   | DecreaseLiquiditySteps
   | CollectFeesSteps
   | UnifiedYieldDepositSteps
-  | UnifiedYieldWithdrawStep
-  | ZapDepositSteps;
+  | UnifiedYieldWithdrawStep;
 
 // =============================================================================
 // LIQUIDITY ACTION - Matches Uniswap's LiquidityAction

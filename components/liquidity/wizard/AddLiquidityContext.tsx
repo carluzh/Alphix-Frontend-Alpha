@@ -19,14 +19,12 @@ import {
   WizardState,
   LPMode,
   RangePreset,
-  UnifiedYieldDepositMode,
   DEFAULT_WIZARD_STATE,
 } from './types';
 import { usePoolState } from '@/lib/apollo/hooks/usePoolState';
 import { getPoolBySlug, getPoolBySlugMultiChain, type NetworkMode } from '@/lib/pools-config';
 import { useDerivedPositionInfo } from '@/lib/liquidity/hooks/position/useDerivedPositionInfo';
 import type { CreatePositionInfo } from '@/lib/liquidity/types';
-import { isZapEligiblePool } from '@/lib/liquidity/zap';
 
 // Navigation source for dynamic breadcrumbs
 export type NavigationSource = 'pools' | 'pool' | 'overview';
@@ -90,10 +88,6 @@ interface AddLiquidityContextType {
   setRangePreset: (preset: RangePreset) => void;
   setAmounts: (amount0: string, amount1: string) => void;
   setInputSide: (side: 'token0' | 'token1') => void;
-
-  // Unified Yield Zap mode setters
-  setDepositMode: (mode: UnifiedYieldDepositMode) => void;
-  setZapInputToken: (token: 'token0' | 'token1' | null) => void;
 }
 
 const AddLiquidityContext = createContext<AddLiquidityContextType | undefined>(undefined);
@@ -141,9 +135,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     const poolConfig = initialPoolId ? (getPoolBySlugMultiChain(initialPoolId) ?? getPoolBySlug(initialPoolId)) : null;
     const defaultMode: LPMode = poolConfig?.yieldSources?.length ? 'rehypo' : 'concentrated';
 
-    // Default to balanced (dual token) mode; user can switch to zap (single token) via toggle
-    const depositModeForPool = { depositMode: 'balanced' as const, zapInputToken: null };
-
     return {
       ...DEFAULT_WIZARD_STATE,
       currentStep: startStep,
@@ -152,7 +143,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
       token1Symbol: urlT1 || entryConfig?.token1Symbol || null,
       mode: (urlMode === 'rehypo' && !poolConfig?.yieldSources?.length) ? 'concentrated'
         : (urlMode || entryConfig?.mode || defaultMode),
-      ...depositModeForPool,
     };
   }, [searchParams, entryConfig]);
 
@@ -284,16 +274,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
       ...prev,
       poolId: newPoolId,
       mode: defaultMode,
-      // Set deposit mode based on zap eligibility:
-      // - Zap-eligible pools: default to zap mode (Single Token)
-      // - Other pools: use balanced mode (Dual Deposit)
-      ...(newPoolId ? (isZapEligiblePool(newPoolId) ? {
-        depositMode: 'zap' as const,
-        zapInputToken: 'token1' as const,
-      } : {
-        depositMode: 'balanced' as const,
-        zapInputToken: null,
-      }) : {}),
     }));
   }, []);
 
@@ -334,30 +314,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
 
   const setInputSide = useCallback((side: 'token0' | 'token1') => {
     setState(prev => ({ ...prev, inputSide: side }));
-  }, []);
-
-  // Unified Yield Zap mode setters
-  // Always clear amounts when switching modes — the input semantics differ
-  // (balanced uses both, zap uses one), so stale entries are misleading.
-  const setDepositModeFn = useCallback((mode: UnifiedYieldDepositMode) => {
-    setState(prev => ({
-      ...prev,
-      depositMode: mode,
-      // When switching to zap mode, default input token to token1 if not set
-      zapInputToken: mode === 'zap' && !prev.zapInputToken ? 'token1' : prev.zapInputToken,
-      amount0: '',
-      amount1: '',
-    }));
-  }, []);
-
-  const setZapInputToken = useCallback((token: 'token0' | 'token1' | null) => {
-    setState(prev => ({
-      ...prev,
-      zapInputToken: token,
-      // Clear the opposite token's amount when switching zap input
-      amount0: token === 'token1' ? '' : prev.amount0,
-      amount1: token === 'token0' ? '' : prev.amount1,
-    }));
   }, []);
 
   // URL sync — runs on step changes only. Wizard steps render as inline forms
@@ -423,10 +379,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     setRangePreset,
     setAmounts,
     setInputSide,
-
-    // Unified Yield Zap mode setters
-    setDepositMode: setDepositModeFn,
-    setZapInputToken,
   };
 
   return (
