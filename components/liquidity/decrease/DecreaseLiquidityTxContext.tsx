@@ -9,7 +9,6 @@ import { useNetwork } from "@/lib/network-context";
 import { chainIdForMode } from "@/lib/network-mode";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
-import { getStoredUserSettings } from "@/hooks/useUserSettings";
 
 import {
   buildLiquidityTxContext,
@@ -214,10 +213,6 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       if (saltHex && saltHex !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
         try { tokenId = BigInt(saltHex).toString(); } catch {}
       }
-      const userSettings = getStoredUserSettings();
-      const slippageBps = Math.round(userSettings.slippage * 100);
-      const deadlineMinutes = userSettings.deadline;
-
       const response = await fetch("/api/liquidity/prepare-decrease-tx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -226,8 +221,6 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           tokenId,
           decreasePercentage,
           chainId,
-          slippageBps,
-          deadlineMinutes,
         }),
       });
 

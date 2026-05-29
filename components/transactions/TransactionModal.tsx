@@ -11,7 +11,7 @@
  * - Flow definition — step generation + executors (via useStepExecutor)
  * - Config — title, confirm button text, success behavior
  *
- * @see TRANSACTION_STEPPER_PLAN.md — Layer 4
+ * @see lib/transactions/EXECUTION_REFACTOR_BRIEF.md — Layer 4
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

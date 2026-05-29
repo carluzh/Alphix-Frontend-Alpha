@@ -115,7 +115,7 @@ export default async function handler(
       amount1: inputAmount1,
       chainId,
       inputSide,
-      slippageBps = 50,
+      slippageBps,
       deadlineMinutes = 30,
       permitSignature,
       permitBatchData,
@@ -184,7 +184,8 @@ export default async function handler(
         tokenAddress: independentIsToken0 ? positionDetails.poolKey.currency0 : positionDetails.poolKey.currency1,
         amount: independentAmount.toString(),
       },
-      slippageTolerance: slippageBps / 100,
+      // Omit slippageTolerance unless the caller pins one — Uniswap then applies its own.
+      ...(typeof slippageBps === 'number' ? { slippageTolerance: slippageBps / 100 } : {}),
       deadline: deadlineSeconds,
       ...(hasSignedPermit ? { v4BatchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
     };

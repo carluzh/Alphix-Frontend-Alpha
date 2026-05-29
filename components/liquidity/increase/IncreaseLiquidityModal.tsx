@@ -12,6 +12,9 @@ import { chainIdForMode } from "@/lib/network-mode";
 import { clearCachedPermit } from "@/lib/permit-types";
 import { useChainMismatch } from "@/hooks/useChainMismatch";
 import { getPoolBySlug } from "@/lib/pools-config";
+import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
+import { usePriceDeviation, type DeviationThresholds } from "@/hooks/usePriceDeviation";
+import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
 import { formatCalculatedAmount, getTokenIcon } from "../liquidity-form-utils";
 import { DepositInputForm, type PositionField } from "../shared/DepositInputForm";
 import { PositionAmountsDisplay } from "../shared/PositionAmountsDisplay";
@@ -35,6 +38,8 @@ interface IncreaseLiquidityModalProps {
   onClose: () => void;
   onSuccess?: () => void;
 }
+
+const SLIPPAGE_DEVIATION_THRESHOLDS: DeviationThresholds = { LOW: 1, MEDIUM: 5, HIGH: 5 };
 
 function mapStepsToUI(
   steps: unknown[],
@@ -128,6 +133,20 @@ function IncreaseLiquidityInner({
   const chainId = networkMode ? chainIdForMode(networkMode) : undefined;
   const { formattedAmounts } = derivedIncreaseLiquidityInfo;
   const canBatchCalls = useCanBatchCalls(chainId);
+
+  const poolConfig = useMemo(
+    () => (position.poolId ? getPoolBySlug(position.poolId, networkMode) : null),
+    [position.poolId, networkMode],
+  );
+  const { data: poolStateData } = usePoolState(poolConfig?.poolId ?? '', networkMode);
+  const priceDeviation = usePriceDeviation(
+    {
+      token0Symbol: position.token0.symbol,
+      token1Symbol: position.token1.symbol,
+      poolPrice: poolStateData?.currentPrice ?? null,
+    },
+    SLIPPAGE_DEVIATION_THRESHOLDS,
+  );
 
   const isOutOfRange = !position.isInRange;
   let deposit0Disabled = false;
@@ -263,6 +282,13 @@ function IncreaseLiquidityInner({
             <TokenImage src={getTokenIcon(position.token1.symbol, networkMode)} alt="" size={36} />
           </div>
         </div>
+
+        <PriceDeviationCallout
+          deviation={priceDeviation}
+          token0Symbol={position.token0.symbol}
+          token1Symbol={position.token1.symbol}
+          variant="card"
+        />
 
         <DepositInputForm
           token0Symbol={position.token0.symbol}

@@ -123,7 +123,7 @@ export default async function handler(
       userTickLower,
       userTickUpper,
       chainId,
-      slippageBps = 50,
+      slippageBps,
       deadlineMinutes = 30,
       permitSignature,
       permitBatchData,
@@ -199,7 +199,8 @@ export default async function handler(
       },
       independentToken: { tokenAddress: inputTokenAddress, amount: parsedInputAmount.toString() },
       tickBounds: { tickLower, tickUpper },
-      slippageTolerance: slippageBps / 100,
+      // Omit slippageTolerance unless the caller pins one — Uniswap then applies its own.
+      ...(typeof slippageBps === 'number' ? { slippageTolerance: slippageBps / 100 } : {}),
       deadline: deadlineSeconds,
       ...(hasSignedPermit ? { batchPermitData: denormalizeV4BatchPermit(permitBatchData!), signature: permitSignature } : {}),
     };

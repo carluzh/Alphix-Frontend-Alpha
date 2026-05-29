@@ -53,6 +53,13 @@ const BASE_CSP: Record<string, string[]> = {
     "wss://api.alphix.fi",
     "https://api.goldsky.com",
     "https://gateway.thegraph.com",
+    // KyberSwap (aggregator API for quotes + build, token/dex settings, RPC rotation)
+    "https://*.kyberswap.com",
+    "https://*.kyberengineering.io",
+    // Public RPC fallbacks reached by @kyberswap/widgets and wagmi default transports
+    "https://*.blastapi.io",
+    "https://*.tenderly.co",
+    "https://*.nodies.app",
     // Data providers
     "https://api.coingecko.com",
     "https://pro-api.coingecko.com",

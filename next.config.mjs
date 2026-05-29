@@ -38,6 +38,22 @@ const nextConfig = {
     config.resolve.alias['@react-native-async-storage/async-storage'] = false;
     config.ignoreWarnings = [{ module: /@whatwg-node\/fetch/ }];
 
+    // SVGR: handle `*.svg` imports as React components for the vendored Kyber widget.
+    // Supports the `?url` query suffix the widget uses for URL-as-string imports.
+    config.module.rules.push(
+      {
+        test: /\.svg$/i,
+        type: 'asset/resource',
+        resourceQuery: /url/, // *.svg?url → URL string
+      },
+      {
+        test: /\.svg$/i,
+        issuer: /\.[jt]sx?$/,
+        resourceQuery: { not: [/url/] }, // default → React component
+        use: ['@svgr/webpack'],
+      },
+    );
+
     // Fix WalletConnect ESM/CommonJS interop issues in serverless functions
     // These packages use CommonJS but get imported as ESM, causing named export errors
     if (isServer) {

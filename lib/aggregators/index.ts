@@ -27,9 +27,6 @@ export {
   getKyberswapRouterAddress,
 } from './kyberswap';
 
-// Quote comparison utility
-export { compareQuotes, selectBestQuote } from './comparison';
-
 // Token registry
 export {
   type TokenInfo,

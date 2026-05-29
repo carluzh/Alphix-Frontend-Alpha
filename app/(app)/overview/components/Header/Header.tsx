@@ -4,7 +4,6 @@ import { memo } from "react";
 import { useAccount } from "wagmi";
 import { cn } from "@/lib/utils";
 import { AddressDisplay } from "./AddressDisplay";
-import { SettingsPopover } from "./SettingsPopover";
 import { DisconnectButton } from "./DisconnectButton";
 import { useShouldHeaderBeCompact } from "../../hooks/useShouldHeaderBeCompact";
 
@@ -49,9 +48,8 @@ export const OverviewHeader = memo(function OverviewHeader({
       {/* Left: Address Display */}
       <AddressDisplay isCompact={isCompact} />
 
-      {/* Right: Settings + Disconnect */}
+      {/* Right: Disconnect */}
       <div className="flex flex-row items-center gap-1">
-        <SettingsPopover size={iconSize} />
         <DisconnectButton size={iconSize} />
       </div>
     </div>

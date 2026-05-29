@@ -71,9 +71,8 @@
     --sidebar-ring: #f45502;              /* = brand-primary */
     --sidebar-logo: #ffffff;
     --sidebar-connect-button-bg: #1f1f1f;/* = button-secondary-bg */
-    /* Swap interface dark theme - direct references */
+    /* Toast/notification surface (consumed by components/ui/sonner.tsx) */
     --swap-background: #131313;           /* = container-bg */
-    --swap-border: #323232;               /* = border-primary */
     /* Legacy variables for compatibility */
     --token-container-background: #131313;/* = container-bg */
     --token-selector-background: #1b1b1b;/* = selector-bg */
@@ -87,6 +86,15 @@
   html {
     overscroll-behavior: none;
     overflow-y: scroll;
+    scrollbar-gutter: stable;
+  }
+  /* Radix Dialog uses react-remove-scroll, which adds padding-right to <body>
+     to compensate for a "removed" scrollbar. Combined with our always-visible
+     html scrollbar + scrollbar-gutter, that extra padding causes a visible
+     content shift each time a dialog opens/closes. Neutralize it. */
+  body[data-scroll-locked] {
+    padding-right: 0 !important;
+    margin-right: 0 !important;
   }
   .no-scrollbar {
     scrollbar-width: none; /* Firefox */

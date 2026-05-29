@@ -12,6 +12,9 @@ import { PositionAmountsDisplay } from "../shared/PositionAmountsDisplay";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
 import { getPoolBySlug, getTokenDefinitions } from "@/lib/pools-config";
+import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
+import { usePriceDeviation, type DeviationThresholds } from "@/hooks/usePriceDeviation";
+import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
 
 import { TransactionModal } from "@/components/transactions/TransactionModal";
 import { DecreaseLiquidityContextProvider, useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
@@ -26,6 +29,8 @@ interface DecreaseLiquidityModalProps {
 }
 
 const PERCENTAGE_OPTIONS = [25, 50, 75, 100];
+
+const SLIPPAGE_DEVIATION_THRESHOLDS: DeviationThresholds = { LOW: 1, MEDIUM: 5, HIGH: 5 };
 
 function DecreaseLiquidityInner({
   isOpen,
@@ -50,6 +55,20 @@ function DecreaseLiquidityInner({
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const token0Decimals = tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals ?? 18;
   const token1Decimals = tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals ?? 18;
+
+  const poolConfig = useMemo(
+    () => (position.poolId ? getPoolBySlug(position.poolId, networkMode) : null),
+    [position.poolId, networkMode],
+  );
+  const { data: poolStateData } = usePoolState(poolConfig?.poolId ?? '', networkMode);
+  const priceDeviation = usePriceDeviation(
+    {
+      token0Symbol: position.token0.symbol,
+      token1Symbol: position.token1.symbol,
+      poolPrice: poolStateData?.currentPrice ?? null,
+    },
+    SLIPPAGE_DEVIATION_THRESHOLDS,
+  );
 
   const [percent, setPercent] = useState<number>(0);
   const percentRef = useRef<number>(0);
@@ -176,6 +195,13 @@ function DecreaseLiquidityInner({
             <TokenImage src={getTokenIcon(position.token1.symbol, networkMode)} alt="" size={36} />
           </div>
         </div>
+
+        <PriceDeviationCallout
+          deviation={priceDeviation}
+          token0Symbol={position.token0.symbol}
+          token1Symbol={position.token1.symbol}
+          variant="card"
+        />
 
         <div className="rounded-xl border border-sidebar-border/60 bg-surface overflow-hidden">
           <div className="px-4 pt-6 pb-4">

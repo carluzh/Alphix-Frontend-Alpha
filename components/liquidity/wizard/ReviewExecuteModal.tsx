@@ -19,7 +19,6 @@ const PositionRangeChart = dynamic(() => import('@/components/liquidity/Position
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
 import { chainIdForMode } from '@/lib/network-mode';
 import { useChainMismatch } from '@/hooks/useChainMismatch';
-import { getStoredUserSettings } from '@/hooks/useUserSettings';
 
 import {
   buildLiquidityTxContext,
@@ -218,10 +217,6 @@ export function ReviewExecuteModal() {
     if (state.inputSide === 'token0') { inputAmount = state.amount0 || '0'; inputTokenSymbol = token0Symbol; }
     else if (state.inputSide === 'token1') { inputAmount = state.amount1 || '0'; inputTokenSymbol = token1Symbol; }
 
-    const userSettings = getStoredUserSettings();
-    const slippageBps = Math.round(userSettings.slippage * 100);
-    const deadlineMinutes = userSettings.deadline;
-
     const response = await fetch('/api/liquidity/prepare-mint-tx', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -229,7 +224,7 @@ export function ReviewExecuteModal() {
         userAddress: address, poolId: state.poolId, token0Symbol, token1Symbol,
         inputAmount, inputTokenSymbol,
         userTickLower: tl, userTickUpper: tu,
-        chainId, slippageBps, deadlineMinutes,
+        chainId,
       }),
     });
 
@@ -271,7 +266,7 @@ export function ReviewExecuteModal() {
         userAddress: address, poolId: state.poolId!, token0Symbol, token1Symbol,
         inputAmount, inputTokenSymbol,
         userTickLower: tl, userTickUpper: tu,
-        chainId, slippageBps, deadlineMinutes,
+        chainId,
         permitBatchData: apiResponse.permitBatchData,
       },
     });

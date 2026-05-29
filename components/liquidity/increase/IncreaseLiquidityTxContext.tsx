@@ -12,7 +12,6 @@ import { useDerivedIncreaseInfo } from "@/lib/liquidity/hooks";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { useIncreaseLiquidityContext } from "./IncreaseLiquidityContext";
-import { getStoredUserSettings } from "@/hooks/useUserSettings";
 
 import {
   buildLiquidityTxContext,
@@ -340,10 +339,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
 
     const tokenId = parseTokenId(position.positionId);
 
-    const userSettings = getStoredUserSettings();
-    const slippageBps = Math.round(userSettings.slippage * 100);
-    const deadlineMinutes = userSettings.deadline;
-
     // Tell Uniswap which field is independent — otherwise it defaults to token0 and
     // recomputes a token1 amount that breaks MAX deposits when the user is editing token1.
     const inputSide: 'token0' | 'token1' = exactField === 'TOKEN1' ? 'token1' : 'token0';
@@ -376,8 +371,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           amount1: amount1 || "0",
           inputSide,
           chainId,
-          slippageBps,
-          deadlineMinutes,
         }),
       });
 
@@ -398,8 +391,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         amount1: amount1 || "0",
         inputSide,
         chainId,
-        slippageBps,
-        deadlineMinutes,
       };
 
       syncAmountsFromApi(data.details);

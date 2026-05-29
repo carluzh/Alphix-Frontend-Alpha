@@ -21,8 +21,8 @@ import {
 import type { NetworkMode } from "@/lib/network-mode"
 import type { KyberswapRouteSummary } from "@/lib/aggregators/types"
 import type { AggregatorSource } from "@/lib/aggregators/types"
-import type { Token } from "./swap-interface"
-import type { RouteTokenMetadata } from "./useSwapQuote"
+import type { Token } from "./types"
+import type { RouteTokenMetadata } from "./swapRouteHelpers"
 
 interface RouteInfo {
   path: string[]
@@ -255,16 +255,8 @@ export function SwapRoutePreview({
         }),
       }))
     }
-    if (source === "alphix" && routeInfo) {
-      return [{
-        percentage: 100,
-        path: routeInfo.path,
-        // All Alphix pool hops show as "Custom Pool" with a single consistent color
-        exchanges: routeInfo.pools.map(() => "Custom Pool"),
-      }] as ParsedSplitRoute[]
-    }
     return [] as ParsedSplitRoute[]
-  }, [source, kyberswapRouteSummary, routeInfo, addressMap, fromToken.symbol, toToken.symbol])
+  }, [source, kyberswapRouteSummary, addressMap, fromToken.symbol, toToken.symbol])
 
   const exchangeColorMap = useMemo(() => buildExchangeColorMap(routes), [routes])
   const maxCols = useMemo(() => Math.max(...routes.map((r) => r.path.length), 0), [routes])
@@ -561,12 +553,6 @@ export function SwapRoutePreview({
               <span className="text-[11px] text-muted-foreground font-medium">via Kyberswap</span>
             </a>
           )}
-          {source === "alphix" && (
-            <div className="flex items-center gap-1.5">
-              <Image src="/logos/alphix-icon-white.svg" alt="Alphix" width={14} height={14} className="opacity-80" />
-              <span className="text-[11px] text-muted-foreground font-medium">via Alphix</span>
-            </div>
-          )}
         </div>
       )}
 
@@ -587,6 +573,8 @@ export function SwapRoutePreview({
                 <Image src="/logos/alphix-icon-white.svg" alt="Loading" width={24} height={24} className="opacity-60" />
               </div>
             </div>
+          ) : !layout ? (
+            <div style={{ minHeight: compact ? 80 : 120 }} />
           ) : layout && (
             <svg
               width={layout.svgW}

@@ -183,7 +183,7 @@ export interface WSPoolData {
   lendingYield24hUsd?: number;
   /** 24h total fees in USD (swap fees + lending yield) */
   totalFees24hUsd?: number;
-  /** LP fee in basis points */
+  /** Current LP fee in V4 units (hundredths of a basis point, 1e-6 fraction). bps = lpFee/100, pct = lpFee/10000 (e.g. 3000 = 0.30%) */
   lpFee: number;
   /** USD value of token0 reserves (CL + UY combined) */
   tvlToken0Usd?: number;

@@ -26,6 +26,7 @@ const DEVIATION_THRESHOLDS = {
   HIGH: 10,    // 10% - Show red warning + require acknowledgment
 } as const;
 
+export type DeviationThresholds = { LOW: number; MEDIUM: number; HIGH: number };
 export type DeviationSeverity = 'none' | 'low' | 'medium' | 'high';
 
 export interface PriceDeviationResult {
@@ -50,11 +51,14 @@ export interface PriceDeviationResult {
 /**
  * Determine severity level based on deviation percentage
  */
-function getSeverity(absoluteDeviation: number | null): DeviationSeverity {
+function getSeverity(
+  absoluteDeviation: number | null,
+  thresholds: DeviationThresholds,
+): DeviationSeverity {
   if (absoluteDeviation === null) return 'none';
-  if (absoluteDeviation >= DEVIATION_THRESHOLDS.HIGH) return 'high';
-  if (absoluteDeviation >= DEVIATION_THRESHOLDS.MEDIUM) return 'medium';
-  if (absoluteDeviation >= DEVIATION_THRESHOLDS.LOW) return 'low';
+  if (absoluteDeviation >= thresholds.HIGH) return 'high';
+  if (absoluteDeviation >= thresholds.MEDIUM) return 'medium';
+  if (absoluteDeviation >= thresholds.LOW) return 'low';
   return 'none';
 }
 
@@ -105,11 +109,10 @@ interface UsePriceDeviationParams {
  *   // Show warning
  * }
  */
-export function usePriceDeviation({
-  token0Symbol,
-  token1Symbol,
-  poolPrice,
-}: UsePriceDeviationParams): PriceDeviationResult {
+export function usePriceDeviation(
+  { token0Symbol, token1Symbol, poolPrice }: UsePriceDeviationParams,
+  thresholds: DeviationThresholds = DEVIATION_THRESHOLDS,
+): PriceDeviationResult {
   // Get CoinGecko prices for both tokens
   const tokenSymbols = useMemo(() => {
     const symbols: string[] = [];
@@ -171,7 +174,7 @@ export function usePriceDeviation({
     const deviation = ((poolPriceNum - marketPriceRatio) / marketPriceRatio) * 100;
     const absoluteDeviation = Math.abs(deviation);
     const direction: 'above' | 'below' = deviation > 0 ? 'above' : 'below';
-    const severity = getSeverity(absoluteDeviation);
+    const severity = getSeverity(absoluteDeviation, thresholds);
     const message = getDeviationMessage(absoluteDeviation, direction, severity);
 
     return {
@@ -184,7 +187,7 @@ export function usePriceDeviation({
       poolPrice: poolPriceNum,
       message,
     };
-  }, [token0Symbol, token1Symbol, poolPrice, prices, isLoading]);
+  }, [token0Symbol, token1Symbol, poolPrice, prices, isLoading, thresholds]);
 
   return result;
 }

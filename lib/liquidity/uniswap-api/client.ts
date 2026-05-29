@@ -168,7 +168,7 @@ export interface CreatePositionRequest {
    *  `priceBounds`/`tickPrice` with a 400 regardless of shape (verified
    *  empirically against /lp/create). */
   tickBounds: TickBounds;
-  /** Decimal percent (0.5 = 0.5%). API default is 0.5 if omitted. */
+  /** Decimal percent (0.5 = 0.5%). Optional — if omitted, Uniswap applies its own server-side slippage (value server-controlled/undocumented). */
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;
@@ -189,8 +189,10 @@ export interface CreatePositionResponse {
   token1: LPToken;
   tickLower: number;
   tickUpper: number;
-  minPrice: string;
-  maxPrice: string;
+  /** Optional — /lp/create omits these in practice (verified empirically). */
+  minPrice?: string;
+  maxPrice?: string;
+  /** Price representation of the requested tick range — NOT slippage-adjusted on /lp/create. */
   adjustedMinPrice?: string;
   adjustedMaxPrice?: string;
   create: LPTransactionRequest;
@@ -210,7 +212,7 @@ export interface IncreasePositionRequest {
   token1Address: string;
   nftTokenId: string;
   independentToken: LPToken;
-  /** Decimal percent (0.5 = 0.5%). API default is 0.5 if omitted. */
+  /** Decimal percent (0.5 = 0.5%). Optional — if omitted, Uniswap applies its own server-side slippage (value server-controlled/undocumented). */
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;
@@ -243,7 +245,7 @@ export interface DecreasePositionRequest {
   nftTokenId: string;
   /** 1-100. */
   liquidityPercentageToDecrease: number;
-  /** Decimal percent (0.5 = 0.5%). API default is 0.5 if omitted. */
+  /** Decimal percent (0.5 = 0.5%). Optional — if omitted, Uniswap applies its own server-side slippage (value server-controlled/undocumented). */
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;

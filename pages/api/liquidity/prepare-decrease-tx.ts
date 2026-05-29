@@ -63,7 +63,7 @@ export default async function handler(
       tokenId,
       decreasePercentage,
       chainId,
-      slippageBps = 50,
+      slippageBps,
       deadlineMinutes = 30,
     } = req.body;
 
@@ -99,7 +99,8 @@ export default async function handler(
       token1Address: positionDetails.poolKey.currency1,
       nftTokenId: nftTokenId.toString(),
       liquidityPercentageToDecrease: pct,
-      slippageTolerance: slippageBps / 100,
+      // Omit slippageTolerance unless the caller pins one — Uniswap then applies its own.
+      ...(typeof slippageBps === 'number' ? { slippageTolerance: slippageBps / 100 } : {}),
       deadline: deadlineSeconds,
       simulateTransaction: true,
     });
