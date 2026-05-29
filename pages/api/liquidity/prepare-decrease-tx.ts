@@ -6,7 +6,6 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as Sentry from '@sentry/nextjs';
 import { isAddress, getAddress } from 'viem';
 
 import { getAllPools } from '@/lib/pools-config';
@@ -15,6 +14,7 @@ import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
 import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
+import { reportError, addReportBreadcrumb } from '@/lib/observability';
 
 interface PrepareDecreaseTxRequest extends NextApiRequest {
   body: {
@@ -79,6 +79,9 @@ export default async function handler(
     const nftTokenId = BigInt(tokenId);
     const pct = Math.round(decreasePercentage);
 
+    // Breadcrumb before the on-chain position lookup; if it throws it bubbles to the
+    // outer catch where reportError captures it.
+    addReportBreadcrumb({ domain: 'liquidity', action: 'fetchPositionDetails', data: { tokenId, chainId } });
     const positionDetails = await getPositionDetails(nftTokenId, chainId);
     const poolConfig = findPoolByPoolKey(getAllPools(networkMode), positionDetails.poolKey);
     if (!poolConfig) {
@@ -125,21 +128,37 @@ export default async function handler(
   } catch (error: any) {
     if (error instanceof UniswapLPAPIRateLimitError) {
       console.warn('[prepare-decrease-tx] Rate limit exhausted after retries');
+      // Rate limits are expected — do NOT capture; leave a breadcrumb trail only.
+      addReportBreadcrumb({ domain: 'liquidity', action: 'decrease', level: 'warning', message: 'rate limited' });
       res.setHeader('Retry-After', '2');
       return res.status(429).json({ message: 'Busy — please retry in a moment.' });
     }
     if (error instanceof UniswapLPAPIError) {
       console.error('[prepare-decrease-tx] Uniswap LP API error:', error.status, error.message);
-      Sentry.captureException(error, {
-        tags: { route: 'prepare-decrease-tx', source: 'uniswap_lp_api', uniswap_status: String(error.status) },
-        extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId, decreasePercentage: req.body?.decreasePercentage },
+      reportError(error, {
+        domain: 'liquidity',
+        action: 'decrease',
+        component: 'prepare-decrease-tx',
+        chainId: req.body?.chainId,
+        networkMode,
+        tags: { uniswapStatus: error.status, uniswapErrorCode: error.code },
+        extras: {
+          userAddress: req.body?.userAddress,
+          tokenId: req.body?.tokenId,
+          decreasePercentage: req.body?.decreasePercentage,
+          uniswapDetails: error.details,
+        },
       });
       return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
     }
     console.error('[API prepare-decrease-tx] Error:', error);
-    Sentry.captureException(error, {
-      tags: { route: 'prepare-decrease-tx', source: 'internal' },
-      extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
+    reportError(error, {
+      domain: 'liquidity',
+      action: 'decrease',
+      component: 'prepare-decrease-tx',
+      chainId: req.body?.chainId,
+      networkMode,
+      extras: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId },
     });
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return res.status(500).json({ message: errorMessage, error: process.env.NODE_ENV === 'development' ? error : undefined });

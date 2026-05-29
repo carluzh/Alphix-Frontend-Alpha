@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useAccount } from "wagmi";
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability";
 import {
   fetchUserPoints,
   fetchUserHistory,
@@ -188,8 +188,10 @@ export function usePointsPageData(): UsePointsPageDataReturn {
           });
         }
       } else {
-        Sentry.captureException(globalStatsResult.reason, {
-          tags: { operation: "points_fetch_global_stats" },
+        reportError(globalStatsResult.reason, {
+          domain: "points",
+          action: "fetchGlobalStats",
+          component: "usePointsPageData",
         });
       }
       setLoading("globalStats", false);
@@ -198,8 +200,10 @@ export function usePointsPageData(): UsePointsPageDataReturn {
       if (leaderboardResult.status === "fulfilled") {
         setLeaderboardData(leaderboardResult.value as LeaderboardEntry[]);
       } else {
-        Sentry.captureException(leaderboardResult.reason, {
-          tags: { operation: "points_fetch_leaderboard" },
+        reportError(leaderboardResult.reason, {
+          domain: "points",
+          action: "fetchLeaderboard",
+          component: "usePointsPageData",
         });
       }
       setLoading("leaderboard", false);
@@ -222,9 +226,11 @@ export function usePointsPageData(): UsePointsPageDataReturn {
             });
           }
         } else {
-          Sentry.captureException(userPointsResult.reason, {
-            tags: { operation: "points_fetch_user_points" },
-            extra: { address: accountAddress },
+          reportError(userPointsResult.reason, {
+            domain: "points",
+            action: "fetchUserPoints",
+            component: "usePointsPageData",
+            extras: { address: accountAddress },
           });
         }
         setLoading("userPoints", false);
@@ -245,9 +251,11 @@ export function usePointsPageData(): UsePointsPageDataReturn {
             }))
           );
         } else {
-          Sentry.captureException(historyResult.reason, {
-            tags: { operation: "points_fetch_history" },
-            extra: { address: accountAddress },
+          reportError(historyResult.reason, {
+            domain: "points",
+            action: "fetchUserHistory",
+            component: "usePointsPageData",
+            extras: { address: accountAddress },
           });
         }
         setLoading("history", false);

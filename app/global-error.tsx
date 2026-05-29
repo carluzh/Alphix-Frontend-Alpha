@@ -1,7 +1,7 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
+import { reportError } from "@/lib/observability";
 
 export default function GlobalError({
   error,
@@ -11,8 +11,10 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    Sentry.captureException(error, {
-      tags: { type: 'react_render_error' }
+    reportError(error, {
+      domain: 'render',
+      action: 'reactRenderError',
+      extras: { digest: error.digest },
     });
   }, [error]);
 

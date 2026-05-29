@@ -29,7 +29,7 @@ import { useUnifiedYieldApprovals } from '@/lib/liquidity/unified-yield/useUnifi
 import { previewDeposit } from '@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx';
 import type { DepositPreviewResult, UnifiedYieldApprovalStatus } from '@/lib/liquidity/unified-yield/types';
 import { createNetworkClient } from '@/lib/viemClient';
-import * as Sentry from '@sentry/nextjs';
+import { reportError } from '@/lib/observability';
 
 export interface TokenApprovalState {
   needsApproval: boolean;
@@ -264,9 +264,14 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
         if (!cancelled) {
           console.warn('Unified Yield preview failed:', err);
           setDepositPreview(null);
-          Sentry.captureException(err, {
-            tags: { component: 'UnifiedYieldPreview', inputSide: activeInputSide || 'unknown' },
-            extra: {
+          reportError(err, {
+            domain: 'unified-yield',
+            action: 'preview',
+            component: 'CreatePositionTxContext',
+            networkMode: effectiveNetworkMode,
+            chainId,
+            tags: { inputSide: activeInputSide || 'unknown' },
+            extras: {
               hookAddress,
               inputAmount: inputWei.toString(),
               inputSide: activeInputSide,

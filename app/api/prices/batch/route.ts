@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { batchQuotePrices } from '@/lib/swap/quote-prices';
 import { modeForChainId, type NetworkMode, CHAIN_REGISTRY } from '@/lib/network-mode';
 import { checkRateLimit } from '@/lib/api/ratelimit';
+import { reportError } from '@/lib/observability';
 
 /**
  * POST /api/prices/batch
@@ -17,10 +18,14 @@ export async function POST(request: Request) {
   const rateLimited = await checkRateLimit(request);
   if (rateLimited) return rateLimited;
 
+  let chainId: number | undefined;
+  let symbolsCount: number | undefined;
+
   try {
     const body = await request.json();
     const symbols: string[] = body.symbols || [];
-    const chainId = parseInt(body.chainId || String(CHAIN_REGISTRY.base.chainId), 10);
+    chainId = parseInt(body.chainId || String(CHAIN_REGISTRY.base.chainId), 10);
+    symbolsCount = Array.isArray(symbols) ? symbols.length : 0;
 
     if (!Array.isArray(symbols) || symbols.length === 0) {
       return NextResponse.json({ error: 'symbols array required' }, { status: 400 });
@@ -36,6 +41,13 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     console.error('[/api/prices/batch] Error:', error);
+    reportError(error, {
+      domain: 'backend',
+      action: 'batchPrices',
+      component: 'api/prices/batch',
+      chainId,
+      extras: { symbolsCount },
+    });
     return NextResponse.json(
       { error: 'Failed to fetch prices' },
       { status: 500 }

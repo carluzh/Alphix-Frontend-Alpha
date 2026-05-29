@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeftIcon, SearchIcon } from 'lucide-react'
-import styled from 'styled-components'
 import { TokenInfo as TokenDetail, NATIVE_TOKEN, NATIVE_TOKEN_ADDRESS } from '../constants'
 import useTokenBalances from '../hooks/useTokenBalances'
 import { useTokens } from '../hooks/useTokens'
@@ -16,7 +15,7 @@ import { getToken as getPoolToken } from '@/lib/pools-config'
 // 0x000…0 pools-config address) so the balance lookup hits Kyber's native slot.
 const SUPPORTED_SYMBOLS_BY_CHAIN: Record<number, string[]> = {
   8453: ['ETH', 'USDC', 'cbBTC', 'ZFI'],
-  42161: ['USDC', 'USDT'],
+  42161: ['ETH', 'USDC', 'USDT'],
 }
 
 const CHAIN_SWITCHER_META: Record<number, { icon: string; label: string }> = {
@@ -24,17 +23,6 @@ const CHAIN_SWITCHER_META: Record<number, { icon: string; label: string }> = {
   42161: { icon: '/chains/arbitrum.svg', label: 'Arbitrum' },
 }
 const CHAIN_SWITCHER_ORDER: number[] = [8453, 42161]
-
-// Re-exported because `./DexesSetting` imports it.
-export const Input = styled.input`
-  font-size: 0.75rem;
-  padding: 0.75rem;
-  border-radius: ${({ theme }) => theme.borderRadius};
-  background: ${({ theme }) => theme.secondary};
-  outline: none;
-  border: none;
-  color: ${({ theme }) => theme.text};
-`
 
 const CHAIN_BADGE_MAP: Record<number, string> = {
   8453: '/chains/base.svg',
@@ -217,10 +205,53 @@ function SelectCurrency({
 }) {
   const tokens = useTokens()
   const [search, setSearch] = useState('')
-  const tokenAddresses = useMemo(() => tokens.map((item) => item.address), [tokens])
-  const { balances, loading } = useTokenBalances(tokenAddresses)
   const { chainId, connectedAccount } = useActiveWeb3()
   const isConnected = !!connectedAccount.address
+
+  // Kyber's DEFAULT_TOKENS for Arbitrum lists legacy USDC.e (0xFF970…), not
+  // native USDC (0xaf88d…) — and USDT differs only in case (0xfd086… vs
+  // 0xFd086…). The Supported Tokens list resolves via getPoolToken() so its
+  // addresses come from OUR pools-config, but the multicall was keyed off
+  // useTokens() (Kyber default + imported), so the native-USDC + checksum-USDT
+  // balances were never fetched and the Supported rows rendered $0 despite a
+  // real on-chain balance. Explicitly include the supported-token addresses in
+  // the multicall, and normalize all lookup keys to lowercase so a checksum
+  // mismatch can't hide a balance.
+  const networkModeForBalances: 'base' | 'arbitrum' = chainId === 42161 ? 'arbitrum' : 'base'
+  const supportedTokenAddrs = useMemo(() => {
+    const symbols = SUPPORTED_SYMBOLS_BY_CHAIN[chainId] ?? []
+    const addrs: string[] = []
+    for (const sym of symbols) {
+      if (sym === 'ETH') continue // native ETH is fetched separately via eth_getBalance
+      const tc = getPoolToken(sym, networkModeForBalances)
+      if (tc) addrs.push(tc.address)
+    }
+    return addrs
+  }, [chainId, networkModeForBalances])
+
+  const tokenAddresses = useMemo(
+    () => Array.from(new Set([
+      ...tokens.map((item) => item.address.toLowerCase()),
+      ...supportedTokenAddrs.map((a) => a.toLowerCase()),
+    ])),
+    [tokens, supportedTokenAddrs],
+  )
+  const { balances: rawBalances, loading } = useTokenBalances(tokenAddresses)
+  // Normalize all balance keys to lowercase so a checksum-vs-lowercase mismatch
+  // (Kyber default vs pool config vs imported) never hides a real balance.
+  // NATIVE_TOKEN_ADDRESS lookups continue to work — the casing of the constant
+  // is consistent across all consumers and useTokenBalances stores it verbatim.
+  const balances = useMemo(() => {
+    const out: { [address: string]: bigint } = {}
+    for (const k of Object.keys(rawBalances)) {
+      out[k.toLowerCase()] = rawBalances[k]
+    }
+    // Preserve the native-token key as-is for the ETH lookup at NATIVE_TOKEN_ADDRESS.
+    if (rawBalances[NATIVE_TOKEN_ADDRESS] !== undefined) {
+      out[NATIVE_TOKEN_ADDRESS] = rawBalances[NATIVE_TOKEN_ADDRESS]
+    }
+    return out
+  }, [rawBalances])
 
   const hasReceivedBalancesRef = useRef(false)
   const [hasInitialBalances, setHasInitialBalances] = useState(false)
@@ -255,7 +286,7 @@ function SelectCurrency({
         }
         const tc = getPoolToken(sym, networkMode)
         if (!tc) return null
-        const balance = balances[tc.address]
+        const balance = balances[tc.address.toLowerCase()]
         const formattedBalance = formatUnits((balance || 0n).toString(), tc.decimals)
         return {
           name: tc.name,
@@ -280,7 +311,7 @@ function SelectCurrency({
     if (!isConnected) return []
     return tokens
       .map((item) => {
-        const balance = balances[item.address]
+        const balance = balances[item.address.toLowerCase()]
         const formattedBalance = formatUnits((balance || 0n).toString(), item.decimals)
         return { ...item, balance, formattedBalance }
       })
@@ -299,7 +330,7 @@ function SelectCurrency({
         formattedBalance: formatUnits((balances[NATIVE_TOKEN_ADDRESS] || 0n).toString(), 18),
       },
       ...tokens.map((item) => {
-        const balance = balances[item.address]
+        const balance = balances[item.address.toLowerCase()]
         const formattedBalance = formatUnits((balance || 0n).toString(), item.decimals)
         return { ...item, balance, formattedBalance }
       }),

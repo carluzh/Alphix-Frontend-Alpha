@@ -7,7 +7,8 @@
  * all execution logic to the unified TransactionModal + useCollectFeesFlow.
  */
 
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo } from "react";
+import { useAccount } from "wagmi";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import { TokenImage } from "@/components/ui/token-image";
 import { formatUSD } from "@/lib/format";
@@ -19,6 +20,8 @@ import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
 import { getToken, getPoolBySlug } from "@/lib/pools-config";
 import { chainIdForMode } from "@/lib/network-mode";
+import { invalidateAfterTx } from "@/lib/apollo/mutations/invalidation";
+import { reportMessage } from "@/lib/observability";
 
 import { TransactionModal } from "@/components/transactions";
 import { useCollectFeesFlow } from "@/lib/transactions/flows/useCollectFeesFlow";
@@ -39,6 +42,7 @@ interface CollectFeesModalProps {
 // =============================================================================
 
 export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: CollectFeesModalProps) {
+  const { address } = useAccount();
   const networkMode = position.networkMode;
   const chainId = networkMode ? chainIdForMode(networkMode) : undefined;
 
@@ -84,6 +88,25 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
     token1Icon: getTokenIcon(position.token1.symbol, networkMode),
   });
 
+  // Kick off Apollo refetch BEFORE the parent's onSuccess so consumers re-render
+  // against fresh user-positions / cleared uncollectedFees. invalidateAfterTx
+  // implements Uniswap's 2-layer pattern (3s delayed refetchQueries({include:'active'})).
+  const handleSuccess = useCallback(() => {
+    if (address && chainId) {
+      invalidateAfterTx({ owner: address, chainId }).catch((err) =>
+        reportMessage('post-tx refetch failed', {
+          domain: 'liquidity',
+          action: 'refetchPositions',
+          level: 'warning',
+          component: 'CollectFeesModal',
+          chainId,
+          extras: { refetchError: err instanceof Error ? err.message : String(err) },
+        }),
+      );
+    }
+    onSuccess?.();
+  }, [address, chainId, onSuccess]);
+
   return (
     <TransactionModal
       open={isOpen}
@@ -95,7 +118,7 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
       generateSteps={generateSteps}
       executors={executors}
       mapStepsToUI={mapStepsToUI}
-      onSuccess={() => { onSuccess?.(); }}
+      onSuccess={handleSuccess}
     >
       {/* Token Pair Header */}
       <div className="flex items-center justify-between">

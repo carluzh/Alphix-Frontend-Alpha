@@ -4,10 +4,11 @@ import { useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAccount } from 'wagmi';
-import * as Sentry from '@sentry/nextjs';
+import { reportError, reportMessage } from '@/lib/observability';
 import { type Address } from 'viem';
 import { clearCachedPermit } from '@/lib/permit-types';
 import { getExplorerTxUrl } from '@/lib/wagmiConfig';
+import { invalidateAfterTx } from '@/lib/apollo/mutations/invalidation';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useCreatePositionTxContext } from './CreatePositionTxContext';
@@ -278,9 +279,13 @@ export function ReviewExecuteModal() {
     }
     return { steps: canBatchCalls ? collapseToBatchedAsync(v4RawSteps as TransactionStep[]) : v4RawSteps };
   } catch (err) {
-    Sentry.captureException(err, {
-      tags: { component: 'ReviewExecuteModal', operation: 'transaction' },
-      extra: { poolId: pool?.slug, userAddress: address, chainId, isUnifiedYield },
+    reportError(err, {
+      domain: isUnifiedYield ? 'unified-yield' : 'liquidity',
+      action: isUnifiedYield ? 'deposit' : 'mint',
+      component: 'ReviewExecuteModal',
+      networkMode,
+      chainId,
+      extras: { poolId: pool?.slug, userAddress: address, isUnifiedYield },
     });
     throw err;
   }
@@ -319,6 +324,20 @@ export function ReviewExecuteModal() {
     }
 
     closeReviewModal();
+    // Kick off Apollo refetch BEFORE navigation so Overview mounts with fresh user-positions.
+    // invalidateAfterTx implements Uniswap's 2-layer pattern (3s delayed refetchQueries({include:'active'})).
+    if (address && chainId) {
+      invalidateAfterTx({ owner: address, chainId }).catch((err) =>
+        reportMessage('post-tx refetch failed', {
+          domain: 'liquidity',
+          action: 'refetchPositions',
+          level: 'warning',
+          component: 'ReviewExecuteModal',
+          chainId,
+          extras: { refetchError: err instanceof Error ? err.message : String(err) },
+        }),
+      );
+    }
     router.push('/overview');
   }, [closeReviewModal, router, address, chainId, pool, networkMode]);
 

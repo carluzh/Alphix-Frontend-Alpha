@@ -4,7 +4,6 @@ import { ArrowLeftIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import useTheme from '../hooks/useTheme'
 import AlertIcon from '../assets/alert.svg'
-import { Dex } from '../hooks/useSwap'
 import InfoHelper from './InfoHelper'
 import Slippage from './Slippage'
 
@@ -340,9 +339,6 @@ function Settings({
   setSlippage: (value: number) => void
   deadline: number
   setDeadline: (value: number) => void
-  allDexes?: Dex[]
-  excludedDexes?: Dex[]
-  onShowSource?: () => void
   approvalType?: 'infinite' | 'exact'
   setApprovalType?: (value: 'infinite' | 'exact') => void
   onClose?: () => void

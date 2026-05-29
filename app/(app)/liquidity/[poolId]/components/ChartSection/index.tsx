@@ -391,11 +391,16 @@ export const ChartSection = memo(function ChartSection({
     return formatTickForPeriod(timestamp, timePeriod as ChartPeriodPool);
   }, [timePeriod]);
 
-  // Format USD for tooltips
+  // Format USD for the chart Y-axis and tooltip values. Above 100K drops the
+  // trailing decimals — "$150K" instead of "$150.00K" — per UX preference; M
+  // values keep one decimal because $1.2M is meaningfully more useful than $1M.
   const formatUSD = (value: number) => {
     if (!Number.isFinite(value) || value <= 0) return "$0.00";
     if (value >= 1_000_000) {
-      return `$${(value / 1_000_000).toFixed(2)}M`;
+      return `$${(value / 1_000_000).toFixed(1)}M`;
+    }
+    if (value >= 100_000) {
+      return `$${Math.round(value / 1_000)}K`;
     }
     if (value >= 1_000) {
       return `$${(value / 1_000).toFixed(2)}K`;

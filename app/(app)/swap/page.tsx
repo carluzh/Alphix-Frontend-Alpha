@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { useAccount, useSendTransaction } from 'wagmi';
+import { useAccount, useSendTransaction, useSwitchChain } from 'wagmi';
 import { chainIdForMode, type NetworkMode } from '@/lib/network-mode';
 import { getRpcUrlForNetwork } from '@/lib/viemClient';
+import { reportError } from '@/lib/observability';
 
 const VendoredKyberWidget = dynamic(
   () => import('@/lib/kyber-widget/components/Widget'),
@@ -55,11 +56,64 @@ export default function Page() {
   const chainId = chainIdForMode(mode);
   const { address, chainId: walletChainId } = useAccount();
   const { sendTransactionAsync } = useSendTransaction();
+  const { switchChainAsync } = useSwitchChain();
+
+  // Tracks a user-initiated in-widget chain switch. While the wallet is being
+  // asked to switch (or in the rare case where the wallet declines), we suppress
+  // the wallet→mode sync effect below so it doesn't immediately revert the user's
+  // selection before walletChainId catches up.
+  const pendingChainSwitchRef = useRef<number | null>(null);
 
   const onSetChain = useCallback((nextChainId: number) => {
+    // 1) Optimistically reflect the user's choice in the widget so the UI updates
+    //    immediately (token list, balances RPC, etc.).
     if (nextChainId === 8453) setMode('base');
     else if (nextChainId === 42161) setMode('arbitrum');
-  }, []);
+    else return;
+
+    // 2) Drive the wallet to the same chain so it stays in sync. This also makes
+    //    the wallet→mode sync effect a no-op (walletChainId === required → match).
+    pendingChainSwitchRef.current = nextChainId;
+    (async () => {
+      try {
+        await switchChainAsync({ chainId: nextChainId });
+      } catch (e) {
+        // User rejected or wallet refused. Leave widget on the requested chain so
+        // the user can retry from the wallet manually; the sync effect will fix
+        // things up once walletChainId actually changes.
+        // The helper auto-drops 4001 declines, so only genuine wallet failures
+        // are reported; existing UI behavior (silent recovery) is unchanged.
+        reportError(e, {
+          domain: 'swap',
+          action: 'switchChain',
+          component: 'swap/page',
+          chainId: nextChainId,
+          extras: { targetChain: nextChainId },
+        });
+      } finally {
+        // Always clear so the sync effect resumes (e.g., wallet-driven switches).
+        pendingChainSwitchRef.current = null;
+      }
+    })();
+  }, [switchChainAsync]);
+
+  // Sync local `mode` with the wallet's chainId so the Widget always uses the
+  // RPC + token addresses for the chain the wallet is actually on. Without this,
+  // navigating to /swap while the wallet is on Arbitrum keeps mode='base' and
+  // useTokenBalances queries the wrong RPC, surfacing a phantom "Insufficient
+  // balance" error (the original Step-14 chain-flip bug this effect was added for).
+  //
+  // IMPORTANT: When the user explicitly initiates a chain switch through the
+  // widget's chain switcher, `onSetChain` flips `mode` optimistically before
+  // walletChainId catches up. Without the ref guard, this effect would revert
+  // mode back to match the stale walletChainId on the very next render. The
+  // pendingChainSwitchRef.current check below skips the sync until the wallet
+  // either confirms or rejects the switch.
+  useEffect(() => {
+    if (pendingChainSwitchRef.current !== null) return;
+    if (walletChainId === 8453 && mode !== 'base') setMode('base');
+    else if (walletChainId === 42161 && mode !== 'arbitrum') setMode('arbitrum');
+  }, [walletChainId, mode]);
 
   const onSubmitTx = useMemo(
     () => async (txData: { from: string; to: string; value: string; data: string; gasLimit: string }) => {

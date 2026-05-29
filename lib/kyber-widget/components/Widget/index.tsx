@@ -13,7 +13,7 @@ import BackIcon from '../../assets/back1.svg'
 import KyberSwapLogo from '../../assets/kyberswap.svg'
 import AlertIcon from '../../assets/alert.svg'
 import Expand from '../../assets/expand.svg'
-import unknownTokenImg from '../../assets/unknown-token.svg?url'
+import { TokenLogo } from '../FallbackTokenIcon'
 
 // Alphix host-app helpers — used for the CTA button (matches the reference UI).
 import { cn } from '@/lib/utils'
@@ -110,10 +110,8 @@ import useApproval, { APPROVAL_STATE } from '../../hooks/useApproval'
 import Settings from '../Settings'
 import { TokenListProvider, useTokens } from '../../hooks/useTokens'
 import RefreshBtn from '../RefreshBtn'
-import DexesSetting from '../DexesSetting'
 import ImportModal from '../ImportModal'
 import InfoHelper from '../InfoHelper'
-import TradeRouting from '../TradeRouting'
 import Slippage from '../Slippage'
 import { calculateGasMargin, estimateGas, formatUnits } from '../../utils/crypto'
 import Select from '../Select'
@@ -301,9 +299,7 @@ enum ModalType {
   CURRENCY_IN = 'currency_in',
   CURRENCY_OUT = 'currency_out',
   REVIEW = 'review',
-  DEXES_SETTING = 'dexes_setting',
   IMPORT_TOKEN = 'import_token',
-  TRADE_ROUTE = 'trade_route',
 }
 
 export interface TxData {
@@ -426,9 +422,6 @@ const Widget = ({
     getRate,
     deadline,
     setDeadline,
-    allDexes,
-    excludedDexes,
-    setExcludedDexes,
     setTrade,
     isWrap,
     isUnwrap,
@@ -506,12 +499,8 @@ const Widget = ({
         return 'Select Token'
       case ModalType.CURRENCY_OUT:
         return 'Select Token'
-      case ModalType.DEXES_SETTING:
-        return 'Liquidity Sources'
       case ModalType.IMPORT_TOKEN:
         return 'Import Token'
-      case ModalType.TRADE_ROUTE:
-        return 'Your Trade Route'
 
       default:
         return null
@@ -530,17 +519,11 @@ const Widget = ({
             setSlippage={setSlippage}
             deadline={deadline}
             setDeadline={setDeadline}
-            allDexes={allDexes}
-            excludedDexes={excludedDexes}
-            onShowSource={() => setShowModal(ModalType.DEXES_SETTING)}
             approvalType={approvalType}
             setApprovalType={setApprovalType}
             onClose={() => setShowModal(null)}
           />
         )
-      case ModalType.TRADE_ROUTE:
-        if (enableRoute) return <TradeRouting trade={trade} currencyIn={tokenInInfo} currencyOut={tokenOutInfo} />
-        return null
       case ModalType.CURRENCY_IN:
         return (
           <SelectCurrency
@@ -579,14 +562,14 @@ const Widget = ({
             onChainSwitch={onSetChain}
           />
         )
-      case ModalType.DEXES_SETTING:
-        return <DexesSetting allDexes={allDexes} excludedDexes={excludedDexes} setExcludedDexes={setExcludedDexes} />
-
       case ModalType.IMPORT_TOKEN:
         if (tokenToImport)
           return (
             <ImportModal
               token={tokenToImport}
+              onBack={() => {
+                setShowModal(importType === 'in' ? ModalType.CURRENCY_IN : ModalType.CURRENCY_OUT)
+              }}
               onImport={() => {
                 if (importType === 'in') {
                   setTokenIn(tokenToImport.address)
@@ -595,6 +578,14 @@ const Widget = ({
                   setTokenOut(tokenToImport.address)
                   setShowModal(null)
                 }
+                // Newly-imported token's balance isn't in the multicall result
+                // yet (the previous fetch ran before the token entered the
+                // `tokens` list). Without this refetch, `tokenInBalance` reads
+                // 0n and the CTA shows "Insufficient Balance" until a page
+                // reload. Triggering a refetch here gets the new token's
+                // balance immediately. Trade-off: one extra multicall per
+                // import — acceptable since imports are rare/manual events.
+                refetch()
               }}
             />
           )
@@ -635,6 +626,16 @@ const Widget = ({
 
       return new Promise<StepResult>((resolve, reject) => {
         let attempts = 0
+        // Tracks whether we ever observed Kyber's PENDING state — i.e. the
+        // wallet popup was confirmed and `onSubmitTx` returned a tx hash. We
+        // use this to disambiguate "user cancelled in wallet" from "tx mined
+        // unsuccessfully" when state lands on NOT_APPROVED.
+        let everPending = false
+        // Grace period (in 1s polls) before we treat a NOT_APPROVED state with
+        // no PENDING transition as a user-cancel. Kyber's `approve()` does an
+        // async gas estimate + onSubmitTx before flipping to PENDING; it can
+        // take a few seconds for the wallet popup to appear.
+        const CANCEL_GRACE_POLLS = 30 // ~30s
         const MAX_ATTEMPTS = 150 * 8 // ~20 min budget at 1s poll
         const interval = setInterval(() => {
           if (context.isCancelled?.()) {
@@ -643,18 +644,43 @@ const Widget = ({
             return
           }
 
+          // Definite success — only resolve here.
           if (approvalState === APPROVAL_STATE.APPROVED) {
             clearInterval(interval)
             resolve({ txHash: approvalPendingTx || '' })
             return
           }
 
-          // After a brief grace period (≥5 polls) treat a return-to-
-          // NOT_APPROVED as a user rejection or failed tx.
-          if (approvalState === APPROVAL_STATE.NOT_APPROVED && attempts > 5) {
-            clearInterval(interval)
-            reject(new Error('Approval rejected or failed'))
-            return
+          // Track PENDING so we know the tx was submitted on-chain.
+          if (approvalState === APPROVAL_STATE.PENDING) {
+            everPending = true
+          }
+
+          // Failure paths:
+          // (a) We saw PENDING, then state flipped back to NOT_APPROVED →
+          //     Kyber's on-chain poll observed a failed tx (use-approval.ts
+          //     L148–154). This is a definite failure.
+          // (b) We never saw PENDING and stayed NOT_APPROVED past the grace
+          //     window → wallet popup was rejected / approve() threw before
+          //     reaching setApprovalStates(PENDING) (use-approval.ts L113–116).
+          // We do NOT reject on a transient NOT_APPROVED that follows
+          // PENDING within the same poll tick — the on-chain re-check (line
+          // 165 in use-approval.ts) can momentarily reset state during the
+          // PENDING→APPROVED transition.
+          if (approvalState === APPROVAL_STATE.NOT_APPROVED) {
+            if (everPending && !approvalPendingTx) {
+              // Saw PENDING, now NOT_APPROVED, and `pendingTx` cleared → the
+              // tx mined as failed. Definite failure.
+              clearInterval(interval)
+              reject(new Error('Approval transaction failed'))
+              return
+            }
+            if (!everPending && attempts >= CANCEL_GRACE_POLLS) {
+              // No PENDING after grace window → wallet popup rejected.
+              clearInterval(interval)
+              reject(new Error('Approval rejected by user'))
+              return
+            }
           }
 
           attempts++
@@ -669,6 +695,10 @@ const Widget = ({
   )
   // Suppress unused warning if the upstream flag isn't read in JSX.
   void checkingAllowance
+  // `enableRoute` remains in the public SwapWidget prop API for compat, but
+  // the in-widget TradeRouting modal was removed (route preview now renders
+  // via the Alphix-side SwapRoutePreview below the widget).
+  void enableRoute
 
   // Submission closure for the new review modal — mirrors the build + estimate +
   // onSubmitTx flow from Confirmation/index.tsx so the backend chain is unchanged.
@@ -739,7 +769,11 @@ const Widget = ({
     <Outer width={width}>
     <Wrapper
       width={width}
-      $selectorOpen={showModal === ModalType.CURRENCY_IN || showModal === ModalType.CURRENCY_OUT}
+      $selectorOpen={
+        showModal === ModalType.CURRENCY_IN ||
+        showModal === ModalType.CURRENCY_OUT ||
+        showModal === ModalType.IMPORT_TOKEN
+      }
     >
       <DialogWrapper className={showModal ? 'open' : 'close'}>
         <ModalContent>
@@ -748,12 +782,7 @@ const Widget = ({
             showModal !== ModalType.CURRENCY_OUT &&
             showModal !== ModalType.SETTING && (
               <ModalHeader>
-                <ModalTitle
-                  onClick={() =>
-                    showModal === ModalType.DEXES_SETTING ? setShowModal(ModalType.SETTING) : setShowModal(null)
-                  }
-                  role="button"
-                >
+                <ModalTitle onClick={() => setShowModal(null)} role="button">
                   <BackIcon style={{ color: theme.subText }} />
                   {modalTitle}
                 </ModalTitle>
@@ -803,15 +832,11 @@ const Widget = ({
             {tokenInInfo ? (
               <>
                 <TokenIconWrap>
-                  <img
-                    width="28"
-                    height="28"
-                    alt="tokenIn"
+                  <TokenLogo
                     src={tokenInInfo?.logoURI}
-                    onError={({ currentTarget }) => {
-                      currentTarget.onerror = null
-                      currentTarget.src = unknownTokenImg
-                    }}
+                    symbol={tokenInInfo?.symbol ?? ''}
+                    size={28}
+                    alt="tokenIn"
                   />
                   {chainBadge && <ChainBadge src={chainBadge.src} alt={chainBadge.alt} />}
                 </TokenIconWrap>
@@ -923,15 +948,11 @@ const Widget = ({
             {tokenOutInfo ? (
               <>
                 <TokenIconWrap>
-                  <img
-                    width="28"
-                    height="28"
-                    alt="tokenOut"
+                  <TokenLogo
                     src={tokenOutInfo?.logoURI}
-                    onError={({ currentTarget }) => {
-                      currentTarget.onerror = null
-                      currentTarget.src = unknownTokenImg
-                    }}
+                    symbol={tokenOutInfo?.symbol ?? ''}
+                    size={28}
+                    alt="tokenOut"
                   />
                   {chainBadge && <ChainBadge src={chainBadge.src} alt={chainBadge.alt} />}
                 </TokenIconWrap>

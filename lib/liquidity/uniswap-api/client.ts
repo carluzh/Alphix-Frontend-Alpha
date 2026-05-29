@@ -15,7 +15,7 @@
  *   /lp/claim_fees      — build V4 collect fees tx
  */
 
-import * as Sentry from '@sentry/nextjs';
+import { addReportBreadcrumb } from '@/lib/observability';
 
 const BASE_URL = 'https://liquidity.api.uniswap.org';
 
@@ -335,6 +335,15 @@ function jitter(baseMs: number): number {
 async function post<Req, Res>(path: string, body: Req): Promise<Res> {
   // N+1 iterations: N retry-sleeps + 1 final attempt without sleep.
   for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_BASE_MS.length; attempt++) {
+    // Pre-fetch lifecycle breadcrumb so a subsequent failure correlates to the
+    // exact endpoint + retry attempt that triggered it.
+    addReportBreadcrumb({
+      domain: 'liquidity',
+      action: 'uniswapLPApi',
+      message: path,
+      data: { attempt, path },
+    });
+
     const res = await fetch(`${BASE_URL}${path}`, {
       method: 'POST',
       headers: {
@@ -358,19 +367,30 @@ async function post<Req, Res>(path: string, body: Req): Promise<Res> {
       continue;
     }
     if (isRateLimit) {
+      // Rate-limits are expected; routes decide whether to surface them. We do NOT
+      // capture here — only leave a breadcrumb trail.
       throw new UniswapLPAPIRateLimitError();
     }
 
     if (!res.ok) {
       const message = parsed?.message ?? (typeof parsed === 'string' ? parsed : `HTTP ${res.status}`);
+      // Error-path breadcrumb (before throwing) so the failure correlates to the
+      // upstream requestId even when the body carried no successful payload.
+      addReportBreadcrumb({
+        domain: 'liquidity',
+        action: 'uniswapLPApi',
+        level: 'error',
+        message: `${path} failed`,
+        data: { path, status: res.status, code: parsed?.code, requestId: parsed?.requestId },
+      });
       throw new UniswapLPAPIError(res.status, parsed?.code, message, parsed?.details);
     }
     // Tag every successful Uniswap LP API response with its `requestId` so support
     // can correlate user complaints back to a specific upstream call.
     if (parsed?.requestId) {
-      Sentry.addBreadcrumb({
-        category: 'uniswap-lp-api',
-        level: 'info',
+      addReportBreadcrumb({
+        domain: 'liquidity',
+        action: 'uniswapLPApi',
         message: path,
         data: { requestId: parsed.requestId },
       });

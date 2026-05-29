@@ -17,6 +17,7 @@ import InfoHelper from '../InfoHelper'
 import unknownTokenImg from '../../assets/unknown-token.svg?url'
 import { friendlyError } from '../../utils/errorMessage'
 import { calculateGasMargin, estimateGas, isTransactionSuccessful } from '../../utils/crypto'
+import { addReportBreadcrumb, reportError, reportFailedTx } from '@/lib/observability'
 
 const Success = styled(SuccessSVG)`
   color: ${({ theme }) => theme.success};
@@ -230,7 +231,22 @@ function Confirmation({
 
           if (res.status) {
             setTxStatus('success')
-          } else setTxStatus('failed')
+          } else {
+            setTxStatus('failed')
+            // CRITICAL GAP CLOSED: on-chain revert of a submitted swap. Report
+            // AFTER the failure is detected (additive — does not touch the
+            // audited submit path). Omit to/data/from so the helper performs no
+            // eth_call replay against the audited calldata; per-tx fingerprint
+            // dedupes repeated polls for the same hash.
+            void reportFailedTx(null, {
+              domain: 'swap',
+              action: 'submitTx',
+              component: 'Confirmation',
+              txHash,
+              chainId,
+              fingerprint: ['swap', 'onchain_failed', txHash],
+            })
+          }
         })
       }, 10_000)
 
@@ -291,6 +307,21 @@ function Confirmation({
       const date = new Date()
       date.setMinutes(date.getMinutes() + (deadline || 20))
 
+      // Additive breadcrumb only — leaves a trail before the audited route/build
+      // request. Does NOT touch the request body, calldata, gas math, or submit.
+      addReportBreadcrumb({
+        domain: 'swap',
+        action: 'routeBuild',
+        message: 'building route',
+        data: {
+          tokenIn: trade.routeSummary.tokenIn,
+          tokenOut: trade.routeSummary.tokenOut,
+          amountIn,
+          amountOut,
+          slippage,
+        },
+      })
+
       const buildRes = await fetch(
         `https://aggregator-api.kyberswap.com/${AGGREGATOR_PATH[chainId]}/api/v1/route/build`,
         {
@@ -331,6 +362,22 @@ function Confirmation({
       setTxHash(hash || '')
       setAttempTx(false)
     } catch (e) {
+      // Report inside the EXISTING catch only (additive). The helper auto-drops
+      // wallet user-rejections (4001), so a declined confirmation is not noise.
+      reportError(e, {
+        domain: 'swap',
+        action: 'routeBuild',
+        component: 'Confirmation',
+        chainId,
+        extras: {
+          tokenIn: trade.routeSummary.tokenIn,
+          tokenOut: trade.routeSummary.tokenOut,
+          amountIn,
+          amountOut,
+          slippage,
+          buildErrorDetails: (e as any)?.data?.message || (e as any)?.message,
+        },
+      })
       setAttempTx(false)
       setTxError(e)
       onError?.(e)

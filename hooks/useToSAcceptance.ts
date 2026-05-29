@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAccount, useSignMessage } from 'wagmi'
 import { TOS_SIGNATURE_MESSAGE, TOS_VERSION } from '@/lib/tos-content'
+import { reportError, addReportBreadcrumb } from '@/lib/observability'
 
 // ---------------------------------------------------------------------------
 // localStorage helpers (fast cache — backend is source of truth)
@@ -188,6 +189,13 @@ export function useToSAcceptance(): UseToSAcceptanceReturn {
       // 1. Get wallet signature
       const signature = await signMessageAsync({ message: TOS_SIGNATURE_MESSAGE })
 
+      addReportBreadcrumb({
+        domain: 'signature',
+        action: 'tosSign',
+        message: 'ToS message signed',
+        data: { address, tosVersion: TOS_VERSION },
+      })
+
       setIsSigningMessage(false)
       setIsSendingToBackend(true)
 
@@ -201,6 +209,7 @@ export function useToSAcceptance(): UseToSAcceptanceReturn {
       setShowModal(false)
     } catch (error) {
       console.error('[useToSAcceptance] Acceptance failed:', error)
+      reportError(error, { domain: 'signature', action: 'tosSign', component: 'useToSAcceptance' })
       // Modal stays open — user can retry
     } finally {
       setIsSigningMessage(false)

@@ -254,7 +254,7 @@ export const Overview = memo(function Overview({
       >
         {/* PORTFOLIO CHART - Left */}
         <div className="flex-1 min-w-0 flex flex-col w-full">
-          <PortfolioChart className="w-full" currentPositionsValue={totalPositionsValue} isParentLoading={isLoading} />
+          <PortfolioChart className="w-full" isParentLoading={isLoading} />
         </div>
 
         {/* RIGHT COLUMN - Points Earned + Stats */}

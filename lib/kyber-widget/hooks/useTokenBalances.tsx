@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { directRpcFetch, ethCall, getBalance } from '../rpc-client'
 import { getFunctionSelector } from '../utils/crypto'
 import { MULTICALL_ADDRESS, NATIVE_TOKEN_ADDRESS } from '../constants'
@@ -114,9 +114,20 @@ const useTokenBalances = (tokenAddresses: string[]) => {
   const [balances, setBalances] = useState<{ [address: string]: bigint }>({})
   const [loading, setLoading] = useState(false)
 
+  // Discard stale in-flight responses. When chainId / rpcUrl / token list
+  // changes (e.g. user toggles the in-widget chain switcher), `fetchBalances`
+  // is re-invoked but the previous call's multicall is still in flight. If
+  // the older Base-RPC response resolves AFTER the newer Arbitrum-RPC one,
+  // it overwrites the correct balances with stale data — surfacing as the
+  // "Your Tokens flashes then disappears" bug on rapid chain toggles AND as
+  // the "0 in selector, real balance in input" inconsistency between this
+  // hook's two parallel instances (Widget panel + SelectCurrency list).
+  const callIdRef = useRef(0)
+
   const fetchBalances = useCallback(async () => {
+    const callId = ++callIdRef.current
     if (!connectedAccount.address) {
-      setBalances({})
+      if (callId === callIdRef.current) setBalances({})
       return
     }
     try {
@@ -150,6 +161,9 @@ const useTokenBalances = (tokenAddresses: string[]) => {
       // Use allSettled so a multicall failure does not discard the native balance.
       const [nativeResult, multicallResult] = await Promise.allSettled([fetchNativeBalance(), fetchMulticall()])
 
+      // A newer fetch has started — drop this stale result.
+      if (callId !== callIdRef.current) return
+
       const balancesMap: Record<string, bigint> = {}
 
       if (multicallResult.status === 'fulfilled' && multicallResult.value) {
@@ -171,7 +185,7 @@ const useTokenBalances = (tokenAddresses: string[]) => {
     } catch (e) {
       console.error('[swap-widgets] Failed to fetch token balances:', e)
     } finally {
-      setLoading(false)
+      if (callId === callIdRef.current) setLoading(false)
     }
     //eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rpcUrl, hasIntegratorRpcUrl, connectedAccount.address, chainId, JSON.stringify(tokenAddresses)])

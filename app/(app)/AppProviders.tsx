@@ -2,7 +2,9 @@
 
 import type React from "react"
 import { useEffect } from "react"
-import * as Sentry from '@sentry/nextjs'
+import { useAccount } from "wagmi"
+import { reportError, setWalletUser, clearWalletUser } from '@/lib/observability'
+import { modeForChainId } from '@/lib/network-mode'
 import AppKitProvider from '@/components/AppKitProvider'
 import { ChainAutoSwitcher } from '@/components/ChainAutoSwitcher'
 import { NetworkProvider, type NetworkMode } from "@/lib/network-context"
@@ -42,6 +44,26 @@ function isWalletProviderError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Global Sentry wallet user context — wired ONCE (single source of truth).
+ * Rendered INSIDE AppKitProvider (alongside ChainAutoSwitcher) so useAccount()
+ * resolves against the wagmi context. On connect / chain-change it attaches the
+ * connected wallet to every Sentry event; on disconnect it clears it. Never call
+ * setWalletUser/clearWalletUser at error sites.
+ */
+function WalletSentryUser() {
+  const { address, isConnected, chainId } = useAccount();
+  useEffect(() => {
+    if (isConnected && address) {
+      const networkMode = chainId != null ? modeForChainId(chainId) : null;
+      setWalletUser(address, chainId, networkMode);
+    } else {
+      clearWalletUser();
+    }
+  }, [address, isConnected, chainId]);
+  return null;
+}
+
 export default function AppProviders({
   children,
   cookieString,
@@ -59,29 +81,26 @@ export default function AppProviders({
 
       // Check if this is a wallet provider error
       if (isWalletProviderError(error)) {
-        // Log it properly with Sentry context
-        Sentry.withScope((scope) => {
-          scope.setTag('error_source', 'wallet_provider');
-          scope.setTag('handled_by', 'global_rejection_handler');
-
-          // Extract error details
-          const errorObj = error as Record<string, unknown>;
-          scope.setExtras({
+        // Route through the consolidated helper. It auto-drops user rejections
+        // (4001); 4100/4200/4900/4901/-32xxx still capture. errorCategory is
+        // derived by the helper — never computed here.
+        const errorObj = (error ?? {}) as Record<string, unknown>;
+        const code = errorObj.code;
+        reportError(error, {
+          domain: 'wallet',
+          action: 'unhandledRejection',
+          fingerprint: ['wallet', 'unhandledRejection', String(code)],
+          tags: {
+            error_source: 'wallet_provider',
+            handled_by: 'global_rejection_handler',
+            code: typeof code === 'number' ? code : undefined,
+          },
+          extras: {
             code: errorObj.code,
             message: errorObj.message,
             data: errorObj.data,
             stack: errorObj.stack,
-          });
-
-          // Convert to proper Error for Sentry
-          const wrappedError = new Error(
-            typeof errorObj.message === 'string'
-              ? errorObj.message
-              : 'Wallet provider error'
-          );
-          wrappedError.name = 'WalletProviderError';
-
-          Sentry.captureException(wrappedError);
+          },
         });
 
         // Prevent the default unhandled rejection behavior
@@ -133,6 +152,7 @@ export default function AppProviders({
   return (
     <AppKitProvider cookies={cookieString}>
       <ChainAutoSwitcher />
+      <WalletSentryUser />
       <NetworkProvider initialNetworkMode={initialNetworkMode}>
         <SSEProvider>
           <WebSocketProvider>

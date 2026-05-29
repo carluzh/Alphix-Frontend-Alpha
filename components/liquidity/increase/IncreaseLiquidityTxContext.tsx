@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount, useBalance } from "wagmi";
 import { formatUnits, type Address } from "viem";
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability";
 import { formatTokenDisplayAmount } from "@/lib/utils";
 import { getTokenDefinitions, getPoolBySlug, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
@@ -327,9 +327,13 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         return context as ValidatedLiquidityTxContext;
       } catch (err: any) {
         console.error("[IncreaseLiquidityTxContext] Unified Yield context error:", err);
-        Sentry.captureException(err, {
-          tags: { component: "IncreaseLiquidityTxContext", operation: "buildUnifiedYieldContext" },
-          extra: { poolId: position?.poolId, hookAddress: poolConfig?.hooks, userAddress: accountAddress, chainId },
+        reportError(err, {
+          domain: "unified-yield",
+          action: "buildContext",
+          component: "IncreaseLiquidityTxContext",
+          networkMode,
+          chainId,
+          extras: { poolId: position?.poolId, hookAddress: poolConfig?.hooks, userAddress: accountAddress },
         });
         setError(err.message || "Failed to prepare Unified Yield deposit");
         setIsLoading(false);
@@ -512,9 +516,13 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       throw new Error("Unexpected API response");
     } catch (err: any) {
       console.error("[IncreaseLiquidityTxContext] fetchAndBuildContext error:", err);
-      Sentry.captureException(err, {
-        tags: { component: "IncreaseLiquidityTxContext", operation: "fetchAndBuildContext" },
-        extra: { poolId: position?.poolId, positionId: position?.positionId, userAddress: accountAddress, chainId },
+      reportError(err, {
+        domain: "liquidity",
+        action: "increase",
+        component: "IncreaseLiquidityTxContext",
+        networkMode,
+        chainId,
+        extras: { poolId: position?.poolId, positionId: position?.positionId, userAddress: accountAddress },
       });
       setError(err.message || "Failed to prepare transaction");
       setIsLoading(false);

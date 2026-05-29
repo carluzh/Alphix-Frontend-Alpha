@@ -1,23 +1,29 @@
 import * as Sentry from "@sentry/nextjs";
+import { IGNORE_ERRORS, dropEip1193Rejection } from "@/lib/observability/sentry-init-shared";
 
 Sentry.init({
   dsn: "https://7f3aaefeeb345947a6a199963656c216@o4510478966980608.ingest.de.sentry.io/4510478986903632",
-  tracesSampleRate: 0,
+  // Correlate every event to a deployed build + git commit for source-map matching.
+  // NEXT_PUBLIC_APP_VERSION / NEXT_PUBLIC_GIT_COMMIT are wired in next.config.mjs env.
+  release: process.env.NEXT_PUBLIC_APP_VERSION,
+  dist: process.env.NEXT_PUBLIC_GIT_COMMIT,
   enableLogs: true,
+  // Top-level noise filter: substring-matches the message + last exception value
+  // (a drop-in for the previous beforeSend includes() checks). beforeSend handles
+  // the one structured case (EIP-1193 code 4001).
+  ignoreErrors: [...IGNORE_ERRORS],
+  beforeSend: dropEip1193Rejection,
+  // Error-only Session Replay: never sample plain sessions (0), capture a replay
+  // only when an error is reported (1.0). replayIntegration() is the BUNDLED build
+  // (not lazyLoadIntegration) — the CDN variant is fetched from a Sentry domain that
+  // the same adblockers tunnelRoute exists to work around would block. Default text
+  // masking stays ON.
   integrations: [
     Sentry.consoleLoggingIntegration({ levels: ["error"] }),
-    Sentry.browserTracingIntegration({ instrumentPageLoad: false, instrumentNavigation: false }),
+    Sentry.replayIntegration(),
   ],
-  beforeSend(event) {
-    const errorValue = event.exception?.values?.[0]?.value || '';
-    if (errorValue.includes('Failed to fetch')) return null;
-    if (errorValue.includes('User rejected')) return null;
-    if (errorValue.includes('EPIPE')) return null;
-    if (errorValue.includes('broken pipe')) return null;
-    // Filter browser extension service worker errors (not actionable from our code)
-    if (errorValue.includes('disconnected port object')) return null;
-    return event;
-  },
+  replaysSessionSampleRate: 0,
+  replaysOnErrorSampleRate: 1.0,
   environment: process.env.NODE_ENV,
 });
 

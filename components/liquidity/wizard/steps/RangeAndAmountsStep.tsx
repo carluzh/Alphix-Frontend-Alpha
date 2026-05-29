@@ -33,7 +33,7 @@ import { usePercentageInput } from '@/hooks/usePercentageInput';
 import { useTokenPrices } from '@/hooks/useTokenPrices';
 import { useRangeHopCallbacks } from '@/hooks/useRangeHopCallbacks';
 import { usePriceDeviation, requiresDeviationAcknowledgment } from '@/hooks/usePriceDeviation';
-import { PriceDeviationCallout } from '@/components/ui/PriceDeviationCallout';
+import { PriceDeviationCallout, PoolOutOfRangeCallout } from '@/components/ui/PriceDeviationCallout';
 import { HighRiskConfirmModal, createPriceDeviationWarning } from '@/components/ui/HighRiskConfirmModal';
 import { TokenInputCard, TokenInputStyles } from '@/components/liquidity/TokenInputCard';
 import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
@@ -188,6 +188,7 @@ interface CurrentPriceProps {
   inverted: boolean;
   onSelectToken: (token: string) => void;
   networkMode?: import('@/lib/network-mode').NetworkMode;
+  outOfRange?: boolean;
 }
 
 function CurrentPriceDisplay({
@@ -197,6 +198,7 @@ function CurrentPriceDisplay({
   inverted,
   onSelectToken,
   networkMode,
+  outOfRange,
 }: CurrentPriceProps) {
   const baseToken = inverted ? token1Symbol : token0Symbol;
   const quoteToken = inverted ? token0Symbol : token1Symbol;
@@ -216,9 +218,12 @@ function CurrentPriceDisplay({
         />
       </div>
       {/* Price value and denomination text */}
+      {/* When the pool is out of the UY preset range, the on-chain price math overflows
+          into scientific notation (e+40). Suppress the broken number and show a hyphen
+          instead - the PoolOutOfRangeCallout below already conveys the state. */}
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-xl font-semibold text-white">
-          {price || '—'}
+          {outOfRange ? '-' : (price || '—')}
         </span>
         <span className="text-sm text-muted-foreground">
           {quoteToken} per {baseToken}
@@ -420,6 +425,19 @@ export function RangeAndAmountsStep() {
     token1Symbol: token1Symbol ?? null,
     poolPrice: currentPriceRaw,
   });
+
+  // Unified Yield pool out-of-range check (mirrors PositionDetail / usePositionPageData).
+  // When the pool's tick is outside the configured rehypoRange, the market price is so
+  // far outside that price-deviation math overflows into scientific notation (e+40).
+  // In that case we surface the canonical "Position is out of range" callout instead
+  // of the broken deviation text, matching the position card pattern.
+  const poolOutsideRange = useMemo(() => {
+    if (!isRehypoMode || !poolConfig?.rehypoRange || poolConfig.rehypoRange.isFullRange) return false;
+    if (currentTick === undefined || currentTick === null) return false;
+    const lo = parseInt(poolConfig.rehypoRange.min, 10);
+    const hi = parseInt(poolConfig.rehypoRange.max, 10);
+    return Number.isFinite(lo) && Number.isFinite(hi) && (currentTick < lo || currentTick >= hi);
+  }, [isRehypoMode, poolConfig, currentTick]);
 
   // For Unified Yield: Convert tick range from config to prices
   // rehypoRange stores tick values (e.g., min: "-276326", max: "-276324"), NOT prices
@@ -1263,10 +1281,13 @@ export function RangeAndAmountsStep() {
           inverted={priceInverted}
           onSelectToken={handleSelectToken}
           networkMode={networkMode}
+          outOfRange={poolOutsideRange}
         />
 
         {/* Price Deviation Warning - prominent display under current price */}
-        {priceDeviation.severity !== 'none' && poolConfig && (
+        {poolOutsideRange ? (
+          <PoolOutOfRangeCallout />
+        ) : priceDeviation.severity !== 'none' && poolConfig && (
           <PriceDeviationCallout
             deviation={priceDeviation}
             token0Symbol={poolConfig.currency0.symbol}
@@ -1345,7 +1366,9 @@ export function RangeAndAmountsStep() {
           <div className="flex flex-row items-center gap-3 p-3 rounded-lg bg-white/5 border border-transparent hover:border-muted-foreground/30 transition-colors">
             <IconCircleInfo className="w-4 h-4 text-muted-foreground shrink-0" />
             <span className="text-sm text-muted-foreground">
-              Unified Yield uses an optimized range to offer lending yield
+              {poolOutsideRange
+                ? "Pool price is currently outside the Unified Yield range. Assets continue to earn lending yield."
+                : "Unified Yield uses a preset range to offer lending yield"}
             </span>
           </div>
         )}

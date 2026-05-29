@@ -12,7 +12,7 @@
  */
 
 import type { Currency, CurrencyAmount, Token } from '@uniswap/sdk-core';
-import * as Sentry from '@sentry/nextjs';
+import { reportError, markReported } from '@/lib/observability';
 import type { Address, Hex } from 'viem';
 
 import {
@@ -211,7 +211,10 @@ export function createIncreasePositionAsyncStep(
         // backend pairs `permitSignature` with `permitBatchData`, so omit both when
         // we have no signature.
         const body: Record<string, unknown> = { ...increasePositionRequestArgs };
-        if (signature) body.permitSignature = signature;
+        // H2 guard: only attach signature if it has the full 0x + 130-hex shape (132 chars).
+        // A truthy-but-short string here would silently downgrade to the no-permit path,
+        // hiding upstream signature corruption.
+        if (signature && signature.length >= 132) body.permitSignature = signature;
         else delete (body as any).permitBatchData;
 
         const response = await fetch('/api/liquidity/prepare-increase-tx', {
@@ -280,15 +283,19 @@ export function createIncreasePositionAsyncStep(
           ? (e as { diagnostics?: Record<string, unknown> }).diagnostics
           : undefined;
         console.error('createIncreasePositionAsyncStep error:', e, diagnostics);
-        Sentry.captureException(e, {
+        reportError(e, {
+          domain: 'liquidity',
+          action: 'prepareTx',
+          component: 'createIncreasePositionAsyncStep',
+          chainId: increasePositionRequestArgs.chainId,
           tags: { flow: 'lp_increase', stage: 'async_build_with_signature' },
-          extra: {
+          extras: {
             userAddress: increasePositionRequestArgs.userAddress,
             tokenId: increasePositionRequestArgs.tokenId,
-            chainId: increasePositionRequestArgs.chainId,
             ...(diagnostics ?? {}),
           },
         });
+        markReported(e);
         throw e;
       }
     },
@@ -318,7 +325,10 @@ export function createCreatePositionAsyncStep(
         // (existing Permit2 state still valid post-approves); the backend pairs
         // `permitSignature` with `permitBatchData`, so omit both when no signature.
         const body: Record<string, unknown> = { ...createPositionRequestArgs };
-        if (signature) body.permitSignature = signature;
+        // H2 guard: only attach signature if it has the full 0x + 130-hex shape (132 chars).
+        // A truthy-but-short string here would silently downgrade to the no-permit path,
+        // hiding upstream signature corruption.
+        if (signature && signature.length >= 132) body.permitSignature = signature;
         else delete (body as any).permitBatchData;
 
         const response = await fetch('/api/liquidity/prepare-mint-tx', {
@@ -385,15 +395,19 @@ export function createCreatePositionAsyncStep(
           ? (e as { diagnostics?: Record<string, unknown> }).diagnostics
           : undefined;
         console.error('createCreatePositionAsyncStep error:', e, diagnostics);
-        Sentry.captureException(e, {
+        reportError(e, {
+          domain: 'liquidity',
+          action: 'prepareTx',
+          component: 'createCreatePositionAsyncStep',
+          chainId: createPositionRequestArgs.chainId,
           tags: { flow: 'lp_create', stage: 'async_build_with_signature' },
-          extra: {
+          extras: {
             userAddress: createPositionRequestArgs.userAddress,
             poolId: createPositionRequestArgs.poolId,
-            chainId: createPositionRequestArgs.chainId,
             ...(diagnostics ?? {}),
           },
         });
+        markReported(e);
         throw e;
       }
     },

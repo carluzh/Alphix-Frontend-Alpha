@@ -115,10 +115,13 @@ const nextConfig = {
   ],
 }
 
-// Wrap with bundle analyzer, then Sentry
+// Wrap with bundle analyzer, then Sentry.
+// Source-map upload is env-gated: the bundler plugin auto-reads SENTRY_ORG,
+// SENTRY_PROJECT, and SENTRY_AUTH_TOKEN from the environment and self-activates
+// upload once all three are set (e.g. in CI / Vercel). No explicit org/project/
+// authToken options needed here.
 export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   silent: true,
-  hideSourceMaps: true,
   // Route Sentry events through our own domain so adblockers / Brave shields /
   // privacy DNS don't silently drop them. Crypto-savvy users frequently block
   // *.ingest.sentry.io directly.

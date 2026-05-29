@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as Sentry from '@sentry/nextjs';
 import { isAddress, getAddress } from 'viem';
 
 import { getAllPools } from '@/lib/pools-config';
@@ -8,6 +7,7 @@ import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
 import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
+import { reportError, reportMessage, addReportBreadcrumb } from '@/lib/observability';
 
 interface PrepareCollectTxRequest extends NextApiRequest {
   body: {
@@ -47,6 +47,9 @@ export default async function handler(
     const chainIdError = validateChainId(chainId, networkMode);
     if (chainIdError) return res.status(400).json({ message: chainIdError });
 
+    // Breadcrumb before the on-chain position lookup; if it throws it bubbles to the
+    // outer catch where reportError captures it.
+    addReportBreadcrumb({ domain: 'liquidity', action: 'fetchPositionDetails', data: { tokenId, chainId } });
     const details = await getPositionDetails(BigInt(tokenId), chainId);
     const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
 
@@ -57,6 +60,11 @@ export default async function handler(
       return res.status(400).json({ message: 'Unified Yield positions use a separate withdraw flow.' });
     }
 
+    // No retry. The Uniswap Data API is eventually consistent — freshly-minted or
+    // freshly-modified positions can return 404 ResourceNotFound ("Unable to derive
+    // uncollected fees from Data API for V4 position") until the indexer catches up.
+    // We surface a clear "please try again" message instead of papering over with a
+    // retry loop; loud failure is the explicit project convention here.
     try {
       const response = await uniswapLPAPI.claimFees({
         walletAddress: getAddress(userAddress),
@@ -74,14 +82,40 @@ export default async function handler(
     } catch (e) {
       if (e instanceof UniswapLPAPIRateLimitError) {
         console.warn('[prepare-collect-tx] Rate limit exhausted after retries');
+        // Rate limits are expected — do NOT capture; leave a breadcrumb trail only.
+        addReportBreadcrumb({ domain: 'liquidity', action: 'collect', level: 'warning', message: 'rate limited' });
         res.setHeader('Retry-After', '2');
         return res.status(429).json({ message: 'Busy — please retry in a moment.' });
       }
       if (e instanceof UniswapLPAPIError) {
         console.error('[prepare-collect-tx] Uniswap LP API error:', e.status, e.message);
-        Sentry.captureException(e, {
-          tags: { route: 'prepare-collect-tx', source: 'uniswap_lp_api', uniswap_status: String(e.status) },
-          extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
+        if (e.status === 404) {
+          // Eventual-consistency indexing delay (ResourceNotFound) — expected, NOT an
+          // exception worth capturing. Report as a soft warning so it stays queryable
+          // without paging anyone, then surface the existing 503 retry message.
+          reportMessage('indexing delay: uncollected fees not yet derivable', {
+            domain: 'liquidity',
+            action: 'collect',
+            component: 'prepare-collect-tx',
+            level: 'warning',
+            chainId: req.body?.chainId,
+            networkMode,
+            tags: { isIndexingDelay: 'true', uniswapStatus: e.status, uniswapErrorCode: e.code },
+            extras: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId },
+          });
+          res.setHeader('Retry-After', '5');
+          return res.status(503).json({
+            message: 'Uncollected fees are still being indexed by Uniswap. Please try again in a few seconds.',
+          });
+        }
+        reportError(e, {
+          domain: 'liquidity',
+          action: 'collect',
+          component: 'prepare-collect-tx',
+          chainId: req.body?.chainId,
+          networkMode,
+          tags: { uniswapStatus: e.status, uniswapErrorCode: e.code },
+          extras: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, uniswapDetails: e.details },
         });
         return res.status(e.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${e.message}` });
       }
@@ -89,9 +123,12 @@ export default async function handler(
     }
   } catch (error: any) {
     console.error('[prepare-collect-tx] Error:', error);
-    Sentry.captureException(error, {
-      tags: { route: 'prepare-collect-tx', source: 'internal' },
-      extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
+    reportError(error, {
+      domain: 'liquidity',
+      action: 'collect',
+      component: 'prepare-collect-tx',
+      chainId: req.body?.chainId,
+      extras: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId },
     });
     return res.status(500).json({ message: error?.message || 'Failed to prepare collect transaction' });
   }

@@ -70,6 +70,47 @@ const FLOW_GAP = 2
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Renders an intermediate token icon inside the Sankey SVG. Mirrors the
+ * existing gray-circle SVG fallback when (a) the URL is the static
+ * placeholder, OR (b) the external <img> 404s at runtime. This guards
+ * against unknown intermediate tokens whose CoinGecko icon URL is broken —
+ * the parent's render-time `isPlaceholder` check can't catch those.
+ */
+function IntermediateTokenIcon({
+  x,
+  centerY,
+  size,
+  icon,
+  alt,
+}: {
+  x: number
+  centerY: number
+  size: number
+  icon: string
+  alt: string
+}) {
+  const [errored, setErrored] = useState(false)
+  if (errored) {
+    return (
+      <circle cx={x} cy={centerY} r={size / 2} fill="#2D2D2D" stroke="#454545" strokeWidth={1} />
+    )
+  }
+  return (
+    <foreignObject x={x - size / 2} y={centerY - size / 2} width={size} height={size}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={icon}
+        alt={alt}
+        width={size}
+        height={size}
+        className="rounded-full"
+        onError={() => setErrored(true)}
+      />
+    </foreignObject>
+  )
+}
+
 function buildExchangeColorMap(routes: ParsedSplitRoute[]): Map<string, string> {
   const map = new Map<string, string>()
   let idx = 0
@@ -689,9 +730,13 @@ export function SwapRoutePreview({
                         isPlaceholder ? (
                           <circle cx={x} cy={centerY} r={cICON_SIZE / 2} fill="#2D2D2D" stroke="#454545" strokeWidth={1} />
                         ) : (
-                          <foreignObject x={x - cICON_SIZE / 2} y={centerY - cICON_SIZE / 2} width={cICON_SIZE} height={cICON_SIZE}>
-                            <TokenImage src={icon} alt={bar.symbol} size={cICON_SIZE} />
-                          </foreignObject>
+                          <IntermediateTokenIcon
+                            x={x}
+                            centerY={centerY}
+                            size={cICON_SIZE}
+                            icon={icon}
+                            alt={bar.symbol}
+                          />
                         )
                       )}
                     </g>

@@ -7,22 +7,17 @@ import { Loader2 } from "lucide-react";
 
 export default function HomePage() {
   const router = useRouter();
-  const { isConnected, status } = useAccount();
+  const { isConnected } = useAccount();
 
+  // Route immediately based on isConnected. If wagmi is still "connecting"
+  // on mount we get isConnected=false → /liquidity; if a connection settles
+  // later this effect re-runs (deps include isConnected) and replaces to
+  // /overview. The previous status-aware setup could trap us on this page
+  // when status oscillated between "connecting" and "reconnecting" (the
+  // 3s safety timeout kept getting torn down before it could fire).
   useEffect(() => {
-    if (status === "connecting" || status === "reconnecting") return;
     router.replace(isConnected ? "/overview" : "/liquidity");
-  }, [isConnected, status, router]);
-
-  // Fallback: if wagmi is stuck reconnecting for 3s, default to /liquidity
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      if (status === "connecting" || status === "reconnecting") {
-        router.replace("/liquidity");
-      }
-    }, 3000);
-    return () => clearTimeout(timeout);
-  }, [status, router]);
+  }, [isConnected, router]);
 
   return (
     <div className="flex flex-1 items-center justify-center">

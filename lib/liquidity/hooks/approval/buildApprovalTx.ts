@@ -6,7 +6,7 @@
  */
 
 import { maxUint256, type Address } from 'viem';
-import * as Sentry from '@sentry/nextjs';
+import { reportError, addReportBreadcrumb } from '@/lib/observability';
 import type { ValidatedTransactionRequest } from '../../types';
 
 /**
@@ -26,9 +26,11 @@ export function buildApprovalCalldata(
   // Validate spender address to catch encoding issues early
   if (!spender || typeof spender !== 'string' || !spender.startsWith('0x') || spender.length !== 42) {
     const error = new Error(`Invalid spender address format: ${spender}`);
-    Sentry.captureException(error, {
-      tags: { component: 'buildApprovalCalldata' },
-      extra: { spender, spenderType: typeof spender, spenderLength: spender?.length },
+    reportError(error, {
+      domain: 'approval',
+      action: 'buildCalldata',
+      component: 'buildApprovalTx',
+      extras: { spender, spenderType: typeof spender, spenderLength: spender?.length },
     });
     throw error;
   }
@@ -48,9 +50,11 @@ export function buildApprovalCalldata(
   // Validate calldata length (should be 2 + 8 + 64 + 64 = 138 chars including 0x)
   if (calldata.length !== 138) {
     const error = new Error(`Invalid calldata length: expected 138, got ${calldata.length}`);
-    Sentry.captureException(error, {
-      tags: { component: 'buildApprovalCalldata' },
-      extra: {
+    reportError(error, {
+      domain: 'approval',
+      action: 'buildCalldata',
+      component: 'buildApprovalTx',
+      extras: {
         spender,
         amount: amount?.toString(),
         approvalAmount: approvalAmount.toString(),
@@ -64,10 +68,10 @@ export function buildApprovalCalldata(
   }
 
   // Add breadcrumb for debugging - will be included with any subsequent error
-  Sentry.addBreadcrumb({
-    category: 'approval',
+  addReportBreadcrumb({
+    domain: 'approval',
+    action: 'buildCalldata',
     message: 'Built approval calldata',
-    level: 'info',
     data: {
       spender,
       amount: amount?.toString(),

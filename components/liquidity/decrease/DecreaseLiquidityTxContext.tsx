@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount } from "wagmi";
 import { parseUnits, type Address, type Hash } from "viem";
-import * as Sentry from "@sentry/nextjs";
+import { reportError } from "@/lib/observability";
 import { getTokenDefinitions, getPoolBySlug, getTokenSymbolByAddress } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
 import { chainIdForMode } from "@/lib/network-mode";
@@ -113,9 +113,13 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       return txHash;
     } catch (err: any) {
       console.error("[DecreaseLiquidityTxContext] Unified Yield withdraw error:", err);
-      Sentry.captureException(err, {
-        tags: { component: "DecreaseLiquidityTxContext", operation: "executeUnifiedYieldWithdraw" },
-        extra: { poolId: position?.poolId, shareBalance: position?.shareBalance, userAddress: accountAddress, chainId },
+      reportError(err, {
+        domain: "unified-yield",
+        action: "withdraw",
+        component: "DecreaseLiquidityTxContext",
+        networkMode,
+        chainId,
+        extras: { poolId: position?.poolId, shareBalance: position?.shareBalance, userAddress: accountAddress },
       });
       setError(err.message || "Unified Yield withdrawal failed");
       setIsLoading(false);
@@ -196,9 +200,13 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         return context as ValidatedLiquidityTxContext;
       } catch (err: any) {
         console.error("[DecreaseLiquidityTxContext] Unified Yield context error:", err);
-        Sentry.captureException(err, {
-          tags: { component: "DecreaseLiquidityTxContext", operation: "buildUnifiedYieldContext" },
-          extra: { poolId: position?.poolId, hookAddress: position?.hookAddress, shareBalance: position?.shareBalance, userAddress: accountAddress, chainId },
+        reportError(err, {
+          domain: "unified-yield",
+          action: "buildContext",
+          component: "DecreaseLiquidityTxContext",
+          networkMode,
+          chainId,
+          extras: { poolId: position?.poolId, hookAddress: position?.hookAddress, shareBalance: position?.shareBalance, userAddress: accountAddress },
         });
         setError(err.message || "Failed to prepare Unified Yield withdrawal");
         setIsLoading(false);
@@ -249,9 +257,13 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       return context as ValidatedLiquidityTxContext;
     } catch (err: any) {
       console.error("[DecreaseLiquidityTxContext] fetchAndBuildContext error:", err);
-      Sentry.captureException(err, {
-        tags: { component: "DecreaseLiquidityTxContext", operation: "fetchAndBuildContext" },
-        extra: { poolId: position?.poolId, positionId: position?.positionId, userAddress: accountAddress, chainId, withdrawAmount0, withdrawAmount1 },
+      reportError(err, {
+        domain: "liquidity",
+        action: "decrease",
+        component: "DecreaseLiquidityTxContext",
+        networkMode,
+        chainId,
+        extras: { poolId: position?.poolId, positionId: position?.positionId, userAddress: accountAddress, withdrawAmount0, withdrawAmount1 },
       });
       setError(err.message || "Failed to prepare transaction");
       setIsLoading(false);

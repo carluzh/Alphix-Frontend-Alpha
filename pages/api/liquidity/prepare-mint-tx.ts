@@ -7,7 +7,6 @@
  */
 
 import { nearestUsableTick, TickMath } from '@uniswap/v3-sdk';
-import * as Sentry from '@sentry/nextjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isAddress, getAddress, parseUnits } from 'viem';
 
@@ -27,6 +26,7 @@ import {
   normalizeV4BatchPermit,
   denormalizeV4BatchPermit,
 } from '@/lib/liquidity/uniswap-api/client';
+import { reportError, addReportBreadcrumb } from '@/lib/observability';
 
 interface PrepareMintTxRequest extends NextApiRequest {
   body: {
@@ -173,7 +173,17 @@ export default async function handler(
     if ((permitSignature == null) !== (permitBatchData == null)) {
       return res.status(400).json({ message: 'permitSignature and permitBatchData must be provided together.' });
     }
-    const hasSignedPermit = !!(permitSignature && permitBatchData);
+    // H2 tightening: reject malformed signatures loudly rather than silently coercing
+    // empty/short strings downstream (a 64-byte signature is 0x + 130 hex = 132 chars).
+    if (permitSignature != null) {
+      if (typeof permitSignature !== 'string' || permitSignature.length === 0) {
+        return res.status(400).json({ message: 'permitSignature must be a non-empty string.' });
+      }
+      if (permitSignature.length < 132 || !permitSignature.startsWith('0x')) {
+        return res.status(400).json({ message: 'permitSignature is malformed (expected 0x-prefixed hex, >= 132 chars).' });
+      }
+    }
+    const hasSignedPermit = !!(permitSignature && permitSignature.length >= 132 && permitBatchData);
 
     const inputTokenAddress = inputTokenSymbol === token0Symbol
       ? getAddress(token0Config.address)
@@ -211,6 +221,12 @@ export default async function handler(
       createResponse = await uniswapLPAPI.create({ ...baseReq, simulateTransaction: !hasSignedPermit });
     } catch (e) {
       if (e instanceof UniswapLPAPIError && e.status === 404 && /FAILED_TO_ESTIMATE_GAS|TRANSFER_FROM_FAILED/i.test(e.message)) {
+        addReportBreadcrumb({
+          domain: 'liquidity',
+          action: 'create',
+          message: 'retry without simulation',
+          data: { attempt: 2 },
+        });
         createResponse = await uniswapLPAPI.create({ ...baseReq, simulateTransaction: false });
         needsApprovalDiscovery = true;
       } else {
@@ -300,21 +316,38 @@ export default async function handler(
   } catch (error: any) {
     if (error instanceof UniswapLPAPIRateLimitError) {
       console.warn('[prepare-mint-tx] Rate limit exhausted after retries');
+      // Rate limits are expected — do NOT capture; leave a breadcrumb trail only.
+      addReportBreadcrumb({ domain: 'liquidity', action: 'mint', level: 'warning', message: 'rate limited' });
       res.setHeader('Retry-After', '2');
       return res.status(429).json({ message: 'Busy — please retry in a moment.' });
     }
     if (error instanceof UniswapLPAPIError) {
       console.error('[prepare-mint-tx] Uniswap LP API error:', error.status, error.message);
-      Sentry.captureException(error, {
-        tags: { route: 'prepare-mint-tx', source: 'uniswap_lp_api', uniswap_status: String(error.status) },
-        extra: { userAddress: req.body?.userAddress, poolId: req.body?.poolId, chainId: req.body?.chainId, tickLower: req.body?.userTickLower, tickUpper: req.body?.userTickUpper },
+      reportError(error, {
+        domain: 'liquidity',
+        action: 'mint',
+        component: 'prepare-mint-tx',
+        chainId: req.body?.chainId,
+        networkMode,
+        tags: { uniswapStatus: error.status, uniswapErrorCode: error.code },
+        extras: {
+          userAddress: req.body?.userAddress,
+          poolId: req.body?.poolId,
+          tickLower: req.body?.userTickLower,
+          tickUpper: req.body?.userTickUpper,
+          uniswapDetails: error.details,
+        },
       });
       return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
     }
     console.error('[API prepare-mint-tx] Error:', error);
-    Sentry.captureException(error, {
-      tags: { route: 'prepare-mint-tx', source: 'internal' },
-      extra: { userAddress: req.body?.userAddress, poolId: req.body?.poolId, chainId: req.body?.chainId },
+    reportError(error, {
+      domain: 'liquidity',
+      action: 'mint',
+      component: 'prepare-mint-tx',
+      chainId: req.body?.chainId,
+      networkMode,
+      extras: { userAddress: req.body?.userAddress, poolId: req.body?.poolId },
     });
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return res.status(500).json({ message: errorMessage, error: process.env.NODE_ENV === 'development' ? error : undefined });

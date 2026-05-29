@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useAccount, useSignMessage } from "wagmi";
-import * as Sentry from "@sentry/nextjs";
+import { reportError, reportMessage, addReportBreadcrumb } from "@/lib/observability";
 import {
   fetchReferralCode,
   fetchRefereesData,
@@ -147,8 +147,10 @@ export function useReferralData(): UseReferralDataReturn {
       setError(null);
 
       try {
-        // Fetch all data in parallel from backend API
-        const [codeData, referrerData, refereesResult] = await Promise.all([
+        // Fetch all data in parallel from backend API. Use allSettled so one
+        // failing leg does not blank the others — each rejected leg is reported
+        // independently with a `which` tag.
+        const [codeSettled, referrerSettled, refereesSettled] = await Promise.allSettled([
           fetchReferralCode(address!),
           fetchMyReferrer(address!),
           fetchRefereesData(address!),
@@ -157,34 +159,69 @@ export function useReferralData(): UseReferralDataReturn {
         if (cancelled) return;
 
         // Set my code
-        if (codeData) {
-          if (codeData.code === null && codeData.eligible === false) {
-            setMyCode("REQUIREMENTS_NOT_MET");
-          } else if (codeData.code) {
-            setMyCode(codeData.code);
-            setMyCodeUsageCount(codeData.usageCount);
+        if (codeSettled.status === "fulfilled") {
+          const codeData = codeSettled.value;
+          if (codeData) {
+            if (codeData.code === null && codeData.eligible === false) {
+              setMyCode("REQUIREMENTS_NOT_MET");
+            } else if (codeData.code) {
+              setMyCode(codeData.code);
+              setMyCodeUsageCount(codeData.usageCount);
+            }
           }
+        } else {
+          reportError(codeSettled.reason, {
+            domain: "points",
+            action: "fetchReferralCode",
+            component: "useReferralData",
+            tags: { which: "referral_code" },
+            extras: { address },
+          });
         }
 
         // Set my referrer
-        if (referrerData) {
-          setMyReferrer(referrerData.referrer);
-          setMyReferrerCode(referrerData.referralCode);
-          setJoinedAt(referrerData.joinedAt);
+        if (referrerSettled.status === "fulfilled") {
+          const referrerData = referrerSettled.value;
+          if (referrerData) {
+            setMyReferrer(referrerData.referrer);
+            setMyReferrerCode(referrerData.referralCode);
+            setJoinedAt(referrerData.joinedAt);
+          }
+        } else {
+          reportError(referrerSettled.reason, {
+            domain: "points",
+            action: "fetchMyReferrer",
+            component: "useReferralData",
+            tags: { which: "my_referrer" },
+            extras: { address },
+          });
         }
 
         // Set referees data
-        if (refereesResult) {
-          setRefereesData(refereesResult);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          const message = err instanceof Error ? err.message : "Failed to load referral data";
-          setError(message);
-          Sentry.captureException(err, {
-            tags: { operation: "referral_fetch" },
-            extra: { address },
+        if (refereesSettled.status === "fulfilled") {
+          if (refereesSettled.value) {
+            setRefereesData(refereesSettled.value);
+          }
+        } else {
+          reportError(refereesSettled.reason, {
+            domain: "points",
+            action: "fetchRefereesData",
+            component: "useReferralData",
+            tags: { which: "referees" },
+            extras: { address },
           });
+        }
+
+        // Surface a user-facing error if any leg failed (preserves prior behavior).
+        const firstRejection = [codeSettled, referrerSettled, refereesSettled].find(
+          (r): r is PromiseRejectedResult => r.status === "rejected"
+        );
+        if (firstRejection) {
+          const message =
+            firstRejection.reason instanceof Error
+              ? firstRejection.reason.message
+              : "Failed to load referral data";
+          setError(message);
         }
       } finally {
         if (!cancelled) {
@@ -251,9 +288,11 @@ export function useReferralData(): UseReferralDataReturn {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to get referral code";
       setError(message);
-      Sentry.captureException(err, {
-        tags: { operation: "referral_get_code" },
-        extra: { address },
+      reportError(err, {
+        domain: "points",
+        action: "fetchReferralCode",
+        component: "useReferralData",
+        extras: { address },
       });
       return null;
     }
@@ -295,8 +334,26 @@ export function useReferralData(): UseReferralDataReturn {
           setError(errorMsg);
           return { success: false, error: errorMsg };
         }
-        throw signErr;
+        // Non-rejection signature failure (helper auto-skips rejections anyway).
+        // Report here under the signature domain and return directly so the outer
+        // catch does not double-report the same error under a different fingerprint.
+        reportError(signErr, {
+          domain: "signature",
+          action: "referralSign",
+          component: "useReferralData",
+          extras: { address },
+        });
+        const errorMsg = signErr instanceof Error ? signErr.message : "Failed to apply referral code";
+        setError(errorMsg);
+        return { success: false, error: errorMsg };
       }
+
+      addReportBreadcrumb({
+        domain: "signature",
+        action: "referralSign",
+        message: "referral apply signature obtained",
+        data: { address },
+      });
 
       const response = await fetch(`${BACKEND_URL}/referral/apply`, {
         method: "POST",
@@ -331,6 +388,14 @@ export function useReferralData(): UseReferralDataReturn {
 
         const userError = errorMap[backendError] || backendError;
         setError(userError);
+        // Backend-validation rejection (not an exception) — track as a soft warning.
+        reportMessage(`Referral apply rejected: ${backendError}`, {
+          domain: "points",
+          action: "applyReferral",
+          level: "warning",
+          component: "useReferralData",
+          extras: { address, code, status: response.status, backendError },
+        });
         return { success: false, error: userError };
       }
 
@@ -350,9 +415,11 @@ export function useReferralData(): UseReferralDataReturn {
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to apply referral code";
       setError(errorMsg);
-      Sentry.captureException(err, {
-        tags: { operation: "referral_apply" },
-        extra: { address, code },
+      reportError(err, {
+        domain: "points",
+        action: "applyReferral",
+        component: "useReferralData",
+        extras: { address, code },
       });
       return { success: false, error: errorMsg };
     }
@@ -377,6 +444,13 @@ export function useReferralData(): UseReferralDataReturn {
       const message = `Change referral code to: ${newCode}\nAddress: ${address}\nTimestamp: ${Date.now()}`;
       const signature = await signMessageAsync({ message });
 
+      addReportBreadcrumb({
+        domain: "signature",
+        action: "referralSign",
+        message: "referral change signature obtained",
+        data: { address },
+      });
+
       const response = await fetch(`${BACKEND_URL}/referral/change`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -395,7 +469,17 @@ export function useReferralData(): UseReferralDataReturn {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to change referrer");
+        const backendError = errorData.error || "Failed to change referrer";
+        setError(backendError);
+        // Backend-validation rejection (not an exception) — track as a soft warning.
+        reportMessage(`Referral change rejected: ${backendError}`, {
+          domain: "points",
+          action: "changeReferrer",
+          level: "warning",
+          component: "useReferralData",
+          extras: { address, newCode, status: response.status, backendError },
+        });
+        return false;
       }
 
       const data = await response.json();
@@ -409,9 +493,11 @@ export function useReferralData(): UseReferralDataReturn {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to change referrer";
       setError(message);
-      Sentry.captureException(err, {
-        tags: { operation: "referral_change" },
-        extra: { address, newCode },
+      reportError(err, {
+        domain: "points",
+        action: "changeReferrer",
+        component: "useReferralData",
+        extras: { address, newCode },
       });
       return false;
     }

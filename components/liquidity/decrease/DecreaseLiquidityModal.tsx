@@ -2,11 +2,15 @@
 
 import React, { useState, useCallback, useEffect, useMemo, useRef, useLayoutEffect } from "react";
 import { formatUnits } from "viem";
+import { useAccount } from "wagmi";
 import { TokenImage } from "@/components/ui/token-image";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
+import { chainIdForMode } from "@/lib/network-mode";
+import { invalidateAfterTx } from "@/lib/apollo/mutations/invalidation";
+import { reportMessage } from "@/lib/observability";
 import { getTokenIcon } from "../liquidity-form-utils";
 import { PositionAmountsDisplay } from "../shared/PositionAmountsDisplay";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
@@ -51,7 +55,9 @@ function DecreaseLiquidityInner({
 
   const { isLoading, fetchAndBuildContext, receive } = useDecreaseLiquidityTxContext();
 
+  const { address } = useAccount();
   const networkMode = position.networkMode;
+  const chainId = networkMode ? chainIdForMode(networkMode) : undefined;
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
   const token0Decimals = tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals ?? 18;
   const token1Decimals = tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals ?? 18;
@@ -145,8 +151,24 @@ function DecreaseLiquidityInner({
       toast.success(msg);
     }
 
+    // Kick off Apollo refetch BEFORE the parent's onSuccess so consumers re-render
+    // against fresh user-positions. invalidateAfterTx implements Uniswap's 2-layer
+    // pattern (3s delayed refetchQueries({include:'active'})).
+    if (address && chainId) {
+      invalidateAfterTx({ owner: address, chainId }).catch((err) =>
+        reportMessage('post-tx refetch failed', {
+          domain: 'liquidity',
+          action: 'refetchPositions',
+          level: 'warning',
+          component: 'DecreaseLiquidityModal',
+          chainId,
+          extras: { refetchError: err instanceof Error ? err.message : String(err) },
+        }),
+      );
+    }
+
     onSuccess?.({ isFullBurn });
-  }, [onSuccess, networkMode]);
+  }, [onSuccess, networkMode, address, chainId]);
 
   const isDisabled = percent === 0 || isLoading || !hasValidAmounts;
 

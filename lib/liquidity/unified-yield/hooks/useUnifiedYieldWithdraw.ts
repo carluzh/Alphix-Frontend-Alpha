@@ -16,9 +16,7 @@
 import { useCallback, useState } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
 import type { Address, Hash } from 'viem';
-import * as Sentry from '@sentry/nextjs';
-
-import { isUserRejectionError } from '../../utils/validation/errorHandling';
+import { reportError } from '@/lib/observability';
 
 import { UNIFIED_YIELD_HOOK_ABI } from '../abi/unifiedYieldHookABI';
 import {
@@ -184,12 +182,16 @@ export function useUnifiedYieldWithdraw(
         return preview;
       } catch (err) {
         console.warn('Preview failed:', err);
-        // Capture preview failures to Sentry for debugging
-        Sentry.captureException(err, {
-          tags: { component: 'useUnifiedYieldWithdraw', operation: 'getPreview' },
-          extra: {
+        // Capture preview failures for debugging (helper auto-drops rejections).
+        reportError(err, {
+          domain: 'unified-yield',
+          action: 'preview',
+          component: 'useUnifiedYieldWithdraw',
+          networkMode,
+          chainId: params.chainId ?? chainIdForMode(networkMode),
+          extras: {
             hookAddress: params.hookAddress,
-            shares: shares.toString(),
+            shares,
             token0Decimals: params.token0Decimals,
             token1Decimals: params.token1Decimals,
             poolId: params.poolId,
@@ -265,21 +267,23 @@ export function useUnifiedYieldWithdraw(
         const error = err instanceof Error ? err : new Error('Withdrawal failed');
         setError(error);
 
-        // Capture non-rejection errors to Sentry
-        if (!isUserRejectionError(err)) {
-          Sentry.captureException(error, {
-            tags: { component: 'useUnifiedYieldWithdraw', operation: 'withdraw' },
-            extra: {
-              hookAddress: params.hookAddress,
-              shares: shares.toString(),
-              userAddress,
-              poolId: params.poolId,
-              chainId: params.chainId,
-              sqrtPriceX96: params.sqrtPriceX96,
-              maxPriceSlippage: params.maxPriceSlippage,
-            },
-          });
-        }
+        // Helper auto-drops user rejections — no manual 4001 check.
+        reportError(err, {
+          domain: 'unified-yield',
+          action: 'withdraw',
+          component: 'useUnifiedYieldWithdraw',
+          networkMode,
+          chainId: params.chainId ?? chainIdForMode(networkMode),
+          extras: {
+            hookAddress: params.hookAddress,
+            shares,
+            userAddress,
+            poolId: params.poolId,
+            chainId: params.chainId,
+            sqrtPriceX96: params.sqrtPriceX96,
+            maxPriceSlippage: params.maxPriceSlippage,
+          },
+        });
 
         return undefined;
       }

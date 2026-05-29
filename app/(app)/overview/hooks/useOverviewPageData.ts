@@ -14,6 +14,7 @@ import { createNetworkClient } from "@/lib/viemClient";
 import { chainIdForMode } from "@/lib/network-mode";
 import type { NetworkMode } from "@/lib/network-mode";
 import type { UnifiedYieldPosition } from "@/lib/liquidity/unified-yield/types";
+import { reportError } from "@/lib/observability";
 
 /**
  * useOverviewPageData - Aggregates all data needed for overview pages
@@ -124,6 +125,7 @@ export function useOverviewPageData() {
 
     fetchAllUYPositions().catch((error) => {
       console.warn('[useOverviewPageData] Failed to fetch Unified Yield positions:', error);
+      reportError(error, { domain: 'unified-yield', action: 'fetchPositions', component: 'useOverviewPageData', extras: { address: accountAddress } });
       if (!cancelled) setUnifiedYieldPositions([]);
     }).finally(() => {
       if (!cancelled) setIsLoadingUYPositions(false);
@@ -155,6 +157,7 @@ export function useOverviewPageData() {
       })
       .catch((err) => {
         console.error("[useOverviewPageData] Error fetching points:", err);
+        reportError(err, { domain: 'points', action: 'fetchUserPoints', component: 'useOverviewPageData', extras: { address: accountAddress } });
         if (!cancelled) {
           setPointsData(DEFAULT_USER_POINTS);
         }

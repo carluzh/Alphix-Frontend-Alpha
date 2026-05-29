@@ -31,8 +31,6 @@ interface ChartDataPoint {
 
 interface PortfolioChartProps {
   className?: string;
-  /** Current total value of all positions (calculated by parent using live data) */
-  currentPositionsValue?: number;
   /** Parent loading state - when true, positions data is not yet available */
   isParentLoading?: boolean;
 }
@@ -94,7 +92,7 @@ class ChartModelWrapper implements ChartModelWithLiveDot {
   updateData(data: ChartDataPoint[]): void { this.data = data; }
 }
 
-export function PortfolioChart({ className, currentPositionsValue, isParentLoading }: PortfolioChartProps) {
+export function PortfolioChart({ className, isParentLoading }: PortfolioChartProps) {
   const { address, isConnected } = useAccount();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -108,11 +106,12 @@ export function PortfolioChart({ className, currentPositionsValue, isParentLoadi
   const [hoverPositionsCoords, setHoverPositionsCoords] = useState<{ x: number; y: number } | null>(null);
   const [isChartReady, setIsChartReady] = useState(false);
 
-  // Fetch historical position values from backend
+  // Series comes straight from the backend (no FE-derived "live now" point).
+  // SSE inside usePositionsChartData invalidates the query when a new snapshot
+  // is recorded, so the chart's right edge updates without flicker.
   const { data: positionsHistoricalData, isLoading: isLoadingPositions } = usePositionsChartData({
     address,
     period: selectedPeriod,
-    currentTotalValue: currentPositionsValue,
     enabled: isConnected && !!address,
   });
 

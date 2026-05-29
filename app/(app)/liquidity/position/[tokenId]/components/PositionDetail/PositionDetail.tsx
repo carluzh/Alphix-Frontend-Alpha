@@ -2,6 +2,7 @@
 
 import { memo, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import Image from "next/image";
 import { ChevronRight, Plus, Minus } from "lucide-react";
@@ -817,6 +818,7 @@ export const PositionDetail = memo(function PositionDetail({
 }: PositionDetailProps) {
   const isMobile = useIsMobile();
   const router = useRouter();
+  const queryClient = useQueryClient();
   // Use pool's chain, not wallet's chain — ensures correct token icons, colors, and API calls
   const networkMode = poolConfig?.networkMode ?? 'base' as NetworkMode;
 
@@ -988,21 +990,45 @@ export const PositionDetail = memo(function PositionDetail({
     setIsAddModalOpen(true);
   }, []);
 
-  // Handle modal success - refetch position data
+  // Handle modal success - invalidate React Query caches and refetch.
+  //
+  // The position page uses React Query (not Apollo) for ["position", "v4", tokenId, networkMode]
+  // and ["unified-yield-position-detail", ...]. invalidateAfterTx() inside the modal
+  // refreshes the Apollo cache (used by Overview) but does NOT touch React Query.
+  //
+  // We mirror Uniswap's 2-layer pattern: invalidate immediately (so the next render
+  // marks queries stale), then refetch after a 3s delay to give the backend indexer
+  // time to catch up to the on-chain state. Refetching immediately races the indexer
+  // and surfaces stale data to the user.
+  const REFETCH_DELAY_MS = 3000;
+  const invalidatePositionQueries = useCallback(() => {
+    if (isUnifiedYield) {
+      queryClient.invalidateQueries({ queryKey: ["unified-yield-position-detail"] }).catch(() => {});
+    } else {
+      queryClient.invalidateQueries({ queryKey: ["position", "v4", tokenId, networkMode] }).catch(() => {});
+    }
+  }, [queryClient, isUnifiedYield, tokenId, networkMode]);
+
   const handleModalSuccess = useCallback(() => {
-    refetch();
-    refetchYieldChart();
-  }, [refetch, refetchYieldChart]);
+    invalidatePositionQueries();
+    window.setTimeout(() => {
+      refetch();
+      refetchYieldChart();
+    }, REFETCH_DELAY_MS);
+  }, [invalidatePositionQueries, refetch, refetchYieldChart]);
 
   // Handle decrease modal success - navigate to overview on full burn
   const handleDecreaseSuccess = useCallback((options?: { isFullBurn?: boolean }) => {
     if (options?.isFullBurn) {
       router.push('/overview');
     } else {
-      refetch();
-      refetchYieldChart();
+      invalidatePositionQueries();
+      window.setTimeout(() => {
+        refetch();
+        refetchYieldChart();
+      }, REFETCH_DELAY_MS);
     }
-  }, [router, refetch, refetchYieldChart]);
+  }, [router, invalidatePositionQueries, refetch, refetchYieldChart]);
 
   // Loading state
   if (isLoading) {

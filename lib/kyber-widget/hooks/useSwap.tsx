@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { addReportBreadcrumb, reportError, reportMessage } from '@/lib/observability'
 import { parseUnits } from '../utils/crypto'
 import { AGGREGATOR_PATH, NATIVE_TOKEN_ADDRESS, SUPPORTED_NETWORKS, WRAPPED_NATIVE_TOKEN } from '../constants'
 import { useDebounce } from '../hooks/use-debounce'
@@ -227,6 +228,18 @@ const useSwap = ({
       error = 'Please connect your wallet'
     }
 
+    // Expected user states (insufficient balance / not connected) — breadcrumb
+    // only, never reported as an error. Leaves the trail for later failures.
+    if (error) {
+      addReportBreadcrumb({
+        domain: 'swap',
+        action: 'getRate',
+        level: 'info',
+        message: `getRate input state: ${error}`,
+        data: { tokenIn, tokenOut, amountIn: debouncedInput, error },
+      })
+    }
+
     setError(error)
     if (isWrap || isUnwrap) {
       setTrade({
@@ -293,6 +306,14 @@ const useSwap = ({
     } catch (e: unknown) {
       // Request was superseded by a newer call; the newer call will manage state.
       if (e instanceof Error && e.name === 'AbortError') return
+      reportError(e, {
+        domain: 'swap',
+        action: 'getRate',
+        component: 'useSwap',
+        chainId,
+        fingerprint: ['swap', 'getRate', tokenIn, tokenOut],
+        extras: { debouncedInput, tokenIn, tokenOut, dexes },
+      })
       setTrade(null)
       setError('Failed to fetch route')
       if (controllerRef.current === controller) {
@@ -306,6 +327,16 @@ const useSwap = ({
       setTrade(routeResponse.data)
       if (connectedAccount.address && tokenInBalance >= amountIn) setError('')
     } else {
+      // Not an exception — the route call succeeded but returned no fillable
+      // amountOut. Soft-report so we can track persistent no-liquidity pairs.
+      reportMessage('Insufficient liquidity for swap', {
+        domain: 'swap',
+        action: 'getRate',
+        component: 'useSwap',
+        level: 'warning',
+        chainId,
+        extras: { tokenIn, tokenOut, amountIn: amountIn.toString() },
+      })
       setTrade(null)
       setError('Insufficient liquidity')
     }

@@ -263,15 +263,22 @@ export function PositionRangeChart({
         bandIndicatorRef.current.updateAllViews()
       }
 
-      // Calculate visible range based on price line data only
-      // Bands will be drawn wherever they fall (may be partially visible)
-      const priceValues = entries.map(e => e.value)
-      const priceMin = Math.min(...priceValues)
-      const priceMax = Math.max(...priceValues)
-
-      // No margin - fit exactly to price line data
-      const visibleMin = priceMin
-      const visibleMax = priceMax
+      // Autoscale to include BOTH the price-history line AND the range band.
+      // The Position Page (PriceChartSection) is tall and labeled, so it can
+      // pad ±20% around history and rely on the user reading the Y axis when
+      // the band sits outside the viewport. This preview is an 80px sparkline
+      // with no Y labels — if the band is outside the viewport it reads as
+      // "range is above/below the price" even when the position is in-range.
+      // Fix: include the band bounds in the candidate set BEFORE computing
+      // min/max so the viewport always contains the band.
+      const candidates: number[] = entries.map(e => e.value)
+      if (priceLower !== undefined && priceLower > 0) candidates.push(priceLower)
+      if (priceUpper !== undefined && priceUpper < Number.MAX_SAFE_INTEGER) candidates.push(priceUpper)
+      const dataMin = Math.min(...candidates)
+      const dataMax = Math.max(...candidates)
+      const padding = (dataMax - dataMin) * 0.1 || dataMax * 0.1
+      const visibleMin = Math.max(0, dataMin - padding)
+      const visibleMax = dataMax + padding
 
       const autoscaleProvider = () => ({
         priceRange: {

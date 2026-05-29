@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { chainIdForMode } from "@/lib/network-mode";
 import { clearCachedPermit } from "@/lib/permit-types";
+import { invalidateAfterTx } from "@/lib/apollo/mutations/invalidation";
+import { reportMessage } from "@/lib/observability";
 import { useChainMismatch } from "@/hooks/useChainMismatch";
 import { getPoolBySlug } from "@/lib/pools-config";
 import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
@@ -217,6 +219,21 @@ function IncreaseLiquidityInner({
       });
     } else {
       toast.success("Liquidity added");
+    }
+    // Kick off Apollo refetch BEFORE the parent's onSuccess so consumers re-render
+    // against fresh user-positions. invalidateAfterTx implements Uniswap's 2-layer
+    // pattern (3s delayed refetchQueries({include:'active'})).
+    if (address && chainId) {
+      invalidateAfterTx({ owner: address, chainId }).catch((err) =>
+        reportMessage('post-tx refetch failed', {
+          domain: 'liquidity',
+          action: 'refetchPositions',
+          level: 'warning',
+          component: 'IncreaseLiquidityModal',
+          chainId,
+          extras: { refetchError: err instanceof Error ? err.message : String(err) },
+        }),
+      );
     }
     onSuccess?.();
   }, [onSuccess, address, chainId, networkMode, position.token0.symbol, position.token1.symbol]);
