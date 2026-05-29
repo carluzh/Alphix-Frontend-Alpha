@@ -1,26 +1,26 @@
 /**
- * prepare-decrease-tx.ts — route non-UY V4 decrease liquidity through Uniswap's LP API.
+ * prepare-decrease-tx.ts — thin pass-through to Uniswap's LP API for non-UY V4 decreases.
  *
- * Decrease operations don't require approvals (user is withdrawing).
- * UY positions use a separate share-burn flow; this route rejects them.
+ * No approvals needed (user is withdrawing). No server-side computation.
+ * Validates input, forwards to /lp/decrease, and returns the response verbatim.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
-import * as Sentry from '@sentry/nextjs';
+import { isAddress, getAddress } from 'viem';
 
-import { getAllPools, getToken, getTokenSymbolByAddress } from '@/lib/pools-config';
+import { getAllPools } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
-import { getPositionDetails, getPoolState } from '@/lib/liquidity/liquidity-utils';
+import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
 import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
-import { isAddress, getAddress, zeroAddress, type Hex } from 'viem';
+import { reportError, addReportBreadcrumb } from '@/lib/observability';
 
 interface PrepareDecreaseTxRequest extends NextApiRequest {
   body: {
     userAddress: string;
     tokenId: string;
-    /** 1-100. Sole supported input from frontend. */
+    /** 1-100. */
     decreasePercentage: number;
     chainId: number;
     slippageBps?: number;
@@ -31,21 +31,10 @@ interface PrepareDecreaseTxRequest extends NextApiRequest {
 interface TransactionPreparedResponse {
   needsApproval: false;
   create: { to: string; from?: string; data: string; value: string; chainId: number; gasLimit?: string };
-  transaction: { to: string; data: string; value: string; gasLimit?: string };
-  sqrtRatioX96: string;
-  currentTick: number;
-  poolLiquidity: string;
-  deadline: string;
   isFullBurn: boolean;
-  /** Estimated gas cost in wei from API simulation. */
+  /** Estimated gas cost in wei from /lp/decrease simulation. */
   gasFee?: string;
-  details: {
-    token0: { address: string; symbol: string; amount: string };
-    token1: { address: string; symbol: string; amount: string };
-    liquidityToRemove: string;
-    tickLower: number;
-    tickUpper: number;
-  };
+  details: { token0: { amount: string }; token1: { amount: string } };
 }
 
 type PrepareDecreaseTxResponse = TransactionPreparedResponse | { message: string; error?: any };
@@ -74,10 +63,11 @@ export default async function handler(
       tokenId,
       decreasePercentage,
       chainId,
-      slippageBps = 50,
+      slippageBps,
       deadlineMinutes = 30,
     } = req.body;
 
+    // --- 1. Validate request -------------------------------------------------
     const chainIdError = validateChainId(chainId, networkMode);
     if (chainIdError) return res.status(400).json({ message: chainIdError });
     if (!isAddress(userAddress)) return res.status(400).json({ message: 'Invalid userAddress.' });
@@ -89,8 +79,11 @@ export default async function handler(
     const nftTokenId = BigInt(tokenId);
     const pct = Math.round(decreasePercentage);
 
-    const details = await getPositionDetails(nftTokenId, chainId);
-    const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
+    // Breadcrumb before the on-chain position lookup; if it throws it bubbles to the
+    // outer catch where reportError captures it.
+    addReportBreadcrumb({ domain: 'liquidity', action: 'fetchPositionDetails', data: { tokenId, chainId } });
+    const positionDetails = await getPositionDetails(nftTokenId, chainId);
+    const poolConfig = findPoolByPoolKey(getAllPools(networkMode), positionDetails.poolKey);
     if (!poolConfig) {
       return res.status(400).json({ message: 'Position is not in an Alphix pool.' });
     }
@@ -98,38 +91,24 @@ export default async function handler(
       return res.status(400).json({ message: 'Unified Yield positions use a separate withdraw flow.' });
     }
 
-    const sym0 = getTokenSymbolByAddress(details.poolKey.currency0, networkMode);
-    const sym1 = getTokenSymbolByAddress(details.poolKey.currency1, networkMode);
-    const defC0 = sym0 ? getToken(sym0, networkMode) : null;
-    const defC1 = sym1 ? getToken(sym1, networkMode) : null;
-    if (!defC0 || !defC1) {
-      return res.status(400).json({ message: 'Token metadata missing for this position.' });
-    }
-    const isNativeC0 = getAddress(details.poolKey.currency0) === zeroAddress;
-    const isNativeC1 = getAddress(details.poolKey.currency1) === zeroAddress;
-
     const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
 
-    const [response, state] = await Promise.all([
-      uniswapLPAPI.decrease({
-        walletAddress: getAddress(userAddress),
-        chainId,
-        protocol: 'V4',
-        token0Address: details.poolKey.currency0,
-        token1Address: details.poolKey.currency1,
-        nftTokenId: nftTokenId.toString(),
-        liquidityPercentageToDecrease: pct,
-        slippageTolerance: slippageBps / 100,
-        deadline: deadlineSeconds,
-        simulateTransaction: true,
-      }),
-      getPoolState(poolConfig.poolId as Hex, chainId),
-    ]);
+    // --- 2. Call /lp/decrease -----------------------------------------------
+    const response = await uniswapLPAPI.decrease({
+      walletAddress: getAddress(userAddress),
+      chainId,
+      protocol: 'V4',
+      token0Address: positionDetails.poolKey.currency0,
+      token1Address: positionDetails.poolKey.currency1,
+      nftTokenId: nftTokenId.toString(),
+      liquidityPercentageToDecrease: pct,
+      // Omit slippageTolerance unless the caller pins one — Uniswap then applies its own.
+      ...(typeof slippageBps === 'number' ? { slippageTolerance: slippageBps / 100 } : {}),
+      deadline: deadlineSeconds,
+      simulateTransaction: true,
+    });
 
-    const liquidityToRemove = pct === 100
-      ? details.liquidity.toString()
-      : ((details.liquidity * BigInt(pct)) / 100n).toString();
-
+    // --- 3. Return ----------------------------------------------------------
     return res.status(200).json({
       needsApproval: false,
       create: {
@@ -139,43 +118,47 @@ export default async function handler(
         value: response.decrease.value,
         chainId,
       },
-      transaction: {
-        to: response.decrease.to,
-        data: response.decrease.data,
-        value: response.decrease.value,
-      },
-      sqrtRatioX96: state.sqrtPriceX96.toString(),
-      currentTick: state.tick,
-      poolLiquidity: state.liquidity.toString(),
-      deadline: deadlineSeconds.toString(),
       isFullBurn: pct === 100,
       gasFee: response.gasFee,
       details: {
-        token0: { address: isNativeC0 ? zeroAddress : getAddress(defC0.address), symbol: defC0.symbol, amount: response.token0.amount },
-        token1: { address: isNativeC1 ? zeroAddress : getAddress(defC1.address), symbol: defC1.symbol, amount: response.token1.amount },
-        liquidityToRemove,
-        tickLower: details.tickLower,
-        tickUpper: details.tickUpper,
+        token0: { amount: response.token0.amount },
+        token1: { amount: response.token1.amount },
       },
     });
   } catch (error: any) {
     if (error instanceof UniswapLPAPIRateLimitError) {
       console.warn('[prepare-decrease-tx] Rate limit exhausted after retries');
+      // Rate limits are expected — do NOT capture; leave a breadcrumb trail only.
+      addReportBreadcrumb({ domain: 'liquidity', action: 'decrease', level: 'warning', message: 'rate limited' });
       res.setHeader('Retry-After', '2');
       return res.status(429).json({ message: 'Busy — please retry in a moment.' });
     }
     if (error instanceof UniswapLPAPIError) {
       console.error('[prepare-decrease-tx] Uniswap LP API error:', error.status, error.message);
-      Sentry.captureException(error, {
-        tags: { route: 'prepare-decrease-tx', source: 'uniswap_lp_api', uniswap_status: String(error.status) },
-        extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId, decreasePercentage: req.body?.decreasePercentage },
+      reportError(error, {
+        domain: 'liquidity',
+        action: 'decrease',
+        component: 'prepare-decrease-tx',
+        chainId: req.body?.chainId,
+        networkMode,
+        tags: { uniswapStatus: error.status, uniswapErrorCode: error.code },
+        extras: {
+          userAddress: req.body?.userAddress,
+          tokenId: req.body?.tokenId,
+          decreasePercentage: req.body?.decreasePercentage,
+          uniswapDetails: error.details,
+        },
       });
       return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
     }
     console.error('[API prepare-decrease-tx] Error:', error);
-    Sentry.captureException(error, {
-      tags: { route: 'prepare-decrease-tx', source: 'internal' },
-      extra: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, chainId: req.body?.chainId },
+    reportError(error, {
+      domain: 'liquidity',
+      action: 'decrease',
+      component: 'prepare-decrease-tx',
+      chainId: req.body?.chainId,
+      networkMode,
+      extras: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId },
     });
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
     return res.status(500).json({ message: errorMessage, error: process.env.NODE_ENV === 'development' ? error : undefined });

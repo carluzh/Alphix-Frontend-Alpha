@@ -10,7 +10,7 @@
 
 // TYPES - Selective exports (matching Uniswap pattern, no export *)
 export { PositionField, type FeeData, DEFAULT_FEE_DATA, PositionFlowStep, RangeAmountInputPriceMode, type InitialPosition, type PositionState, DEFAULT_POSITION_STATE, type PriceRangeState, DEFAULT_PRICE_RANGE_STATE, type CreatePositionInfo, type PriceRangeInfo, type DepositState, DEFAULT_DEPOSIT_STATE, type DepositInfo, type V4PositionInfo, type WarningSeverity, type PriceDifference, type DynamicFeeTierSpeedbumpData } from './types/position';
-export { TransactionStepType, LiquidityTransactionType, type ValidatedTransactionRequest, type OnChainTransactionFields, type OnChainTransactionFieldsBatched, type SignTypedDataStepFields, type TokenInfo, type TokenApprovalTransactionStep, type TokenRevocationTransactionStep, type Permit2SignatureStep, type Permit2TransactionStep, type IncreasePositionTransactionStep, type IncreasePositionTransactionStepAsync, type IncreasePositionTransactionStepBatched, type DecreasePositionTransactionStep, type CollectFeesTransactionStep, type IncreaseLiquiditySteps, type DecreaseLiquiditySteps, type CollectFeesSteps, type TransactionStep, type LiquidityAction, type IncreasePositionTxAndGasInfo, type CreatePositionTxAndGasInfo, type DecreasePositionTxAndGasInfo, type CollectFeesTxAndGasInfo, type LiquidityTxAndGasInfo, type ValidatedLiquidityTxContext, isValidLiquidityTxContext, type FlowStatus, type StepState, type LiquidityFlowState, type TokenApprovalStatus, type ApprovalCheckResult, type StepperStep } from './types/transaction';
+export { TransactionStepType, LiquidityTransactionType, type ValidatedTransactionRequest, type OnChainTransactionFields, type OnChainTransactionFieldsBatched, type SignTypedDataStepFields, type TokenInfo, type TokenApprovalTransactionStep, type TokenRevocationTransactionStep, type Permit2SignatureStep, type Permit2TransactionStep, type IncreasePositionTransactionStep, type IncreasePositionTransactionStepAsync, type IncreasePositionTransactionStepBatched, type DecreasePositionTransactionStep, type CollectFeesTransactionStep, type IncreaseLiquiditySteps, type DecreaseLiquiditySteps, type CollectFeesSteps, type TransactionStep, type LiquidityAction, type IncreasePositionTxAndGasInfo, type CreatePositionTxAndGasInfo, type DecreasePositionTxAndGasInfo, type CollectFeesTxAndGasInfo, type LiquidityTxAndGasInfo, type ValidatedLiquidityTxContext, isValidLiquidityTxContext, type FlowStatus, type StepState, type TokenApprovalStatus, type ApprovalCheckResult } from './types/transaction';
 
 // =============================================================================
 // HOOKS - Custom React hooks for liquidity operations
@@ -23,26 +23,6 @@ export {
   getFeeDataFromPool,
   type UseDerivedPositionInfoParams,
 } from './hooks/position';
-
-// Approval hooks
-export {
-  useLiquidityApprovals,
-  useCheckMintApprovals,
-  useCheckIncreaseApprovals,
-  type UseApprovalsParams,
-  type UseApprovalsOptions,
-  type UseApprovalsResult,
-  type CheckMintApprovalsParams,
-  type CheckIncreaseApprovalsParams,
-  type LegacyApprovalResponse,
-  // Mode-aware approval hook (supports both V4 and Unified Yield)
-  useModeAwareApprovals,
-  useCheckMintApprovalsWithMode,
-  type UseModeAwareApprovalsParams,
-  type UseModeAwareApprovalsOptions,
-  type UseModeAwareApprovalsResult,
-  type ModeAwareApprovalResult,
-} from './hooks/approval';
 
 // Range hooks - SDK-based tick limit and range utilities
 export {
@@ -127,31 +107,8 @@ export {
 // TRANSACTION - Step management (builders sunsetted in favor of Uniswap LP API)
 // =============================================================================
 
-// Step factory functions - COPIED FROM UNISWAP
-export {
-  parseERC20ApproveCalldata,
-  createApprovalTransactionStep,
-  createRevocationTransactionStep,
-  createPermit2SignatureStep,
-  createPermit2TransactionStep,
-  createIncreasePositionStep,
-  createIncreasePositionAsyncStep,
-  createIncreasePositionStepBatched,
-  createDecreasePositionStep,
-  createCollectFeesStep,
-  orderIncreaseLiquiditySteps,
-  orderDecreaseLiquiditySteps,
-  orderCollectFeesSteps,
-  generateStepperSteps,
-  createInitialFlowState,
-  getNextStep,
-  isFlowComplete,
-  hasFlowError,
-  type IncreaseLiquidityFlow,
-  type DecreaseLiquidityFlow,
-  type CollectFeesFlow,
-  type ValidatedPermit,
-} from './transaction/steps';
+// Step generator and step factories live at `@/lib/liquidity/transaction`;
+// nothing here uses them directly so they are not re-exported.
 
 // =============================================================================
 // UNIFIED YIELD - Alternative liquidity provision through Hook + ERC-4626 vault

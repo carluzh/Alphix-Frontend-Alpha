@@ -2,6 +2,7 @@
 
 import { memo, useState, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import Image from "next/image";
 import { ChevronRight, Plus, Minus } from "lucide-react";
@@ -88,7 +89,7 @@ import {
   type UnifiedYieldPosition,
 } from "@/lib/liquidity/unified-yield";
 import { usePriceDeviation, requiresDeviationAcknowledgment } from "@/hooks/usePriceDeviation";
-import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
+import { PriceDeviationCallout, PoolOutOfRangeCallout } from "@/components/ui/PriceDeviationCallout";
 import { HighRiskConfirmModal, createPriceDeviationWarning } from "@/components/ui/HighRiskConfirmModal";
 
 // ============================================================================
@@ -131,10 +132,11 @@ export interface PositionDetailProps {
   tokenBSymbol?: string;
   isFullRange?: boolean;
   isInRange: boolean;
+  poolOutsideRange: boolean;
   // APR data
   poolApr: number | null;
   aaveApr: number | null;
-  aprBySource?: Record<'aave' | 'spark', number>;
+  aprBySource?: Record<'aave', number>;
   totalApr: number | null;
   // LP Type
   lpType: LPType;
@@ -463,6 +465,7 @@ function PriceRangeSection({
   currentPriceNumeric,
   priceInverted,
   poolType,
+  poolOutsideRange,
 }: {
   minPrice: string;
   maxPrice: string;
@@ -472,6 +475,7 @@ function PriceRangeSection({
   currentPriceNumeric: number | null;
   priceInverted: boolean;
   poolType?: string;
+  poolOutsideRange?: boolean;
 }) {
   const priceLabel = `${tokenASymbol} per ${tokenBSymbol}`;
 
@@ -487,16 +491,16 @@ function PriceRangeSection({
 
   // Format current price using the same approach as Step 2 (Add Liquidity wizard)
   const formattedCurrentPrice = useMemo(() => {
-    if (currentPriceNumeric === null) return "—";
+    if (poolOutsideRange || currentPriceNumeric === null) return "-";
     const displayPrice = priceInverted ? 1 / currentPriceNumeric : currentPriceNumeric;
-    if (!isFinite(displayPrice) || displayPrice <= 0) return "—";
+    if (!isFinite(displayPrice) || displayPrice <= 0) return "-";
     // tokenASymbol is the denomination/quote token (e.g., "USDC" in "USDC per ETH")
     const displayDecimals = getDecimalsForDenomination(tokenASymbol, poolType);
     return displayPrice.toLocaleString("en-US", {
       minimumFractionDigits: displayDecimals,
       maximumFractionDigits: displayDecimals,
     });
-  }, [currentPriceNumeric, priceInverted, tokenASymbol, poolType]);
+  }, [currentPriceNumeric, priceInverted, tokenASymbol, poolType, poolOutsideRange]);
 
   return (
     <div className="flex flex-col gap-4 p-4 bg-container border border-sidebar-border rounded-lg">
@@ -692,7 +696,7 @@ function EarningsSection({
 
 // ─── Earning on cards (same as pool detail sidebar) ───────────────────────────
 
-const EARNING_SOURCE_CONFIG: Record<'aave' | 'spark', {
+const EARNING_SOURCE_CONFIG: Record<'aave', {
   name: string;
   logo: string;
   pillBg: string;
@@ -704,15 +708,9 @@ const EARNING_SOURCE_CONFIG: Record<'aave' | 'spark', {
     pillBg: 'rgba(152, 150, 255, 0.25)',
     pillText: '#BDBBFF',
   },
-  spark: {
-    name: 'Spark',
-    logo: '/spark/Spark-Logomark-RGB.svg',
-    pillBg: 'rgba(250, 67, 189, 0.2)',
-    pillText: '#FA7BD4',
-  },
 };
 
-function EarningOnCard({ source, apr }: { source: 'aave' | 'spark'; apr?: number }) {
+function EarningOnCard({ source, apr }: { source: 'aave'; apr?: number }) {
   const cfg = EARNING_SOURCE_CONFIG[source];
   return (
     <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 surface-depth p-3">
@@ -756,15 +754,15 @@ function EarningSourcesSection({
   yieldSources = [],
   aprBySource,
 }: {
-  yieldSources?: Array<'aave' | 'spark'>;
-  aprBySource?: Record<'aave' | 'spark', number>;
+  yieldSources?: Array<'aave'>;
+  aprBySource?: Record<'aave', number>;
 }) {
   return (
     <div className="flex flex-col gap-2">
       {yieldSources.map((source) => (
         <EarningOnCard key={source} source={source} apr={aprBySource?.[source]} />
       ))}
-      <EarningPointsCard />
+      {/* Re-add <EarningPointsCard /> on next season. */}
     </div>
   );
 }
@@ -802,6 +800,7 @@ export const PositionDetail = memo(function PositionDetail({
   tokenBSymbol,
   isFullRange,
   isInRange,
+  poolOutsideRange,
   poolApr,
   aaveApr,
   aprBySource,
@@ -819,6 +818,7 @@ export const PositionDetail = memo(function PositionDetail({
 }: PositionDetailProps) {
   const isMobile = useIsMobile();
   const router = useRouter();
+  const queryClient = useQueryClient();
   // Use pool's chain, not wallet's chain — ensures correct token icons, colors, and API calls
   const networkMode = poolConfig?.networkMode ?? 'base' as NetworkMode;
 
@@ -909,15 +909,14 @@ export const PositionDetail = memo(function PositionDetail({
   const { c0YieldLabel, c1YieldLabel, c0YieldColor, c1YieldColor } = useMemo(() => {
     const token0Sym = poolConfig?.currency0?.symbol ?? "";
     const token1Sym = poolConfig?.currency1?.symbol ?? "";
-    const protocolName = (p?: 'aave' | 'spark') => p === 'spark' ? 'Spark' : 'Aave';
 
-    const c0Label = uyC0Protocol ? `${protocolName(uyC0Protocol)} ${token0Sym}` : `Yield ${token0Sym}`;
-    const c1Label = uyC1Protocol ? `${protocolName(uyC1Protocol)} ${token1Sym}` : `Yield ${token1Sym}`;
+    const c0Label = uyC0Protocol ? `Aave ${token0Sym}` : `Yield ${token0Sym}`;
+    const c1Label = uyC1Protocol ? `Aave ${token1Sym}` : `Yield ${token1Sym}`;
 
-    // Colors: protocol-specific, with a lighter shade when both tokens use the same protocol
+    // Colors: lighter shade when both tokens use Aave
     const bothAave = uyC0Protocol === 'aave' && uyC1Protocol === 'aave';
-    const c0Color = uyC0Protocol === 'spark' ? "#F5AC37" : "#9896FF";
-    const c1Color = uyC1Protocol === 'spark' ? "#F5AC37" : (bothAave ? "#C4C2FF" : "#9896FF");
+    const c0Color = "#9896FF";
+    const c1Color = bothAave ? "#C4C2FF" : "#9896FF";
 
     return { c0YieldLabel: c0Label, c1YieldLabel: c1Label, c0YieldColor: c0Color, c1YieldColor: c1Color };
   }, [poolConfig?.currency0?.symbol, poolConfig?.currency1?.symbol, uyC0Protocol, uyC1Protocol]);
@@ -991,21 +990,45 @@ export const PositionDetail = memo(function PositionDetail({
     setIsAddModalOpen(true);
   }, []);
 
-  // Handle modal success - refetch position data
+  // Handle modal success - invalidate React Query caches and refetch.
+  //
+  // The position page uses React Query (not Apollo) for ["position", "v4", tokenId, networkMode]
+  // and ["unified-yield-position-detail", ...]. invalidateAfterTx() inside the modal
+  // refreshes the Apollo cache (used by Overview) but does NOT touch React Query.
+  //
+  // We mirror Uniswap's 2-layer pattern: invalidate immediately (so the next render
+  // marks queries stale), then refetch after a 3s delay to give the backend indexer
+  // time to catch up to the on-chain state. Refetching immediately races the indexer
+  // and surfaces stale data to the user.
+  const REFETCH_DELAY_MS = 3000;
+  const invalidatePositionQueries = useCallback(() => {
+    if (isUnifiedYield) {
+      queryClient.invalidateQueries({ queryKey: ["unified-yield-position-detail"] }).catch(() => {});
+    } else {
+      queryClient.invalidateQueries({ queryKey: ["position", "v4", tokenId, networkMode] }).catch(() => {});
+    }
+  }, [queryClient, isUnifiedYield, tokenId, networkMode]);
+
   const handleModalSuccess = useCallback(() => {
-    refetch();
-    refetchYieldChart();
-  }, [refetch, refetchYieldChart]);
+    invalidatePositionQueries();
+    window.setTimeout(() => {
+      refetch();
+      refetchYieldChart();
+    }, REFETCH_DELAY_MS);
+  }, [invalidatePositionQueries, refetch, refetchYieldChart]);
 
   // Handle decrease modal success - navigate to overview on full burn
   const handleDecreaseSuccess = useCallback((options?: { isFullBurn?: boolean }) => {
     if (options?.isFullBurn) {
       router.push('/overview');
     } else {
-      refetch();
-      refetchYieldChart();
+      invalidatePositionQueries();
+      window.setTimeout(() => {
+        refetch();
+        refetchYieldChart();
+      }, REFETCH_DELAY_MS);
     }
-  }, [router, refetch, refetchYieldChart]);
+  }, [router, invalidatePositionQueries, refetch, refetchYieldChart]);
 
   // Loading state
   if (isLoading) {
@@ -1096,8 +1119,9 @@ export const PositionDetail = memo(function PositionDetail({
           networkMode={networkMode}
         />
 
-        {/* Price Deviation Warning */}
-        {priceDeviation.severity !== 'none' && poolConfig && (
+        {poolOutsideRange ? (
+          <PoolOutOfRangeCallout />
+        ) : priceDeviation.severity !== 'none' && poolConfig && (
           <PriceDeviationCallout
             deviation={priceDeviation}
             token0Symbol={token0Symbol}
@@ -1200,6 +1224,7 @@ export const PositionDetail = memo(function PositionDetail({
             currentPriceNumeric={currentPriceNumeric}
             priceInverted={priceInverted}
             poolType={poolConfig?.type}
+            poolOutsideRange={poolOutsideRange}
           />
         </div>
 
@@ -1231,8 +1256,9 @@ export const PositionDetail = memo(function PositionDetail({
             networkMode={networkMode}
           />
 
-          {/* Price Deviation Warning */}
-          {priceDeviation.severity !== 'none' && poolConfig && (
+          {poolOutsideRange ? (
+            <PoolOutOfRangeCallout />
+          ) : priceDeviation.severity !== 'none' && poolConfig && (
             <PriceDeviationCallout
               deviation={priceDeviation}
               token0Symbol={token0Symbol}

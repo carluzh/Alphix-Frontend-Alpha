@@ -93,7 +93,7 @@ export const Overview = memo(function Overview({
   }, [router]);
 
   // Stablecoins always priced at $1
-  const STABLECOINS_USD = new Set(['USDC', 'USDS', 'atUSDC', 'atDAI']);
+  const STABLECOINS_USD = new Set(['USDC', 'atUSDC', 'atDAI']);
 
   // Get USD price for a symbol from priceMap (with stablecoin fallback)
   const getUsdPriceForSymbol = useCallback(
@@ -254,7 +254,7 @@ export const Overview = memo(function Overview({
       >
         {/* PORTFOLIO CHART - Left */}
         <div className="flex-1 min-w-0 flex flex-col w-full">
-          <PortfolioChart className="w-full" currentPositionsValue={totalPositionsValue} isParentLoading={isLoading} />
+          <PortfolioChart className="w-full" isParentLoading={isLoading} />
         </div>
 
         {/* RIGHT COLUMN - Points Earned + Stats */}

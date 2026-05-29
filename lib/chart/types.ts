@@ -22,9 +22,6 @@ export type PriceChartData = CandlestickData<UTCTimestamp> & AreaData<UTCTimesta
  */
 export enum ChartType {
   PRICE = 'Price',
-  VOLUME = 'Volume',
-  TVL = 'TVL',
-  LIQUIDITY = 'Liquidity',
 }
 
 /**
@@ -34,7 +31,6 @@ export enum ChartType {
 export enum DataQuality {
   VALID = 0,
   INVALID = 1,
-  STALE = 2,
 }
 
 /**

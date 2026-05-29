@@ -12,8 +12,8 @@
 
 import type { Hex } from 'viem';
 import { createPublicClient } from 'viem';
-import * as Sentry from '@sentry/nextjs';
-import { baseMainnet, getOrderedRpcUrls } from '@/lib/chains';
+import { reportFailedTx, markReported } from '@/lib/observability';
+import { baseMainnet } from '@/lib/chains';
 import { createFallbackTransport } from '@/lib/viemClient';
 import type {
   UnifiedYieldApprovalStep,
@@ -26,107 +26,28 @@ import { ERC20_ABI } from '@/lib/abis/erc20';
 // TYPES
 // =============================================================================
 
-export type UnifiedYieldStep =
-  | UnifiedYieldApprovalStep
-  | UnifiedYieldDepositStep
-  | UnifiedYieldWithdrawStep;
-
 export interface HandleUnifiedYieldApprovalParams {
   address: `0x${string}`;
   step: UnifiedYieldApprovalStep;
   setCurrentStep: (params: { step: UnifiedYieldApprovalStep; accepted: boolean }) => void;
+  /** Chain id used to surface revert reasons via a post-revert eth_call. Optional. */
+  chainId?: number;
 }
 
 export interface HandleUnifiedYieldDepositParams {
   address: `0x${string}`;
   step: UnifiedYieldDepositStep;
   setCurrentStep: (params: { step: UnifiedYieldDepositStep; accepted: boolean }) => void;
+  /** Chain id used to surface revert reasons via a post-revert eth_call. Optional. */
+  chainId?: number;
 }
 
 export interface HandleUnifiedYieldWithdrawParams {
   address: `0x${string}`;
   step: UnifiedYieldWithdrawStep;
   setCurrentStep: (params: { step: UnifiedYieldWithdrawStep; accepted: boolean }) => void;
-}
-
-// =============================================================================
-// TRANSACTION INFO TYPES - For transaction tracking
-// =============================================================================
-
-export interface UnifiedYieldApprovalInfo {
-  type: 'UnifiedYieldApproval';
-  tokenAddress: string;
-  tokenSymbol: string;
-  hookAddress: string;
-  amount: string;
-}
-
-export interface UnifiedYieldDepositInfo {
-  type: 'UnifiedYieldDeposit';
-  hookAddress: string;
-  poolId: string;
-  sharesToMint: string;
-  token0Symbol: string;
-  token1Symbol: string;
-}
-
-export interface UnifiedYieldWithdrawInfo {
-  type: 'UnifiedYieldWithdraw';
-  hookAddress: string;
-  poolId: string;
-  sharesToWithdraw: string;
-  token0Symbol: string;
-  token1Symbol: string;
-}
-
-export type UnifiedYieldTransactionInfo =
-  | UnifiedYieldApprovalInfo
-  | UnifiedYieldDepositInfo
-  | UnifiedYieldWithdrawInfo;
-
-// =============================================================================
-// INFO GETTERS - For transaction tracking
-// =============================================================================
-
-/**
- * Gets approval transaction info from step
- */
-export function getUnifiedYieldApprovalInfo(step: UnifiedYieldApprovalStep): UnifiedYieldApprovalInfo {
-  return {
-    type: 'UnifiedYieldApproval',
-    tokenAddress: step.tokenAddress,
-    tokenSymbol: step.tokenSymbol,
-    hookAddress: step.hookAddress,
-    amount: step.amount.toString(),
-  };
-}
-
-/**
- * Gets deposit transaction info from step
- */
-export function getUnifiedYieldDepositInfo(step: UnifiedYieldDepositStep): UnifiedYieldDepositInfo {
-  return {
-    type: 'UnifiedYieldDeposit',
-    hookAddress: step.hookAddress,
-    poolId: step.poolId,
-    sharesToMint: step.sharesToMint.toString(),
-    token0Symbol: step.token0Symbol,
-    token1Symbol: step.token1Symbol,
-  };
-}
-
-/**
- * Gets withdraw transaction info from step
- */
-export function getUnifiedYieldWithdrawInfo(step: UnifiedYieldWithdrawStep): UnifiedYieldWithdrawInfo {
-  return {
-    type: 'UnifiedYieldWithdraw',
-    hookAddress: step.hookAddress,
-    poolId: step.poolId,
-    sharesToWithdraw: step.sharesToWithdraw.toString(),
-    token0Symbol: step.token0Symbol,
-    token1Symbol: step.token1Symbol,
-  };
+  /** Chain id used to surface revert reasons via a post-revert eth_call. Optional. */
+  chainId?: number;
 }
 
 // =============================================================================
@@ -153,7 +74,7 @@ export async function handleUnifiedYieldApprovalStep(
   }) => Promise<`0x${string}`>,
   waitForReceipt: (args: { hash: `0x${string}` }) => Promise<{ status: 'success' | 'reverted' }>,
 ): Promise<`0x${string}`> {
-  const { step, setCurrentStep, address } = params;
+  const { step, setCurrentStep, address, chainId } = params;
 
   // Trigger UI prompting user to accept
   setCurrentStep({ step, accepted: false });
@@ -178,8 +99,8 @@ export async function handleUnifiedYieldApprovalStep(
 
     return hash;
   } catch (error) {
-    // Capture approval failures to Sentry with FULL context
-    // This is critical for debugging intermittent approval issues
+    // Capture approval failures with FULL context. This is critical for debugging
+    // intermittent approval issues. User rejections are dropped inside reportFailedTx.
     const errorObj = error instanceof Error ? error : new Error(String(error));
 
     // Log to console for immediate visibility during debugging
@@ -246,55 +167,43 @@ export async function handleUnifiedYieldApprovalStep(
       diagnosticData = { diagnosticFetchError: String(diagErr) };
     }
 
-    // Use withScope to ensure context is properly attached
-    Sentry.withScope((scope) => {
-      // Set level to error to ensure it's not filtered as a warning
-      scope.setLevel('error');
-
-      // Set fingerprint for better grouping of this specific issue
-      scope.setFingerprint(['unified-yield-approval-failure', step.tokenSymbol]);
-
-      scope.setTags({
-        component: 'UnifiedYieldApprovalHandler',
-        stepType: step.type,
-        tokenSymbol: step.tokenSymbol,
-      });
-
-      scope.setExtras({
-        // User context
+    // Route through the consolidated reporter so this ALSO gets revert decode (via
+    // the read-only eth_call replay) on top of the rich diagnostics. Pass the
+    // original error so categorizeError + user-rejection drop apply; supply tx
+    // coordinates for the decode. Pass calldata SELECTOR only (not full calldata)
+    // to avoid event bloat.
+    await reportFailedTx(error, {
+      domain: 'unified-yield',
+      action: 'approve',
+      component: 'UnifiedYieldApprovalHandler',
+      fingerprint: ['unified-yield-approval-failure', step.tokenSymbol],
+      tags: { tokenSymbol: step.tokenSymbol, stepType: step.type },
+      to: step.txRequest.to,
+      data: step.txRequest.data,
+      value: step.txRequest.value,
+      from: address,
+      chainId,
+      extras: {
         userAddress: address,
-
-        // DIAGNOSTIC DATA - the key to understanding why this user fails
         ...diagnosticData,
-
-        // Transaction details - FULL calldata for debugging
         tokenAddress: step.tokenAddress,
         tokenSymbol: step.tokenSymbol,
         hookAddress: step.hookAddress,
         approvalAmount: step.amount.toString(),
-
-        // Full calldata for debugging nibble/encoding issues
         txRequestTo: step.txRequest.to,
-        txRequestData: step.txRequest.data, // Full calldata
         txRequestDataLength: step.txRequest.data?.length,
         txRequestValue: step.txRequest.value?.toString(),
-
-        // Error details from viem
-        errorMessage: errorObj.message,
         errorCause: (error as any)?.cause?.message || (error as any)?.cause,
         errorShortMessage: (error as any)?.shortMessage,
         errorDetails: (error as any)?.details,
-
-        // Parsed calldata components for easy debugging
+        // Selector only — avoid full-calldata event bloat.
         calldataSelector: step.txRequest.data?.slice(0, 10),
-        calldataSpender: step.txRequest.data?.slice(10, 74), // 64 chars after selector
-        calldataAmount: step.txRequest.data?.slice(74), // Remaining chars
-      });
-
-      Sentry.captureException(errorObj);
+      },
     });
 
-    // Re-throw to let the executor handle it
+    // Re-throw to let the executor handle it. Marked already-reported so the
+    // upstream useStepExecutor catch does not report this SAME failure again.
+    markReported(error);
     throw error;
   }
 }
@@ -323,7 +232,7 @@ export async function handleUnifiedYieldDepositStep(
   }) => Promise<`0x${string}`>,
   waitForReceipt: (args: { hash: `0x${string}` }) => Promise<{ status: 'success' | 'reverted' }>,
 ): Promise<`0x${string}`> {
-  const { step, setCurrentStep } = params;
+  const { step, setCurrentStep, address, chainId } = params;
 
   // Trigger UI prompting user to accept
   setCurrentStep({ step, accepted: false });
@@ -343,7 +252,21 @@ export async function handleUnifiedYieldDepositStep(
   const receipt = await waitForReceipt({ hash });
 
   if (receipt.status === 'reverted') {
-    throw new Error(`${step.type} transaction reverted`);
+    // Decode the revert reason via a read-only eth_call replay. Previously this
+    // site had no diagnostics.
+    await reportFailedTx(null, {
+      domain: 'unified-yield',
+      action: 'deposit',
+      component: 'unifiedYieldHandler',
+      txHash: hash,
+      to: step.txRequest.to,
+      data: step.txRequest.data,
+      value: step.txRequest.value,
+      from: address,
+      chainId,
+      extras: { stepType: step.type, userAddress: address, hookAddress: step.hookAddress, poolId: step.poolId },
+    });
+    throw markReported(new Error(`${step.type} transaction reverted`));
   }
 
   return hash;
@@ -374,7 +297,7 @@ export async function handleUnifiedYieldWithdrawStep(
   }) => Promise<`0x${string}`>,
   waitForReceipt: (args: { hash: `0x${string}` }) => Promise<{ status: 'success' | 'reverted' }>,
 ): Promise<`0x${string}`> {
-  const { step, setCurrentStep } = params;
+  const { step, setCurrentStep, address, chainId } = params;
 
   // Trigger UI prompting user to accept
   setCurrentStep({ step, accepted: false });
@@ -394,7 +317,21 @@ export async function handleUnifiedYieldWithdrawStep(
   const receipt = await waitForReceipt({ hash });
 
   if (receipt.status === 'reverted') {
-    throw new Error(`${step.type} transaction reverted`);
+    // Decode the revert reason via a read-only eth_call replay. Previously this
+    // site had no diagnostics.
+    await reportFailedTx(null, {
+      domain: 'unified-yield',
+      action: 'withdraw',
+      component: 'unifiedYieldHandler',
+      txHash: hash,
+      to: step.txRequest.to,
+      data: step.txRequest.data,
+      value: step.txRequest.value,
+      from: address,
+      chainId,
+      extras: { stepType: step.type, userAddress: address, hookAddress: step.hookAddress, poolId: step.poolId },
+    });
+    throw markReported(new Error(`${step.type} transaction reverted`));
   }
 
   return hash;

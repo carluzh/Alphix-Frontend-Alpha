@@ -9,7 +9,6 @@
 import { SafeStorage } from './safe-storage';
 import { RetryUtility } from './retry-utility';
 import type { NetworkMode } from './network-mode';
-import { ALL_MODES } from './chain-registry';
 
 // Request deduplication: track ongoing requests to prevent duplicates
 const ongoingRequests = new Map<string, Promise<any>>();
@@ -45,13 +44,6 @@ function getUserPositionIdsCacheKey(address: string, networkMode: NetworkMode): 
 /** Invalidate user position IDs cache for a specific chain */
 export function invalidateUserPositionIdsCache(ownerAddress: string, networkMode: NetworkMode): void {
   try { SafeStorage.remove(getUserPositionIdsCacheKey(ownerAddress, networkMode)); } catch {}
-}
-
-/** Invalidate user position IDs cache across ALL chains */
-export function invalidateAllChainsPositionIdsCache(ownerAddress: string): void {
-  for (const mode of ALL_MODES) {
-    invalidateUserPositionIdsCache(ownerAddress, mode);
-  }
 }
 
 /** Time window (ms) to preserve optimistic entries that aren't in subgraph yet */

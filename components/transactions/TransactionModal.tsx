@@ -4,14 +4,14 @@
  * TransactionModal — Shared modal shell for ALL transaction flows
  *
  * One modal used by every flow: swap, create position, increase, decrease,
- * collect fees, zap deposit, UY deposit/withdraw.
+ * collect fees, UY deposit/withdraw.
  *
  * Each flow provides:
  * - Review content (children) — the token amounts, price display, etc.
  * - Flow definition — step generation + executors (via useStepExecutor)
  * - Config — title, confirm button text, success behavior
  *
- * @see TRANSACTION_STEPPER_PLAN.md — Layer 4
+ * @see lib/transactions/EXECUTION_REFACTOR_BRIEF.md — Layer 4
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

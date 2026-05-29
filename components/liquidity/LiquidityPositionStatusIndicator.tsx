@@ -1,8 +1,12 @@
 /**
- * LiquidityPositionStatusIndicator
+ * Liquidity position status constants + helpers.
  *
- * Displays position status (In Range, Out of Range, Closed) with colored indicator.
- * Mirrors Uniswap's implementation from:
+ * Despite the filename, this module exports primitives (StatusIndicatorCircle,
+ * lpStatusConfig, FULL_RANGE_CONFIG, label/color helpers) — there is no
+ * `LiquidityPositionStatusIndicator` component. Cards compose the primitives
+ * themselves (see PositionCardCompact, UnifiedYieldPositionCard).
+ *
+ * Filename retained to match Uniswap's source:
  * - interface/apps/web/src/components/Liquidity/LiquidityPositionStatusIndicator.tsx
  * - interface/apps/web/src/components/Liquidity/constants.ts (lpStatusConfig)
  */
@@ -82,80 +86,6 @@ export function StatusIndicatorCircle({ className }: StatusIndicatorCircleProps)
       {/* Inner circle - solid */}
       <circle cx="4" cy="4" r="2" fill="currentColor" />
     </svg>
-  );
-}
-
-// =============================================================================
-// LOADING STATE
-// =============================================================================
-
-/**
- * Skeleton loader for the status indicator.
- * Mirrors Uniswap's LiquidityPositionStatusIndicatorLoader.
- */
-export function LiquidityPositionStatusIndicatorLoader() {
-  return (
-    <div className="flex items-center gap-1.5">
-      <StatusIndicatorCircle className="text-muted/60" />
-      <div className="h-3 w-16 bg-muted/60 rounded animate-pulse" />
-    </div>
-  );
-}
-
-// =============================================================================
-// MAIN COMPONENT
-// =============================================================================
-
-interface LiquidityPositionStatusIndicatorProps {
-  /** Position status to display */
-  status: PositionStatus;
-  /** Whether this is a full-range position (overrides IN_RANGE label) */
-  isFullRange?: boolean;
-  /** Additional CSS classes */
-  className?: string;
-}
-
-/**
- * Position status indicator with colored circle and label.
- * Mirrors Uniswap's LiquidityPositionStatusIndicator component.
- *
- * @example
- * ```tsx
- * <LiquidityPositionStatusIndicator status="IN_RANGE" />
- * <LiquidityPositionStatusIndicator status="IN_RANGE" isFullRange />
- * <LiquidityPositionStatusIndicator status="OUT_OF_RANGE" />
- * <LiquidityPositionStatusIndicator status="CLOSED" />
- * ```
- */
-export function LiquidityPositionStatusIndicator({
-  status,
-  isFullRange = false,
-  className,
-}: LiquidityPositionStatusIndicatorProps) {
-  // Get config for this status
-  const config = lpStatusConfig[status];
-
-  // Don't render if status is unrecognized
-  if (!config) {
-    return null;
-  }
-
-  // Use Full Range label for full-range IN_RANGE positions
-  const displayLabel = isFullRange && status === 'IN_RANGE'
-    ? FULL_RANGE_CONFIG.label
-    : config.label;
-
-  const displayColor = isFullRange && status === 'IN_RANGE'
-    ? FULL_RANGE_CONFIG.color
-    : config.color;
-
-  return (
-    <div className={cn("flex items-center gap-1.5", className)}>
-      <StatusIndicatorCircle className={displayColor} />
-      <span className={cn("text-xs", displayColor)}>
-        {displayLabel}
-      </span>
-    </div>
   );
 }
 

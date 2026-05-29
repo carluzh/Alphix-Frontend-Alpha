@@ -1,33 +1,18 @@
 "use client";
 
-/**
- * IncreaseLiquidityTxContext - Transaction context for increase liquidity flow
- *
- * Refactored to use Uniswap's step-based executor pattern:
- * - Builds context with increasePositionRequestArgs for async step
- * - Includes approval transaction requests when needed
- * - Includes permit data when needed
- * - Step executor handles ALL steps (approvals, permits, position transaction)
- *
- * @see interface/apps/web/src/pages/IncreaseLiquidity/IncreaseLiquidityTxContext.tsx
- * @see components/liquidity/wizard/ReviewExecuteModal.tsx
- */
-
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, type PropsWithChildren } from "react";
 import { useAccount, useBalance } from "wagmi";
-import { parseUnits, formatUnits, type Address } from "viem";
-import * as Sentry from "@sentry/nextjs";
+import { formatUnits, type Address } from "viem";
+import { reportError } from "@/lib/observability";
 import { formatTokenDisplayAmount } from "@/lib/utils";
 import { getTokenDefinitions, getPoolBySlug, type TokenSymbol } from "@/lib/pools-config";
 import { useNetwork } from "@/lib/network-context";
-import { chainIdForMode, type NetworkMode } from "@/lib/network-mode";
+import { chainIdForMode } from "@/lib/network-mode";
 import { useDerivedIncreaseInfo } from "@/lib/liquidity/hooks";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { useIncreaseLiquidityContext } from "./IncreaseLiquidityContext";
-import { getStoredUserSettings } from "@/hooks/useUserSettings";
 
-// Import from transaction module
 import {
   buildLiquidityTxContext,
   type MintTxApiResponse,
@@ -38,69 +23,36 @@ import {
   type ValidatedTransactionRequest,
   type SignTypedDataStepFields,
 } from "@/lib/liquidity/types";
-import { PERMIT2_ADDRESS } from "../liquidity-form-utils";
+import { buildApprovalCalldata } from "@/lib/liquidity/hooks/approval";
+import { toApproveRequest } from "@/lib/liquidity/utils/toApproveRequest";
 
-// Shared approval utilities
-import { buildApprovalRequests, buildApprovalCalldata } from "@/lib/liquidity/hooks/approval";
-
-// Pool state for slippage protection (sqrtPriceX96)
 import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
 
-// Unified Yield deposit hook for ReHypothecation positions
 import { useUnifiedYieldDeposit } from "@/lib/liquidity/unified-yield/hooks/useUnifiedYieldDeposit";
 import { useUnifiedYieldApprovals } from "@/lib/liquidity/unified-yield/useUnifiedYieldApprovals";
 import { buildUnifiedYieldDepositTx, buildDepositParamsFromPreview } from "@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx";
-import type { DepositPreviewResult, UnifiedYieldApprovalStatus } from "@/lib/liquidity/unified-yield/types";
-
-// Zap hooks for single-token deposits
-import { useZapPreview, useZapApprovals } from "@/lib/liquidity/zap/hooks";
-import type { ZapToken, ZapPreviewResult, ZapApprovalStatus } from "@/lib/liquidity/zap";
+import type { UnifiedYieldApprovalStatus } from "@/lib/liquidity/unified-yield/types";
 
 interface IncreaseLiquidityTxContextType {
-  // API/Context state
   isLoading: boolean;
   error: string | null;
-
-  // Transaction context for step executor (contains ALL info for steps)
   txContext: ValidatedLiquidityTxContext | null;
-
-  // Balances and prices
   token0Balance: string;
   token1Balance: string;
   token0USDPrice: number;
   token1USDPrice: number;
-
-  // Dependent amount calculation
   isCalculating: boolean;
   dependentAmount: string | null;
   dependentField: "amount0" | "amount1" | null;
-
-  // Actions
   fetchAndBuildContext: () => Promise<ValidatedLiquidityTxContext | null>;
   handlePercentage0: (percentage: number) => string | void;
   handlePercentage1: (percentage: number) => string | void;
   calculateDependentAmount: (value: string, field: "amount0" | "amount1") => void;
   refetchBalances: () => void;
   clearError: () => void;
-
-  // Unified Yield approval status (for checking if approvals needed)
   unifiedYieldApprovalStatus: UnifiedYieldApprovalStatus | null;
   isCheckingApprovals: boolean;
   refetchApprovals: (overrideAmounts?: { amount0Wei: bigint; amount1Wei: bigint }) => Promise<UnifiedYieldApprovalStatus | null>;
-
-  // Zap mode (single-token deposit with auto-swap)
-  isZapMode: boolean;
-  zapPreview: ZapPreviewResult | null;
-  zapApprovals: ZapApprovalStatus | null;
-  isZapPreviewLoading: boolean;
-  isZapPreviewFetching: boolean;
-  isZapPreviewError: boolean;
-  zapPreviewError: Error | null;
-  zapDataUpdatedAt: number;
-  refetchZapPreview: () => Promise<any>;
-
-  // Execution state — pauses zap refetch during tx execution
-  setExecuting: (executing: boolean) => void;
 }
 
 const IncreaseLiquidityTxContext = createContext<IncreaseLiquidityTxContextType | null>(null);
@@ -115,26 +67,19 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     setAmount0,
     setAmount1,
     isUnifiedYield,
-    isZapEligible,
-    depositMode,
-    zapInputToken,
   } = useIncreaseLiquidityContext();
   const { position, exactField } = increaseLiquidityState;
 
-  // Derive networkMode from the position's chain — never use global context
   const networkMode = position.networkMode || 'base';
   const chainId = chainIdForMode(networkMode);
   const tokenDefinitions = useMemo(() => getTokenDefinitions(networkMode), [networkMode]);
 
-  // Get pool config for Unified Yield (hook address)
   const poolConfig = useMemo(() => {
     return position.poolId ? getPoolBySlug(position.poolId, networkMode) : null;
   }, [position.poolId, networkMode]);
 
-  // Pool state for slippage protection (sqrtPriceX96)
   const { data: poolStateData } = usePoolState(poolConfig?.poolId ?? '', networkMode);
 
-  // Unified Yield deposit hook - only active for ReHypothecation positions
   const unifiedYieldDeposit = useUnifiedYieldDeposit({
     hookAddress: poolConfig?.hooks as Address | undefined,
     token0Address: tokenDefinitions[position.token0.symbol as TokenSymbol]?.address as Address | undefined,
@@ -144,11 +89,10 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     poolId: position.poolId,
     chainId,
     sqrtPriceX96: poolStateData?.sqrtPriceX96,
-    maxPriceSlippage: 500, // 0.05%
+    maxPriceSlippage: 500,
     networkModeOverride: networkMode,
   });
 
-  // Unified Yield approval checking hook - uses preview from deposit hook
   const {
     data: unifiedYieldApprovalStatus,
     isLoading: isCheckingApprovals,
@@ -168,59 +112,10 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     }
   );
 
-  // =========================================================================
-  // ZAP MODE HOOKS - Single-token deposit with auto-swap (USDS/USDC only)
-  // =========================================================================
-
-  // Execution state — when true, pauses zap refetch to avoid stale quotes overwriting
-  const [isExecuting, setExecuting] = useState(false);
-
-  // Determine if we're in zap mode
-  const isZapMode = isUnifiedYield && isZapEligible && depositMode === 'zap' && zapInputToken !== null;
-
-  // Map zapInputToken to ZapToken type (dynamic based on position's tokens)
-  const zapToken: ZapToken | undefined = isZapMode
-    ? (zapInputToken === 'token0' ? position.token0.symbol as ZapToken : position.token1.symbol as ZapToken)
-    : undefined;
-
-  // Get the input amount for zap (from the active input field)
-  const zapInputAmount = isZapMode
-    ? (zapInputToken === 'token0'
-      ? derivedIncreaseLiquidityInfo.formattedAmounts?.TOKEN0
-      : derivedIncreaseLiquidityInfo.formattedAmounts?.TOKEN1)
-    : undefined;
-
-  // Zap preview hook - calculates optimal swap amount via binary search
-  const zapPreviewQuery = useZapPreview({
-    inputToken: zapToken ?? null,
-    inputAmount: zapInputAmount || '',
-    hookAddress: (poolConfig?.hooks ?? '0x0') as Address,
-    enabled: isZapMode && !!zapToken && !!zapInputAmount && parseFloat(zapInputAmount) > 0 && !!poolConfig?.hooks,
-    refetchEnabled: !isExecuting, // Pause auto-refetch during execution
-    networkMode,
-  });
-
-  // Zap approvals hook - checks approval status for swap + Hook deposit
-  const zapApprovalsQuery = useZapApprovals({
-    userAddress: accountAddress,
-    inputToken: zapToken,
-    swapAmount: zapPreviewQuery.data?.swapAmount,
-    route: zapPreviewQuery.data?.route,
-    hookAddress: poolConfig?.hooks as Address,
-    inputAmount: zapPreviewQuery.data
-      ? zapPreviewQuery.data.swapAmount + zapPreviewQuery.data.remainingInputAmount
-      : undefined,
-    enabled: isZapMode && !!zapPreviewQuery.data && !!accountAddress && !!poolConfig?.hooks,
-    networkMode,
-  });
-
-
-  // State
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txContext, setTxContext] = useState<ValidatedLiquidityTxContext | null>(null);
 
-  // USD prices
   const increasePriceSymbols = useMemo(
     () => [position.token0.symbol, position.token1.symbol].filter(Boolean),
     [position.token0.symbol, position.token1.symbol]
@@ -229,7 +124,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const token0USDPrice = increasePrices[position.token0.symbol] || null;
   const token1USDPrice = increasePrices[position.token1.symbol] || null;
 
-  // Balances - check isConnected first to prevent fetching before wallet connection is established
   const { data: token0BalanceData, refetch: refetchToken0Balance } = useBalance({
     address: accountAddress,
     token: tokenDefinitions[position.token0.symbol as TokenSymbol]?.address === "0x0000000000000000000000000000000000000000"
@@ -251,7 +145,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
   const token0Balance = token0BalanceData?.formatted || "0";
   const token1Balance = token1BalanceData?.formatted || "0";
 
-  // Update derived info with balances and prices
   useEffect(() => {
     setDerivedInfo((prev) => ({
       ...prev,
@@ -263,7 +156,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     }));
   }, [token0Balance, token1Balance, token0USDPrice, token1USDPrice, setDerivedInfo]);
 
-  // Percentage input handlers
   const handlePercentage0 = usePercentageInput(
     token0BalanceData,
     { decimals: tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals || 18, symbol: position.token0.symbol as TokenSymbol },
@@ -275,7 +167,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     setAmount1
   );
 
-  // Dependent amount calculation - V4 uses liquidity math, UY uses Hook preview
   const v4DerivedInfo = useDerivedIncreaseInfo({
     position,
     chainId,
@@ -283,27 +174,23 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     networkMode
   });
 
-  // Calculate dependent amount - wraps V4 or UY logic based on position type
   const calculateDependentAmount = useCallback(async (
     inputAmount: string,
     inputSide: "amount0" | "amount1"
   ) => {
     if (isUnifiedYield && poolConfig?.hooks) {
-      // Unified Yield: Use Hook preview (stores result in unifiedYieldDeposit.lastPreview)
       const hookInputSide = inputSide === "amount0" ? "token0" : "token1";
       const inputDecimals = inputSide === "amount0"
         ? (tokenDefinitions[position.token0.symbol as TokenSymbol]?.decimals ?? 18)
         : (tokenDefinitions[position.token1.symbol as TokenSymbol]?.decimals ?? 18);
       await unifiedYieldDeposit.getPreview(inputAmount, hookInputSide, inputDecimals);
     } else {
-      // V4: Use standard liquidity math calculation
       v4DerivedInfo.calculateDependentAmount(inputAmount, inputSide);
     }
   }, [isUnifiedYield, poolConfig?.hooks, tokenDefinitions, position, unifiedYieldDeposit, v4DerivedInfo]);
 
-  // Derive values from the appropriate source
   const uyPreview = unifiedYieldDeposit.lastPreview;
-  const isCalculating = isUnifiedYield ? false : v4DerivedInfo.isCalculating; // UY preview is sync from hook
+  const isCalculating = isUnifiedYield ? false : v4DerivedInfo.isCalculating;
   const dependentAmount = isUnifiedYield
     ? (uyPreview?.inputSide === 'token0' ? uyPreview?.amount1Formatted : uyPreview?.amount0Formatted) ?? null
     : v4DerivedInfo.dependentAmount;
@@ -311,7 +198,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     ? (uyPreview?.inputSide === 'token0' ? 'amount1' : uyPreview?.inputSide === 'token1' ? 'amount0' : null)
     : v4DerivedInfo.dependentField;
 
-  // Update derived info with dependent amount
   useEffect(() => {
     if (!dependentField || !dependentAmount) return;
     if (dependentField === "amount1") {
@@ -321,7 +207,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     }
   }, [dependentField, dependentAmount, setDerivedInfo]);
 
-  // Helper to parse token ID from position
   const parseTokenId = useCallback((positionId: string): string => {
     const compositeId = positionId.toString();
     const parts = compositeId.split('-');
@@ -336,19 +221,9 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     return compositeId;
   }, []);
 
-  /**
-   * Fetch API and build complete transaction context for step executor.
-   *
-   * This builds a context that includes:
-   * - approveToken0Request/approveToken1Request when ERC20 approval needed
-   * - permit data when Permit2 signature needed
-   * - increasePositionRequestArgs for async step to call API with signature
-   * - txRequest when all approvals are done
-   */
   const fetchAndBuildContext = useCallback(async (): Promise<ValidatedLiquidityTxContext | null> => {
     if (!accountAddress || !chainId) return null;
 
-    // Ensure wallet is on the correct chain before submitting
     const ok = await ensureChain(chainIdForMode(networkMode));
     if (!ok) return null;
 
@@ -365,10 +240,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
 
     const { TOKEN0: amount0, TOKEN1: amount1 } = derivedIncreaseLiquidityInfo.formattedAmounts || {};
 
-    // =========================================================================
-    // UNIFIED YIELD POSITIONS - Build context with deposit tx (no API call)
-    // =========================================================================
-    // For Unified Yield, we MUST have poolConfig and hooks - don't fall through to V4
     if (isUnifiedYield) {
       if (!poolConfig?.hooks) {
         console.error('[IncreaseLiquidityTxContext] Unified Yield mode but pool.hooks is missing');
@@ -382,7 +253,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       try {
         const hookAddress = poolConfig.hooks as Address;
 
-        // Use the preview from the deposit hook (same preview used for display)
         const preview = unifiedYieldDeposit.lastPreview;
         if (!preview || preview.shares === 0n) {
           setError("Please enter an amount first");
@@ -390,10 +260,8 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           return null;
         }
 
-        // Check approvals with preview amounts
         const approvalCheck = await refetchApprovals({ amount0Wei: preview.amount0, amount1Wei: preview.amount1 });
 
-        // Build approval txRequests if needed
         let approveToken0Request: ValidatedTransactionRequest | undefined;
         let approveToken1Request: ValidatedTransactionRequest | undefined;
 
@@ -414,7 +282,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           };
         }
 
-        // Build deposit params from preview (with slippage protection)
         const sqrtPriceX96 = poolStateData?.sqrtPriceX96 ? BigInt(poolStateData.sqrtPriceX96) : undefined;
         const depositParams = buildDepositParamsFromPreview(
           preview,
@@ -425,13 +292,11 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           position.poolId,
           chainId,
           sqrtPriceX96,
-          500, // 0.05% slippage
+          500,
         );
 
-        // Build deposit transaction
         const depositTx = buildUnifiedYieldDepositTx(depositParams);
 
-        // Build context with UY-specific fields
         const context = buildLiquidityTxContext({
           type: LiquidityTransactionType.Increase,
           apiResponse: {
@@ -443,26 +308,14 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
               gasLimit: depositTx.gasLimit?.toString(),
               chainId,
             },
-            sqrtRatioX96: undefined,
           } as MintTxApiResponse,
-          token0: {
-            address: token0Config.address as Address,
-            symbol: token0Config.symbol,
-            decimals: token0Config.decimals,
-            chainId,
-          },
-          token1: {
-            address: token1Config.address as Address,
-            symbol: token1Config.symbol,
-            decimals: token1Config.decimals,
-            chainId,
-          },
+          token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
+          token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
           amount0: preview.amount0.toString(),
           amount1: preview.amount1.toString(),
           chainId,
           approveToken0Request,
           approveToken1Request,
-          // Unified Yield specific fields
           isUnifiedYield: true,
           hookAddress,
           poolId: position.poolId,
@@ -474,14 +327,13 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         return context as ValidatedLiquidityTxContext;
       } catch (err: any) {
         console.error("[IncreaseLiquidityTxContext] Unified Yield context error:", err);
-        Sentry.captureException(err, {
-          tags: { component: "IncreaseLiquidityTxContext", operation: "buildUnifiedYieldContext" },
-          extra: {
-            poolId: position?.poolId,
-            hookAddress: poolConfig?.hooks,
-            userAddress: accountAddress,
-            chainId,
-          },
+        reportError(err, {
+          domain: "unified-yield",
+          action: "buildContext",
+          component: "IncreaseLiquidityTxContext",
+          networkMode,
+          chainId,
+          extras: { poolId: position?.poolId, hookAddress: poolConfig?.hooks, userAddress: accountAddress },
         });
         setError(err.message || "Failed to prepare Unified Yield deposit");
         setIsLoading(false);
@@ -489,48 +341,30 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       }
     }
 
-    // =========================================================================
-    // V4 POSITIONS - Call API to build transaction
-    // =========================================================================
     const tokenId = parseTokenId(position.positionId);
 
-    // Get user settings
-    const userSettings = getStoredUserSettings();
-    const slippageBps = Math.round(userSettings.slippage * 100);
-    const deadlineMinutes = userSettings.deadline;
-
-    // Tell the backend which side the user is entering — the dependent amount in
-    // `formattedAmounts` is FE-computed and will drift slightly from Uniswap's
-    // recomputation. Without this, Uniswap is told "independent = token0" by
-    // default and recomputes a token1 amount that breaks `MAX` deposits.
+    // Tell Uniswap which field is independent — otherwise it defaults to token0 and
+    // recomputes a token1 amount that breaks MAX deposits when the user is editing token1.
     const inputSide: 'token0' | 'token1' = exactField === 'TOKEN1' ? 'token1' : 'token0';
 
-    // After the API responds, replace the FE-computed dependent in `formattedAmounts`
-    // with the Uniswap-computed amount so the input field matches what the wallet popup
-    // is about to sign. Leaves the user's input side untouched.
-    const syncDependentDisplay = (apiDetails: { token0?: { amount?: string }; token1?: { amount?: string } } | undefined) => {
-      if (!apiDetails) return;
-      const dependentRaw = inputSide === 'token0' ? apiDetails.token1?.amount : apiDetails.token0?.amount;
-      if (!dependentRaw) return;
-      let formatted: string;
-      try {
-        const dependentDecimals = inputSide === 'token0' ? token1Config.decimals : token0Config.decimals;
-        const dependentSymbol = (inputSide === 'token0' ? token1Config.symbol : token0Config.symbol) as TokenSymbol;
-        formatted = formatTokenDisplayAmount(formatUnits(BigInt(dependentRaw), dependentDecimals), dependentSymbol, networkMode);
-      } catch {
-        return;
-      }
+    const syncAmountsFromApi = (apiDetails: { token0: { amount: string }; token1: { amount: string } }) => {
+      const formatted0 = formatTokenDisplayAmount(
+        formatUnits(BigInt(apiDetails.token0.amount), token0Config.decimals),
+        token0Config.symbol as TokenSymbol,
+        networkMode,
+      );
+      const formatted1 = formatTokenDisplayAmount(
+        formatUnits(BigInt(apiDetails.token1.amount), token1Config.decimals),
+        token1Config.symbol as TokenSymbol,
+        networkMode,
+      );
       setDerivedInfo((prev) => ({
         ...prev,
-        formattedAmounts: {
-          ...prev.formattedAmounts,
-          [inputSide === 'token0' ? 'TOKEN1' : 'TOKEN0']: formatted,
-        },
+        formattedAmounts: { ...prev.formattedAmounts, TOKEN0: formatted0, TOKEN1: formatted1 },
       }));
     };
 
     try {
-      // Call API to check approvals and get permit/tx data
       const response = await fetch("/api/liquidity/prepare-increase-tx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -541,8 +375,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           amount1: amount1 || "0",
           inputSide,
           chainId,
-          slippageBps,
-          deadlineMinutes,
         }),
       });
 
@@ -552,8 +384,10 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         throw new Error(data.message || "Failed to prepare transaction");
       }
 
-      // Build request args for async step (needed when permit signing is required)
-      // Note: prepare-increase-tx.ts expects amount0/amount1 (not inputAmount/inputTokenSymbol)
+      if (!data.details?.token0?.amount || !data.details?.token1?.amount) {
+        throw new Error("Uniswap LP API response missing token amounts");
+      }
+
       const increasePositionRequestArgs = {
         userAddress: accountAddress,
         tokenId,
@@ -561,46 +395,14 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         amount1: amount1 || "0",
         inputSide,
         chainId,
-        slippageBps,
-        deadlineMinutes,
       };
 
-      // Sync the dependent input field to Uniswap's computed amount so the UI
-      // matches what the user is about to sign. No-op when the response omits
-      // `details` (older deployments).
-      syncDependentDisplay(data.details);
+      syncAmountsFromApi(data.details);
 
-      // Handle ERC20 approval needed (API now includes permit data for complete step generation)
       if (data.needsApproval && data.approvalType === 'ERC20_TO_PERMIT2') {
-        // Use the new needsToken0Approval/needsToken1Approval flags from API to handle both tokens
-        // Fallback to legacy address comparison for backwards compatibility
-        const needsToken0 = data.needsToken0Approval ??
-          (data.approvalTokenAddress?.toLowerCase() === token0Config.address.toLowerCase());
-        const needsToken1 = data.needsToken1Approval ??
-          (data.approvalTokenAddress?.toLowerCase() === token1Config.address.toLowerCase());
+        const rawAmount0 = BigInt(data.details.token0.amount);
+        const rawAmount1 = BigInt(data.details.token1.amount);
 
-        // Build approval transaction request using shared modular helper
-        // Respects user's approval mode setting (exact vs infinite). Prefer the
-        // Uniswap-computed amounts when present so approval display, permit
-        // values, and the actual transfer all agree.
-        const rawAmount0 = data.details?.token0?.amount
-          ? BigInt(data.details.token0.amount)
-          : parseUnits(amount0 || "0", token0Config.decimals);
-        const rawAmount1 = data.details?.token1?.amount
-          ? BigInt(data.details.token1.amount)
-          : parseUnits(amount1 || "0", token1Config.decimals);
-        const approvals = buildApprovalRequests({
-          needsToken0,
-          needsToken1,
-          token0Address: token0Config.address as Address,
-          token1Address: token1Config.address as Address,
-          spender: PERMIT2_ADDRESS,
-          amount0: rawAmount0,
-          amount1: rawAmount1,
-          chainId,
-        });
-
-        // Build permit step fields from API response (API now includes this with ERC20_TO_PERMIT2)
         const permitData = data.permitBatchData;
         const sigDetails = data.signatureDetails;
         let permit: SignTypedDataStepFields | undefined;
@@ -617,8 +419,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           };
         }
 
-        // Include permitBatchData in request args so async step can send it with signature.
-        // Send the FULL normalized permit (domain, types, values) — the backend's
+        // Send the FULL normalized permit (domain, types, values) — backend's
         // `denormalizeV4BatchPermit` reads `types` to wrap fields, so a values-only
         // payload throws "Cannot convert undefined or null to object".
         const increasePositionRequestArgsWithPermit = permitData ? {
@@ -626,12 +427,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           permitBatchData: permitData,
         } : increasePositionRequestArgs;
 
-        // Build context with approval step AND permit data for complete step generation.
-        // - With permit data: [approval] -> [permit signature] -> [async position tx]
-        // - Without permit data (existing Permit2 state still valid): rely on the
-        //   pre-built `data.create` tx returned by the backend, producing
-        //   [approval] -> [sync position tx]. The signed-flow generator branch
-        //   handles both cases via `txRequest`.
         const context = buildLiquidityTxContext({
           type: LiquidityTransactionType.Increase,
           apiResponse: {
@@ -640,23 +435,13 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
             signatureDetails: sigDetails,
             create: data.create,
           } as MintTxApiResponse,
-          token0: {
-            address: token0Config.address as Address,
-            symbol: token0Config.symbol,
-            decimals: token0Config.decimals,
-            chainId,
-          },
-          token1: {
-            address: token1Config.address as Address,
-            symbol: token1Config.symbol,
-            decimals: token1Config.decimals,
-            chainId,
-          },
+          token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
+          token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
           amount0: rawAmount0.toString(),
           amount1: rawAmount1.toString(),
           chainId,
-          approveToken0Request: approvals.token0,
-          approveToken1Request: approvals.token1,
+          approveToken0Request: toApproveRequest(data.approveToken0Tx, chainId),
+          approveToken1Request: toApproveRequest(data.approveToken1Tx, chainId),
           permit,
           increasePositionRequestArgs: increasePositionRequestArgsWithPermit,
         });
@@ -666,13 +451,10 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         return context as ValidatedLiquidityTxContext;
       }
 
-
-      // Handle Permit2 signature needed
       if (data.needsApproval && data.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
         const permitData = data.permitBatchData;
         const sigDetails = data.signatureDetails;
 
-        // Build permit step fields
         const permit: SignTypedDataStepFields = {
           domain: {
             name: sigDetails.domain.name,
@@ -683,47 +465,14 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
           values: permitData.values || permitData,
         };
 
-        // Backend signals via `erc20ApprovalNeeded` when /lp/check_approval
-        // returned BOTH a fresh batch permit AND outstanding ERC20→Permit2
-        // allowances. Without these approval steps, Permit2's `transferFrom`
-        // reverts on-chain with TRANSFER_FROM_FAILED even though the permit
-        // signature is valid.
-        const rawAmount0 = data.details?.token0?.amount
-          ? BigInt(data.details.token0.amount)
-          : parseUnits(amount0 || "0", token0Config.decimals);
-        const rawAmount1 = data.details?.token1?.amount
-          ? BigInt(data.details.token1.amount)
-          : parseUnits(amount1 || "0", token1Config.decimals);
-        const needsToken0Approval = data.erc20ApprovalNeeded && (
-          data.needsToken0Approval ??
-          (data.approvalTokenAddress?.toLowerCase() === token0Config.address.toLowerCase())
-        );
-        const needsToken1Approval = data.erc20ApprovalNeeded && (
-          data.needsToken1Approval ??
-          (data.approvalTokenAddress?.toLowerCase() === token1Config.address.toLowerCase())
-        );
-        const approvals = (needsToken0Approval || needsToken1Approval)
-          ? buildApprovalRequests({
-              needsToken0: !!needsToken0Approval,
-              needsToken1: !!needsToken1Approval,
-              token0Address: token0Config.address as Address,
-              token1Address: token1Config.address as Address,
-              spender: PERMIT2_ADDRESS,
-              amount0: rawAmount0,
-              amount1: rawAmount1,
-              chainId,
-            })
-          : { token0: undefined, token1: undefined };
+        const rawAmount0 = BigInt(data.details.token0.amount);
+        const rawAmount1 = BigInt(data.details.token1.amount);
 
-        // Include permitBatchData in request args so async step can send it with signature.
-        // Send the FULL normalized permit (domain, types, values) — backend's
-        // `denormalizeV4BatchPermit` reads `types` to wrap fields.
         const increasePositionRequestArgsWithPermit = {
           ...increasePositionRequestArgs,
           permitBatchData: permitData,
         };
 
-        // Build unsigned context with permit and request args for async step
         const context = buildLiquidityTxContext({
           type: LiquidityTransactionType.Increase,
           apiResponse: {
@@ -731,23 +480,13 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
             permitBatchData: permitData,
             signatureDetails: sigDetails,
           } as MintTxApiResponse,
-          token0: {
-            address: token0Config.address as Address,
-            symbol: token0Config.symbol,
-            decimals: token0Config.decimals,
-            chainId,
-          },
-          token1: {
-            address: token1Config.address as Address,
-            symbol: token1Config.symbol,
-            decimals: token1Config.decimals,
-            chainId,
-          },
+          token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
+          token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
           amount0: rawAmount0.toString(),
           amount1: rawAmount1.toString(),
           chainId,
-          approveToken0Request: approvals.token0,
-          approveToken1Request: approvals.token1,
+          approveToken0Request: toApproveRequest(data.approveToken0Tx, chainId),
+          approveToken1Request: toApproveRequest(data.approveToken1Tx, chainId),
           permit,
           increasePositionRequestArgs: increasePositionRequestArgsWithPermit,
         });
@@ -757,33 +496,17 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
         return context as ValidatedLiquidityTxContext;
       }
 
-      // Transaction ready - all approvals done
       if (!data.needsApproval && data.create) {
         const context = buildLiquidityTxContext({
           type: LiquidityTransactionType.Increase,
-          apiResponse: {
-            needsApproval: false,
-            create: data.create,
-            sqrtRatioX96: data.sqrtRatioX96,
-          } as MintTxApiResponse,
-          token0: {
-            address: token0Config.address as Address,
-            symbol: token0Config.symbol,
-            decimals: token0Config.decimals,
-            chainId,
-          },
-          token1: {
-            address: token1Config.address as Address,
-            symbol: token1Config.symbol,
-            decimals: token1Config.decimals,
-            chainId,
-          },
-          amount0: data.details?.token0?.amount || "0",
-          amount1: data.details?.token1?.amount || "0",
+          apiResponse: { needsApproval: false, create: data.create } as MintTxApiResponse,
+          token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
+          token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
+          amount0: data.details.token0.amount,
+          amount1: data.details.token1.amount,
           chainId,
           increasePositionRequestArgs,
         });
-
 
         setTxContext(context as ValidatedLiquidityTxContext);
         setIsLoading(false);
@@ -793,14 +516,13 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
       throw new Error("Unexpected API response");
     } catch (err: any) {
       console.error("[IncreaseLiquidityTxContext] fetchAndBuildContext error:", err);
-      Sentry.captureException(err, {
-        tags: { component: "IncreaseLiquidityTxContext", operation: "fetchAndBuildContext" },
-        extra: {
-          poolId: position?.poolId,
-          positionId: position?.positionId,
-          userAddress: accountAddress,
-          chainId,
-        },
+      reportError(err, {
+        domain: "liquidity",
+        action: "increase",
+        component: "IncreaseLiquidityTxContext",
+        networkMode,
+        chainId,
+        extras: { poolId: position?.poolId, positionId: position?.positionId, userAddress: accountAddress },
       });
       setError(err.message || "Failed to prepare transaction");
       setIsLoading(false);
@@ -813,9 +535,7 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     refetchToken1Balance();
   }, [refetchToken0Balance, refetchToken1Balance]);
 
-  const clearError = useCallback(() => {
-    setError(null);
-  }, []);
+  const clearError = useCallback(() => setError(null), []);
 
   const value = useMemo(() => ({
     isLoading,
@@ -834,21 +554,9 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     calculateDependentAmount,
     refetchBalances,
     clearError,
-    // Unified Yield approval status (for checking if approvals needed)
     unifiedYieldApprovalStatus,
     isCheckingApprovals,
     refetchApprovals,
-    // Zap mode (single-token deposit with auto-swap)
-    isZapMode,
-    zapPreview: zapPreviewQuery.data ?? null,
-    zapApprovals: zapApprovalsQuery.approvals ?? null,
-    isZapPreviewLoading: zapPreviewQuery.isLoading,
-    isZapPreviewFetching: zapPreviewQuery.isFetching,
-    isZapPreviewError: zapPreviewQuery.isError,
-    zapPreviewError: zapPreviewQuery.error ?? null,
-    zapDataUpdatedAt: zapPreviewQuery.dataUpdatedAt ?? 0,
-    refetchZapPreview: zapPreviewQuery.refetch,
-    setExecuting,
   }), [
     isLoading,
     error,
@@ -869,16 +577,6 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     unifiedYieldApprovalStatus,
     isCheckingApprovals,
     refetchApprovals,
-    // Zap dependencies
-    isZapMode,
-    zapPreviewQuery.data,
-    zapPreviewQuery.isLoading,
-    zapPreviewQuery.isFetching,
-    zapPreviewQuery.isError,
-    zapPreviewQuery.error,
-    zapPreviewQuery.dataUpdatedAt,
-    zapPreviewQuery.refetch,
-    zapApprovalsQuery.approvals,
   ]);
 
   return (
@@ -893,4 +591,3 @@ export function useIncreaseLiquidityTxContext(): IncreaseLiquidityTxContextType 
   if (!context) throw new Error("useIncreaseLiquidityTxContext must be used within IncreaseLiquidityTxContextProvider");
   return context;
 }
-

@@ -12,17 +12,11 @@
  */
 
 import type { Currency, CurrencyAmount, Token } from '@uniswap/sdk-core';
-import * as Sentry from '@sentry/nextjs';
+import { reportError, markReported } from '@/lib/observability';
 import type { Address, Hex } from 'viem';
-import { maxUint256, getAddress } from 'viem';
-import type { TokenSymbol } from '@/lib/pools-config';
-import { getToken, getPositionManagerAddress } from '@/lib/pools-config';
-import { PERMIT2_ADDRESS, PERMIT2_DOMAIN_NAME, PERMIT_EXPIRATION_DURATION_SECONDS } from '@/lib/swap/swap-constants';
-import type { NetworkMode } from '@/lib/network-mode';
 
 import {
   TransactionStepType,
-  LiquidityTransactionType,
   type TokenApprovalTransactionStep,
   type TokenRevocationTransactionStep,
   type Permit2SignatureStep,
@@ -39,12 +33,7 @@ import {
   type IncreaseLiquiditySteps,
   type DecreaseLiquiditySteps,
   type CollectFeesSteps,
-  type TransactionStep,
   type ValidatedTransactionRequest,
-  type TokenInfo,
-  type StepperStep,
-  type LiquidityFlowState,
-  type OnChainTransactionFields,
   type CreateLPPositionRequestArgs,
   type IncreaseLPPositionRequestArgs,
 } from '../../types';
@@ -191,12 +180,10 @@ export function createPermit2TransactionStep({
 
 export function createIncreasePositionStep(
   txRequest: ValidatedTransactionRequest,
-  sqrtRatioX96: string | undefined
 ): IncreasePositionTransactionStep {
   return {
     type: TransactionStepType.IncreasePositionTransaction,
     txRequest,
-    sqrtRatioX96,
   };
 }
 
@@ -213,9 +200,9 @@ export function createIncreasePositionAsyncStep(
     type: TransactionStepType.IncreasePositionTransactionAsync,
     getTxRequest: async (
       signature: string,
-    ): Promise<{ txRequest: ValidatedTransactionRequest | undefined; sqrtRatioX96: string | undefined }> => {
+    ): Promise<{ txRequest: ValidatedTransactionRequest | undefined }> => {
       if (!increasePositionRequestArgs) {
-        return { txRequest: undefined, sqrtRatioX96: undefined };
+        return { txRequest: undefined };
       }
 
       try {
@@ -224,7 +211,10 @@ export function createIncreasePositionAsyncStep(
         // backend pairs `permitSignature` with `permitBatchData`, so omit both when
         // we have no signature.
         const body: Record<string, unknown> = { ...increasePositionRequestArgs };
-        if (signature) body.permitSignature = signature;
+        // H2 guard: only attach signature if it has the full 0x + 130-hex shape (132 chars).
+        // A truthy-but-short string here would silently downgrade to the no-permit path,
+        // hiding upstream signature corruption.
+        if (signature && signature.length >= 132) body.permitSignature = signature;
         else delete (body as any).permitBatchData;
 
         const response = await fetch('/api/liquidity/prepare-increase-tx', {
@@ -256,7 +246,7 @@ export function createIncreasePositionAsyncStep(
         const data = await response.json();
 
         // Validate and transform the response
-        const txData = data.create || data.transaction;
+        const txData = data.create;
         if (!txData) {
           // API returned approval-needed response instead of transaction data
           if (data.needsApproval) {
@@ -287,21 +277,25 @@ export function createIncreasePositionAsyncStep(
           chainId: txData.chainId || increasePositionRequestArgs.chainId,
         };
 
-        return { txRequest, sqrtRatioX96: data.sqrtRatioX96 };
+        return { txRequest };
       } catch (e) {
         const diagnostics = (e && typeof e === 'object' && 'diagnostics' in e)
           ? (e as { diagnostics?: Record<string, unknown> }).diagnostics
           : undefined;
         console.error('createIncreasePositionAsyncStep error:', e, diagnostics);
-        Sentry.captureException(e, {
+        reportError(e, {
+          domain: 'liquidity',
+          action: 'prepareTx',
+          component: 'createIncreasePositionAsyncStep',
+          chainId: increasePositionRequestArgs.chainId,
           tags: { flow: 'lp_increase', stage: 'async_build_with_signature' },
-          extra: {
+          extras: {
             userAddress: increasePositionRequestArgs.userAddress,
             tokenId: increasePositionRequestArgs.tokenId,
-            chainId: increasePositionRequestArgs.chainId,
             ...(diagnostics ?? {}),
           },
         });
+        markReported(e);
         throw e;
       }
     },
@@ -321,9 +315,9 @@ export function createCreatePositionAsyncStep(
     type: TransactionStepType.IncreasePositionTransactionAsync,
     getTxRequest: async (
       signature: string,
-    ): Promise<{ txRequest: ValidatedTransactionRequest | undefined; sqrtRatioX96: string | undefined }> => {
+    ): Promise<{ txRequest: ValidatedTransactionRequest | undefined }> => {
       if (!createPositionRequestArgs) {
-        return { txRequest: undefined, sqrtRatioX96: undefined };
+        return { txRequest: undefined };
       }
 
       try {
@@ -331,7 +325,10 @@ export function createCreatePositionAsyncStep(
         // (existing Permit2 state still valid post-approves); the backend pairs
         // `permitSignature` with `permitBatchData`, so omit both when no signature.
         const body: Record<string, unknown> = { ...createPositionRequestArgs };
-        if (signature) body.permitSignature = signature;
+        // H2 guard: only attach signature if it has the full 0x + 130-hex shape (132 chars).
+        // A truthy-but-short string here would silently downgrade to the no-permit path,
+        // hiding upstream signature corruption.
+        if (signature && signature.length >= 132) body.permitSignature = signature;
         else delete (body as any).permitBatchData;
 
         const response = await fetch('/api/liquidity/prepare-mint-tx', {
@@ -361,7 +358,7 @@ export function createCreatePositionAsyncStep(
         const data = await response.json();
 
         // Validate and transform the response
-        const txData = data.create || data.transaction;
+        const txData = data.create;
         if (!txData) {
           // API returned approval-needed response instead of transaction data
           if (data.needsApproval) {
@@ -392,21 +389,25 @@ export function createCreatePositionAsyncStep(
           chainId: txData.chainId || createPositionRequestArgs.chainId,
         };
 
-        return { txRequest, sqrtRatioX96: data.sqrtRatioX96 };
+        return { txRequest };
       } catch (e) {
         const diagnostics = (e && typeof e === 'object' && 'diagnostics' in e)
           ? (e as { diagnostics?: Record<string, unknown> }).diagnostics
           : undefined;
         console.error('createCreatePositionAsyncStep error:', e, diagnostics);
-        Sentry.captureException(e, {
+        reportError(e, {
+          domain: 'liquidity',
+          action: 'prepareTx',
+          component: 'createCreatePositionAsyncStep',
+          chainId: createPositionRequestArgs.chainId,
           tags: { flow: 'lp_create', stage: 'async_build_with_signature' },
-          extra: {
+          extras: {
             userAddress: createPositionRequestArgs.userAddress,
             poolId: createPositionRequestArgs.poolId,
-            chainId: createPositionRequestArgs.chainId,
             ...(diagnostics ?? {}),
           },
         });
+        markReported(e);
         throw e;
       }
     },
@@ -415,12 +416,10 @@ export function createCreatePositionAsyncStep(
 
 export function createIncreasePositionStepBatched(
   txRequests: ValidatedTransactionRequest[],
-  sqrtRatioX96: string | undefined
 ): IncreasePositionTransactionStepBatched {
   return {
     type: TransactionStepType.IncreasePositionTransactionBatched,
     batchedTxRequests: txRequests,
-    sqrtRatioX96,
   };
 }
 
@@ -430,12 +429,10 @@ export function createIncreasePositionStepBatched(
 
 export function createDecreasePositionStep(
   txRequest: ValidatedTransactionRequest,
-  sqrtRatioX96?: string
 ): DecreasePositionTransactionStep {
   return {
     type: TransactionStepType.DecreasePositionTransaction,
     txRequest,
-    sqrtRatioX96,
   };
 }
 
@@ -564,111 +561,6 @@ export function orderDecreaseLiquiditySteps(flow: DecreaseLiquidityFlow): Decrea
  */
 export function orderCollectFeesSteps(flow: CollectFeesFlow): CollectFeesSteps[] {
   return [flow.collectFees];
-}
-
-// =============================================================================
-// STEPPER UI HELPERS
-// =============================================================================
-
-export function generateStepperSteps(flowState: LiquidityFlowState): StepperStep[] {
-  const steps: StepperStep[] = [];
-
-  // Group approval steps
-  const approvalSteps = flowState.steps.filter(
-    (s) => s.step.type === TransactionStepType.TokenApprovalTransaction
-  );
-  if (approvalSteps.length > 0) {
-    const completed = approvalSteps.filter((s) => s.status === 'completed').length;
-    const hasLoading = approvalSteps.some((s) => s.status === 'loading');
-    const hasError = approvalSteps.some((s) => s.status === 'error');
-
-    steps.push({
-      id: 'approvals',
-      label: 'Token Approvals',
-      status: hasError
-        ? 'error'
-        : hasLoading
-          ? 'loading'
-          : completed === approvalSteps.length
-            ? 'completed'
-            : 'pending',
-      count: { completed, total: approvalSteps.length },
-    });
-  }
-
-  // Permit signature step
-  const permitStep = flowState.steps.find(
-    (s) => s.step.type === TransactionStepType.Permit2Signature
-  );
-  if (permitStep) {
-    steps.push({
-      id: 'permit',
-      label: 'Permit Signature',
-      status: permitStep.status === 'idle' ? 'pending' : permitStep.status,
-    });
-  }
-
-  // Position transaction step
-  const positionStep = flowState.steps.find(
-    (s) =>
-      s.step.type === TransactionStepType.IncreasePositionTransaction ||
-      s.step.type === TransactionStepType.IncreasePositionTransactionAsync ||
-      s.step.type === TransactionStepType.DecreasePositionTransaction ||
-      s.step.type === TransactionStepType.CollectFeesTransactionStep
-  );
-  if (positionStep) {
-    const label = getPositionStepLabel(flowState.operationType);
-    steps.push({
-      id: 'position',
-      label,
-      status: positionStep.status === 'idle' ? 'pending' : positionStep.status,
-    });
-  }
-
-  return steps;
-}
-
-function getPositionStepLabel(operationType: LiquidityTransactionType): string {
-  switch (operationType) {
-    case LiquidityTransactionType.Create:
-      return 'Create Position';
-    case LiquidityTransactionType.Increase:
-      return 'Add Liquidity';
-    case LiquidityTransactionType.Decrease:
-      return 'Remove Liquidity';
-    case LiquidityTransactionType.Collect:
-      return 'Collect Fees';
-    default:
-      return 'Execute Transaction';
-  }
-}
-
-// =============================================================================
-// FLOW STATE HELPERS
-// =============================================================================
-
-export function createInitialFlowState(operationType: LiquidityTransactionType): LiquidityFlowState {
-  return {
-    operationType,
-    steps: [],
-    currentStepIndex: 0,
-    isComplete: false,
-  };
-}
-
-export function getNextStep(flowState: LiquidityFlowState): number | null {
-  const incompleteIndex = flowState.steps.findIndex(
-    (s) => s.status !== 'completed' && s.status !== 'error'
-  );
-  return incompleteIndex === -1 ? null : incompleteIndex;
-}
-
-export function isFlowComplete(flowState: LiquidityFlowState): boolean {
-  return flowState.steps.every((s) => s.status === 'completed');
-}
-
-export function hasFlowError(flowState: LiquidityFlowState): boolean {
-  return flowState.steps.some((s) => s.status === 'error');
 }
 
 // =============================================================================

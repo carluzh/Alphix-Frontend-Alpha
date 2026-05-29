@@ -24,7 +24,7 @@ interface PoolsConfigFile {
     enabled: boolean;
     featured: boolean;
     type?: string;
-    yieldSources?: Array<'aave' | 'spark'>;
+    yieldSources?: Array<'aave'>;
     rehypoRange?: { min: string; max: string; isFullRange: boolean };
     proMeta?: {
       projectName: string;
@@ -85,7 +85,7 @@ export interface RehypoRangeConfig {
   isFullRange: boolean;
 }
 
-export type YieldSource = 'aave' | 'spark';
+export type YieldSource = 'aave';
 
 export type PoolType = 'Stable' | 'Volatile' | 'Pro';
 
@@ -150,7 +150,6 @@ const TOKEN_ICONS: Record<string, string> = {
   ETH: '/tokens/ETH.png',
   WETH: '/tokens/ETH.png',
   USDC: '/tokens/USDC.png',
-  USDS: '/tokens/USDS.png',
   USDT: '/tokens/USDT.png',
   aETH: '/tokens/aETH.png',
   aUSDC: '/tokens/aUSDC.png',
@@ -214,7 +213,6 @@ export function getPoolByTokens(tokenA: string, tokenB: string, networkModeOverr
   const priority: Record<string, number> = {
     'USDC': 100,
     'USDT': 100,
-    'USDS': 95,
     'ETH': 80,
   };
 

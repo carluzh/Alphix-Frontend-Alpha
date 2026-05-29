@@ -88,6 +88,7 @@ function PositionDetailContent({ tokenId, fromPage, networkModeOverride }: { tok
     tokenBSymbol,
     isFullRange,
     isInRange,
+    poolOutsideRange,
     // APR data
     poolApr,
     aaveApr,
@@ -139,6 +140,7 @@ function PositionDetailContent({ tokenId, fromPage, networkModeOverride }: { tok
       tokenBSymbol={tokenBSymbol}
       isFullRange={isFullRange}
       isInRange={isInRange}
+      poolOutsideRange={poolOutsideRange}
       poolApr={poolApr}
       aaveApr={aaveApr}
       aprBySource={aprBySource}

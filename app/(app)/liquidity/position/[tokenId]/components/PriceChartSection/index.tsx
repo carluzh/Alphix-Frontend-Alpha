@@ -291,7 +291,7 @@ export const PriceChartSection = memo(function PriceChartSection({
 
   // Detect if it's a stablecoin pair (both symbols contain USD or stable naming)
   const isStablePair = useMemo(() => {
-    const stableTokens = ["USDC", "USDS", "DAI", "BUSD", "FRAX", "LUSD"];
+    const stableTokens = ["USDC", "DAI", "BUSD", "FRAX", "LUSD"];
     const t0 = token0Symbol.toUpperCase();
     const t1 = token1Symbol.toUpperCase();
     return stableTokens.some(s => t0.includes(s)) && stableTokens.some(s => t1.includes(s));

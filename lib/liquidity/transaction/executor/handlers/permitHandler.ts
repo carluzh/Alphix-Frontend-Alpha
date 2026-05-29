@@ -12,6 +12,7 @@
 
 import type { Permit2SignatureStep } from '../../../types';
 import { cacheSignedPermit, type CachedPermit } from '@/lib/permit-types';
+import { addReportBreadcrumb } from '@/lib/observability';
 
 // =============================================================================
 // TYPES - Matches Uniswap's HandleSignatureStepParams
@@ -95,6 +96,18 @@ export async function handleSignatureStep(
       console.warn('[permitHandler] Failed to cache permit signature:', e);
     }
   }
+
+  // Leave a lifecycle breadcrumb so a later revert/failure event carries the
+  // signing context. Errors from signTypedData itself bubble to useStepExecutor.
+  addReportBreadcrumb({
+    domain: 'signature',
+    action: 'permit2Sign',
+    message: 'permit signed/cached',
+    data: {
+      chainId: chainId ?? null,
+      cached: Boolean(chainId && token0Symbol && token1Symbol),
+    },
+  });
 
   // Mark step as accepted after successful signature - MATCHES UNISWAP
   setCurrentStep({ step, accepted: true });

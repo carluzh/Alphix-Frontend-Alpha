@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { redis } from '@/lib/cache/redis'
 import { checkRateLimit } from '@/lib/api/ratelimit'
 import { TOS_SIGNATURE_MESSAGE, TOS_VERSION } from '@/lib/tos-content'
+import { reportError } from '@/lib/observability'
 
 const AcceptBodySchema = z.object({
   address: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
@@ -104,6 +105,7 @@ export async function POST(request: Request) {
     await redis.rpush('tos:log', JSON.stringify({ address: address.toLowerCase(), ...record }))
   } catch (error) {
     console.error('[/api/tos/accept] Redis write failed:', error)
+    reportError(error, { domain: 'backend', action: 'tosStore', component: 'api/tos/accept' })
     return NextResponse.json(
       { error: 'Failed to store acceptance' },
       { status: 500 }

@@ -9,13 +9,9 @@
 import { useMemo } from 'react';
 import Link from 'next/link';
 import { ChevronRight } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { motion, AnimatePresence } from 'framer-motion';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { WizardProgressSidebar, WizardProgressHeader } from './shared/WizardProgress';
-import { Container } from './shared/Container';
-import { WizardStep } from './types';
 
 const WIDTH = {
   positionCard: 720,
@@ -146,99 +142,3 @@ export function FormWrapper({
   );
 }
 
-/**
- * Step container with animations
- * Wraps each step content with proper enter/exit animations
- */
-interface StepContainerProps {
-  step: WizardStep;
-  children: React.ReactNode;
-  className?: string;
-}
-
-export function StepContainer({ step, children, className }: StepContainerProps) {
-  const { currentStep } = useAddLiquidityContext();
-  const isVisible = currentStep === step;
-
-  return (
-    <AnimatePresence mode="wait">
-      {isVisible && (
-        <motion.div
-          key={step}
-          initial={{ y: 10, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: -10, opacity: 0 }}
-          transition={{ duration: 0.2 }}
-          className={className}
-        >
-          <Container>{children}</Container>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
-/**
- * Multi-step container that shows steps based on current progress
- * Similar to Uniswap's FormStepsWrapper
- */
-interface FormStepsWrapperProps {
-  children: React.ReactNode;
-}
-
-export function FormStepsWrapper({ children }: FormStepsWrapperProps) {
-  const { currentStep } = useAddLiquidityContext();
-
-  return (
-    <div className="flex flex-col gap-6">
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={currentStep}
-          initial={{ y: 10, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: -10, opacity: 0 }}
-          transition={{ duration: 0.2 }}
-        >
-          {children}
-        </motion.div>
-      </AnimatePresence>
-    </div>
-  );
-}
-
-/**
- * Collapsed step indicator shown after completing a step
- * Like Uniswap's EditStep showing selected tokens
- */
-interface CollapsedStepProps {
-  title: string;
-  summary: string;
-  onEdit?: () => void;
-  icon?: React.ReactNode;
-}
-
-export function CollapsedStep({ title, summary, onEdit, icon }: CollapsedStepProps) {
-  return (
-    <div className="flex flex-row items-center justify-between p-4 rounded-xl bg-sidebar-accent/50 border border-sidebar-border">
-      <div className="flex flex-row items-center gap-3">
-        {icon && (
-          <div className="w-10 h-10 rounded-full bg-sidebar-accent flex items-center justify-center">
-            {icon}
-          </div>
-        )}
-        <div className="flex flex-col">
-          <span className="text-xs text-sidebar-foreground/60">{title}</span>
-          <span className="text-sm font-medium text-white">{summary}</span>
-        </div>
-      </div>
-      {onEdit && (
-        <button
-          onClick={onEdit}
-          className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
-        >
-          Edit
-        </button>
-      )}
-    </div>
-  );
-}

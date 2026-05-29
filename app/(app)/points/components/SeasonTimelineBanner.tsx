@@ -93,6 +93,7 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
     seasonRemainingMs,
     weekRemainingMs,
     isSeasonActive,
+    isSeasonConcluded,
     isBeforeSeason,
     msUntilStart,
   } = useMemo(() => {
@@ -155,8 +156,8 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
     // Time remaining calculations
     const seasonRemMs = Math.max(0, seasonEnd.getTime() - now.getTime());
 
-    // Season is active if we're between start and end
-    const isActive = now >= effectiveSeasonStart && now <= seasonEnd;
+    const concluded = !beforeSeason && now >= seasonEnd;
+    const isActive = now >= effectiveSeasonStart && !concluded;
 
     return {
       seasonProgress: seasonProg,
@@ -166,6 +167,7 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
       seasonRemainingMs: seasonRemMs,
       weekRemainingMs: weekRemMs,
       isSeasonActive: isActive,
+      isSeasonConcluded: concluded,
       isBeforeSeason: beforeWeek1, // Use week1 for "before" display
       msUntilStart: msUntilWeek1, // Raw ms for proper formatting
     };
@@ -233,7 +235,11 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
                 </div>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-[220px]">
-                <p className="text-xs">Distributed every Thursday at 02:00 UTC</p>
+                <p className="text-xs">
+                  {isSeasonConcluded
+                    ? "For more information, follow our Discord."
+                    : "Distributed every Thursday at 02:00 UTC"}
+                </p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -245,15 +251,20 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground">Season Progress</span>
-              <span className="text-foreground font-medium" style={{ fontFamily: "Consolas, monospace" }}>
+              <span className="text-foreground font-medium flex items-center gap-1" style={{ fontFamily: "Consolas, monospace" }}>
                 {isBeforeSeason ? (
                   <span className="text-sidebar-primary">starting in {formatWeekRemaining(msUntilStart)}</span>
+                ) : isSeasonConcluded ? (
+                  <span className="text-muted-foreground">100%</span>
                 ) : (
                   formatSeasonRemaining(seasonRemainingMs)
                 )}
               </span>
             </div>
-            <SeasonProgressBar progress={seasonProgress} />
+            <SeasonProgressBar
+              progress={isSeasonConcluded ? 100 : seasonProgress}
+              solidColor={isSeasonConcluded ? "#404040" : undefined}
+            />
           </div>
 
           {/* Week Progress Bar */}
@@ -261,17 +272,19 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
             <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground">
                 Current Week{" "}
-                <span className="text-foreground font-medium">S0W{currentWeek}</span>
+                <span className="text-foreground font-medium">
+                  S0W{isSeasonConcluded ? totalWeeks : currentWeek}
+                </span>
               </span>
               <span className="text-foreground font-medium" style={{ fontFamily: "Consolas, monospace" }}>
-                {isBeforeSeason ? (
-                  <span className="text-muted-foreground">—</span>
+                {isBeforeSeason || isSeasonConcluded ? (
+                  <span className="text-muted-foreground">-</span>
                 ) : (
                   formatWeekRemaining(weekRemainingMs)
                 )}
               </span>
             </div>
-            <WeekProgressBar progress={weekProgress} />
+            <WeekProgressBar progress={isSeasonConcluded ? 0 : weekProgress} />
           </div>
         </div>
       </div>
@@ -323,16 +336,20 @@ function PulsingLiveDot() {
 /**
  * SeasonProgressBar - Progress bar with visible 100% track
  */
-function SeasonProgressBar({ progress }: { progress: number }) {
+function SeasonProgressBar({ progress, solidColor }: { progress: number; solidColor?: string }) {
   const clampedProgress = Math.max(0, Math.min(100, progress));
 
   return (
     <div className="relative h-2 rounded-full bg-white/5">
       <div
-        className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-foreground/60 to-foreground/90 transition-all duration-500 ease-out"
+        className={cn(
+          "absolute inset-y-0 left-0 rounded-full transition-all duration-500 ease-out",
+          !solidColor && "bg-gradient-to-r from-foreground/60 to-foreground/90"
+        )}
         style={{
           width: `${clampedProgress}%`,
           minWidth: clampedProgress > 0 ? "4px" : "0",
+          ...(solidColor ? { backgroundColor: solidColor } : {}),
         }}
       />
     </div>

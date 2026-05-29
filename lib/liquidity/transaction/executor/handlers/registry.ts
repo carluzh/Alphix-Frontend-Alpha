@@ -33,12 +33,6 @@ import {
   handleUnifiedYieldDepositStep,
   handleUnifiedYieldWithdrawStep,
 } from './unifiedYieldHandler';
-import {
-  handleZapSwapApprovalStep,
-  handleZapPSMSwapStep,
-  handleZapPoolSwapStep,
-  handleZapDynamicDepositStep,
-} from '../../../../liquidity/zap/execution/handlers';
 
 // =============================================================================
 // TYPES
@@ -66,7 +60,7 @@ export interface StepExecutionContext {
   action?: LiquidityAction;
   signature?: string; // From prior Permit2Signature step
   setCurrentStep: (params: { step: TransactionStep; accepted: boolean }) => void;
-  /** Sign typed data for Permit2 (used by zap pool swaps) */
+  /** Sign typed data for Permit2 */
   signTypedData?: (args: {
     domain: { name: string; chainId: number; verifyingContract: `0x${string}` };
     types: Record<string, Array<{ name: string; type: string }>>;
@@ -123,6 +117,7 @@ const approvalHandler: TransactionStepHandler = async (step, context, txFunction
       address: context.address,
       step: typedStep,
       setCurrentStep: narrowSetCurrentStep<typeof typedStep>(context.setCurrentStep),
+      chainId: context.chainId,
     },
     txFunctions.sendTransaction,
     txFunctions.waitForReceipt,
@@ -139,6 +134,7 @@ const permitTxHandler: TransactionStepHandler = async (step, context, txFunction
       address: context.address,
       step: typedStep,
       setCurrentStep: narrowSetCurrentStep<typeof typedStep>(context.setCurrentStep),
+      chainId: context.chainId,
     },
     txFunctions.sendTransaction,
     txFunctions.waitForReceipt,
@@ -160,6 +156,7 @@ const positionHandler: TransactionStepHandler = async (step, context, txFunction
       setCurrentStep: narrowSetCurrentStep<typeof typedStep>(context.setCurrentStep),
       action: context.action,
       signature: context.signature,
+      chainId: context.chainId,
     },
     txFunctions.sendTransaction,
     txFunctions.waitForReceipt,
@@ -176,6 +173,7 @@ const uyApprovalHandler: TransactionStepHandler = async (step, context, txFuncti
       address: context.address,
       step: typedStep,
       setCurrentStep: narrowSetCurrentStep<typeof typedStep>(context.setCurrentStep),
+      chainId: context.chainId,
     },
     txFunctions.sendTransaction,
     txFunctions.waitForReceipt,
@@ -192,6 +190,7 @@ const uyDepositHandler: TransactionStepHandler = async (step, context, txFunctio
       address: context.address,
       step: typedStep,
       setCurrentStep: narrowSetCurrentStep<typeof typedStep>(context.setCurrentStep),
+      chainId: context.chainId,
     },
     txFunctions.sendTransaction,
     txFunctions.waitForReceipt,
@@ -208,6 +207,7 @@ const uyWithdrawHandler: TransactionStepHandler = async (step, context, txFuncti
       address: context.address,
       step: typedStep,
       setCurrentStep: narrowSetCurrentStep<typeof typedStep>(context.setCurrentStep),
+      chainId: context.chainId,
     },
     txFunctions.sendTransaction,
     txFunctions.waitForReceipt,
@@ -263,20 +263,6 @@ export const STEP_HANDLER_REGISTRY: Partial<Record<TransactionStepType, StepHand
   },
   [TransactionStepType.UnifiedYieldWithdrawTransaction]: {
     handler: uyWithdrawHandler,
-  },
-
-  // Zap steps (single-token deposit with swap)
-  [TransactionStepType.ZapSwapApproval]: {
-    handler: handleZapSwapApprovalStep,
-  },
-  [TransactionStepType.ZapPSMSwap]: {
-    handler: handleZapPSMSwapStep,
-  },
-  [TransactionStepType.ZapPoolSwap]: {
-    handler: handleZapPoolSwapStep,
-  },
-  [TransactionStepType.ZapDynamicDeposit]: {
-    handler: handleZapDynamicDepositStep,
   },
 };
 

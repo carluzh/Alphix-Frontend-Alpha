@@ -167,4 +167,22 @@ export function PriceDeviationCallout({
   );
 }
 
+export function PoolOutOfRangeCallout({ className }: { className?: string }) {
+  const color = '#FF593C';
+  const border = 'rgba(255, 89, 60, 0.2)';
+  return (
+    <div
+      className={cn('flex flex-row items-center gap-2 rounded-lg border p-2 transition-colors', className)}
+      style={{ backgroundColor: 'rgba(255, 89, 60, 0.08)', borderColor: border }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(255, 89, 60, 0.4)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = border; }}
+    >
+      <div className="flex items-center justify-center p-1.5 rounded-md shrink-0" style={{ backgroundColor: 'rgba(255, 89, 60, 0.12)' }}>
+        <IconTriangleWarningFilled className="w-3.5 h-3.5" style={{ color }} />
+      </div>
+      <span className="text-xs font-medium" style={{ color }}>Position is currently out of range</span>
+    </div>
+  );
+}
+
 export default PriceDeviationCallout;

@@ -15,6 +15,8 @@
  *   /lp/claim_fees      — build V4 collect fees tx
  */
 
+import { addReportBreadcrumb } from '@/lib/observability';
+
 const BASE_URL = 'https://liquidity.api.uniswap.org';
 
 export type LPProtocol = 'V2' | 'V3' | 'V4';
@@ -153,7 +155,6 @@ export interface NewPoolRef {
 }
 
 export type TickBounds = { tickLower: number; tickUpper: number };
-export type PriceBounds = { minPrice: string; maxPrice: string };
 
 export interface CreatePositionRequest {
   walletAddress: string;
@@ -163,10 +164,11 @@ export interface CreatePositionRequest {
   existingPool?: ExistingPoolRef;
   newPool?: NewPoolRef;
   independentToken: LPToken;
-  /** Exactly one of tickBounds or priceBounds. */
-  tickBounds?: TickBounds;
-  priceBounds?: PriceBounds;
-  /** Decimal percent (0.5 = 0.5%). API default is 0.5 if omitted. */
+  /** Ticks must be pre-snapped to the pool's tickSpacing — API rejects
+   *  `priceBounds`/`tickPrice` with a 400 regardless of shape (verified
+   *  empirically against /lp/create). */
+  tickBounds: TickBounds;
+  /** Decimal percent (0.5 = 0.5%). Optional — if omitted, Uniswap applies its own server-side slippage (value server-controlled/undocumented). */
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;
@@ -187,8 +189,10 @@ export interface CreatePositionResponse {
   token1: LPToken;
   tickLower: number;
   tickUpper: number;
-  minPrice: string;
-  maxPrice: string;
+  /** Optional — /lp/create omits these in practice (verified empirically). */
+  minPrice?: string;
+  maxPrice?: string;
+  /** Price representation of the requested tick range — NOT slippage-adjusted on /lp/create. */
   adjustedMinPrice?: string;
   adjustedMaxPrice?: string;
   create: LPTransactionRequest;
@@ -208,7 +212,7 @@ export interface IncreasePositionRequest {
   token1Address: string;
   nftTokenId: string;
   independentToken: LPToken;
-  /** Decimal percent (0.5 = 0.5%). API default is 0.5 if omitted. */
+  /** Decimal percent (0.5 = 0.5%). Optional — if omitted, Uniswap applies its own server-side slippage (value server-controlled/undocumented). */
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;
@@ -241,7 +245,7 @@ export interface DecreasePositionRequest {
   nftTokenId: string;
   /** 1-100. */
   liquidityPercentageToDecrease: number;
-  /** Decimal percent (0.5 = 0.5%). API default is 0.5 if omitted. */
+  /** Decimal percent (0.5 = 0.5%). Optional — if omitted, Uniswap applies its own server-side slippage (value server-controlled/undocumented). */
   slippageTolerance?: number;
   /** Unix timestamp in seconds. API default is +20min if omitted. */
   deadline?: number;
@@ -329,7 +333,17 @@ function jitter(baseMs: number): number {
 }
 
 async function post<Req, Res>(path: string, body: Req): Promise<Res> {
+  // N+1 iterations: N retry-sleeps + 1 final attempt without sleep.
   for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_BASE_MS.length; attempt++) {
+    // Pre-fetch lifecycle breadcrumb so a subsequent failure correlates to the
+    // exact endpoint + retry attempt that triggered it.
+    addReportBreadcrumb({
+      domain: 'liquidity',
+      action: 'uniswapLPApi',
+      message: path,
+      data: { attempt, path },
+    });
+
     const res = await fetch(`${BASE_URL}${path}`, {
       method: 'POST',
       headers: {
@@ -343,19 +357,43 @@ async function post<Req, Res>(path: string, body: Req): Promise<Res> {
     let parsed: any;
     try { parsed = JSON.parse(text); } catch { parsed = text; }
 
-    // Rate-limited: back off with jitter and retry until budget is exhausted.
-    const isRateLimit = res.status === 403 && parsed?.message === 'Forbidden';
+    // Treat any 403 or 429 as rate-limit and retry with backoff.
+    // Empirically Uniswap returns 403+`{"message":"Forbidden"}` (no Retry-After header), but
+    // coupling to the body string is fragile — accept either status code so we survive
+    // a future migration to spec-compliant 429s or any body-shape change.
+    const isRateLimit = res.status === 403 || res.status === 429;
     if (isRateLimit && attempt < RATE_LIMIT_RETRY_BASE_MS.length) {
       await sleep(jitter(RATE_LIMIT_RETRY_BASE_MS[attempt]));
       continue;
     }
     if (isRateLimit) {
+      // Rate-limits are expected; routes decide whether to surface them. We do NOT
+      // capture here — only leave a breadcrumb trail.
       throw new UniswapLPAPIRateLimitError();
     }
 
     if (!res.ok) {
       const message = parsed?.message ?? (typeof parsed === 'string' ? parsed : `HTTP ${res.status}`);
+      // Error-path breadcrumb (before throwing) so the failure correlates to the
+      // upstream requestId even when the body carried no successful payload.
+      addReportBreadcrumb({
+        domain: 'liquidity',
+        action: 'uniswapLPApi',
+        level: 'error',
+        message: `${path} failed`,
+        data: { path, status: res.status, code: parsed?.code, requestId: parsed?.requestId },
+      });
       throw new UniswapLPAPIError(res.status, parsed?.code, message, parsed?.details);
+    }
+    // Tag every successful Uniswap LP API response with its `requestId` so support
+    // can correlate user complaints back to a specific upstream call.
+    if (parsed?.requestId) {
+      addReportBreadcrumb({
+        domain: 'liquidity',
+        action: 'uniswapLPApi',
+        message: path,
+        data: { requestId: parsed.requestId },
+      });
     }
     return parsed as Res;
   }

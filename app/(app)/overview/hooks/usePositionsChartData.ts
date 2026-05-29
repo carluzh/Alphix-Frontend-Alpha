@@ -1,19 +1,27 @@
 "use client";
 
 /**
- * usePositionsChartData - Fetches position value history from AlphixBackend
+ * usePositionsChartData — Portfolio chart series, sourced from AlphixBackend only.
  *
- * Simple architecture:
- * - Backend returns stored historical values (SUM of position_snapshots.value_usd)
- * - Frontend adds the "live now" point using position data it already has
- * - SSE updates append new points in real-time
+ * Architecture:
+ * - Backend returns timestamped snapshots (already summed across chains).
+ * - SSE notifications trigger a query invalidation so the next render fetches
+ *   the freshly-recorded snapshot — no FE-side live-value computation.
+ * - The chart's pulsating "live" dot renders on the last point of the series,
+ *   which is now always the latest backend snapshot.
+ *
+ * Why no FE-derived "live now" point: it used to be computed from
+ * `currentTotalValue = sum(positions × prices)`, which is a derived value with
+ * many flicker sources (Apollo refetch, useTokenPrices refetch, UY position
+ * refresh). Any momentary drop produced a visible nose-dive on the chart's
+ * right edge. The backend value is single-source-of-truth; using it directly
+ * is both simpler and stable.
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef } from "react";
 import { fetchPositionsChart } from "@/lib/backend-client";
 import { useSSEContext } from "@/lib/realtime";
-import type { NetworkMode } from "@/lib/network-mode";
 import { ALL_MODES } from "@/lib/chain-registry";
 
 export type ChartPeriod = "DAY" | "WEEK" | "MONTH";
@@ -28,8 +36,6 @@ export interface PositionsChartPoint {
 interface UsePositionsChartDataParams {
   address: string | undefined;
   period: ChartPeriod;
-  /** Current total value calculated by frontend (for "live now" point) */
-  currentTotalValue?: number;
   enabled?: boolean;
 }
 
@@ -47,28 +53,17 @@ interface UsePositionsChartDataResult {
   toTimestamp: number | undefined;
 }
 
-/**
- * Hook to fetch historical position values from AlphixBackend
- * with real-time updates via SSE.
- *
- * Fetches from ALL production chains and merges values at each timestamp
- * so the chart reflects the total portfolio across Base + Arbitrum.
- */
 export function usePositionsChartData({
   address,
   period,
-  currentTotalValue,
   enabled = true,
 }: UsePositionsChartDataParams): UsePositionsChartDataResult {
   const queryClient = useQueryClient();
   const { subscribeToSnapshots, isConnected } = useSSEContext();
 
   const queryKey = ["positions-chart", address, period, "all-chains"];
-  // Use refs to avoid stale closures in subscription callback
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
-  const currentTotalValueRef = useRef(currentTotalValue);
-  currentTotalValueRef.current = currentTotalValue;
 
   // Store time range from backend response
   const timeRangeRef = useRef<{ from: number; to: number } | null>(null);
@@ -124,78 +119,22 @@ export function usePositionsChartData({
     retryDelay: 1000,
   });
 
-  // Subscribe to SSE snapshots and append new points to chart
+  // SSE: when the backend records a new snapshot, invalidate the query so the
+  // next render pulls it in. We do NOT extract values from the SSE payload —
+  // it's per-chain only, and we'd rather pay one refetch than try to merge
+  // single-chain SSE deltas into a cross-chain series here.
   useEffect(() => {
     if (!enabled || !address) return;
 
-    const unsubscribe = subscribeToSnapshots((snapshot) => {
-      // Use the multi-chain currentTotalValue (via ref) instead of the
-      // single-chain snapshot positions. The SSE stream only connects to the
-      // currently connected chain, so snapshot.positions is incomplete.
-      // currentTotalValue is computed from Apollo queries across ALL chains.
-      const totalValue = currentTotalValueRef.current;
-      if (totalValue === undefined || totalValue <= 0) return;
-
-      const newPoint: PositionsChartPoint = {
-        timestamp: snapshot.timestamp,
-        value: totalValue,
-      };
-
-      // Use ref to get current queryKey (avoids stale closure)
-      queryClient.setQueryData<PositionsChartPoint[]>(
-        queryKeyRef.current,
-        (oldData) => {
-          if (!oldData) return [newPoint];
-
-          // Check if we already have this timestamp (avoid duplicates)
-          const exists = oldData.some(
-            (p) => p.timestamp === newPoint.timestamp
-          );
-          if (exists) {
-            // Update existing point
-            return oldData.map((p) =>
-              p.timestamp === newPoint.timestamp ? newPoint : p
-            );
-          }
-
-          // Append and sort by timestamp
-          const updated = [...oldData, newPoint].sort(
-            (a, b) => a.timestamp - b.timestamp
-          );
-
-          console.log("[usePositionsChartData] SSE update - new point:", newPoint);
-          return updated;
-        }
-      );
+    const unsubscribe = subscribeToSnapshots(() => {
+      queryClient.invalidateQueries({ queryKey: queryKeyRef.current });
     });
 
     return () => unsubscribe();
   }, [enabled, address, queryClient, subscribeToSnapshots]);
 
-  // Add "live now" point using frontend's current total value
-  const dataWithLivePoint = useMemo(() => {
-    const historicalData = query.data;
-    if (!historicalData) return undefined;
-
-    // If we have a current total value from frontend, append it as the "now" point
-    if (currentTotalValue !== undefined && currentTotalValue > 0) {
-      const now = Math.floor(Date.now() / 1000);
-      const lastPoint = historicalData[historicalData.length - 1];
-
-      // Only add if it's newer than the last historical point
-      if (!lastPoint || now > lastPoint.timestamp) {
-        return [
-          ...historicalData,
-          { timestamp: now, value: currentTotalValue },
-        ];
-      }
-    }
-
-    return historicalData;
-  }, [query.data, currentTotalValue]);
-
   return {
-    data: dataWithLivePoint,
+    data: query.data,
     isLoading: query.isLoading,
     isPending: query.isPending,
     isError: query.isError,

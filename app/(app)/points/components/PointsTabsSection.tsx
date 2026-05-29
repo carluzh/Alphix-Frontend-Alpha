@@ -3,6 +3,7 @@
 import { memo, useRef, useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { reportError } from "@/lib/observability";
 import { cn } from "@/lib/utils";
 import { IconClone2, IconCheck, IconChevronLeft, IconChevronRight, IconLink, IconCircleInfo } from "nucleo-micro-bold-essential";
 import {
@@ -344,7 +345,12 @@ function ReferralContent({
         setApplyError(result.error || "Failed to apply code");
         toast.error(result.error || "Failed to apply code");
       }
-    } catch {
+    } catch (error) {
+      reportError(error, {
+        domain: 'points',
+        action: 'applyReferralCode',
+        component: 'ReferralContent',
+      });
       setApplyError("Failed to apply code");
       toast.error("Failed to apply code");
     } finally {

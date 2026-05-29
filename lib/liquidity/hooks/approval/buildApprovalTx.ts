@@ -6,18 +6,13 @@
  */
 
 import { maxUint256, type Address } from 'viem';
-import * as Sentry from '@sentry/nextjs';
-import { getStoredUserSettings } from '@/hooks/useUserSettings';
+import { reportError, addReportBreadcrumb } from '@/lib/observability';
 import type { ValidatedTransactionRequest } from '../../types';
 
 /**
- * Build ERC20 approve calldata
- * Respects user's approval mode setting (exact vs infinite)
- *
- * @param spender - Address to approve
- * @param amount - Exact amount to approve (used when approvalMode is 'exact')
- * @param forceInfinite - Force infinite approval regardless of settings
- * @returns Encoded approve(address,uint256) calldata
+ * Build ERC20 approve calldata for the Unified Yield flow. Exact amount + 0.001%
+ * buffer (UY required amounts drift up with the Aave share price between approval
+ * and deposit, ~5min cushion); infinite only when forced or no amount is known.
  */
 export function buildApprovalCalldata(
   spender: Address,
@@ -31,29 +26,22 @@ export function buildApprovalCalldata(
   // Validate spender address to catch encoding issues early
   if (!spender || typeof spender !== 'string' || !spender.startsWith('0x') || spender.length !== 42) {
     const error = new Error(`Invalid spender address format: ${spender}`);
-    Sentry.captureException(error, {
-      tags: { component: 'buildApprovalCalldata' },
-      extra: { spender, spenderType: typeof spender, spenderLength: spender?.length },
+    reportError(error, {
+      domain: 'approval',
+      action: 'buildCalldata',
+      component: 'buildApprovalTx',
+      extras: { spender, spenderType: typeof spender, spenderLength: spender?.length },
     });
     throw error;
   }
 
   const paddedSpender = spender.slice(2).padStart(64, '0');
 
-  // Determine approval amount based on user settings
   let approvalAmount: bigint;
-  if (forceInfinite) {
+  if (forceInfinite || !amount) {
     approvalAmount = maxUint256;
   } else {
-    const userSettings = getStoredUserSettings();
-    if (userSettings.approvalMode === 'infinite' || !amount) {
-      approvalAmount = maxUint256;
-    } else {
-      // For exact mode, add 1 wei buffer to account for slippage/rounding differences
-      // Cap at maxUint256 to prevent overflow for very large amounts
-      const bufferedAmount = amount + 1n;
-      approvalAmount = bufferedAmount > maxUint256 ? maxUint256 : bufferedAmount;
-    }
+    approvalAmount = amount + amount / 100_000n;
   }
 
   const paddedAmount = approvalAmount.toString(16).padStart(64, '0');
@@ -62,9 +50,11 @@ export function buildApprovalCalldata(
   // Validate calldata length (should be 2 + 8 + 64 + 64 = 138 chars including 0x)
   if (calldata.length !== 138) {
     const error = new Error(`Invalid calldata length: expected 138, got ${calldata.length}`);
-    Sentry.captureException(error, {
-      tags: { component: 'buildApprovalCalldata' },
-      extra: {
+    reportError(error, {
+      domain: 'approval',
+      action: 'buildCalldata',
+      component: 'buildApprovalTx',
+      extras: {
         spender,
         amount: amount?.toString(),
         approvalAmount: approvalAmount.toString(),
@@ -78,10 +68,10 @@ export function buildApprovalCalldata(
   }
 
   // Add breadcrumb for debugging - will be included with any subsequent error
-  Sentry.addBreadcrumb({
-    category: 'approval',
+  addReportBreadcrumb({
+    domain: 'approval',
+    action: 'buildCalldata',
     message: 'Built approval calldata',
-    level: 'info',
     data: {
       spender,
       amount: amount?.toString(),

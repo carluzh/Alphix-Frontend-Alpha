@@ -25,12 +25,7 @@ export { useOverviewPageData } from "./useOverviewPageData";
 
 // Chart data hooks
 export {
-  useOverviewChartData,
-  type ChartPeriod,
-  type OverviewChartPoint,
-} from "./useOverviewChartData";
-
-export {
   usePositionsChartData,
+  type ChartPeriod,
   type PositionsChartPoint,
 } from "./usePositionsChartData";

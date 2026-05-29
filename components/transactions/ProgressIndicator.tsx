@@ -133,7 +133,7 @@ function getStepText(step: TransactionStep, status: StepStatus): { title: string
 
     case TransactionStepType.SwapTransaction: {
       const swapStep = step as SwapStep
-      const routeLabel = swapStep.routeType === 'psm' ? 'PSM' : swapStep.routeType === 'kyberswap' ? 'Kyberswap' : 'Pool'
+      const routeLabel = swapStep.routeType === 'kyberswap' ? 'Kyberswap' : 'Pool'
       return isComplete
         ? { title: `Swapped ${swapStep.inputTokenSymbol} → ${swapStep.outputTokenSymbol}` }
         : { title: `Swapping via ${routeLabel}`, subtitle: 'Confirm in wallet' }

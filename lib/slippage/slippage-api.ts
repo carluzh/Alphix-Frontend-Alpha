@@ -144,7 +144,7 @@ function calculateFallbackSlippage(params: {
  * Check if token pair is likely a stablecoin pair
  */
 function isStablecoinPair(token0: string, token1: string): boolean {
-  const stablecoins = ['USDC', 'USDS', 'DAI', 'FRAX', 'LUSD', 'USDbC'];
+  const stablecoins = ['USDC', 'DAI', 'FRAX', 'LUSD', 'USDbC'];
 
   const token0Upper = token0.toUpperCase();
   const token1Upper = token1.toUpperCase();

@@ -6,7 +6,7 @@
  */
 
 import { cn } from "@/lib/utils";
-import type { ChartPeriod } from "../../hooks/useOverviewChartData";
+import type { ChartPeriod } from "../../hooks/usePositionsChartData";
 
 // Re-export for convenience
 export type { ChartPeriod };

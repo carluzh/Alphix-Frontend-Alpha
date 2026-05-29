@@ -16,19 +16,6 @@ export {
   type UseDerivedIncreaseInfoResult,
 } from './position'
 
-// Approval hooks
-export {
-  useLiquidityApprovals,
-  useCheckMintApprovals,
-  useCheckIncreaseApprovals,
-  type UseApprovalsParams,
-  type UseApprovalsOptions,
-  type UseApprovalsResult,
-  type CheckMintApprovalsParams,
-  type CheckIncreaseApprovalsParams,
-  type LegacyApprovalResponse,
-} from './approval'
-
 // Range utilities (minimal - most deleted, use SDK directly)
 export {
   Bound,

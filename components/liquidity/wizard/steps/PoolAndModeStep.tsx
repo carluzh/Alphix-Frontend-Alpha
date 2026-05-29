@@ -48,14 +48,6 @@ const AAVE_CONFIG = {
   pillText: '#E2E0FF',
 };
 
-const SPARK_CONFIG = {
-  name: 'Spark',
-  logo: '/spark/Spark-Logomark-RGB.svg',
-  gradient: 'linear-gradient(135deg, #FA43BD 0%, #FFCD4D 100%)',
-  pillBg: 'linear-gradient(135deg, #FA43BD 0%, #FFCD4D 100%)',
-  pillText: '#FFFFFF',
-};
-
 function PoolCard({ pool, selected, onSelect, apr, lendingApr, aprLoading }: {
   pool: PoolConfig;
   selected: boolean;
@@ -86,34 +78,11 @@ function PoolCard({ pool, selected, onSelect, apr, lendingApr, aprLoading }: {
   );
 }
 
-// Spark decorative SVG pattern (rotated 90deg left, centered, scaled up)
-function SparkPattern() {
-  return (
-    <svg
-      className="absolute inset-0 w-full h-full opacity-30"
-      viewBox="-100 100 550 400"
-      preserveAspectRatio="xMidYMid slice"
-      style={{ transform: 'rotate(-90deg) scale(1.4)' }}
-    >
-      <path
-        d="M593.095 300.902L231.194 172.579C190.342 158.094 145.753 158.094 104.901 172.579L-257 300.902M369.4 304.132L218.526 188.579C188.743 165.769 147.364 165.769 117.581 188.579L-33.293 304.132M354.765 375.253L219.979 207.607C193.31 174.436 142.801 174.436 116.132 207.607L-18.6543 375.253M354.766 485.147L214.311 221.752C194.576 184.741 141.528 184.741 121.792 221.752L-18.6621 485.147M345.064 601.849L199.624 226.891C188.446 198.072 147.669 198.072 136.491 226.891L-8.94922 601.849"
-        stroke="white"
-        strokeWidth="6"
-        fill="none"
-      />
-    </svg>
-  );
-}
-
-function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { selected: boolean; onSelect: () => void; extraApr?: number; yieldSources?: Array<'aave' | 'spark'> }) {
-  const hasSpark = yieldSources?.includes('spark');
+function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { selected: boolean; onSelect: () => void; extraApr?: number; yieldSources?: Array<'aave'> }) {
   const hasAave = yieldSources?.includes('aave') ?? false;
-  const hasBoth = hasAave && hasSpark;
 
   // Border gradient - always Aave purple (loops seamlessly)
-  const borderGradient = hasSpark && !hasAave
-    ? 'linear-gradient(90deg, #FA43BD 0%, #FFCD4D 50%, #FA43BD 100%)'
-    : 'linear-gradient(90deg, #AAA8FF 0%, #9896FF 50%, #AAA8FF 100%)';
+  const borderGradient = 'linear-gradient(90deg, #AAA8FF 0%, #9896FF 50%, #AAA8FF 100%)';
 
   return (
     <div className="group relative">
@@ -154,7 +123,6 @@ function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { select
                       <span className="text-muted-foreground">Lending Protocol</span>
                       <div className="flex items-center gap-1.5">
                         {hasAave && <Image src="/aave/Logomark-light.png" alt="Aave" width={16} height={16} />}
-                        {hasSpark && <Image src="/spark/Spark-Logomark-RGB.svg" alt="Spark" width={16} height={16} />}
                       </div>
                     </div>
                   </div>
@@ -171,93 +139,41 @@ function RehypoModeCard({ selected, onSelect, extraApr, yieldSources }: { select
           </div>
           {/* Powered by section - hidden on mobile */}
           <div className="hidden sm:block">
-            {hasBoth ? (
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ backgroundColor: AAVE_CONFIG.pillBg }}>
-                  <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
-                  <Image src={AAVE_CONFIG.textLogo} alt="Aave" width={44} height={12} />
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: SPARK_CONFIG.gradient }}>
-                  <span className="text-xs font-medium text-white">Powered by</span>
-                  <Image src="/spark/Spark-Logo-Horizontal-White-RGB.svg" alt="Spark" width={52} height={14} />
-                </div>
-              </div>
-            ) : hasAave ? (
+            {hasAave && (
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ backgroundColor: AAVE_CONFIG.pillBg }}>
                 <span className="text-xs font-medium" style={{ color: AAVE_CONFIG.pillText }}>Powered by</span>
                 <Image src={AAVE_CONFIG.textLogo} alt="Aave" width={44} height={12} />
               </div>
-            ) : hasSpark ? (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg w-fit" style={{ background: SPARK_CONFIG.gradient }}>
-                <span className="text-xs font-medium text-white">Powered by</span>
-                <Image src="/spark/Spark-Logo-Horizontal-White-RGB.svg" alt="Spark" width={52} height={14} />
-              </div>
-            ) : null}
+            )}
           </div>
         </div>
 
         {/* APR visualization section - below on mobile, right on desktop */}
         <div className="relative z-10 flex w-full sm:w-[25%] sm:min-w-[140px] h-20 sm:h-auto rounded-lg overflow-hidden mt-2 sm:mt-0">
-          {hasBoth ? (
-            // Both sources: left Aave purple rings, right Spark gradient with SVG
-            <>
+          <div
+            className="relative flex items-center justify-center flex-1"
+            style={{ backgroundColor: AAVE_CONFIG.bgColor }}
+          >
+            {hasAave && (
               <div
-                className="flex-1"
+                className="absolute inset-0"
                 style={{
                   backgroundImage: `url(${AAVE_CONFIG.bgPurple})`,
                   backgroundSize: 'cover',
                   backgroundPosition: 'center',
                 }}
               />
-              <div
-                className="relative flex-1 overflow-hidden"
-                style={{ background: 'linear-gradient(135deg, #FA43BD 0%, #FFCD4D 100%)' }}
-              >
-                <SparkPattern />
+            )}
+            {extraApr !== undefined ? (
+              <AnimatedAprValue value={extraApr} />
+            ) : (
+              <div className="relative z-10 flex items-center gap-1">
+                <span className="text-white text-2xl font-bold">+</span>
+                <div className="h-7 w-14 bg-white/20 rounded animate-pulse" />
+                <span className="text-white text-2xl font-bold">%</span>
               </div>
-              {/* Centered +X% overlay */}
-              <div className="absolute inset-0 flex items-center justify-center">
-                {extraApr !== undefined ? (
-                  <AnimatedAprValue value={extraApr} />
-                ) : (
-                  <div className="flex items-center gap-1">
-                    <span className="text-white text-2xl font-bold">+</span>
-                    <div className="h-7 w-14 bg-white/20 rounded animate-pulse" />
-                    <span className="text-white text-2xl font-bold">%</span>
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            // Single source: Aave purple rings or Spark gradient
-            <div
-              className="relative flex items-center justify-center flex-1"
-              style={hasSpark
-                ? { background: SPARK_CONFIG.gradient }
-                : { backgroundColor: AAVE_CONFIG.bgColor }
-              }
-            >
-              {hasAave && (
-                <div
-                  className="absolute inset-0"
-                  style={{
-                    backgroundImage: `url(${AAVE_CONFIG.bgPurple})`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                  }}
-                />
-              )}
-              {extraApr !== undefined ? (
-                <AnimatedAprValue value={extraApr} />
-              ) : (
-                <div className="relative z-10 flex items-center gap-1">
-                  <span className="text-white text-2xl font-bold">+</span>
-                  <div className="h-7 w-14 bg-white/20 rounded animate-pulse" />
-                  <span className="text-white text-2xl font-bold">%</span>
-                </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </button>
     </div>
@@ -282,7 +198,7 @@ function CustomRangeModeCard({ selected, onSelect }: { selected: boolean; onSele
   );
 }
 
-function LPModeSection({ mode, onSelectMode, extraAaveApr, yieldSources }: { mode: LPMode; onSelectMode: (mode: LPMode) => void; extraAaveApr?: number; yieldSources?: Array<'aave' | 'spark'> }) {
+function LPModeSection({ mode, onSelectMode, extraAaveApr, yieldSources }: { mode: LPMode; onSelectMode: (mode: LPMode) => void; extraAaveApr?: number; yieldSources?: Array<'aave'> }) {
   const hasYieldSources = !!(yieldSources && yieldSources.length > 0);
 
   // No yield sources → only Custom Range, no mode selection needed

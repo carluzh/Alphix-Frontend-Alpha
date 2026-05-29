@@ -3,6 +3,7 @@ export const runtime = 'nodejs'
 import { NextResponse } from 'next/server'
 import { redis } from '@/lib/cache/redis'
 import { checkRateLimit } from '@/lib/api/ratelimit'
+import { reportError } from '@/lib/observability'
 import type { TosAcceptanceRecord } from '../accept/route'
 
 export async function GET(request: Request) {
@@ -55,6 +56,12 @@ export async function GET(request: Request) {
     )
   } catch (error) {
     console.error('[/api/tos/status] Redis read failed:', error)
+    reportError(error, {
+      domain: 'backend',
+      action: 'tosStatus',
+      component: 'tosStatus',
+      extras: { address: address.toLowerCase(), key },
+    })
     return NextResponse.json(
       { error: 'Failed to check acceptance status' },
       { status: 500 }

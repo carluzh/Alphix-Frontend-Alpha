@@ -3,6 +3,7 @@
 import { type NetworkMode } from './network-mode';
 import { CHAIN_REGISTRY } from './chain-registry';
 import { apiFetch } from './fetch-client';
+import { reportError } from '@/lib/observability';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
 
@@ -31,7 +32,7 @@ export function buildBackendUrl(
 /**
  * Build a backend URL WITHOUT network param (for base-only endpoints)
  *
- * Used for: /aave/rates, /spark/rates, /points/*, /referral/*
+ * Used for: /aave/rates, /points/*, /referral/*
  */
 export function buildBackendUrlNoNetwork(
   path: string,
@@ -92,59 +93,6 @@ function toFullHexPositionId(positionId: string): string {
 }
 
 /**
- * Chart point from backend
- */
-export interface PortfolioChartPoint {
-  timestamp: number;
-  positionsValue: number;
-}
-
-/**
- * Portfolio chart response
- */
-export interface PortfolioChartResponse {
-  success: boolean;
-  address: string;
-  period: 'DAY' | 'WEEK' | 'MONTH';
-  fromTimestamp: number;
-  toTimestamp: number;
-  positionCount: number;
-  points: PortfolioChartPoint[];
-  error?: string;
-}
-
-/**
- * Pool snapshot from backend
- */
-export interface PoolSnapshot {
-  timestamp: number;
-  tick: number;
-  sqrtPriceX96: string;
-  liquidity: string;
-  tvlToken0: number;
-  tvlToken1: number;
-  volumeToken024h?: number;
-  tvlUSD?: number;
-  volumeUSD?: number;
-  feesUSD?: number;
-}
-
-/**
- * Pool history response
- */
-export interface PoolHistoryResponse {
-  success: boolean;
-  poolId: string;
-  poolName?: string;
-  period: string;
-  fromTimestamp: number;
-  toTimestamp: number;
-  snapshotCount: number;
-  snapshots: PoolSnapshot[];
-  error?: string;
-}
-
-/**
  * Fetch portfolio chart data (historical position values)
  *
  * Simple GET endpoint - just pass address and period.
@@ -159,7 +107,16 @@ export async function fetchPositionsChart(
   address: string,
   period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
   networkMode: NetworkMode = 'base'
-): Promise<PortfolioChartResponse> {
+): Promise<{
+  success: boolean;
+  address: string;
+  period: 'DAY' | 'WEEK' | 'MONTH';
+  fromTimestamp: number;
+  toTimestamp: number;
+  positionCount: number;
+  points: Array<{ timestamp: number; positionsValue: number }>;
+  error?: string;
+}> {
   try {
     const url = buildBackendUrl('/portfolio/chart', networkMode, {
       address: address,
@@ -178,6 +135,13 @@ export async function fetchPositionsChart(
 
     return await response.json();
   } catch (error) {
+    reportError(error, {
+      domain: 'backend',
+      action: 'fetchPositionsChart',
+      component: 'backend-client',
+      networkMode,
+      extras: { address, period },
+    });
     return {
       success: false,
       address,
@@ -202,7 +166,28 @@ export async function fetchPoolHistory(
   poolId: string,
   period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
   networkMode: NetworkMode = 'base'
-): Promise<PoolHistoryResponse> {
+): Promise<{
+  success: boolean;
+  poolId: string;
+  poolName?: string;
+  period: string;
+  fromTimestamp: number;
+  toTimestamp: number;
+  snapshotCount: number;
+  snapshots: Array<{
+    timestamp: number;
+    tick: number;
+    sqrtPriceX96: string;
+    liquidity: string;
+    tvlToken0: number;
+    tvlToken1: number;
+    volumeToken024h?: number;
+    tvlUSD?: number;
+    volumeUSD?: number;
+    feesUSD?: number;
+  }>;
+  error?: string;
+}> {
   try {
     const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/history`, networkMode, {
       period: period,
@@ -220,6 +205,13 @@ export async function fetchPoolHistory(
 
     return await response.json();
   } catch (error) {
+    reportError(error, {
+      domain: 'backend',
+      action: 'fetchPoolHistory',
+      component: 'backend-client',
+      networkMode,
+      extras: { poolId, period },
+    });
     return {
       success: false,
       poolId,
@@ -231,29 +223,6 @@ export async function fetchPoolHistory(
       error: error instanceof Error ? error.message : 'Unknown error',
     };
   }
-}
-
-/**
- * Position fee chart point
- */
-export interface FeeChartPoint {
-  timestamp: number;
-  feesUsd: number;
-  accumulatedFeesUsd: number;
-  apr: number;
-}
-
-/**
- * Position fee chart response
- */
-export interface PositionFeeChartResponse {
-  success: boolean;
-  positionId: string;
-  period: 'DAY' | 'WEEK' | 'MONTH';
-  fromTimestamp: number;
-  toTimestamp: number;
-  points: FeeChartPoint[];
-  error?: string;
 }
 
 /**
@@ -271,7 +240,20 @@ export async function fetchPositionFees(
   positionId: string,
   period: '1W' | '1M' | '1Y' | 'ALL' = '1W',
   networkMode: NetworkMode = 'base'
-): Promise<PositionFeeChartResponse> {
+): Promise<{
+  success: boolean;
+  positionId: string;
+  period: 'DAY' | 'WEEK' | 'MONTH';
+  fromTimestamp: number;
+  toTimestamp: number;
+  points: Array<{
+    timestamp: number;
+    feesUsd: number;
+    accumulatedFeesUsd: number;
+    apr: number;
+  }>;
+  error?: string;
+}> {
   // Map frontend period format to backend format
   const periodMap: Record<string, 'DAY' | 'WEEK' | 'MONTH'> = {
     '1W': 'WEEK',
@@ -301,6 +283,13 @@ export async function fetchPositionFees(
 
     return await response.json();
   } catch (error) {
+    reportError(error, {
+      domain: 'backend',
+      action: 'fetchPositionFees',
+      component: 'backend-client',
+      networkMode,
+      extras: { positionId: fullHexPositionId, period: backendPeriod },
+    });
     return {
       success: false,
       positionId: fullHexPositionId,
@@ -314,9 +303,18 @@ export async function fetchPositionFees(
 }
 
 /**
- * Position APR response
+ * Fetch position-specific 7-day average APR
+ *
+ * Uses backend's hourly snapshots to calculate accurate position APR.
+ * Returns daysCovered < 7 for positions younger than 7 days.
+ *
+ * @param positionId - Position token ID
+ * @param networkMode - Network mode ('base' | 'arbitrum')
  */
-export interface PositionAprResponse {
+export async function fetchPositionApr(
+  positionId: string,
+  networkMode: NetworkMode = 'base'
+): Promise<{
   success: boolean;
   positionId: string;
   /** 7d-avg APR as percentage (e.g., 1.826 = 1.826%) */
@@ -332,21 +330,7 @@ export interface PositionAprResponse {
   /** Most recent snapshot value */
   latestValueUsd: number | null;
   error?: string;
-}
-
-/**
- * Fetch position-specific 7-day average APR
- *
- * Uses backend's hourly snapshots to calculate accurate position APR.
- * Returns daysCovered < 7 for positions younger than 7 days.
- *
- * @param positionId - Position token ID
- * @param networkMode - Network mode ('base' | 'arbitrum')
- */
-export async function fetchPositionApr(
-  positionId: string,
-  networkMode: NetworkMode = 'base'
-): Promise<PositionAprResponse> {
+}> {
   // Convert position ID to full 66-char hex format expected by backend
   const fullHexPositionId = toFullHexPositionId(positionId);
 
@@ -365,6 +349,13 @@ export async function fetchPositionApr(
 
     return await response.json();
   } catch (error) {
+    reportError(error, {
+      domain: 'backend',
+      action: 'fetchPositionApr',
+      component: 'backend-client',
+      networkMode,
+      extras: { positionId: fullHexPositionId },
+    });
     return {
       success: false,
       positionId: fullHexPositionId,
@@ -379,65 +370,9 @@ export async function fetchPositionApr(
   }
 }
 
-/**
- * Get current pool state
- *
- * @param poolId - Pool ID
- * @param networkMode - Network mode ('base' | 'arbitrum')
- */
-export async function fetchPoolCurrent(
-  poolId: string,
-  networkMode: NetworkMode = 'base'
-): Promise<{
-  success: boolean;
-  snapshot?: PoolSnapshot;
-  error?: string;
-}> {
-  try {
-    const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/current`, networkMode);
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-      success: true,
-      snapshot: data.snapshot,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
 // =============================================================================
 // UNIFIED YIELD ENDPOINTS
 // =============================================================================
-
-/**
- * APR response for a UY pool
- */
-export interface UnifiedYieldPoolAprResponse {
-  success: boolean;
-  network?: string;
-  poolName?: string;
-  poolId: string;
-  swapApr7d: number | null;
-  swapApr24h?: number | null;
-  volume24hUsd?: number;
-  tvlUsd?: number;
-  calculatedAt?: number;
-  error?: string;
-}
 
 /**
  * Fetch swap APR for a Unified Yield pool
@@ -448,7 +383,18 @@ export interface UnifiedYieldPoolAprResponse {
 export async function fetchUnifiedYieldPoolApr(
   poolId: string,
   networkMode: NetworkMode = 'base'
-): Promise<UnifiedYieldPoolAprResponse> {
+): Promise<{
+  success: boolean;
+  network?: string;
+  poolName?: string;
+  poolId: string;
+  swapApr7d: number | null;
+  swapApr24h?: number | null;
+  volume24hUsd?: number;
+  tvlUsd?: number;
+  calculatedAt?: number;
+  error?: string;
+}> {
   try {
     const url = buildBackendUrl(`/unified-yield/pool/${encodeURIComponent(poolId)}/apr`, networkMode);
 
@@ -464,6 +410,13 @@ export async function fetchUnifiedYieldPoolApr(
 
     return await response.json();
   } catch (error) {
+    reportError(error, {
+      domain: 'backend',
+      action: 'fetchUnifiedYieldPoolApr',
+      component: 'backend-client',
+      networkMode,
+      extras: { poolId },
+    });
     return {
       success: false,
       poolId,
@@ -523,144 +476,16 @@ export async function fetchUnifiedYieldPoolAprHistory(
 
     return await response.json();
   } catch (error) {
+    reportError(error, {
+      domain: 'backend',
+      action: 'fetchUnifiedYieldPoolAprHistory',
+      component: 'backend-client',
+      networkMode,
+      extras: { poolId, period },
+    });
     return {
       success: false,
       poolId,
-      period,
-      points: [],
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-/**
- * Historical pool prices response
- */
-export interface PoolPricesHistoryResponse {
-  success: boolean;
-  poolId: string;
-  period: string;
-  points: Array<{
-    timestamp: number;
-    token0PriceUsd: number;
-    token1PriceUsd: number;
-    tick?: number;
-  }>;
-  error?: string;
-}
-
-/**
- * Fetch historical token prices from a pool
- *
- * @param poolId - Pool ID
- * @param period - Time period (DAY, WEEK, MONTH)
- * @param networkMode - Network mode ('base' | 'arbitrum')
- */
-export async function fetchPoolPricesHistory(
-  poolId: string,
-  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK',
-  networkMode: NetworkMode = 'base'
-): Promise<PoolPricesHistoryResponse> {
-  try {
-    const url = buildBackendUrl(`/pools/${encodeURIComponent(poolId)}/prices/history`, networkMode, {
-      period: period,
-    });
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    return {
-      success: false,
-      poolId,
-      period,
-      points: [],
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-// =============================================================================
-// SPARK RATES (MAINNET-ONLY)
-// =============================================================================
-
-/**
- * Spark rate data (sUSDS yield)
- */
-interface SparkRateData {
-  apy: number;
-  timestamp: number;
-}
-
-/**
- * Spark rates response
- */
-interface SparkRatesResponse {
-  success: boolean;
-  data: SparkRateData | null;
-  error?: string;
-}
-
-/**
- * Spark historical rate point
- */
-interface SparkHistoryPoint {
-  timestamp: number;
-  apy: number;
-}
-
-/**
- * Spark rates history response
- */
-interface SparkHistoryResponse {
-  success: boolean;
-  token: string;
-  period: string;
-  points: SparkHistoryPoint[];
-  error?: string;
-}
-
-/**
- * Fetch historical Spark rates for a token
- *
- * Note: This is Base-only - no network param needed
- *
- * @param token - Token symbol (e.g., 'DAI', 'USDS')
- * @param period - Time period (DAY, WEEK, MONTH)
- */
-export async function fetchSparkRatesHistory(
-  token: string,
-  period: 'DAY' | 'WEEK' | 'MONTH' = 'WEEK'
-): Promise<SparkHistoryResponse> {
-  try {
-    const url = new URL('/spark/rates/history', BACKEND_URL);
-    url.searchParams.set('token', token);
-    url.searchParams.set('period', period);
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    // Return RAW rates - pool factor applied at display time via applyPoolYieldFactor()
-    return await response.json() as SparkHistoryResponse;
-  } catch (error) {
-    return {
-      success: false,
-      token,
       period,
       points: [],
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -729,6 +554,13 @@ export async function fetchUnifiedYieldPositionCompoundedFees(
 
     return await response.json();
   } catch (error) {
+    reportError(error, {
+      domain: 'backend',
+      action: 'fetchUnifiedYieldPositionCompoundedFees',
+      component: 'backend-client',
+      networkMode,
+      extras: { positionId, hookAddress, userAddress },
+    });
     return {
       success: false,
       positionId,
@@ -786,10 +618,11 @@ export interface PoolMetrics {
   tvlUsd: number;
   volume24hUsd: number;
   fees24hUsd: number;
-  /** 24h lending yield in USD (from Aave/Spark for UY pools) */
+  /** 24h lending yield in USD (from Aave for UY pools) */
   lendingYield24hUsd?: number;
   /** 24h total fees in USD (swap fees + lending yield) */
   totalFees24hUsd?: number;
+  /** Current LP fee in V4 units (hundredths of a basis point, 1e-6 fraction). bps = lpFee/100, pct = lpFee/10000 (e.g. 3000 = 0.30%) */
   lpFee: number;
   /** USD value of token0 reserves (CL + UY combined) */
   tvlToken0Usd?: number;
@@ -850,6 +683,12 @@ export async function fetchPoolsMetrics(
 
     return await response.json();
   } catch (error) {
+    reportError(error, {
+      domain: 'backend',
+      action: 'fetchPoolsMetrics',
+      component: 'backend-client',
+      networkMode,
+    });
     return {
       success: false,
       network: getNetworkParam(networkMode),
@@ -871,6 +710,11 @@ export async function fetchAllPoolsMetrics(): Promise<PoolsMetricsResponse> {
     }
     return await response.json();
   } catch (error) {
+    reportError(error, {
+      domain: 'backend',
+      action: 'fetchAllPoolsMetrics',
+      component: 'backend-client',
+    });
     return { success: false, network: 'all', pools: [], timestamp: Date.now(), error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }

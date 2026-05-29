@@ -32,12 +32,6 @@ export enum TransactionStepType {
   UnifiedYieldApprovalTransaction = 'UnifiedYieldApproval',
   UnifiedYieldDepositTransaction = 'UnifiedYieldDeposit',
   UnifiedYieldWithdrawTransaction = 'UnifiedYieldWithdraw',
-  // Zap step types (single-token deposit with swap)
-  ZapSwapApproval = 'ZapSwapApproval',
-  ZapPSMSwap = 'ZapPSMSwap',
-  ZapPoolSwap = 'ZapPoolSwap',
-  // Zap dynamic deposit - queries actual balances at execution time
-  ZapDynamicDeposit = 'ZapDynamicDeposit',
 }
 
 // =============================================================================
@@ -103,7 +97,7 @@ export interface IncreaseLPPositionRequestArgs {
   amount0: string;
   amount1: string;
   /** Which side the user is entering. The other side is recomputed by Uniswap. */
-  inputSide?: 'token0' | 'token1';
+  inputSide: 'token0' | 'token1';
   chainId: number;
   slippageBps?: number;
   deadlineMinutes?: number;
@@ -138,7 +132,6 @@ export interface LPPositionTransactionResponse {
     value: string;
     chainId: number;
   };
-  sqrtRatioX96?: string;
 }
 
 // =============================================================================
@@ -233,7 +226,6 @@ export interface Permit2TransactionStep extends OnChainTransactionFields {
  */
 export interface IncreasePositionTransactionStep extends OnChainTransactionFields {
   type: TransactionStepType.IncreasePositionTransaction;
-  sqrtRatioX96: string | undefined;
 }
 
 /**
@@ -243,7 +235,6 @@ export interface IncreasePositionTransactionStepAsync {
   type: TransactionStepType.IncreasePositionTransactionAsync;
   getTxRequest(signature: string): Promise<{
     txRequest: ValidatedTransactionRequest | undefined;
-    sqrtRatioX96: string | undefined;
   }>;
 }
 
@@ -252,7 +243,6 @@ export interface IncreasePositionTransactionStepAsync {
  */
 export interface IncreasePositionTransactionStepBatched extends OnChainTransactionFieldsBatched {
   type: TransactionStepType.IncreasePositionTransactionBatched;
-  sqrtRatioX96: string | undefined;
 }
 
 /**
@@ -265,7 +255,6 @@ export interface IncreasePositionTransactionStepBatchedAsync {
   approvalRequests: ValidatedTransactionRequest[];
   getTxRequest(signature: string): Promise<{
     txRequest: ValidatedTransactionRequest | undefined;
-    sqrtRatioX96: string | undefined;
   }>;
 }
 
@@ -274,7 +263,6 @@ export interface IncreasePositionTransactionStepBatchedAsync {
  */
 export interface DecreasePositionTransactionStep extends OnChainTransactionFields {
   type: TransactionStepType.DecreasePositionTransaction;
-  sqrtRatioX96?: string;
 }
 
 /**
@@ -339,124 +327,6 @@ export interface UnifiedYieldWithdrawStep extends OnChainTransactionFields {
 }
 
 // =============================================================================
-// ZAP STEP INTERFACES - Single-token deposit with automatic swap
-// =============================================================================
-
-/** Zap token types */
-export type ZapTokenSymbol = 'USDS' | 'USDC' | 'ETH' | 'USDT';
-
-/**
- * Zap Swap Approval Step - Approve input token for swap (to PSM or Permit2)
- */
-export interface ZapSwapApprovalStep extends OnChainTransactionFields {
-  type: TransactionStepType.ZapSwapApproval;
-  /** Token being approved */
-  tokenAddress: Address;
-  /** Token symbol */
-  tokenSymbol: ZapTokenSymbol;
-  /** Spender address (PSM or Permit2) */
-  spender: Address;
-  /** Amount to approve */
-  amount: bigint;
-}
-
-/**
- * Zap PSM Swap Step - Execute 1:1 swap via PSM
- */
-export interface ZapPSMSwapStep extends OnChainTransactionFields {
-  type: TransactionStepType.ZapPSMSwap;
-  /** Swap direction */
-  direction: 'USDS_TO_USDC' | 'USDC_TO_USDS';
-  /** Input amount (in wei) */
-  inputAmount: bigint;
-  /** Expected output amount (in wei) */
-  expectedOutputAmount: bigint;
-  /** Input token address */
-  inputTokenAddress: Address;
-  /** Output token address */
-  outputTokenAddress: Address;
-  /** Hook address for just-in-time swap recalculation */
-  hookAddress?: Address;
-  /** Total zap input amount (for recalculating optimal swap fresh) */
-  totalInputAmount?: bigint;
-  /** Input token symbol */
-  inputToken?: ZapTokenSymbol;
-  /** Max swap amount covered by approval (caps recalculation) */
-  approvedSwapAmount?: bigint;
-}
-
-/**
- * Zap Pool Swap Step - Execute swap via Universal Router
- */
-export interface ZapPoolSwapStep extends OnChainTransactionFields {
-  type: TransactionStepType.ZapPoolSwap;
-  /** Input token */
-  inputToken: ZapTokenSymbol;
-  inputTokenAddress: Address;
-  /** Output token */
-  outputToken: ZapTokenSymbol;
-  outputTokenAddress: Address;
-  /** Input amount (in wei) */
-  inputAmount: bigint;
-  /** Minimum output after slippage (in wei) */
-  minOutputAmount: bigint;
-  /** Transaction deadline */
-  deadline: bigint;
-  /** Swap source - pool (Universal Router) or kyberswap (aggregator) */
-  swapSource?: 'pool' | 'kyberswap';
-  /** Target chain ID for the swap (pool's chain, not wallet's chain) */
-  targetChainId?: number;
-}
-
-/**
- * Zap Dynamic Deposit Step - Rebuilds deposit tx at execution time
- *
- * Unlike the pre-built UnifiedYieldDepositStep, this step queries
- * actual token balances after the swap and calculates the correct
- * shares to mint. This prevents "insufficient balance" errors when
- * swap output differs slightly from the preview estimate.
- */
-export interface ZapDynamicDepositStep {
-  type: TransactionStepType.ZapDynamicDeposit;
-  /** Hook contract address */
-  hookAddress: Address;
-  /** Pool identifier */
-  poolId: string;
-  /** Token0 address */
-  token0Address: Address;
-  /** Token1 address */
-  token1Address: Address;
-  /** Token symbols for display */
-  token0Symbol: string;
-  token1Symbol: string;
-  /** Token decimals for balance queries */
-  token0Decimals: number;
-  token1Decimals: number;
-  /** Fallback shares if balance query fails (from preview) */
-  fallbackSharesEstimate: bigint;
-  /** The input token used for zap (to determine which balance to use for preview) */
-  inputToken: ZapTokenSymbol;
-  /** Whether token0 is native ETH (use getBalance instead of balanceOf, send as msg.value) */
-  isToken0Native?: boolean;
-  /** Token0 price in USD (for non-stablecoin dust calculation) */
-  token0Price?: number;
-  /** Token1 price in USD (for non-stablecoin dust calculation) */
-  token1Price?: number;
-  /** Initial token0 balance before Zap started (for dust calculation) */
-  initialBalance0?: bigint;
-  /** Initial token1 balance before Zap started (for dust calculation) */
-  initialBalance1?: bigint;
-  /** Total input amount in USD (for dust percentage calculation) */
-  inputAmountUSD?: number;
-  /** Total input amount in wei (for accurate dust calculation) */
-  inputAmount?: bigint;
-  /** Expected token0 amount to deposit (caps actual deposit to avoid over-spending allowance) */
-  expectedDepositAmount0: bigint;
-  /** Expected token1 amount to deposit (caps actual deposit to avoid over-spending allowance) */
-  expectedDepositAmount1: bigint;
-}
-
-// =============================================================================
 // COMPOSITE STEP TYPES - Matches Uniswap's union types
 // =============================================================================
 
@@ -481,27 +351,12 @@ export type UnifiedYieldDepositSteps =
   | UnifiedYieldApprovalStep
   | UnifiedYieldDepositStep;
 
-export type UnifiedYieldWithdrawSteps = UnifiedYieldWithdrawStep;
-
-// Zap step unions
-export type ZapSwapSteps =
-  | ZapSwapApprovalStep
-  | ZapPSMSwapStep
-  | ZapPoolSwapStep;
-
-export type ZapDepositSteps =
-  | ZapSwapSteps
-  | UnifiedYieldApprovalStep
-  | UnifiedYieldDepositStep
-  | ZapDynamicDepositStep;
-
 export type TransactionStep =
   | IncreaseLiquiditySteps
   | DecreaseLiquiditySteps
   | CollectFeesSteps
   | UnifiedYieldDepositSteps
-  | UnifiedYieldWithdrawSteps
-  | ZapDepositSteps;
+  | UnifiedYieldWithdrawStep;
 
 // =============================================================================
 // LIQUIDITY ACTION - Matches Uniswap's LiquidityAction
@@ -537,7 +392,6 @@ export interface IncreasePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo 
   type: LiquidityTransactionType.Increase;
   unsigned: boolean;
   increasePositionRequestArgs: IncreaseLPPositionRequestArgs | undefined;
-  sqrtRatioX96: string | undefined;
   /** Unified Yield specific fields (optional - only for UY positions) */
   isUnifiedYield?: boolean;
   hookAddress?: Address;
@@ -549,7 +403,6 @@ export interface CreatePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
   type: LiquidityTransactionType.Create;
   unsigned: boolean;
   createPositionRequestArgs: CreateLPPositionRequestArgs | undefined;
-  sqrtRatioX96: string | undefined;
   /** Unified Yield specific fields (optional - only for UY positions) */
   isUnifiedYield?: boolean;
   hookAddress?: Address;
@@ -559,7 +412,6 @@ export interface CreatePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
 
 export interface DecreasePositionTxAndGasInfo extends BaseLiquidityTxAndGasInfo {
   type: LiquidityTransactionType.Decrease;
-  sqrtRatioX96: string | undefined;
   /** Unified Yield specific fields (optional - only for UY positions) */
   isUnifiedYield?: boolean;
   hookAddress?: Address;
@@ -594,7 +446,6 @@ type ValidatedIncreasePositionTxAndGasInfo = Required<IncreasePositionTxAndGasIn
         unsigned: false;
         permit: undefined;
         txRequest: ValidatedTransactionRequest;
-        sqrtRatioX96: string | undefined;
       }
   );
 
@@ -609,7 +460,6 @@ type ValidatedCreatePositionTxAndGasInfo = Required<CreatePositionTxAndGasInfo> 
         unsigned: false;
         permit: undefined;
         txRequest: ValidatedTransactionRequest;
-        sqrtRatioX96: string | undefined;
       }
   );
 
@@ -687,14 +537,6 @@ export interface StepState {
   error?: string;
 }
 
-export interface LiquidityFlowState {
-  operationType: LiquidityTransactionType;
-  steps: StepState[];
-  currentStepIndex: number;
-  isComplete: boolean;
-  error?: string;
-}
-
 // =============================================================================
 // APPROVAL STATUS - For approval check hooks
 // =============================================================================
@@ -721,14 +563,4 @@ export interface ApprovalCheckResult {
   error?: string;
 }
 
-// =============================================================================
-// STEPPER UI TYPES - For rendering transaction progress
-// =============================================================================
-
-export interface StepperStep {
-  id: string;
-  label: string;
-  status: 'pending' | 'loading' | 'completed' | 'error';
-  count?: { completed: number; total: number };
-}
 

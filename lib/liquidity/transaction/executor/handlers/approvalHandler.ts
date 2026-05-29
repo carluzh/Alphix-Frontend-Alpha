@@ -9,13 +9,12 @@
  */
 
 import { type Hex } from 'viem';
+import { reportFailedTx, markReported } from '@/lib/observability';
 import type {
   TokenApprovalTransactionStep,
   TokenRevocationTransactionStep,
   Permit2TransactionStep,
 } from '../../../types';
-import { TransactionStepType } from '../../../types';
-import { parseERC20ApproveCalldata } from '../../steps';
 
 // =============================================================================
 // TYPES - Matches Uniswap's HandleApprovalStepParams
@@ -25,82 +24,16 @@ export interface HandleApprovalStepParams {
   address: `0x${string}`;
   step: TokenApprovalTransactionStep | TokenRevocationTransactionStep;
   setCurrentStep: (params: { step: TokenApprovalTransactionStep | TokenRevocationTransactionStep; accepted: boolean }) => void;
+  /** Chain id used to surface revert reasons via a post-revert eth_call. Optional. */
+  chainId?: number;
 }
 
 export interface HandlePermitTransactionParams {
   address: `0x${string}`;
   step: Permit2TransactionStep;
   setCurrentStep: (params: { step: Permit2TransactionStep; accepted: boolean }) => void;
-}
-
-export interface ApproveTransactionInfo {
-  type: 'Approve';
-  tokenAddress: string;
-  spender: string;
-  approvalAmount: string;
-}
-
-export interface Permit2ApproveTransactionInfo {
-  type: 'Permit2Approve';
-  tokenAddress: string;
-  spender: string;
-  amount: string;
-}
-
-// =============================================================================
-// APPROVAL TRANSACTION INFO - COPIED FROM UNISWAP utils.ts lines 374-383
-// =============================================================================
-
-/**
- * Gets approval transaction info from step
- * COPIED FROM interface/apps/web/src/state/sagas/transactions/utils.ts
- */
-export function getApprovalTransactionInfo(
-  approvalStep: TokenApprovalTransactionStep | TokenRevocationTransactionStep | Permit2TransactionStep,
-): ApproveTransactionInfo {
-  return {
-    type: 'Approve',
-    tokenAddress: approvalStep.token.address,
-    spender: approvalStep.spender,
-    approvalAmount: approvalStep.amount,
-  };
-}
-
-/**
- * Gets permit transaction info from step
- * COPIED FROM interface/apps/web/src/state/sagas/transactions/utils.ts lines 385-392
- */
-export function getPermitTransactionInfo(approvalStep: Permit2TransactionStep): Permit2ApproveTransactionInfo {
-  return {
-    type: 'Permit2Approve',
-    tokenAddress: approvalStep.token.address,
-    spender: approvalStep.spender,
-    amount: approvalStep.amount,
-  };
-}
-
-// =============================================================================
-// CHECK APPROVAL AMOUNT - COPIED FROM UNISWAP utils.ts lines 394-405
-// =============================================================================
-
-/**
- * Checks if the approval amount submitted matches the required amount
- * COPIED FROM interface/apps/web/src/state/sagas/transactions/utils.ts
- */
-export function checkApprovalAmount(
-  data: string,
-  step: TokenApprovalTransactionStep | TokenRevocationTransactionStep,
-): { isInsufficient: boolean; approvedAmount: string } {
-  const requiredAmount = BigInt(step.amount);
-  const submitted = parseERC20ApproveCalldata(data);
-  const approvedAmount = submitted.amount.toString(10);
-
-  // Special case: for revoke tx's, the approval is insufficient if anything other than an empty approval was submitted on chain.
-  if (step.type === TransactionStepType.TokenRevocationTransaction) {
-    return { isInsufficient: submitted.amount !== BigInt(0), approvedAmount };
-  }
-
-  return { isInsufficient: submitted.amount < requiredAmount, approvedAmount };
+  /** Chain id used to surface revert reasons via a post-revert eth_call. Optional. */
+  chainId?: number;
 }
 
 // =============================================================================
@@ -127,7 +60,7 @@ export async function handleApprovalTransactionStep(
   }) => Promise<`0x${string}`>,
   waitForReceipt: (args: { hash: `0x${string}` }) => Promise<{ status: 'success' | 'reverted' }>,
 ): Promise<`0x${string}`> {
-  const { step, setCurrentStep } = params;
+  const { step, setCurrentStep, address, chainId } = params;
 
   // Trigger UI prompting user to accept
   setCurrentStep({ step, accepted: false });
@@ -146,7 +79,22 @@ export async function handleApprovalTransactionStep(
   const receipt = await waitForReceipt({ hash });
 
   if (receipt.status === 'reverted') {
-    throw new Error(`${step.type} transaction reverted`);
+    // Decode the revert reason via a read-only eth_call replay (does NOT touch the
+    // audited send path). Previously this site had no diagnostics — now it groups
+    // by decoded short-message.
+    await reportFailedTx(null, {
+      domain: 'approval',
+      action: 'erc20Approve',
+      component: 'approvalHandler',
+      txHash: hash,
+      to: step.txRequest.to,
+      data: step.txRequest.data,
+      value: step.txRequest.value,
+      from: address,
+      chainId,
+      extras: { stepType: step.type, userAddress: address },
+    });
+    throw markReported(new Error(`${step.type} transaction reverted`));
   }
 
   return hash;
@@ -175,7 +123,7 @@ export async function handlePermitTransactionStep(
   }) => Promise<`0x${string}`>,
   waitForReceipt: (args: { hash: `0x${string}` }) => Promise<{ status: 'success' | 'reverted' }>,
 ): Promise<`0x${string}`> {
-  const { step, setCurrentStep } = params;
+  const { step, setCurrentStep, address, chainId } = params;
 
   // Trigger UI prompting user to accept
   setCurrentStep({ step, accepted: false });
@@ -194,7 +142,21 @@ export async function handlePermitTransactionStep(
   const receipt = await waitForReceipt({ hash });
 
   if (receipt.status === 'reverted') {
-    throw new Error('Permit2 transaction reverted');
+    // Decode the revert reason via a read-only eth_call replay (does NOT touch the
+    // audited send path). Previously this site had no diagnostics.
+    await reportFailedTx(null, {
+      domain: 'approval',
+      action: 'permit2',
+      component: 'approvalHandler',
+      txHash: hash,
+      to: step.txRequest.to,
+      data: step.txRequest.data,
+      value: step.txRequest.value,
+      from: address,
+      chainId,
+      extras: { stepType: step.type, userAddress: address },
+    });
+    throw markReported(new Error('Permit2 transaction reverted'));
   }
 
   return hash;

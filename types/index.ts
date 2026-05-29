@@ -14,7 +14,7 @@ export interface Pool {
   apr: string;
   type?: string;
   hooks?: string;
-  yieldSources?: Array<'aave' | 'spark'>;
+  yieldSources?: Array<'aave'>;
   networkMode?: NetworkMode;
 }
 

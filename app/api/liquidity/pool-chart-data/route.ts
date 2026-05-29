@@ -3,6 +3,7 @@ export const preferredRegion = 'iad1';
 
 import { NextResponse } from 'next/server';
 import { checkRateLimit } from '@/lib/api/ratelimit';
+import { reportError } from '@/lib/observability';
 import { getPoolId, getPoolBySlugMultiChain } from '@/lib/pools-config';
 import { parseNetworkMode, type NetworkMode } from '@/lib/network-mode';
 import { setCachedData, getCachedDataWithStale } from '@/lib/cache/redis';
@@ -243,6 +244,12 @@ export async function GET(request: Request) {
 
   } catch (error: any) {
     console.error('[pool-chart-data] Unexpected error:', error);
+    reportError(error, {
+      domain: 'backend',
+      action: 'poolChartData',
+      component: 'poolChartData',
+      extras: { url: request.url },
+    });
     return NextResponse.json(
       { success: false, message: error?.message || 'Unknown error' },
       { status: 500 }

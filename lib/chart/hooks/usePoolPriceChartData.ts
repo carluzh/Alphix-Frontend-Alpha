@@ -9,7 +9,6 @@
 
 import { useMemo } from 'react'
 import type { UTCTimestamp } from 'lightweight-charts'
-import useIsWindowVisible from '@/hooks/useIsWindowVisible'
 import { usePollingIntervalByChain } from '@/hooks/usePollingIntervalByChain'
 import { apolloChainForMode } from '@/lib/network-mode'
 import {
@@ -60,9 +59,6 @@ export function usePoolPriceChartData({
   const { poolId, duration = HistoryDuration.WEEK } = variables ?? {}
   const enabled = !!poolId && poolId.length > 0 && !!networkMode
 
-  // skip chart data requests if the window is not focused
-  const isWindowVisible = useIsWindowVisible()
-
   // Chain-based polling interval (L2 = 3s base, x100 for chart = 300s/5 min)
   const chainPollingInterval = usePollingIntervalByChain()
 
@@ -73,7 +69,7 @@ export function usePoolPriceChartData({
       duration: duration as GqlHistoryDuration,
     },
     context: { networkMode: networkMode! },
-    skip: !enabled || !isWindowVisible,
+    skip: !enabled,
     fetchPolicy: 'cache-and-network',
     pollInterval: chainPollingInterval * 100, // ~5 minutes - chart data doesn't need frequent updates
   })
@@ -98,6 +94,7 @@ export function usePoolPriceChartData({
           close: value,
         }
       })
+      .filter((entry) => Number.isFinite(entry.value) && entry.value > 0)
 
     // Apply IQR outlier removal
     const filteredEntries = removeOutliers(entries)

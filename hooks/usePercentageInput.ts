@@ -2,35 +2,6 @@ import { useCallback } from 'react';
 import { formatUnits, parseUnits } from 'viem';
 
 /**
- * Helper function to calculate percentage using bigint arithmetic from a formatted string amount
- * Useful for cases where you don't have the raw bigint value (e.g., position data)
- *
- * @param formattedAmount - The formatted amount as a string (e.g., "123.456")
- * @param percentage - The percentage to calculate (25, 50, 75, or 100)
- * @param decimals - The token's decimals
- * @returns The calculated amount as a string with trailing zeros removed
- */
-export function calculatePercentageFromString(
-  formattedAmount: string,
-  percentage: number,
-  decimals: number
-): string {
-  // For 100%, return the exact amount
-  if (percentage === 100) {
-    return formattedAmount;
-  }
-
-  // Convert string to bigint using the token's decimals
-  const amountBigInt = parseUnits(formattedAmount, decimals);
-
-  // Calculate percentage using bigint arithmetic
-  const percentageAmount = (amountBigInt * BigInt(percentage)) / 100n;
-
-  // Format back to string - return raw value without any truncation
-  return formatUnits(percentageAmount, decimals);
-}
-
-/**
  * Custom hook for handling percentage-based input calculations with bigint precision
  *
  * This hook provides a handler function that calculates percentage amounts using

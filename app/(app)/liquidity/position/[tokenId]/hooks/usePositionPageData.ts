@@ -95,10 +95,11 @@ export interface PositionPageData {
   tokenBSymbol: string | undefined;
   isFullRange: boolean | undefined;
   isInRange: boolean;
+  poolOutsideRange: boolean;
   // APR data
   poolApr: number | null;
   aaveApr: number | null;
-  aprBySource?: Record<'aave' | 'spark', number>;
+  aprBySource?: Record<'aave', number>;
   totalApr: number | null;
   // LP Type
   lpType: LPType;
@@ -550,6 +551,13 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
     return currentTick >= tickLower && currentTick < tickUpper;
   }, [isUnifiedYieldPosition, pool, tickLower, tickUpper]);
 
+  const poolOutsideRange = useMemo(() => {
+    if (!isUnifiedYieldPosition || !poolState || !poolConfig?.rehypoRange || poolConfig.rehypoRange.isFullRange) return false;
+    const lo = parseInt(poolConfig.rehypoRange.min, 10);
+    const hi = parseInt(poolConfig.rehypoRange.max, 10);
+    return Number.isFinite(lo) && Number.isFinite(hi) && (poolState.tick < lo || poolState.tick >= hi);
+  }, [isUnifiedYieldPosition, poolState, poolConfig]);
+
   // Fetch pool APR from backend (fallback for pool-wide APR)
   const { data: poolStatsData } = useQuery({
     queryKey: ["poolStats", poolConfig?.poolId, networkMode],
@@ -692,6 +700,7 @@ export function usePositionPageData(tokenId: string, networkModeOverride?: Netwo
     tokenBSymbol,
     isFullRange,
     isInRange,
+    poolOutsideRange,
     // APR data
     poolApr,
     aaveApr,

@@ -34,7 +34,7 @@ export enum TransactionStepType {
   // Alphix-specific
   CreatePositionTransaction = 'CreatePositionTransaction',
 
-  // Swap operations (for Zap flow)
+  // Swap operations
   SwapTransaction = 'SwapTransaction',
 
   // Faucet
@@ -97,7 +97,7 @@ export interface FaucetMintStep extends TransactionStepBase {
 }
 
 /**
- * Swap step - for Zap flow (PSM or pool swap)
+ * Swap step (pool or Kyberswap aggregator)
  */
 export interface SwapStep extends TransactionStepBase {
   type: TransactionStepType.SwapTransaction
@@ -105,8 +105,8 @@ export interface SwapStep extends TransactionStepBase {
   outputTokenSymbol: string
   inputTokenIcon?: string
   outputTokenIcon?: string
-  /** Route type: 'psm' for 1:1 PSM swap, 'pool' for AMM swap, 'kyberswap' for aggregator */
-  routeType: 'psm' | 'pool' | 'kyberswap'
+  /** Route type: 'pool' for AMM swap, 'kyberswap' for aggregator */
+  routeType: 'pool' | 'kyberswap'
 }
 
 /**

@@ -15,11 +15,11 @@
  */
 
 import { useCallback, useRef } from 'react';
-import * as Sentry from '@sentry/nextjs';
 
+import { reportError, wasReported } from '@/lib/observability';
 import { useExecutionStore } from '@/lib/liquidity/transaction/executor/executionStore';
 import type { ExecutionState } from '@/lib/liquidity/transaction/executor/executionStore';
-import { isUserRejectionError, extractErrorMessage, categorizeError } from '@/lib/liquidity/utils/validation/errorHandling';
+import { isUserRejectionError, extractErrorMessage } from '@/lib/liquidity/utils/validation/errorHandling';
 import type { FlowStatus, StepState } from '@/lib/liquidity/types/transaction';
 
 // =============================================================================
@@ -178,9 +178,11 @@ export function useStepExecutor(config: UseStepExecutorConfig): UseStepExecutorR
       const executor = executors[stepType];
       if (!executor) {
         const error = new Error(`No executor registered for step type: ${stepType}`);
-        Sentry.captureException(error, {
-          tags: { component: 'useStepExecutor' },
-          extra: { stepType, stepIndex: i, registeredTypes: Object.keys(executors) },
+        reportError(error, {
+          domain: 'liquidity',
+          action: 'dispatch',
+          component: 'useStepExecutor',
+          extras: { stepType, stepIndex: i, registeredTypes: Object.keys(executors) },
         });
         store.failStep(lockId, i, error.message);
         executionRef.current.lockId = null;
@@ -233,17 +235,21 @@ export function useStepExecutor(config: UseStepExecutorConfig): UseStepExecutorR
 
         const isRejection = isUserRejectionError(err);
         const errorMessage = extractErrorMessage(err);
-        const errorCategory = categorizeError(err);
 
-        // Log to Sentry (skip user rejections — those are normal)
-        if (!isRejection) {
-          Sentry.captureException(err, {
-            tags: {
-              component: 'useStepExecutor',
-              stepType,
-              errorCategory,
-            },
-            extra: {
+        // Report via the consolidated helper — it drops user rejections internally
+        // and attaches errorCategory automatically (no manual 4001 check here).
+        // GATE: skip when a downstream handler/step already reported this SAME
+        // failure (marked via markReported) — that rich event is authoritative, and
+        // re-reporting here would create a duplicate with a different fingerprint
+        // (the error message contains 'reverted' → category 'contract', not a user
+        // rejection, so it would NOT be deduped/dropped). Genuinely-unreported
+        // errors are not marked, so they still report here (exactly once).
+        if (!wasReported(err)) {
+          reportError(err, {
+            domain: 'liquidity',
+            action: stepType,
+            component: 'useStepExecutor',
+            extras: {
               stepIndex: i,
               totalSteps: steps.length,
               completedSteps: Array.from(results.keys()),

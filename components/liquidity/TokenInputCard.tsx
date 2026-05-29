@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { IconCaretExpandY } from "nucleo-micro-bold-essential";
 import { TokenImage } from "@/components/ui/token-image";
 import { motion, useAnimation, type AnimationControls } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -80,12 +79,6 @@ interface TokenInputCardProps {
   animationControls?: AnimationControls;
   /** Optional className override */
   className?: string;
-  /** Callback when token selector is clicked (for switching tokens in Zap mode) */
-  onTokenClick?: () => void;
-  /** Custom icon to show in token selector when onTokenClick is provided (defaults to caret) */
-  tokenClickIcon?: React.ReactNode;
-  /** Network mode for chain-specific token icon lookup */
-  networkMode?: import('@/lib/network-mode').NetworkMode;
 }
 
 /**
@@ -110,9 +103,6 @@ export function TokenInputCard({
   isOverBalance = false,
   animationControls: externalControls,
   className,
-  onTokenClick,
-  tokenClickIcon,
-  networkMode,
 }: TokenInputCardProps) {
   // Internal animation controls if not provided externally
   const internalControls = useAnimation();
@@ -223,30 +213,14 @@ export function TokenInputCard({
 
           {/* Token Selector + Input Row */}
           <div className="flex items-center gap-2">
-            {onTokenClick ? (
-              <button
-                type="button"
-                onClick={onTokenClick}
-                className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3 transition-colors hover:bg-sidebar-accent hover:border-sidebar-border group/token"
-              >
-                <TokenImage
-                  src={tokenIcon}
-                  alt={tokenSymbol}
-                  size={20}
-                />
-                <span className="text-sm font-medium">{tokenSymbol}</span>
-                {tokenClickIcon ?? <IconCaretExpandY className="w-3.5 h-3.5 text-muted-foreground group-hover/token:text-white transition-colors" />}
-              </button>
-            ) : (
-              <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
-                <TokenImage
-                  src={tokenIcon}
-                  alt={tokenSymbol}
-                  size={20}
-                />
-                <span className="text-sm font-medium">{tokenSymbol}</span>
-              </div>
-            )}
+            <div className="flex items-center gap-1.5 bg-[var(--token-selector-background)] border border-sidebar-border/60 rounded-lg h-11 px-3">
+              <TokenImage
+                src={tokenIcon}
+                alt={tokenSymbol}
+                size={20}
+              />
+              <span className="text-sm font-medium">{tokenSymbol}</span>
+            </div>
             <div className="flex-1">
               <Input
                 id={id}

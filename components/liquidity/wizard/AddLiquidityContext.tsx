@@ -9,7 +9,7 @@
  * - Pool state fetched automatically when poolId changes
  */
 
-import { createContext, useContext, useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { createContext, useContext, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useAccount } from 'wagmi';
 import { Pool as V4Pool } from '@uniswap/v4-sdk';
@@ -19,44 +19,12 @@ import {
   WizardState,
   LPMode,
   RangePreset,
-  UnifiedYieldDepositMode,
   DEFAULT_WIZARD_STATE,
 } from './types';
 import { usePoolState } from '@/lib/apollo/hooks/usePoolState';
-import { getPoolBySlug, getPoolBySlugMultiChain, getChainId, type NetworkMode } from '@/lib/pools-config';
+import { getPoolBySlug, getPoolBySlugMultiChain, type NetworkMode } from '@/lib/pools-config';
 import { useDerivedPositionInfo } from '@/lib/liquidity/hooks/position/useDerivedPositionInfo';
 import type { CreatePositionInfo } from '@/lib/liquidity/types';
-import { isZapEligiblePool } from '@/lib/liquidity/zap';
-
-// Types adapted from Uniswap's structure
-export interface PriceRangeState {
-  priceInverted: boolean;
-  fullRange: boolean;
-  minPrice: string;
-  maxPrice: string;
-  initialPrice: string;
-}
-
-export interface DepositState {
-  exactField: 'token0' | 'token1';
-  exactAmounts: {
-    token0?: string;
-    token1?: string;
-  };
-}
-
-export const DEFAULT_PRICE_RANGE_STATE: PriceRangeState = {
-  priceInverted: false,
-  fullRange: true,
-  minPrice: '',
-  maxPrice: '',
-  initialPrice: '',
-};
-
-export const DEFAULT_DEPOSIT_STATE: DepositState = {
-  exactField: 'token0',
-  exactAmounts: {},
-};
 
 // Navigation source for dynamic breadcrumbs
 export type NavigationSource = 'pools' | 'pool' | 'overview';
@@ -75,8 +43,6 @@ export interface WizardEntryConfig {
 interface AddLiquidityContextType {
   // Current state
   state: WizardState;
-  priceRangeState: PriceRangeState;
-  depositState: DepositState;
 
   // Derived position info (from useDerivedPositionInfo - Uniswap pattern)
   derivedPositionInfo: CreatePositionInfo;
@@ -96,9 +62,6 @@ interface AddLiquidityContextType {
     liquidity: string | null;
   } | null;
 
-  // Refetch function (Uniswap pattern)
-  refetchPoolData: () => void;
-
   // Entry configuration
   entryConfig: WizardEntryConfig | null;
 
@@ -117,11 +80,6 @@ interface AddLiquidityContextType {
   openReviewModal: () => void;
   closeReviewModal: () => void;
 
-  // State setters
-  setState: Dispatch<SetStateAction<WizardState>>;
-  setPriceRangeState: Dispatch<SetStateAction<PriceRangeState>>;
-  setDepositState: Dispatch<SetStateAction<DepositState>>;
-
   // Convenience setters
   setTokens: (token0: string | null, token1: string | null) => void;
   setPoolId: (poolId: string | null) => void;
@@ -130,18 +88,6 @@ interface AddLiquidityContextType {
   setRangePreset: (preset: RangePreset) => void;
   setAmounts: (amount0: string, amount1: string) => void;
   setInputSide: (side: 'token0' | 'token1') => void;
-
-  // Unified Yield Zap mode setters
-  setDepositMode: (mode: UnifiedYieldDepositMode) => void;
-  setZapInputToken: (token: 'token0' | 'token1' | null) => void;
-
-  // Reset functions
-  reset: () => void;
-  resetPriceRange: () => void;
-  resetDeposit: () => void;
-
-  // URL sync
-  syncToUrl: () => void;
 }
 
 const AddLiquidityContext = createContext<AddLiquidityContextType | undefined>(undefined);
@@ -189,9 +135,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     const poolConfig = initialPoolId ? (getPoolBySlugMultiChain(initialPoolId) ?? getPoolBySlug(initialPoolId)) : null;
     const defaultMode: LPMode = poolConfig?.yieldSources?.length ? 'rehypo' : 'concentrated';
 
-    // Default to balanced (dual token) mode; user can switch to zap (single token) via toggle
-    const depositModeForPool = { depositMode: 'balanced' as const, zapInputToken: null };
-
     return {
       ...DEFAULT_WIZARD_STATE,
       currentStep: startStep,
@@ -200,14 +143,11 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
       token1Symbol: urlT1 || entryConfig?.token1Symbol || null,
       mode: (urlMode === 'rehypo' && !poolConfig?.yieldSources?.length) ? 'concentrated'
         : (urlMode || entryConfig?.mode || defaultMode),
-      ...depositModeForPool,
     };
   }, [searchParams, entryConfig]);
 
   // State
   const [state, setState] = useState<WizardState>(initialState);
-  const [priceRangeState, setPriceRangeState] = useState<PriceRangeState>(DEFAULT_PRICE_RANGE_STATE);
-  const [depositState, setDepositState] = useState<DepositState>(DEFAULT_DEPOSIT_STATE);
 
   // Derived values
   const currentStep = state.currentStep;
@@ -226,7 +166,7 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   const poolId = poolConfig?.poolId || '';
 
   // Fetch pool state when pool is selected (Uniswap pattern: useDerivedPositionInfo internally fetches)
-  const { data: poolStateRaw, loading: poolStateLoading, refetch: refetchPoolState } = usePoolState(poolId, poolNetworkMode);
+  const { data: poolStateRaw, loading: poolStateLoading } = usePoolState(poolId, poolNetworkMode);
 
   // Transform pool state to match our interface
   const poolStateData = useMemo(() => {
@@ -253,11 +193,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   // Extract shortcuts from derived info (convenience for components)
   const pool = derivedPositionInfo.pool;
   const poolLoading = poolStateLoading || !!derivedPositionInfo.poolOrPairLoading;
-
-  // Refetch function (Uniswap pattern)
-  const refetchPoolData = useCallback(async () => {
-    await refetchPoolState();
-  }, [refetchPoolState]);
 
   // Determine if back/forward navigation is possible
   const canGoBack = useMemo(() => {
@@ -300,7 +235,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
       // Reset amounts when going back from Step 2 to Step 1
       // This ensures fresh state when user changes pool or LP strategy
       if (currentStep === WizardStep.RANGE_AND_AMOUNTS) {
-        setDepositState(DEFAULT_DEPOSIT_STATE);
         setState(prev => ({
           ...prev,
           currentStep: prevStep as WizardStep,
@@ -340,16 +274,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
       ...prev,
       poolId: newPoolId,
       mode: defaultMode,
-      // Set deposit mode based on zap eligibility:
-      // - USDS/USDC: default to zap mode (Single Token)
-      // - Other pools: use balanced mode (Dual Deposit)
-      ...(newPoolId ? (isZapEligiblePool(newPoolId) ? {
-        depositMode: 'zap' as const,
-        zapInputToken: 'token1' as const, // Default to USDC
-      } : {
-        depositMode: 'balanced' as const,
-        zapInputToken: null,
-      }) : {}),
     }));
   }, []);
 
@@ -392,61 +316,12 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     setState(prev => ({ ...prev, inputSide: side }));
   }, []);
 
-  // Unified Yield Zap mode setters
-  const setDepositModeFn = useCallback((mode: UnifiedYieldDepositMode) => {
-    setState(prev => ({
-      ...prev,
-      depositMode: mode,
-      // When switching to zap mode, set default input token to USDC (token1) if not set
-      zapInputToken: mode === 'zap' && !prev.zapInputToken ? 'token1' : prev.zapInputToken,
-      // When switching back to balanced, clear amounts
-      ...(mode === 'balanced' ? { amount0: '', amount1: '' } : {}),
-    }));
-  }, []);
-
-  const setZapInputToken = useCallback((token: 'token0' | 'token1' | null) => {
-    setState(prev => ({
-      ...prev,
-      zapInputToken: token,
-      // Clear the opposite token's amount when switching zap input
-      amount0: token === 'token1' ? '' : prev.amount0,
-      amount1: token === 'token0' ? '' : prev.amount1,
-    }));
-  }, []);
-
-  // Reset functions
-  const reset = useCallback(() => {
-    setState(DEFAULT_WIZARD_STATE);
-    setPriceRangeState(DEFAULT_PRICE_RANGE_STATE);
-    setDepositState(DEFAULT_DEPOSIT_STATE);
-  }, []);
-
-  const resetPriceRange = useCallback(() => {
-    setPriceRangeState(DEFAULT_PRICE_RANGE_STATE);
-    setState(prev => ({
-      ...prev,
-      tickLower: null,
-      tickUpper: null,
-      isFullRange: true,
-      rangePreset: 'full',
-    }));
-  }, []);
-
-  const resetDeposit = useCallback(() => {
-    setDepositState(DEFAULT_DEPOSIT_STATE);
-    setState(prev => ({
-      ...prev,
-      amount0: '',
-      amount1: '',
-      depositMode: 'balanced',
-      zapInputToken: null,
-    }));
-  }, []);
-
-  // URL sync
-  const syncToUrl = useCallback(() => {
+  // URL sync — runs on step changes only. Wizard steps render as inline forms
+  // (no separate routes), so the URL just needs to reflect the current pool +
+  // mode for refresh/share. Keeping this side-effect inline avoids the
+  // useCallback ceremony.
+  useEffect(() => {
     const params = new URLSearchParams();
-
     params.set('step', state.currentStep.toString());
     if (state.poolId) params.set('pool', state.poolId);
     if (state.mode) params.set('mode', state.mode);
@@ -456,20 +331,14 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     if (state.tickUpper !== null) params.set('tu', state.tickUpper.toString());
     if (state.amount0) params.set('a0', state.amount0);
     if (state.amount1) params.set('a1', state.amount1);
-
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [router, pathname, state]);
-
-  // Sync to URL on state changes
-  useEffect(() => {
-    syncToUrl();
-  }, [state.currentStep]); // Only sync on step changes
+    // Intentionally only depend on currentStep — full state on every keystroke would thrash the URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.currentStep]);
 
   const value: AddLiquidityContextType = {
     // Current state
     state,
-    priceRangeState,
-    depositState,
 
     // Derived position info (Uniswap pattern)
     derivedPositionInfo,
@@ -483,9 +352,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
 
     // Pool state data (current price, tick, etc.)
     poolStateData,
-
-    // Refetch function (Uniswap pattern)
-    refetchPoolData,
 
     // Entry configuration
     entryConfig: entryConfig || null,
@@ -505,11 +371,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     openReviewModal,
     closeReviewModal,
 
-    // State setters
-    setState,
-    setPriceRangeState,
-    setDepositState,
-
     // Convenience setters
     setTokens,
     setPoolId: setPoolIdFn,
@@ -518,18 +379,6 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     setRangePreset,
     setAmounts,
     setInputSide,
-
-    // Unified Yield Zap mode setters
-    setDepositMode: setDepositModeFn,
-    setZapInputToken,
-
-    // Reset functions
-    reset,
-    resetPriceRange,
-    resetDeposit,
-
-    // URL sync
-    syncToUrl,
   };
 
   return (

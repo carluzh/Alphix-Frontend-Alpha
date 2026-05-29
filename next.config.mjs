@@ -38,6 +38,22 @@ const nextConfig = {
     config.resolve.alias['@react-native-async-storage/async-storage'] = false;
     config.ignoreWarnings = [{ module: /@whatwg-node\/fetch/ }];
 
+    // SVGR: handle `*.svg` imports as React components for the vendored Kyber widget.
+    // Supports the `?url` query suffix the widget uses for URL-as-string imports.
+    config.module.rules.push(
+      {
+        test: /\.svg$/i,
+        type: 'asset/resource',
+        resourceQuery: /url/, // *.svg?url → URL string
+      },
+      {
+        test: /\.svg$/i,
+        issuer: /\.[jt]sx?$/,
+        resourceQuery: { not: [/url/] }, // default → React component
+        use: ['@svgr/webpack'],
+      },
+    );
+
     // Fix WalletConnect ESM/CommonJS interop issues in serverless functions
     // These packages use CommonJS but get imported as ESM, causing named export errors
     if (isServer) {
@@ -99,10 +115,13 @@ const nextConfig = {
   ],
 }
 
-// Wrap with bundle analyzer, then Sentry
+// Wrap with bundle analyzer, then Sentry.
+// Source-map upload is env-gated: the bundler plugin auto-reads SENTRY_ORG,
+// SENTRY_PROJECT, and SENTRY_AUTH_TOKEN from the environment and self-activates
+// upload once all three are set (e.g. in CI / Vercel). No explicit org/project/
+// authToken options needed here.
 export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   silent: true,
-  hideSourceMaps: true,
   // Route Sentry events through our own domain so adblockers / Brave shields /
   // privacy DNS don't silently drop them. Crypto-savvy users frequently block
   // *.ingest.sentry.io directly.

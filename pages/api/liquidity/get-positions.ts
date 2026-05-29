@@ -118,14 +118,6 @@ export type ProcessedPosition = V4ProcessedPosition;
  */
 export type Position = V4ProcessedPosition;
 
-/**
- * Type guard for V4 positions
- * @deprecated No longer needed since this API only returns V4 positions
- */
-export function isV4Position(position: Position): position is V4ProcessedPosition {
-    return position.type === 'v4';
-}
-
 // Helper to parse tokenId from composite subgraph id (last dash component hex)
 function parseTokenIdFromHexId(idHex: string): bigint | null {
     try {

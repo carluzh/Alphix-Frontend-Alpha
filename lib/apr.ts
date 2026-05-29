@@ -2,7 +2,7 @@
  * APY Calculator - Uniswap V4 Liquidity Positions
  *
  * All yields are expressed as APY (compound daily) since rehypo pools
- * auto-compound fees via lending. Lending rates from Aave/Spark are
+ * auto-compound fees via lending. Lending rates from Aave are
  * already APY, so swap-fee APY + lending APY = total APY.
  */
 
@@ -155,7 +155,7 @@ export function formatApyValue(apy: Percent | null | undefined): string {
 export interface APYBreakdownInput {
   /** Swap/Pool APY from trading fees (daily compounded) */
   swapApy?: number | null;
-  /** Unified Yield APY (Aave/Spark lending) - only for rehypo pools */
+  /** Unified Yield APY (Aave lending) - only for rehypo pools */
   unifiedYieldApy?: number | null;
   /** Points APY bonus */
   pointsApy?: number | null;
@@ -202,14 +202,6 @@ export function formatTotalApy(breakdown: APYBreakdownInput): string {
 // =============================================================================
 // BACKWARDS COMPAT — old names re-exported for gradual migration
 // =============================================================================
-/** @deprecated Use APYBreakdownInput */
-export type APRBreakdownInput = APYBreakdownInput;
-/** @deprecated Use calculateTotalApy */
-export const calculateTotalApr = calculateTotalApy;
-/** @deprecated Use formatTotalApy */
-export const formatTotalApr = formatTotalApy;
-/** @deprecated Use calculatePositionApy */
-export const calculatePositionApr = calculatePositionApy;
 /** @deprecated Use calculateRealizedApy */
 export const calculateRealizedApr = calculateRealizedApy;
 /** @deprecated Use formatApy */

@@ -8,8 +8,9 @@
 import { getToken, resolveTokenIcon as resolveTokenIconBySymbol } from "@/lib/pools-config"
 import type { NetworkMode } from "@/lib/network-mode"
 import type { KyberswapRouteSummary } from "@/lib/aggregators/types"
-import type { Token } from "./swap-interface"
-import type { RouteTokenMetadata } from "./useSwapQuote"
+import type { Token } from "./types"
+// Inlined here as the canonical shape; SwapRoutePreview re-imports it.
+export type RouteTokenMetadata = Record<string, { symbol: string; logoURI?: string; decimals?: number }>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -54,7 +55,7 @@ export function buildAddressSymbolMap(
   map[toToken.address.toLowerCase()] = toToken.symbol
 
   // Known addresses from pools-config
-  const knownSymbols = ["ETH", "USDC", "USDS", "WETH"]
+  const knownSymbols = ["ETH", "USDC", "WETH"]
   for (const sym of knownSymbols) {
     const t = getToken(sym, networkMode)
     if (t) map[t.address.toLowerCase()] = t.symbol
