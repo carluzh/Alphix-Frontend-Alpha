@@ -172,7 +172,20 @@ const useSwap = ({
     }
   }, [isUnsupported, chainId, defaultTokenIn, defaultTokenOut])
 
-  const { balances } = useTokenBalances(tokens.map(item => item.address))
+  // Include tokenIn + tokenOut so a user-picked Supported Token that isn't in
+  // Kyber's DEFAULT_TOKENS (e.g. native USDC on Arbitrum) still gets a balance.
+  const balanceAddresses = useMemo(
+    () =>
+      Array.from(
+        new Set(([
+          ...tokens.map(item => item.address),
+          tokenIn,
+          tokenOut,
+        ].filter(Boolean) as string[])),
+      ),
+    [tokens, tokenIn, tokenOut],
+  )
+  const { balances } = useTokenBalances(balanceAddresses)
   const [allDexes, dexes, excludedDexes, setExcludedDexes] = useDexes(enableDexes)
 
   const [inputAmout, setInputAmount] = useState(defaultAmountIn || '')
@@ -217,7 +230,7 @@ const useSwap = ({
       return
     }
 
-    const tokenInBalance = balances[tokenIn] || 0n
+    const tokenInBalance = balances[tokenIn?.toLowerCase()] || 0n
 
     let error = ''
     if (tokenInBalance < amountIn) {

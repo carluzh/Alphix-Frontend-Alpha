@@ -208,21 +208,15 @@ function SelectCurrency({
   const { chainId, connectedAccount } = useActiveWeb3()
   const isConnected = !!connectedAccount.address
 
-  // Kyber's DEFAULT_TOKENS for Arbitrum lists legacy USDC.e (0xFF970…), not
-  // native USDC (0xaf88d…) — and USDT differs only in case (0xfd086… vs
-  // 0xFd086…). The Supported Tokens list resolves via getPoolToken() so its
-  // addresses come from OUR pools-config, but the multicall was keyed off
-  // useTokens() (Kyber default + imported), so the native-USDC + checksum-USDT
-  // balances were never fetched and the Supported rows rendered $0 despite a
-  // real on-chain balance. Explicitly include the supported-token addresses in
-  // the multicall, and normalize all lookup keys to lowercase so a checksum
-  // mismatch can't hide a balance.
+  // Kyber's DEFAULT_TOKENS omit native USDC on Arbitrum and use different casing
+  // for USDT, so explicitly include the Supported Tokens' pool-config addresses
+  // in the multicall — otherwise the Supported rows render $0 despite real balances.
   const networkModeForBalances: 'base' | 'arbitrum' = chainId === 42161 ? 'arbitrum' : 'base'
   const supportedTokenAddrs = useMemo(() => {
     const symbols = SUPPORTED_SYMBOLS_BY_CHAIN[chainId] ?? []
     const addrs: string[] = []
     for (const sym of symbols) {
-      if (sym === 'ETH') continue // native ETH is fetched separately via eth_getBalance
+      if (sym === 'ETH') continue
       const tc = getPoolToken(sym, networkModeForBalances)
       if (tc) addrs.push(tc.address)
     }
@@ -231,27 +225,12 @@ function SelectCurrency({
 
   const tokenAddresses = useMemo(
     () => Array.from(new Set([
-      ...tokens.map((item) => item.address.toLowerCase()),
-      ...supportedTokenAddrs.map((a) => a.toLowerCase()),
+      ...tokens.map((item) => item.address),
+      ...supportedTokenAddrs,
     ])),
     [tokens, supportedTokenAddrs],
   )
-  const { balances: rawBalances, loading } = useTokenBalances(tokenAddresses)
-  // Normalize all balance keys to lowercase so a checksum-vs-lowercase mismatch
-  // (Kyber default vs pool config vs imported) never hides a real balance.
-  // NATIVE_TOKEN_ADDRESS lookups continue to work — the casing of the constant
-  // is consistent across all consumers and useTokenBalances stores it verbatim.
-  const balances = useMemo(() => {
-    const out: { [address: string]: bigint } = {}
-    for (const k of Object.keys(rawBalances)) {
-      out[k.toLowerCase()] = rawBalances[k]
-    }
-    // Preserve the native-token key as-is for the ETH lookup at NATIVE_TOKEN_ADDRESS.
-    if (rawBalances[NATIVE_TOKEN_ADDRESS] !== undefined) {
-      out[NATIVE_TOKEN_ADDRESS] = rawBalances[NATIVE_TOKEN_ADDRESS]
-    }
-    return out
-  }, [rawBalances])
+  const { balances, loading } = useTokenBalances(tokenAddresses)
 
   const hasReceivedBalancesRef = useRef(false)
   const [hasInitialBalances, setHasInitialBalances] = useState(false)

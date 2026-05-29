@@ -109,19 +109,16 @@ function encodeMulticallInput(requireSuccess: boolean, calls: { target: string; 
   return `0x${staticPart}${dynamicData}`
 }
 
+// Contract: returned `balances` keys are lowercase. Pass lowercase or use
+// `.toLowerCase()` on lookups; native is also stored under the
+// NATIVE_TOKEN_ADDRESS constant for convenience.
 const useTokenBalances = (tokenAddresses: string[]) => {
   const { chainId, connectedAccount, rpcUrl, hasIntegratorRpcUrl } = useActiveWeb3()
   const [balances, setBalances] = useState<{ [address: string]: bigint }>({})
   const [loading, setLoading] = useState(false)
 
-  // Discard stale in-flight responses. When chainId / rpcUrl / token list
-  // changes (e.g. user toggles the in-widget chain switcher), `fetchBalances`
-  // is re-invoked but the previous call's multicall is still in flight. If
-  // the older Base-RPC response resolves AFTER the newer Arbitrum-RPC one,
-  // it overwrites the correct balances with stale data — surfacing as the
-  // "Your Tokens flashes then disappears" bug on rapid chain toggles AND as
-  // the "0 in selector, real balance in input" inconsistency between this
-  // hook's two parallel instances (Widget panel + SelectCurrency list).
+  // Discard stale in-flight responses across chainId / rpcUrl / token-list changes
+  // so an older multicall can't overwrite a newer one.
   const callIdRef = useRef(0)
 
   const fetchBalances = useCallback(async () => {
@@ -135,9 +132,7 @@ const useTokenBalances = (tokenAddresses: string[]) => {
       const account = connectedAccount.address
       const multicallAddress = MULTICALL_ADDRESS[chainId]
 
-      // When the integrator provided an rpcUrl, dial it directly (no rotation,
-      // matches the documented contract). Otherwise rely on @kyber/rpc-client
-      // rotation seeded with DefaultRpcUrl[chainId] by Web3Provider.
+      // Integrator rpcUrl: dial directly; otherwise use @kyber/rpc-client rotation.
       const fetchNativeBalance = () =>
         hasIntegratorRpcUrl
           ? directRpcFetch<string>(rpcUrl, 'eth_getBalance', [account, 'latest']).then(r => BigInt(r))
@@ -169,14 +164,16 @@ const useTokenBalances = (tokenAddresses: string[]) => {
       if (multicallResult.status === 'fulfilled' && multicallResult.value) {
         const decodedBalances = decodeMulticallOutput(multicallResult.value)
         tokenAddresses.forEach((token, index) => {
-          balancesMap[token] = decodedBalances[index]
+          balancesMap[token.toLowerCase()] = decodedBalances[index]
         })
       } else if (multicallResult.status === 'rejected') {
         console.error('[swap-widgets] Failed to fetch ERC20 balances:', multicallResult.reason)
       }
 
       if (nativeResult.status === 'fulfilled') {
+        // Store under both the constant casing (legacy callers) and lowercase.
         balancesMap[NATIVE_TOKEN_ADDRESS] = nativeResult.value
+        balancesMap[NATIVE_TOKEN_ADDRESS.toLowerCase()] = nativeResult.value
       } else {
         console.error('[swap-widgets] Failed to fetch native balance:', nativeResult.reason)
       }
@@ -190,12 +187,9 @@ const useTokenBalances = (tokenAddresses: string[]) => {
     //eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rpcUrl, hasIntegratorRpcUrl, connectedAccount.address, chainId, JSON.stringify(tokenAddresses)])
 
+  // One fetch per (account + chain + token-set) change; callers use `refetch`
+  // for explicit refreshes (e.g. post-import, post-confirm).
   useEffect(() => {
-    // Fetch balances ONCE per (account + chain + token-set) change. The
-    // previous implementation polled every 10s, which caused the token-row
-    // skeletons to briefly flicker on every poll AND pressured the RPC
-    // unnecessarily. Callers that need a fresh fetch (e.g. Confirmation
-    // close) call `refetch` explicitly via the returned API.
     fetchBalances()
   }, [fetchBalances])
 

@@ -466,8 +466,8 @@ const Widget = ({
         : (Number(amountOut) * (1 - slippage / 10_000)).toPrecision(8).toString()
   }
 
-  const tokenInBalance = balances[tokenIn] || 0n
-  const tokenOutBalance = balances[tokenOut] || 0n
+  const tokenInBalance = balances[tokenIn?.toLowerCase()] || 0n
+  const tokenOutBalance = balances[tokenOut?.toLowerCase()] || 0n
 
   const tokenInWithUnit = formatUnits(tokenInBalance.toString(), tokenInInfo?.decimals || 18)
   const tokenOutWithUnit = formatUnits(tokenOutBalance.toString(), tokenOutInfo?.decimals || 18)
