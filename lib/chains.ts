@@ -24,9 +24,19 @@ const publicArbitrumRpcs = [
   'https://1rpc.io/arb',
 ];
 
-// Primary RPC first, public fallbacks after
-const baseMainnetRpcUrls = primaryBaseRpcUrl ? [primaryBaseRpcUrl, ...publicBaseMainnetRpcs] : publicBaseMainnetRpcs;
-const arbitrumRpcUrls = primaryArbitrumRpcUrl ? [primaryArbitrumRpcUrl, ...publicArbitrumRpcs] : publicArbitrumRpcs;
+// Primary RPC first, public fallbacks after.
+// In E2E (NEXT_PUBLIC_E2E), the primary URL is a local Anvil fork — drop the
+// public fallbacks so reads/sends hit ONLY the fork (no silent fallthrough to
+// public mainnet, which would break fork-state determinism). This also fixes
+// the address the wagmi `mock` connector signs against: it uses
+// rpcUrls.default.http[0], i.e. these arrays' first entry.
+const E2E = process.env.NEXT_PUBLIC_E2E === 'true';
+const baseMainnetRpcUrls = E2E && primaryBaseRpcUrl
+  ? [primaryBaseRpcUrl]
+  : (primaryBaseRpcUrl ? [primaryBaseRpcUrl, ...publicBaseMainnetRpcs] : publicBaseMainnetRpcs);
+const arbitrumRpcUrls = E2E && primaryArbitrumRpcUrl
+  ? [primaryArbitrumRpcUrl]
+  : (primaryArbitrumRpcUrl ? [primaryArbitrumRpcUrl, ...publicArbitrumRpcs] : publicArbitrumRpcs);
 
 export const baseMainnet = defineChain({
   id: BASE_CHAIN_ID,

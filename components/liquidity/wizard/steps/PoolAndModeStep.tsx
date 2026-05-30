@@ -11,6 +11,7 @@ import { useAddLiquidityContext } from '../AddLiquidityContext';
 import { Container } from '../shared/Container';
 import { LPMode } from '../types';
 import { getMultiChainEnabledPools, getPoolBySlug, getPoolBySlugMultiChain, getPoolId, type PoolConfig } from '@/lib/pools-config';
+import { canUseConcurrentMode } from '@/lib/liquidity/utils/pool-type-guards';
 
 import { fetchPoolsMetrics } from '@/lib/backend-client';
 import { CHAIN_REGISTRY, ALL_MODES } from '@/lib/chain-registry';
@@ -198,7 +199,7 @@ function CustomRangeModeCard({ selected, onSelect }: { selected: boolean; onSele
   );
 }
 
-function LPModeSection({ mode, onSelectMode, extraAaveApr, yieldSources }: { mode: LPMode; onSelectMode: (mode: LPMode) => void; extraAaveApr?: number; yieldSources?: Array<'aave'> }) {
+function LPModeSection({ mode, onSelectMode, extraAaveApr, yieldSources, pool }: { mode: LPMode; onSelectMode: (mode: LPMode) => void; extraAaveApr?: number; yieldSources?: Array<'aave'>; pool: PoolConfig | null }) {
   const hasYieldSources = !!(yieldSources && yieldSources.length > 0);
 
   // No yield sources → only Custom Range, no mode selection needed
@@ -212,7 +213,10 @@ function LPModeSection({ mode, onSelectMode, extraAaveApr, yieldSources }: { mod
       </div>
       <div className="flex flex-col gap-3">
         <RehypoModeCard selected={mode === 'rehypo'} onSelect={() => onSelectMode('rehypo')} extraApr={extraAaveApr} yieldSources={yieldSources} />
-        <CustomRangeModeCard selected={mode === 'concentrated'} onSelect={() => onSelectMode('concentrated')} />
+        {/* Hide Custom Range for pools that don't support concentrated mode (UY pools) */}
+        {canUseConcurrentMode(pool) && (
+          <CustomRangeModeCard selected={mode === 'concentrated'} onSelect={() => onSelectMode('concentrated')} />
+        )}
       </div>
     </div>
   );
@@ -375,7 +379,7 @@ export function PoolAndModeStep() {
             transition={FADE_TRANSITION}
             className="flex flex-col gap-4"
           >
-            <LPModeSection mode={state.mode} onSelectMode={setMode} extraAaveApr={extraAaveApr} yieldSources={selectedPool?.yieldSources} />
+            <LPModeSection mode={state.mode} onSelectMode={setMode} extraAaveApr={extraAaveApr} yieldSources={selectedPool?.yieldSources} pool={selectedPool} />
             <Button
               onClick={goNext}
               disabled={!canGoForward}

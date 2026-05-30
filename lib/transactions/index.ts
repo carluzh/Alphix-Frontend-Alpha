@@ -28,15 +28,9 @@ export {
   createPermit2SignatureStep,
 } from './types'
 
-// Transaction state management (Redux)
+// Transaction providers (wallet-balances refresh watcher)
 export { TransactionProvider } from './TransactionProvider'
 export { TransactionWatcherProvider, TokenBalancesProvider } from './TokenBalancesProvider'
-
-// Transaction hooks
-export {
-  useTransactionAdder,
-  usePendingTransactions,
-} from './hooks'
 
 // Re-export TradeType from @uniswap/sdk-core for swap transaction info
 export { TradeType } from '@uniswap/sdk-core'
@@ -69,9 +63,3 @@ export {
   type UseStepExecutorReturn,
 } from './useStepExecutor'
 
-// Local types
-export type { PendingTransactionDetails, ConfirmedTransactionDetails } from './types-local'
-
-// Redux store (for advanced usage)
-export { store as transactionStore, persistor as transactionPersistor } from './redux-store'
-export type { RootState as TransactionRootState, AppDispatch as TransactionAppDispatch } from './redux-store'

@@ -6,16 +6,13 @@
  */
 
 import { encodeAbiParameters, keccak256, type Hex, formatUnits, parseAbi, type Address } from 'viem';
-import { Token } from '@uniswap/sdk-core';
-import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk';
-import JSBI from 'jsbi';
 import { createNetworkClient } from './viemClient';
 import { STATE_VIEW_ABI as STATE_VIEW_HUMAN_READABLE_ABI } from './abis/state_view_abi';
 import { getStateViewAddress, getPositionManagerAddress } from './pools-config';
-import { getToken as getTokenConfig, getTokenSymbolByAddress } from './pools-config';
 import { position_manager_abi } from './abis/PositionManager_abi';
 import { modeForChainId, type NetworkMode } from './network-mode';
 import { calculateUnclaimedFeesV4 } from './liquidity/liquidity-utils';
+import { assembleV4Position } from './positions/assembleV4Position';
 
 /**
  * Decoded position tick and subscription info from on-chain position data
@@ -224,35 +221,7 @@ export async function derivePositionsFromIds(
 
       const { poolKey, infoValue, liquidity } = positionData;
 
-      const t0Addr = poolKey.currency0 as Address;
-      const t1Addr = poolKey.currency1 as Address;
-      const sym0 = getTokenSymbolByAddress(t0Addr, networkMode) || 'T0';
-      const sym1 = getTokenSymbolByAddress(t1Addr, networkMode) || 'T1';
-      const cfg0 = sym0 ? getTokenConfig(sym0, networkMode) : undefined;
-      const cfg1 = sym1 ? getTokenConfig(sym1, networkMode) : undefined;
-      const dec0 = cfg0?.decimals ?? 18;
-      const dec1 = cfg1?.decimals ?? 18;
-      const tok0 = new Token(chainId, t0Addr, dec0, sym0);
-      const tok1 = new Token(chainId, t1Addr, dec1, sym1);
-
-      const v4Pool = new V4Pool(
-        tok0, tok1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks,
-        JSBI.BigInt(poolState.sqrtPriceX96),
-        JSBI.BigInt(poolState.poolLiquidity),
-        poolState.tick
-      );
-
       const { tickLower, tickUpper } = decodePositionInfo(infoValue);
-
-      const v4Position = new V4Position({
-        pool: v4Pool,
-        tickLower,
-        tickUpper,
-        liquidity: JSBI.BigInt(liquidity.toString()),
-      });
-
-      const raw0 = BigInt(v4Position.amount0.quotient.toString());
-      const raw1 = BigInt(v4Position.amount1.quotient.toString());
 
       const ts = timestampsMap?.get(tokenIdStr);
       let created = ts?.createdAt || 0;
@@ -261,23 +230,30 @@ export async function derivePositionsFromIds(
       if (lastMod > 1e12) lastMod = Math.floor(lastMod / 1000);
 
       const fees = feeDataMap.get(tokenIdStr);
-      out.push({
-        type: 'v4' as const,
-        positionId: tokenIdStr,
+      out.push(assembleV4Position({
+        chainId,
+        configMode: networkMode,
+        poolKey: {
+          currency0: poolKey.currency0,
+          currency1: poolKey.currency1,
+          fee: poolKey.fee,
+          tickSpacing: poolKey.tickSpacing,
+          hooks: poolKey.hooks,
+        },
         poolId: positionData.poolId,
+        poolState,
+        liquidity: liquidity.toString(),
+        mathTickLower: tickLower,
+        mathTickUpper: tickUpper,
+        positionId: tokenIdStr,
         owner: ownerAddress,
-        token0: { address: tok0.address, symbol: tok0.symbol || 'T0', amount: formatUnits(raw0, tok0.decimals), rawAmount: raw0.toString() },
-        token1: { address: tok1.address, symbol: tok1.symbol || 'T1', amount: formatUnits(raw1, tok1.decimals), rawAmount: raw1.toString() },
-        tickLower,
-        tickUpper,
-        liquidityRaw: liquidity.toString(),
-        ageSeconds: created > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - created) : 0,
         blockTimestamp: created,
         lastTimestamp: lastMod || created,
-        isInRange: poolState.tick >= tickLower && poolState.tick < tickUpper,
+        ageSeconds: created > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - created) : 0,
+        formatAmount: (raw, dec) => formatUnits(BigInt(raw), dec),
         token0UncollectedFees: fees?.token0Fees,
         token1UncollectedFees: fees?.token1Fees,
-      });
+      }));
     } catch (e) {
       console.warn(`[derivePositionsFromIds] Error processing tokenId ${tokenIdStr}:`, e);
     }

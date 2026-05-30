@@ -178,6 +178,13 @@ export interface TokenInfo {
   decimals: number;
 }
 
+/** Minimal token config shape (structurally satisfied by pool-config token definitions). */
+export interface TokenCfg {
+  address: string;
+  symbol: string;
+  decimals: number;
+}
+
 // =============================================================================
 // STEP INTERFACES - Matches Uniswap's step definitions
 // =============================================================================

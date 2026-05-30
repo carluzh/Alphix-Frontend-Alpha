@@ -14,7 +14,6 @@ import { ChevronLeft } from 'lucide-react';
 import { IconCircleInfo, IconTriangleWarningFilled } from 'nucleo-micro-bold-essential';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { useAccount, useBalance } from 'wagmi';
 import { useAnimation } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
@@ -36,7 +35,6 @@ import { usePriceDeviation, requiresDeviationAcknowledgment } from '@/hooks/useP
 import { PriceDeviationCallout, PoolOutOfRangeCallout } from '@/components/ui/PriceDeviationCallout';
 import { HighRiskConfirmModal, createPriceDeviationWarning } from '@/components/ui/HighRiskConfirmModal';
 import { TokenInputCard, TokenInputStyles } from '@/components/liquidity/TokenInputCard';
-import { DenominationToggle } from '@/components/liquidity/DenominationToggle';
 import { formatCalculatedAmount } from '@/components/liquidity/liquidity-form-utils';
 import { calculateTicksFromPercentage, getFieldsDisabled, PositionField, isInvalidRange } from '@/lib/liquidity/utils/calculations';
 import { DEFAULT_TICK_SPACING } from '@/lib/liquidity/utils/validation/feeTiers';
@@ -46,260 +44,18 @@ import {
   priceToTickSimple,
   priceNumberToTick,
   tickToPriceSmart,
+  TickMath,
+  clampTick,
 } from '@/lib/liquidity/utils/tick-price';
 import { D3LiquidityRangeChart, LiquidityChartSkeleton, CHART_DIMENSIONS } from '@/components/liquidity/d3-chart';
 import { HistoryDuration, usePoolPriceChartData } from '@/lib/chart';
 import { useLiquidityChartData } from '@/hooks/useLiquidityChartData';
 import { getPoolId } from '@/lib/pools-config';
 import { usePriceOrdering, useGetRangeDisplay } from '@/lib/uniswap/liquidity';
-
-// Price Strategy configurations - pool-type dependent
-interface PriceStrategyConfig {
-  id: RangePreset;
-  title: string;
-  display: string;
-  description: string;
-}
-
-// Stable pool strategies (tick-based for tight ranges around peg)
-const STABLE_POOL_STRATEGIES: PriceStrategyConfig[] = [
-  {
-    id: 'stable_narrow',
-    title: 'Narrow',
-    display: '1 tick',
-    description: 'Single tick at current price',
-  },
-  {
-    id: 'stable_standard',
-    title: 'Standard',
-    display: '± 1 tick',
-    description: 'Optimized for lending yield',
-  },
-  {
-    id: 'stable_wide',
-    title: 'Wide',
-    display: '± 2 ticks',
-    description: 'Balanced range for stable pairs',
-  },
-  {
-    id: 'stable_skewed',
-    title: 'Skewed',
-    display: '+1 / −3 ticks',
-    description: 'Asymmetric for depeg protection',
-  },
-];
-
-// Standard/Volatile pool strategies (percentage-based)
-const STANDARD_POOL_STRATEGIES: PriceStrategyConfig[] = [
-  {
-    id: 'narrow',
-    title: 'Narrow',
-    display: '± 5%',
-    description: 'Tight range, higher fee concentration',
-  },
-  {
-    id: 'wide',
-    title: 'Wide',
-    display: '± 25%',
-    description: 'Wide range for volatile pairs',
-  },
-  {
-    id: 'skewed',
-    title: 'Skewed',
-    display: '+10 / −30%',
-    description: 'Asymmetric for directional exposure',
-  },
-  {
-    id: 'full',
-    title: 'Full Range',
-    display: '0 → ∞',
-    description: 'Optimized for lending yield',
-  },
-];
-
-// Helper: Get default range preset based on pool type
-function getDefaultRangePreset(isStablePool: boolean): RangePreset {
-  return isStablePool ? 'stable_narrow' : 'narrow';
-}
-
-// Helper: Get strategies for pool type
-function getStrategiesForPoolType(isStablePool: boolean): PriceStrategyConfig[] {
-  return isStablePool ? STABLE_POOL_STRATEGIES : STANDARD_POOL_STRATEGIES;
-}
-
-
-// Price Strategy button (Uniswap's DefaultPriceStrategyComponent style)
-interface PriceStrategyButtonProps {
-  strategy: PriceStrategyConfig;
-  selected: boolean;
-  onSelect: () => void;
-  disabled?: boolean;
-}
-
-function PriceStrategyButton({ strategy, selected, onSelect, disabled }: PriceStrategyButtonProps) {
-  const renderDisplay = () => {
-    // Handle special formatting for different strategy types
-    if (strategy.id === 'stable_skewed') {
-      return <>+1 <span className="text-muted-foreground/50">/</span> −3 ticks</>;
-    }
-    if (strategy.id === 'skewed') {
-      return <>+10% <span className="text-muted-foreground/50">/</span> −30%</>;
-    }
-    if (strategy.id === 'full') {
-      return <>0 <span className="text-muted-foreground/50">→</span> ∞</>;
-    }
-    return strategy.display;
-  };
-
-  // Uses Disconnect button hover colors (bg-accent, border-white/30)
-  return (
-    <button
-      onClick={onSelect}
-      disabled={disabled}
-      className={cn(
-        'flex flex-col justify-between p-4 rounded-lg border border-sidebar-border bg-muted/30 transition-colors text-left min-h-[120px]',
-        selected && 'bg-accent border-white/30',
-        !selected && 'hover:bg-accent/50 hover:border-white/15',
-        disabled && 'opacity-50 cursor-not-allowed'
-      )}
-    >
-      {/* Title and display value */}
-      <div className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium text-muted-foreground">
-          {strategy.title}
-        </span>
-        <span className="text-base font-semibold text-white">
-          {renderDisplay()}
-        </span>
-      </div>
-      {/* Description */}
-      <span className="text-xs text-muted-foreground/70 leading-tight mt-2">
-        {strategy.description}
-      </span>
-    </button>
-  );
-}
-
-// Current price display with token selector (Uniswap pattern)
-interface CurrentPriceProps {
-  price?: string;
-  token0Symbol: string;
-  token1Symbol: string;
-  inverted: boolean;
-  onSelectToken: (token: string) => void;
-  networkMode?: import('@/lib/network-mode').NetworkMode;
-  outOfRange?: boolean;
-}
-
-function CurrentPriceDisplay({
-  price,
-  token0Symbol,
-  token1Symbol,
-  inverted,
-  onSelectToken,
-  networkMode,
-  outOfRange,
-}: CurrentPriceProps) {
-  const baseToken = inverted ? token1Symbol : token0Symbol;
-  const quoteToken = inverted ? token0Symbol : token1Symbol;
-  const selectedToken = inverted ? token1Symbol : token0Symbol;
-
-  return (
-    <div className="flex flex-col gap-1.5 py-4">
-      {/* Top row: Label + toggle (on mobile: toggle next to label; on desktop: toggle on right) */}
-      <div className="flex flex-row items-center justify-between">
-        <span className="text-sm font-medium text-muted-foreground">Current price</span>
-        <DenominationToggle
-          token0Symbol={token0Symbol}
-          token1Symbol={token1Symbol}
-          activeBase={selectedToken}
-          onToggle={onSelectToken}
-          networkMode={networkMode}
-        />
-      </div>
-      {/* Price value and denomination text */}
-      {/* When the pool is out of the UY preset range, the on-chain price math overflows
-          into scientific notation (e+40). Suppress the broken number and show a hyphen
-          instead - the PoolOutOfRangeCallout below already conveys the state. */}
-      <div className="flex items-baseline gap-2 flex-wrap">
-        <span className="text-xl font-semibold text-white">
-          {outOfRange ? '-' : (price || '—')}
-        </span>
-        <span className="text-sm text-muted-foreground">
-          {quoteToken} per {baseToken}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// Min/Max price input (Uniswap RangeAmountInput style)
-interface RangeInputProps {
-  label: 'Min' | 'Max';
-  percentFromCurrent: string;
-  value: string;
-  onChange: (value: string) => void;
-  onBlur?: () => void;
-  onIncrement: () => void;
-  onDecrement: () => void;
-  disabled?: boolean;
-  position: 'left' | 'right';
-}
-
-function RangeInput({
-  label,
-  percentFromCurrent,
-  value,
-  onChange,
-  onBlur,
-  onIncrement,
-  onDecrement,
-  disabled,
-  position,
-}: RangeInputProps) {
-  return (
-    <div className={cn(
-      'flex flex-row justify-between flex-1 px-4 py-4',
-      position === 'left' ? 'border-r border-sidebar-border' : '',
-      disabled && 'opacity-50'
-    )}>
-      <div className="flex flex-col gap-1 flex-1 overflow-hidden">
-        <span className="text-sm font-medium text-muted-foreground">
-          {label} price
-        </span>
-        <Input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={onBlur}
-          disabled={disabled}
-          className="bg-transparent border-none text-xl md:text-xl font-semibold p-0 h-auto text-white focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-          placeholder="0"
-        />
-        <span className="text-sm text-muted-foreground mt-1">
-          {percentFromCurrent}
-        </span>
-      </div>
-      {/* Right side: +/- buttons */}
-      <div className="flex flex-col gap-2 justify-center">
-        <button
-          onClick={onIncrement}
-          disabled={disabled}
-          className="w-8 h-8 rounded-lg bg-sidebar-accent hover:bg-sidebar-accent/80 flex items-center justify-center text-base font-medium text-muted-foreground hover:text-white transition-colors disabled:opacity-50"
-        >
-          +
-        </button>
-        <button
-          onClick={onDecrement}
-          disabled={disabled}
-          className="w-8 h-8 rounded-lg bg-sidebar-accent hover:bg-sidebar-accent/80 flex items-center justify-center text-base font-medium text-muted-foreground hover:text-white transition-colors disabled:opacity-50"
-        >
-          −
-        </button>
-      </div>
-    </div>
-  );
-}
+import { getDefaultRangePreset, getStrategiesForPoolType } from './range-and-amounts/strategies';
+import { PriceStrategyButton } from './range-and-amounts/PriceStrategyButton';
+import { CurrentPriceDisplay } from './range-and-amounts/CurrentPriceDisplay';
+import { RangeInput } from './range-and-amounts/RangeInput';
 
 export function RangeAndAmountsStep() {
   const {
@@ -778,8 +534,9 @@ export function RangeAndAmountsStep() {
       // Stable pool strategies (tick-based)
       case 'stable_narrow':
         // Single tick at current price (1 tick spacing range)
-        tickLower = nearestUsableTick(poolCurrentTick, tickSpacingVal);
-        tickUpper = tickLower + tickSpacingVal;
+        tickLower = nearestUsableTick(clampTick(poolCurrentTick), tickSpacingVal);
+        // Re-align tickUpper to spacing after clamping so MAX_TICK edge cases stay within bounds.
+        tickUpper = nearestUsableTick(clampTick(tickLower + tickSpacingVal), tickSpacingVal);
         break;
       case 'stable_standard':
         // Use rehypo range from pool config (optimized for lending yield)
@@ -788,59 +545,71 @@ export function RangeAndAmountsStep() {
           tickUpper = rehypoTickUpper;
         } else {
           // Fallback to ± 3 ticks if no rehypo range configured
-          tickLower = nearestUsableTick(poolCurrentTick - 3 * tickSpacingVal, tickSpacingVal);
-          tickUpper = nearestUsableTick(poolCurrentTick + 3 * tickSpacingVal, tickSpacingVal);
+          tickLower = nearestUsableTick(clampTick(poolCurrentTick - 3 * tickSpacingVal), tickSpacingVal);
+          tickUpper = nearestUsableTick(clampTick(poolCurrentTick + 3 * tickSpacingVal), tickSpacingVal);
         }
         break;
       case 'stable_wide':
         // ± 2 tick spacings from current tick
-        tickLower = nearestUsableTick(poolCurrentTick - 2 * tickSpacingVal, tickSpacingVal);
-        tickUpper = nearestUsableTick(poolCurrentTick + 2 * tickSpacingVal, tickSpacingVal);
+        tickLower = nearestUsableTick(clampTick(poolCurrentTick - 2 * tickSpacingVal), tickSpacingVal);
+        tickUpper = nearestUsableTick(clampTick(poolCurrentTick + 2 * tickSpacingVal), tickSpacingVal);
         break;
       case 'stable_skewed':
         // +1 tick upper, -3 ticks lower (asymmetric for depeg protection)
-        tickLower = nearestUsableTick(poolCurrentTick - 3 * tickSpacingVal, tickSpacingVal);
-        tickUpper = nearestUsableTick(poolCurrentTick + 1 * tickSpacingVal, tickSpacingVal);
+        tickLower = nearestUsableTick(clampTick(poolCurrentTick - 3 * tickSpacingVal), tickSpacingVal);
+        tickUpper = nearestUsableTick(clampTick(poolCurrentTick + 1 * tickSpacingVal), tickSpacingVal);
         break;
       case 'stable_moderate':
-      case 'stable': // Legacy support
+      case 'stable': { // Legacy support - both use same ± 3 tick spacing
         // ± 3 tick spacings from current tick
-        tickLower = nearestUsableTick(poolCurrentTick - 3 * tickSpacingVal, tickSpacingVal);
-        tickUpper = nearestUsableTick(poolCurrentTick + 3 * tickSpacingVal, tickSpacingVal);
+        const stableTickSpacing = 3 * tickSpacingVal;
+        tickLower = nearestUsableTick(clampTick(poolCurrentTick - stableTickSpacing), tickSpacingVal);
+        tickUpper = nearestUsableTick(clampTick(poolCurrentTick + stableTickSpacing), tickSpacingVal);
         break;
+      }
       // Standard/Volatile pool strategies (percentage-based)
       case 'narrow':
         // ± 5% from current price
         [tickLower, tickUpper] = calculateTicksFromPercentage(5, 5, poolCurrentTick, tickSpacingVal);
+        tickLower = clampTick(tickLower);
+        tickUpper = clampTick(tickUpper);
         break;
       case 'wide':
         // ± 25% from current price
         [tickLower, tickUpper] = calculateTicksFromPercentage(25, 25, poolCurrentTick, tickSpacingVal);
+        tickLower = clampTick(tickLower);
+        tickUpper = clampTick(tickUpper);
         break;
       case 'skewed':
         // +10% upper, -30% lower (asymmetric for directional exposure)
         [tickLower, tickUpper] = calculateTicksFromPercentage(30, 10, poolCurrentTick, tickSpacingVal);
+        tickLower = clampTick(tickLower);
+        tickUpper = clampTick(tickUpper);
         break;
       case 'moderate':
         // Legacy: ± 5% from current price
         [tickLower, tickUpper] = calculateTicksFromPercentage(5, 5, poolCurrentTick, tickSpacingVal);
+        tickLower = clampTick(tickLower);
+        tickUpper = clampTick(tickUpper);
         break;
       // Legacy strategies (kept for backward compatibility)
       case 'one_sided_lower':
         [tickLower] = calculateTicksFromPercentage(50, 0, poolCurrentTick, tickSpacingVal);
-        tickUpper = nearestUsableTick(poolCurrentTick - tickSpacingVal, tickSpacingVal);
+        tickLower = clampTick(tickLower);
+        tickUpper = nearestUsableTick(clampTick(poolCurrentTick - tickSpacingVal), tickSpacingVal);
         break;
       case 'one_sided_upper':
-        tickLower = nearestUsableTick(poolCurrentTick + tickSpacingVal, tickSpacingVal);
+        tickLower = nearestUsableTick(clampTick(poolCurrentTick + tickSpacingVal), tickSpacingVal);
         [, tickUpper] = calculateTicksFromPercentage(0, 100, poolCurrentTick, tickSpacingVal);
+        tickUpper = clampTick(tickUpper);
         break;
       default:
         return;
     }
 
-    // Ensure tickLower < tickUpper
+    // Ensure tickLower < tickUpper (must also respect bounds and alignment)
     if (tickLower >= tickUpper) {
-      tickUpper = tickLower + tickSpacingVal;
+      tickUpper = nearestUsableTick(clampTick(tickLower + tickSpacingVal), tickSpacingVal);
     }
 
     // Convert ticks to prices (Uniswap pattern: early return if pool not ready)

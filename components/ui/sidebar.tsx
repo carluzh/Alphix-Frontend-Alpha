@@ -15,6 +15,7 @@ const GrainGradient = dynamic(
   { ssr: false }
 )
 import { cn } from "@/lib/utils"
+import { isWebGL2Supported } from "@/lib/webgl"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
@@ -81,6 +82,13 @@ const SidebarProvider = React.forwardRef<
 
     // Hide paper shader on marketing/home page and on mobile (performance)
     const showPaperShader = pathname !== '/' && !isMobile
+
+    // GrainGradient needs WebGL2; on browsers/contexts without it the shader's
+    // ShaderMount throws an uncatchable async rejection (see lib/webgl). Only mount
+    // once we've confirmed support client-side. Starts false → never renders during
+    // SSR/first paint (the shader is dynamic ssr:false + purely decorative anyway).
+    const [webglOk, setWebglOk] = React.useState(false)
+    React.useEffect(() => { setWebglOk(isWebGL2Supported()) }, [])
 
     // This is the internal state of the sidebar.
     // We use openProp and setOpenProp for control from outside the component.
@@ -162,7 +170,7 @@ const SidebarProvider = React.forwardRef<
             ref={ref}
             {...props}
           >
-            {showPaperShader && (
+            {showPaperShader && webglOk && (
               <div className="pointer-events-none fixed inset-0 z-0 h-screen w-screen">
                 {/* Top-right blob - tighter grain containment */}
                 <div className="fixed top-0 right-0 w-4/5 h-4/5 overflow-hidden z-10">

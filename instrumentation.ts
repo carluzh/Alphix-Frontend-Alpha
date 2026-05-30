@@ -5,9 +5,13 @@ const DSN =
   'https://7f3aaefeeb345947a6a199963656c216@o4510478966980608.ingest.de.sentry.io/4510478986903632';
 
 export async function register() {
+  // Never report from the e2e harness build (synthetic flows against a local fork).
+  const enabled = process.env.NEXT_PUBLIC_E2E !== 'true';
+
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     Sentry.init({
       dsn: DSN,
+      enabled,
       release: process.env.NEXT_PUBLIC_APP_VERSION,
       dist: process.env.NEXT_PUBLIC_GIT_COMMIT,
       environment: process.env.NODE_ENV,
@@ -24,6 +28,7 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === 'edge') {
     Sentry.init({
       dsn: DSN,
+      enabled,
       release: process.env.NEXT_PUBLIC_APP_VERSION,
       dist: process.env.NEXT_PUBLIC_GIT_COMMIT,
       environment: process.env.NODE_ENV,

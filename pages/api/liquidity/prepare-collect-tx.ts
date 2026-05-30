@@ -1,13 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isAddress, getAddress } from 'viem';
 
-import { getAllPools } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
 import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
-import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
-import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
 import { reportError, reportMessage, addReportBreadcrumb } from '@/lib/observability';
+import { resolveAlphixPositionPool } from '@/lib/liquidity/api/prepare-tx-shared';
 
 interface PrepareCollectTxRequest extends NextApiRequest {
   body: {
@@ -47,18 +45,13 @@ export default async function handler(
     const chainIdError = validateChainId(chainId, networkMode);
     if (chainIdError) return res.status(400).json({ message: chainIdError });
 
-    // Breadcrumb before the on-chain position lookup; if it throws it bubbles to the
-    // outer catch where reportError captures it.
-    addReportBreadcrumb({ domain: 'liquidity', action: 'fetchPositionDetails', data: { tokenId, chainId } });
-    const details = await getPositionDetails(BigInt(tokenId), chainId);
-    const poolConfig = findPoolByPoolKey(getAllPools(networkMode), details.poolKey);
-
-    if (!poolConfig) {
-      return res.status(400).json({ message: 'Position is not in an Alphix pool.' });
-    }
-    if (isUnifiedYieldPool(poolConfig)) {
-      return res.status(400).json({ message: 'Unified Yield positions use a separate withdraw flow.' });
-    }
+    const resolved = await resolveAlphixPositionPool({
+      tokenId,
+      chainId,
+      networkMode,
+      uyMessage: 'Unified Yield positions use a separate withdraw flow.',
+    });
+    if (!resolved.ok) return res.status(400).json({ message: resolved.message });
 
     // No retry. The Uniswap Data API is eventually consistent — freshly-minted or
     // freshly-modified positions can return 404 ResourceNotFound ("Unable to derive

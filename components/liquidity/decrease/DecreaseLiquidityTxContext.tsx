@@ -10,19 +10,12 @@ import { chainIdForMode } from "@/lib/network-mode";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { useDecreaseLiquidityContext } from "./DecreaseLiquidityContext";
 
-import {
-  buildLiquidityTxContext,
-  type MintTxApiResponse,
-} from "@/lib/liquidity/transaction";
-import {
-  LiquidityTransactionType,
-  type ValidatedLiquidityTxContext,
-} from "@/lib/liquidity/types";
+import { type ValidatedLiquidityTxContext } from "@/lib/liquidity/types";
 
 import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
 
 import { useUnifiedYieldWithdraw } from "@/lib/liquidity/unified-yield/hooks/useUnifiedYieldWithdraw";
-import { buildUnifiedYieldWithdrawTx, calculateSharesFromPercentage } from "@/lib/liquidity/unified-yield/buildUnifiedYieldWithdrawTx";
+import { buildUnifiedYieldDecreaseTxContext, buildV4DecreaseTxContext } from "./buildDecreaseTxContext";
 type WithdrawPercentage = 25 | 50 | 75 | 100;
 
 export interface DecreaseReceive {
@@ -157,47 +150,23 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
 
     if (isUnifiedYield && position.hookAddress && position.shareBalance) {
       try {
-        const shareBalanceBigInt = parseUnits(position.shareBalance, 18);
-        const sharesToWithdraw = calculateSharesFromPercentage(shareBalanceBigInt, decreasePercentage);
-        const sqrtPriceX96 = poolStateData?.sqrtPriceX96 ? BigInt(poolStateData.sqrtPriceX96) : 0n;
-        const txResult = buildUnifiedYieldWithdrawTx({
+        const context = buildUnifiedYieldDecreaseTxContext({
           hookAddress: position.hookAddress as Address,
-          shares: sharesToWithdraw,
+          shareBalance: position.shareBalance,
           userAddress: accountAddress,
           poolId: position.poolId,
           chainId,
-          expectedSqrtPriceX96: sqrtPriceX96,
-          maxPriceSlippage: 500,
+          decreasePercentage,
+          sqrtPriceX96: poolStateData?.sqrtPriceX96,
+          token0Config,
+          token1Config,
+          withdrawAmount0,
+          withdrawAmount1,
         });
 
-        const rawAmount0 = parseUnits(withdrawAmount0 || "0", token0Config.decimals).toString();
-        const rawAmount1 = parseUnits(withdrawAmount1 || "0", token1Config.decimals).toString();
-
-        const context = buildLiquidityTxContext({
-          type: LiquidityTransactionType.Decrease,
-          apiResponse: {
-            needsApproval: false,
-            create: {
-              to: txResult.to,
-              data: txResult.calldata,
-              value: txResult.value?.toString() || "0",
-              gasLimit: txResult.gasLimit?.toString(),
-            },
-          } as MintTxApiResponse,
-          token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
-          token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
-          amount0: rawAmount0,
-          amount1: rawAmount1,
-          chainId,
-          isUnifiedYield: true,
-          hookAddress: position.hookAddress as Address,
-          poolId: position.poolId,
-          sharesToWithdraw,
-        });
-
-        setTxContext(context as ValidatedLiquidityTxContext);
+        setTxContext(context);
         setIsLoading(false);
-        return context as ValidatedLiquidityTxContext;
+        return context;
       } catch (err: any) {
         console.error("[DecreaseLiquidityTxContext] Unified Yield context error:", err);
         reportError(err, {
@@ -215,46 +184,19 @@ export function DecreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     }
 
     try {
-      const compositeId = position.positionId.toString();
-      const saltHex = compositeId.split('-').at(-1);
-      let tokenId = compositeId;
-      if (saltHex && saltHex !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
-        try { tokenId = BigInt(saltHex).toString(); } catch {}
-      }
-      const response = await fetch("/api/liquidity/prepare-decrease-tx", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userAddress: accountAddress,
-          tokenId,
-          decreasePercentage,
-          chainId,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to prepare transaction");
-      }
-      if (!data.details?.token0?.amount || !data.details?.token1?.amount) {
-        throw new Error("Uniswap LP API response missing token amounts");
-      }
-
-      setReceive({ percent: decreasePercentage, amount0: data.details.token0.amount, amount1: data.details.token1.amount });
-
-      const context = buildLiquidityTxContext({
-        type: LiquidityTransactionType.Decrease,
-        apiResponse: { needsApproval: false, create: data.create } as MintTxApiResponse,
-        token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
-        token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
-        amount0: data.details.token0.amount,
-        amount1: data.details.token1.amount,
+      const { context, receive: receiveData } = await buildV4DecreaseTxContext({
+        userAddress: accountAddress,
+        positionId: position.positionId,
+        decreasePercentage,
         chainId,
+        token0Config,
+        token1Config,
       });
 
-      setTxContext(context as ValidatedLiquidityTxContext);
+      setReceive(receiveData);
+      setTxContext(context);
       setIsLoading(false);
-      return context as ValidatedLiquidityTxContext;
+      return context;
     } catch (err: any) {
       console.error("[DecreaseLiquidityTxContext] fetchAndBuildContext error:", err);
       reportError(err, {

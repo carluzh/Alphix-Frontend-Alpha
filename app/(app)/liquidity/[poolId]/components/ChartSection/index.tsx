@@ -18,7 +18,6 @@ import {
 } from "@/components/ui/chart";
 import { cn } from "@/lib/utils";
 import { ChartType, chartConfig, usePDPChartState } from "./hooks";
-import type { ChartDataPoint } from "../../hooks";
 import {
   calculatePeriodRange,
   generateTicksForPeriod,
@@ -29,106 +28,24 @@ import { useUnifiedYieldChartData, type ChartPeriod } from "@/app/(app)/liquidit
 import { getTokenProtocol } from "@/lib/aave-rates";
 import type { NetworkMode, YieldSource } from "@/lib/pools-config";
 import dynamic from "next/dynamic";
-
-function YieldChartSkeleton() {
-  const dotPattern = `radial-gradient(circle, #333333 1px, transparent 1px)`;
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="relative" style={{ height: 300 }}>
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{ backgroundImage: dotPattern, backgroundSize: "24px 24px" }}
-        />
-        <div className="flex flex-col gap-1 p-3 bg-background rounded-xl absolute z-10">
-          <div className="h-9 w-20 bg-muted/20 animate-pulse rounded" />
-          <div className="h-4 w-32 bg-muted/10 animate-pulse rounded" />
-        </div>
-      </div>
-      <div className="flex flex-row items-center gap-1 opacity-50">
-        {["1W", "1M"].map((opt) => (
-          <div key={opt} className="h-7 px-2.5 text-xs rounded-md bg-muted/20 text-muted-foreground">{opt}</div>
-        ))}
-      </div>
-    </div>
-  );
-}
+import type { ChartSectionProps, TimePeriod, HoverData } from "./types";
+import {
+  PDP_CHART_HEIGHT_PX,
+  CHART_COLORS,
+  DOT_PATTERN,
+  TIME_SCALE_HEIGHT,
+  PRICE_SCALE_WIDTH,
+  CHART_DATA_PADDING,
+  formatFeeValue,
+} from "./chart-utils";
+import { DeltaDisplay, FeeChangeDisplay, LastPointPulsatingDot } from "./chart-displays";
+import { ChartTypeTabs, TimePeriodSelector } from "./chart-controls";
+import { YieldChartSkeleton } from "./skeletons";
 
 const YieldChartSection = dynamic(
   () => import("@/app/(app)/liquidity/position/[tokenId]/components/YieldChartSection").then(mod => mod.YieldChartSection),
   { ssr: false, loading: () => <YieldChartSkeleton /> }
 );
-
-interface ChartSectionProps {
-  chartData: ChartDataPoint[];
-  /** Raw fee events — when present with per-event timestamps, enables granular fee chart */
-  feeEvents?: import("../../hooks/usePoolChartData").FeeEvent[];
-  isLoading: boolean;
-  windowWidth: number;
-  chartType?: ChartType;
-  onChartTypeChange?: (type: ChartType) => void;
-  poolId?: string;
-  token0Symbol?: string;
-  token1Symbol?: string;
-  yieldSources?: Array<'aave'>;
-  currentSwapApr?: number;
-  networkMode?: string;
-  /** Pool type — drives fee chart rendering (Volatile: per-event, Stable: daily with Activity/Target) */
-  poolType?: string;
-}
-
-const PDP_CHART_HEIGHT_PX = 300; // Match PortfolioChart height
-
-// Colors matching page.old.tsx
-const CHART_COLORS = {
-  activity: "hsl(var(--chart-3))",
-  target: "hsl(var(--chart-2))",
-  fee: "#e85102",
-  buyFee: "hsl(142.1 76.2% 36.3%)",  // custom-green
-  sellFee: "hsl(0 84.2% 60.2%)",       // custom-red
-  volatility: "#a0a0a0",
-  bar: "#404040",
-};
-
-// Dot pattern for chart background (matches PortfolioChart)
-const DOT_PATTERN = {
-  color: "#333333",
-  size: "1px",
-  spacing: "24px",
-};
-
-// Axis dimensions for pattern overlay positioning (matches PatternOverlay.tsx)
-const TIME_SCALE_HEIGHT = 26; // Height of x-axis labels
-const PRICE_SCALE_WIDTH = 55; // Width of y-axis labels
-const CHART_DATA_PADDING = 10; // Padding between chart data and Y-axis (via XAxis padding)
-
-// Time period options
-type TimePeriod = "1D" | "1W" | "1M";
-
-// Hover state for chart values
-interface HoverData {
-  date: string;
-  fee?: number;
-  activity?: number;
-  target?: number;
-  volume?: number;
-  tvl?: number;
-  volatility?: number;
-  agentAdjustment?: number;
-  buyFee?: number;
-  sellFee?: number;
-}
-
-/**
- * Format fee value with proper decimal places
- * 2 decimals if >= 0.3, 3 if >= 0.05, 4 else
- */
-function formatFeeValue(value: number): string {
-  const absValue = Math.abs(value);
-  if (absValue >= 0.3) return value.toFixed(2);
-  if (absValue >= 0.05) return value.toFixed(3);
-  if (absValue >= 0.0005) return value.toFixed(4);
-  return value.toFixed(5);
-}
 
 /**
  * Chart section for pool detail page.
@@ -815,196 +732,6 @@ export const ChartSection = memo(function ChartSection({
         </>
       )}
 
-    </div>
-  );
-});
-
-/**
- * Custom dot renderer for last data point with pulsating animation
- * Matches LiveDotRenderer.tsx animation pattern
- */
-interface CustomDotProps {
-  cx?: number;
-  cy?: number;
-  index?: number;
-  dataLength: number;
-  color: string;
-  isHovering: boolean;
-}
-
-// Background color for the dot border (matches LiveDotRenderer)
-const SURFACE1_COLOR = "hsl(0 0% 7%)";
-
-function LastPointPulsatingDot({ cx, cy, index, dataLength, color, isHovering }: CustomDotProps) {
-  // Only render for the last data point and when not hovering
-  if (index !== dataLength - 1 || isHovering || cx === undefined || cy === undefined) {
-    return null;
-  }
-
-  return (
-    <g>
-      {/* Inject keyframes animation */}
-      <style>
-        {`
-          @keyframes live-dot-pulse-svg {
-            0% {
-              transform: scale(1);
-              opacity: 0.5;
-            }
-            75% {
-              transform: scale(3);
-              opacity: 0;
-            }
-            100% {
-              transform: scale(3);
-              opacity: 0;
-            }
-          }
-        `}
-      </style>
-      {/* Outer pulsing ring 1 */}
-      <circle
-        cx={cx}
-        cy={cy}
-        r={5}
-        fill={color}
-        style={{
-          transformOrigin: `${cx}px ${cy}px`,
-          animation: "live-dot-pulse-svg 2s ease-in-out infinite",
-        }}
-      />
-      {/* Outer pulsing ring 2 (delayed) */}
-      <circle
-        cx={cx}
-        cy={cy}
-        r={5}
-        fill={color}
-        style={{
-          transformOrigin: `${cx}px ${cy}px`,
-          animation: "live-dot-pulse-svg 2s ease-in-out infinite 0.5s",
-        }}
-      />
-      {/* Inner solid dot with border */}
-      <circle cx={cx} cy={cy} r={5} fill={color} stroke={SURFACE1_COLOR} strokeWidth={2} />
-    </g>
-  );
-}
-
-/**
- * Delta display component (like Uniswap's Delta.tsx)
- */
-function DeltaDisplay({ delta }: { delta: number }) {
-  if (!Number.isFinite(delta) || delta === 0) return null;
-
-  const isPositive = delta > 0;
-  const color = isPositive ? "text-green-500" : "text-red-500";
-  const arrow = isPositive ? "↑" : "↓";
-
-  return (
-    <span className={cn("flex items-center gap-0.5 tabular-nums", color)}>
-      <span>{arrow}</span>
-      <span>{Math.abs(delta).toFixed(2)}%</span>
-    </span>
-  );
-}
-
-/**
- * Fee change display - shows daily change and percentage
- * Format: ↑ +0.05% (15.00%)
- */
-function FeeChangeDisplay({ change, delta }: { change: number; delta: number }) {
-  if (!Number.isFinite(change) && !Number.isFinite(delta)) return null;
-
-  const isPositive = change >= 0;
-  const color = isPositive ? "text-green-500" : "text-red-500";
-  const arrow = isPositive ? "↑" : "↓";
-
-  // Format the fee change with proper decimals
-  const changeStr = formatFeeValue(Math.abs(change));
-
-  // Format the percentage change
-  const deltaStr = Math.abs(delta).toFixed(2);
-
-  return (
-    <span className={cn("flex items-center gap-1 tabular-nums", color)}>
-      <span>{arrow}</span>
-      <span>{isPositive ? "+" : "-"}{changeStr}%</span>
-      <span className="text-muted-foreground">({deltaStr}%)</span>
-    </span>
-  );
-}
-
-/**
- * Chart type tabs - simple tab buttons (Fee/Volume/TVL)
- */
-interface ChartTypeTabsProps {
-  chartType: ChartType;
-  onChartTypeChange: (type: ChartType) => void;
-  disabled?: boolean;
-  /** Hide Yield tab (Volatile pools have no lending yield) */
-  hideYield?: boolean;
-}
-
-const ChartTypeTabs = memo(function ChartTypeTabs({ chartType, onChartTypeChange, disabled, hideYield }: ChartTypeTabsProps) {
-  const tabs = [
-    { type: ChartType.FEE, label: "Dynamic Fee" },
-    ...(!hideYield ? [{ type: ChartType.YIELD, label: "Yield" }] : []),
-    { type: ChartType.VOLUME, label: "Volume" },
-    { type: ChartType.TVL, label: "TVL" },
-  ];
-
-  return (
-    <div className={cn("flex flex-row items-center gap-1", disabled && "opacity-50 pointer-events-none")}>
-      {tabs.map((tab) => (
-        <button
-          key={tab.type}
-          onClick={() => onChartTypeChange(tab.type)}
-          disabled={disabled}
-          className={cn(
-            "h-7 px-2.5 text-xs rounded-md transition-colors duration-150 cursor-pointer select-none",
-            chartType === tab.type
-              ? "bg-muted/50 text-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-          )}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
-  );
-});
-
-/**
- * Time period selector - matches PortfolioChart's TimeFrameSelector
- */
-interface TimePeriodSelectorProps {
-  period: TimePeriod;
-  onPeriodChange: (period: TimePeriod) => void;
-  disabled?: boolean;
-  /** Show 1D option (only for Volatile pool Fee chart) */
-  show1D?: boolean;
-}
-
-const TimePeriodSelector = memo(function TimePeriodSelector({ period, onPeriodChange, disabled, show1D }: TimePeriodSelectorProps) {
-  const options: TimePeriod[] = show1D ? ["1D", "1W", "1M"] : ["1W", "1M"];
-
-  return (
-    <div className={cn("flex flex-row items-center gap-1", disabled && "opacity-50 pointer-events-none")}>
-      {options.map((opt) => (
-        <button
-          key={opt}
-          onClick={() => onPeriodChange(opt)}
-          disabled={disabled}
-          className={cn(
-            "h-7 px-2.5 text-xs rounded-md transition-colors duration-150 cursor-pointer select-none",
-            period === opt
-              ? "bg-muted/50 text-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-          )}
-        >
-          {opt}
-        </button>
-      ))}
     </div>
   );
 });

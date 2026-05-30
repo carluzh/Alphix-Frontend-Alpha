@@ -206,5 +206,3 @@ export function formatTotalApy(breakdown: APYBreakdownInput): string {
 export const calculateRealizedApr = calculateRealizedApy;
 /** @deprecated Use formatApy */
 export const formatApr = formatApy;
-/** @deprecated Use formatApyValue */
-export const formatAprValue = formatApyValue;

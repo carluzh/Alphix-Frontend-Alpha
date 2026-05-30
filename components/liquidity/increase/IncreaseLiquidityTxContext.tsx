@@ -13,25 +13,14 @@ import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { usePercentageInput } from "@/hooks/usePercentageInput";
 import { useIncreaseLiquidityContext } from "./IncreaseLiquidityContext";
 
-import {
-  buildLiquidityTxContext,
-  type MintTxApiResponse,
-} from "@/lib/liquidity/transaction";
-import {
-  LiquidityTransactionType,
-  type ValidatedLiquidityTxContext,
-  type ValidatedTransactionRequest,
-  type SignTypedDataStepFields,
-} from "@/lib/liquidity/types";
-import { buildApprovalCalldata } from "@/lib/liquidity/hooks/approval";
-import { toApproveRequest } from "@/lib/liquidity/utils/toApproveRequest";
+import { type ValidatedLiquidityTxContext } from "@/lib/liquidity/types";
 
 import { usePoolState } from "@/lib/apollo/hooks/usePoolState";
 
 import { useUnifiedYieldDeposit } from "@/lib/liquidity/unified-yield/hooks/useUnifiedYieldDeposit";
 import { useUnifiedYieldApprovals } from "@/lib/liquidity/unified-yield/useUnifiedYieldApprovals";
-import { buildUnifiedYieldDepositTx, buildDepositParamsFromPreview } from "@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx";
 import type { UnifiedYieldApprovalStatus } from "@/lib/liquidity/unified-yield/types";
+import { buildUnifiedYieldIncreaseContext, buildV4IncreaseContext } from "./buildIncreaseTxContext";
 
 interface IncreaseLiquidityTxContextType {
   isLoading: boolean;
@@ -250,81 +239,28 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     }
 
     if (isUnifiedYield && poolConfig?.hooks) {
+      const preview = unifiedYieldDeposit.lastPreview;
+      if (!preview || preview.shares === 0n) {
+        setError("Please enter an amount first");
+        setIsLoading(false);
+        return null;
+      }
       try {
-        const hookAddress = poolConfig.hooks as Address;
-
-        const preview = unifiedYieldDeposit.lastPreview;
-        if (!preview || preview.shares === 0n) {
-          setError("Please enter an amount first");
-          setIsLoading(false);
-          return null;
-        }
-
-        const approvalCheck = await refetchApprovals({ amount0Wei: preview.amount0, amount1Wei: preview.amount1 });
-
-        let approveToken0Request: ValidatedTransactionRequest | undefined;
-        let approveToken1Request: ValidatedTransactionRequest | undefined;
-
-        if (approvalCheck?.token0NeedsApproval) {
-          approveToken0Request = {
-            to: token0Config.address as Address,
-            data: buildApprovalCalldata(hookAddress, preview.amount0),
-            value: 0n,
-            chainId,
-          };
-        }
-        if (approvalCheck?.token1NeedsApproval) {
-          approveToken1Request = {
-            to: token1Config.address as Address,
-            data: buildApprovalCalldata(hookAddress, preview.amount1),
-            value: 0n,
-            chainId,
-          };
-        }
-
-        const sqrtPriceX96 = poolStateData?.sqrtPriceX96 ? BigInt(poolStateData.sqrtPriceX96) : undefined;
-        const depositParams = buildDepositParamsFromPreview(
-          preview,
-          hookAddress,
-          token0Config.address as Address,
-          token1Config.address as Address,
+        const context = await buildUnifiedYieldIncreaseContext({
           accountAddress,
-          position.poolId,
           chainId,
-          sqrtPriceX96,
-          500,
-        );
-
-        const depositTx = buildUnifiedYieldDepositTx(depositParams);
-
-        const context = buildLiquidityTxContext({
-          type: LiquidityTransactionType.Increase,
-          apiResponse: {
-            needsApproval: false,
-            create: {
-              to: depositTx.to,
-              data: depositTx.calldata,
-              value: depositTx.value?.toString() || "0",
-              gasLimit: depositTx.gasLimit?.toString(),
-              chainId,
-            },
-          } as MintTxApiResponse,
-          token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
-          token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
-          amount0: preview.amount0.toString(),
-          amount1: preview.amount1.toString(),
-          chainId,
-          approveToken0Request,
-          approveToken1Request,
-          isUnifiedYield: true,
-          hookAddress,
+          token0Config,
+          token1Config,
+          hookAddress: poolConfig.hooks as Address,
           poolId: position.poolId,
-          sharesToMint: preview.shares,
+          preview,
+          sqrtPriceX96: poolStateData?.sqrtPriceX96,
+          refetchApprovals,
         });
 
-        setTxContext(context as ValidatedLiquidityTxContext);
+        setTxContext(context);
         setIsLoading(false);
-        return context as ValidatedLiquidityTxContext;
+        return context;
       } catch (err: any) {
         console.error("[IncreaseLiquidityTxContext] Unified Yield context error:", err);
         reportError(err, {
@@ -365,155 +301,21 @@ export function IncreaseLiquidityTxContextProvider({ children }: PropsWithChildr
     };
 
     try {
-      const response = await fetch("/api/liquidity/prepare-increase-tx", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userAddress: accountAddress,
-          tokenId,
-          amount0: amount0 || "0",
-          amount1: amount1 || "0",
-          inputSide,
-          chainId,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to prepare transaction");
-      }
-
-      if (!data.details?.token0?.amount || !data.details?.token1?.amount) {
-        throw new Error("Uniswap LP API response missing token amounts");
-      }
-
-      const increasePositionRequestArgs = {
-        userAddress: accountAddress,
+      const context = await buildV4IncreaseContext({
+        accountAddress,
+        chainId,
+        token0Config,
+        token1Config,
         tokenId,
         amount0: amount0 || "0",
         amount1: amount1 || "0",
         inputSide,
-        chainId,
-      };
+        syncAmountsFromApi,
+      });
 
-      syncAmountsFromApi(data.details);
-
-      if (data.needsApproval && data.approvalType === 'ERC20_TO_PERMIT2') {
-        const rawAmount0 = BigInt(data.details.token0.amount);
-        const rawAmount1 = BigInt(data.details.token1.amount);
-
-        const permitData = data.permitBatchData;
-        const sigDetails = data.signatureDetails;
-        let permit: SignTypedDataStepFields | undefined;
-
-        if (permitData?.values && sigDetails?.domain) {
-          permit = {
-            domain: {
-              name: sigDetails.domain.name,
-              chainId: sigDetails.domain.chainId,
-              verifyingContract: sigDetails.domain.verifyingContract as Address,
-            },
-            types: sigDetails.types,
-            values: permitData.values || permitData,
-          };
-        }
-
-        // Send the FULL normalized permit (domain, types, values) — backend's
-        // `denormalizeV4BatchPermit` reads `types` to wrap fields, so a values-only
-        // payload throws "Cannot convert undefined or null to object".
-        const increasePositionRequestArgsWithPermit = permitData ? {
-          ...increasePositionRequestArgs,
-          permitBatchData: permitData,
-        } : increasePositionRequestArgs;
-
-        const context = buildLiquidityTxContext({
-          type: LiquidityTransactionType.Increase,
-          apiResponse: {
-            needsApproval: !data.create,
-            permitBatchData: permitData,
-            signatureDetails: sigDetails,
-            create: data.create,
-          } as MintTxApiResponse,
-          token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
-          token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
-          amount0: rawAmount0.toString(),
-          amount1: rawAmount1.toString(),
-          chainId,
-          approveToken0Request: toApproveRequest(data.approveToken0Tx, chainId),
-          approveToken1Request: toApproveRequest(data.approveToken1Tx, chainId),
-          permit,
-          increasePositionRequestArgs: increasePositionRequestArgsWithPermit,
-        });
-
-        setTxContext(context as ValidatedLiquidityTxContext);
-        setIsLoading(false);
-        return context as ValidatedLiquidityTxContext;
-      }
-
-      if (data.needsApproval && data.approvalType === 'PERMIT2_BATCH_SIGNATURE') {
-        const permitData = data.permitBatchData;
-        const sigDetails = data.signatureDetails;
-
-        const permit: SignTypedDataStepFields = {
-          domain: {
-            name: sigDetails.domain.name,
-            chainId: sigDetails.domain.chainId,
-            verifyingContract: sigDetails.domain.verifyingContract as Address,
-          },
-          types: sigDetails.types,
-          values: permitData.values || permitData,
-        };
-
-        const rawAmount0 = BigInt(data.details.token0.amount);
-        const rawAmount1 = BigInt(data.details.token1.amount);
-
-        const increasePositionRequestArgsWithPermit = {
-          ...increasePositionRequestArgs,
-          permitBatchData: permitData,
-        };
-
-        const context = buildLiquidityTxContext({
-          type: LiquidityTransactionType.Increase,
-          apiResponse: {
-            needsApproval: true,
-            permitBatchData: permitData,
-            signatureDetails: sigDetails,
-          } as MintTxApiResponse,
-          token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
-          token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
-          amount0: rawAmount0.toString(),
-          amount1: rawAmount1.toString(),
-          chainId,
-          approveToken0Request: toApproveRequest(data.approveToken0Tx, chainId),
-          approveToken1Request: toApproveRequest(data.approveToken1Tx, chainId),
-          permit,
-          increasePositionRequestArgs: increasePositionRequestArgsWithPermit,
-        });
-
-        setTxContext(context as ValidatedLiquidityTxContext);
-        setIsLoading(false);
-        return context as ValidatedLiquidityTxContext;
-      }
-
-      if (!data.needsApproval && data.create) {
-        const context = buildLiquidityTxContext({
-          type: LiquidityTransactionType.Increase,
-          apiResponse: { needsApproval: false, create: data.create } as MintTxApiResponse,
-          token0: { address: token0Config.address as Address, symbol: token0Config.symbol, decimals: token0Config.decimals, chainId },
-          token1: { address: token1Config.address as Address, symbol: token1Config.symbol, decimals: token1Config.decimals, chainId },
-          amount0: data.details.token0.amount,
-          amount1: data.details.token1.amount,
-          chainId,
-          increasePositionRequestArgs,
-        });
-
-        setTxContext(context as ValidatedLiquidityTxContext);
-        setIsLoading(false);
-        return context as ValidatedLiquidityTxContext;
-      }
-
-      throw new Error("Unexpected API response");
+      setTxContext(context);
+      setIsLoading(false);
+      return context;
     } catch (err: any) {
       console.error("[IncreaseLiquidityTxContext] fetchAndBuildContext error:", err);
       reportError(err, {

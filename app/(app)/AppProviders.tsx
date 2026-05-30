@@ -81,11 +81,22 @@ export default function AppProviders({
 
       // Check if this is a wallet provider error
       if (isWalletProviderError(error)) {
-        // Route through the consolidated helper. It auto-drops user rejections
-        // (4001); 4100/4200/4900/4901/-32xxx still capture. errorCategory is
-        // derived by the helper — never computed here.
         const errorObj = (error ?? {}) as Record<string, unknown>;
         const code = errorObj.code;
+
+        // Non-actionable wallet/connector noise (user-reject + EIP-1193/JSON-RPC
+        // codes from wagmi/AppKit internal async tasks we can't wrap). Don't report
+        // it — the central beforeSend (isWalletRejection in sentry-init-shared) owns
+        // dropping it; here we just silence the browser console. This eliminated a
+        // ~63-event class of unhandled-rejection reports from /overview.
+        const noiseCodes = [4001, 4100, 4200, 4900, 4901, -32002];
+        const isRpcRange = typeof code === 'number' && code <= -32000 && code >= -32099;
+        if ((typeof code === 'number' && noiseCodes.includes(code)) || isRpcRange) {
+          event.preventDefault();
+          return;
+        }
+
+        // Genuinely-novel wallet errors (unrecognised code) still report.
         reportError(error, {
           domain: 'wallet',
           action: 'unhandledRejection',

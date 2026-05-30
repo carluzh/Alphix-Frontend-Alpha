@@ -1,26 +1,22 @@
 /**
  * Transaction Provider
  *
- * Root provider for transaction infrastructure.
- * Combines Redux store for transaction state and TransactionWatcher for cache invalidation.
+ * Root provider for transaction-related cross-cutting concerns. It wraps the app
+ * with the wallet-balances refresh watcher (TransactionWatcherProvider).
  *
- * @see interface/apps/web/src/state/index.ts
+ * The former Redux store + redux-persist layer was removed: it tracked
+ * transactions that were never dispatched, so it held no state and did no work.
+ * Post-tx cache invalidation is handled by lib/apollo/mutations/invalidation.ts
+ * and the position-page React-Query layer.
  */
 
 'use client'
 
 import { PropsWithChildren } from 'react'
-import { Provider as ReduxProvider } from 'react-redux'
-import { PersistGate } from 'redux-persist/integration/react'
-import { store, persistor } from './redux-store'
 import { TransactionWatcherProvider } from './TokenBalancesProvider'
 
 /**
  * Transaction Provider
- *
- * Wraps the app with:
- * 1. Redux store for transaction state persistence
- * 2. TransactionWatcher for detecting completed transactions
  *
  * Usage:
  * ```tsx
@@ -30,13 +26,7 @@ import { TransactionWatcherProvider } from './TokenBalancesProvider'
  * ```
  */
 export function TransactionProvider({ children }: PropsWithChildren) {
-  return (
-    <ReduxProvider store={store}>
-      <PersistGate loading={null} persistor={persistor}>
-        <TransactionWatcherProvider>{children}</TransactionWatcherProvider>
-      </PersistGate>
-    </ReduxProvider>
-  )
+  return <TransactionWatcherProvider>{children}</TransactionWatcherProvider>
 }
 
 export default TransactionProvider

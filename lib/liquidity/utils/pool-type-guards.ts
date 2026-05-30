@@ -35,6 +35,15 @@ export function isUnifiedYieldPool(pool: PoolConfig): boolean {
 }
 
 /**
+ * Check if a pool supports concentrated (custom range) mode.
+ * UY pools are restricted to rehypo-only; all other pools support concentrated.
+ */
+export function canUseConcurrentMode(pool: PoolConfig | null): boolean {
+  if (!pool) return true;
+  return !isUnifiedYieldPool(pool);
+}
+
+/**
  * Find the PoolConfig that matches an on-chain V4 poolKey. Uses hooks address
  * as primary key (hooks are unique per pool in our deployment) with currencies
  * as a tiebreaker.

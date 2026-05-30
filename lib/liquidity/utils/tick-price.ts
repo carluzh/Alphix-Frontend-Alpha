@@ -183,7 +183,7 @@ export function priceToTickSimple(price: number): number {
   const tick = Math.round(Math.log(price) / Math.log(1.0001));
 
   // Clamp to valid range
-  return Math.max(TickMath.MIN_TICK, Math.min(TickMath.MAX_TICK, tick));
+  return clampTick(tick);
 }
 
 /**
@@ -329,6 +329,19 @@ export function isTickAtLimit(
  */
 export function isTickValid(tick: number): boolean {
   return tick >= TickMath.MIN_TICK && tick <= TickMath.MAX_TICK;
+}
+
+/**
+ * Clamp a tick value to valid V4 SDK bounds
+ *
+ * Prevents assertion crashes when tick arithmetic approaches MIN/MAX_TICK bounds
+ * (e.g. USDC/USDT pools near MAX_TICK) before operations like nearestUsableTick.
+ *
+ * @param tick - Tick value to clamp
+ * @returns Tick clamped to [TickMath.MIN_TICK, TickMath.MAX_TICK] range
+ */
+export function clampTick(tick: number): number {
+  return Math.max(TickMath.MIN_TICK, Math.min(TickMath.MAX_TICK, tick));
 }
 
 // =============================================================================

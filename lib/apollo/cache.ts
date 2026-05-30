@@ -25,19 +25,8 @@ export function setupSharedApolloCache(): InMemoryCache {
            * The following redirects set ids to values known ahead of time.
            *
            * NOTE: may require setting a Field policy to ensure ids are stored in the
-           *      format we specify. See `token()` below for a full example.
+           *      format we specify. See `Token` keyFields below for the address-normalization pattern.
            */
-
-          // simply use chain / address pair as id instead for tokens
-          token: {
-            read(_, { args, toReference }): Reference | undefined {
-              return toReference({
-                __typename: 'Token',
-                chain: args?.chain,
-                address: normalizeTokenAddressForCache(args?.address),
-              })
-            },
-          },
 
           // use chain / poolId pair for pools
           pool: {
@@ -115,9 +104,6 @@ export function setupSharedApolloCache(): InMemoryCache {
             merge: true,
           },
         },
-      },
-      PriceHistory: {
-        keyFields: false,
       },
       FeeItem: {
         keyFields: ['positionId'],

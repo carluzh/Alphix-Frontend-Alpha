@@ -1,12 +1,10 @@
 "use client";
 
 import React, { useCallback, useMemo, useEffect, useRef } from "react";
-import { TokenImage } from "@/components/ui/token-image";
 import { useAnimation } from "framer-motion";
 import { useAccount } from "wagmi";
 import { toast } from "sonner";
 
-import { cn } from "@/lib/utils";
 import { getExplorerTxUrl } from "@/lib/wagmiConfig";
 import { chainIdForMode } from "@/lib/network-mode";
 import { clearCachedPermit } from "@/lib/permit-types";
@@ -20,6 +18,7 @@ import { PriceDeviationCallout } from "@/components/ui/PriceDeviationCallout";
 import { formatCalculatedAmount, getTokenIcon } from "../liquidity-form-utils";
 import { DepositInputForm, type PositionField } from "../shared/DepositInputForm";
 import { PositionAmountsDisplay } from "../shared/PositionAmountsDisplay";
+import { LiquidityModalHeader } from "../shared/LiquidityModalHeader";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 
 import { TransactionModal } from "@/components/transactions/TransactionModal";
@@ -267,38 +266,7 @@ function IncreaseLiquidityInner({
       onSuccess={handleSuccess}
     >
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <span className="text-2xl font-semibold text-white">{position.token0.symbol}</span>
-              <span className="text-2xl font-semibold text-muted-foreground">/</span>
-              <span className="text-2xl font-semibold text-white">{position.token1.symbol}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5">
-                <div className={cn("w-2 h-2 rounded-full", isUnifiedYield ? "bg-green-500" : (position.isInRange ? "bg-green-500" : "bg-red-500"))} />
-                <span className={cn("text-xs font-medium", isUnifiedYield ? "text-green-500" : (position.isInRange ? "text-green-500" : "text-red-500"))}>
-                  {isUnifiedYield ? "Earning" : (position.isInRange ? "In Range" : "Out of Range")}
-                </span>
-              </div>
-              {position.poolId && (() => {
-                const poolConfig = getPoolBySlug(position.poolId, networkMode);
-                const isUY = poolConfig?.rehypoRange !== undefined;
-                return isUY ? (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: "rgba(152, 150, 255, 0.10)", color: "#9896FF" }}>
-                    Unified Yield
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted/40 text-muted-foreground">Custom</span>
-                );
-              })()}
-            </div>
-          </div>
-          <div className="flex items-center -space-x-2">
-            <TokenImage src={getTokenIcon(position.token0.symbol, networkMode)} alt="" size={36} />
-            <TokenImage src={getTokenIcon(position.token1.symbol, networkMode)} alt="" size={36} />
-          </div>
-        </div>
+        <LiquidityModalHeader position={position} isUnifiedYield={isUnifiedYield} networkMode={networkMode} />
 
         <PriceDeviationCallout
           deviation={priceDeviation}
@@ -308,22 +276,28 @@ function IncreaseLiquidityInner({
         />
 
         <DepositInputForm
-          token0Symbol={position.token0.symbol}
-          token1Symbol={position.token1.symbol}
-          formattedAmounts={formattedAmounts}
-          currencyBalances={{ TOKEN0: token0Balance, TOKEN1: token1Balance }}
+          token0={{
+            symbol: position.token0.symbol,
+            amount: formattedAmounts?.TOKEN0 ?? "",
+            balance: token0Balance,
+            usdPrice: token0USDPrice,
+            disabled: deposit0Disabled,
+            isOverBalance: isOverBalance0,
+            wiggleControls: wiggleControls0,
+            onPercentageClick: handlePercentage0,
+          }}
+          token1={{
+            symbol: position.token1.symbol,
+            amount: formattedAmounts?.TOKEN1 ?? "",
+            balance: token1Balance,
+            usdPrice: token1USDPrice,
+            disabled: deposit1Disabled,
+            isOverBalance: isOverBalance1,
+            wiggleControls: wiggleControls1,
+            onPercentageClick: handlePercentage1,
+          }}
           onUserInput={handleUserInput}
           onCalculateDependentAmount={calculateDependentAmount}
-          deposit0Disabled={deposit0Disabled}
-          deposit1Disabled={deposit1Disabled}
-          token0USDPrice={token0USDPrice}
-          token1USDPrice={token1USDPrice}
-          isAmount0OverBalance={isOverBalance0}
-          isAmount1OverBalance={isOverBalance1}
-          wiggleControls0={wiggleControls0}
-          wiggleControls1={wiggleControls1}
-          onToken0PercentageClick={handlePercentage0}
-          onToken1PercentageClick={handlePercentage1}
           formatUsdAmount={formatCalculatedAmount}
           inputLabel="Add"
         />

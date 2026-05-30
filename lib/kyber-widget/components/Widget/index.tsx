@@ -613,6 +613,12 @@ const Widget = ({
   //   - 'exact'   → BigInt(trade.routeSummary.amountIn) (raw wei from Kyber)
   //   - 'infinite'→ undefined, which Kyber pads to 0xffff…ffff (MaxUint256)
   // (see use-approval.ts:77 — the audited default when amount is omitted).
+  // Refs feed the setInterval; closure capture would freeze approvalState.
+  const approvalStateRef = useRef(approvalState)
+  const approvalPendingTxRef = useRef(approvalPendingTx)
+  useEffect(() => { approvalStateRef.current = approvalState }, [approvalState])
+  useEffect(() => { approvalPendingTxRef.current = approvalPendingTx }, [approvalPendingTx])
+
   const approveWithWait = useCallback<StepExecutorFn>(
     async (_step, context: StepExecutionContext): Promise<StepResult> => {
       const amountToApprove =
@@ -644,15 +650,18 @@ const Widget = ({
             return
           }
 
+          const currentState = approvalStateRef.current
+          const currentPendingTx = approvalPendingTxRef.current
+
           // Definite success — only resolve here.
-          if (approvalState === APPROVAL_STATE.APPROVED) {
+          if (currentState === APPROVAL_STATE.APPROVED) {
             clearInterval(interval)
-            resolve({ txHash: approvalPendingTx || '' })
+            resolve({ txHash: currentPendingTx || '' })
             return
           }
 
           // Track PENDING so we know the tx was submitted on-chain.
-          if (approvalState === APPROVAL_STATE.PENDING) {
+          if (currentState === APPROVAL_STATE.PENDING) {
             everPending = true
           }
 
@@ -667,8 +676,8 @@ const Widget = ({
           // PENDING within the same poll tick — the on-chain re-check (line
           // 165 in use-approval.ts) can momentarily reset state during the
           // PENDING→APPROVED transition.
-          if (approvalState === APPROVAL_STATE.NOT_APPROVED) {
-            if (everPending && !approvalPendingTx) {
+          if (currentState === APPROVAL_STATE.NOT_APPROVED) {
+            if (everPending && !currentPendingTx) {
               // Saw PENDING, now NOT_APPROVED, and `pendingTx` cleared → the
               // tx mined as failed. Definite failure.
               clearInterval(interval)
@@ -691,7 +700,7 @@ const Widget = ({
         }, 1000)
       })
     },
-    [approve, approvalState, approvalType, trade?.routeSummary?.amountIn, approvalPendingTx],
+    [approve, approvalType, trade?.routeSummary?.amountIn],
   )
   // Suppress unused warning if the upstream flag isn't read in JSX.
   void checkingAllowance

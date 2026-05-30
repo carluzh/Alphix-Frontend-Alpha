@@ -13,6 +13,7 @@ import { invalidateAfterTx } from "@/lib/apollo/mutations/invalidation";
 import { reportMessage } from "@/lib/observability";
 import { getTokenIcon } from "../liquidity-form-utils";
 import { PositionAmountsDisplay } from "../shared/PositionAmountsDisplay";
+import { LiquidityModalHeader } from "../shared/LiquidityModalHeader";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
 import type { TokenSymbol } from "@/lib/pools-config";
 import { getPoolBySlug, getTokenDefinitions } from "@/lib/pools-config";
@@ -185,38 +186,7 @@ function DecreaseLiquidityInner({
       onSuccess={handleSuccess}
     >
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <span className="text-2xl font-semibold text-white">{position.token0.symbol}</span>
-              <span className="text-2xl font-semibold text-muted-foreground">/</span>
-              <span className="text-2xl font-semibold text-white">{position.token1.symbol}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5">
-                <div className={cn("w-2 h-2 rounded-full", isUnifiedYield ? "bg-green-500" : (position.isInRange ? "bg-green-500" : "bg-red-500"))} />
-                <span className={cn("text-xs font-medium", isUnifiedYield ? "text-green-500" : (position.isInRange ? "text-green-500" : "text-red-500"))}>
-                  {isUnifiedYield ? "Earning" : (position.isInRange ? "In Range" : "Out of Range")}
-                </span>
-              </div>
-              {position.poolId && (() => {
-                const poolConfig = getPoolBySlug(position.poolId, networkMode);
-                const isUY = poolConfig?.rehypoRange !== undefined;
-                return isUY ? (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: "rgba(152, 150, 255, 0.10)", color: "#9896FF" }}>
-                    Unified Yield
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted/40 text-muted-foreground">Custom</span>
-                );
-              })()}
-            </div>
-          </div>
-          <div className="flex items-center -space-x-2">
-            <TokenImage src={getTokenIcon(position.token0.symbol, networkMode)} alt="" size={36} />
-            <TokenImage src={getTokenIcon(position.token1.symbol, networkMode)} alt="" size={36} />
-          </div>
-        </div>
+        <LiquidityModalHeader position={position} isUnifiedYield={isUnifiedYield} networkMode={networkMode} />
 
         <PriceDeviationCallout
           deviation={priceDeviation}

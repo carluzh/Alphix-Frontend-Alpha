@@ -49,8 +49,6 @@ import type { LiquidityPositionFeeStatsProps } from './types';
  *   formattedApr="12.50%"
  *   isAprFallback={false}
  *   cardHovered={isHovered}
- *   pricesInverted={pricesInverted}
- *   setPricesInverted={setPricesInverted}
  *   // ... other props
  * />
  * ```
@@ -62,8 +60,6 @@ export function LiquidityPositionFeeStats({
   hideFees,
   feesLabel = 'Fees',
   hideRangeContent,
-  token0Amount,
-  token1Amount,
 
   // APR data
   apr,
@@ -84,17 +80,6 @@ export function LiquidityPositionFeeStats({
   // Loading states
   isLoading,
   isLoadingApr,
-
-  // Range props
-  tickSpacing,
-  tickLower,
-  tickUpper,
-  pricesInverted,
-  setPricesInverted,
-
-  // Formatting context
-  poolType,
-  denominationBase,
 
   // Pre-formatted range prices
   formattedMinPrice,

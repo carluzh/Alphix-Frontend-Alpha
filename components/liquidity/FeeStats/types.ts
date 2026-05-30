@@ -5,34 +5,11 @@
  * - interface/apps/web/src/components/Liquidity/LiquidityPositionFeeStats.tsx
  * - interface/apps/web/src/components/Liquidity/types.ts
  *
- * IMPORTANT: All interfaces match Uniswap's structure exactly.
+ * Purely presentational props — all calculation/state lives in the parent
+ * (PositionCardCompact / UnifiedYieldPositionCard).
  */
 
-import { Dispatch, SetStateAction } from 'react';
-// PriceOrdering DELETED - use pre-formatted prices instead
 import type { PositionPointsData } from '@/types';
-
-// =============================================================================
-// RANGE PROPS
-// Mirrors LiquidityPositionMinMaxRangeProps from Uniswap
-// =============================================================================
-
-/**
- * Props for MinMaxRange component.
- * Simplified - uses pre-formatted prices instead of SDK Price objects.
- */
-export interface LiquidityPositionMinMaxRangeProps {
-  /** Pool tick spacing for at-limit detection */
-  tickSpacing?: number;
-  /** Position lower tick */
-  tickLower?: number;
-  /** Position upper tick */
-  tickUpper?: number;
-  /** Whether prices are inverted (shows quote/base instead of base/quote) */
-  pricesInverted: boolean;
-  /** Setter for price inversion toggle */
-  setPricesInverted: Dispatch<SetStateAction<boolean>>;
-}
 
 // =============================================================================
 // FEE STATS PROPS
@@ -41,11 +18,12 @@ export interface LiquidityPositionMinMaxRangeProps {
 
 /**
  * Props for LiquidityPositionFeeStats component.
- * Mirrors Uniswap's LiquidityPositionFeeStatsProps.
  *
- * @see interface/apps/web/src/components/Liquidity/LiquidityPositionFeeStats.tsx (lines 88-106)
+ * All props feed the rendered stat columns directly; the range column is driven
+ * solely by the pre-formatted price strings below (the component does no SDK
+ * price/tick math itself).
  */
-export interface LiquidityPositionFeeStatsProps extends LiquidityPositionMinMaxRangeProps {
+export interface LiquidityPositionFeeStatsProps {
   /** Whether the parent card is hovered (for background styling) */
   cardHovered: boolean;
 
@@ -60,12 +38,6 @@ export interface LiquidityPositionFeeStatsProps extends LiquidityPositionMinMaxR
   feesLabel?: string;
   /** Hide range content but keep the column for spacing (Unified Yield) */
   hideRangeContent?: boolean;
-
-  // Token amounts (for Unified Yield positions - shown instead of fees)
-  /** Formatted token0 amount (e.g., "500.00") */
-  token0Amount?: string;
-  /** Formatted token1 amount (e.g., "500.00") */
-  token1Amount?: string;
 
   // APR data
   /** Raw APR value (for points calculation) */
@@ -91,13 +63,7 @@ export interface LiquidityPositionFeeStatsProps extends LiquidityPositionMinMaxR
   /** Whether APR is loading */
   isLoadingApr?: boolean;
 
-  // Formatting context
-  /** Pool type for decimal formatting (e.g., 'stable') */
-  poolType?: string;
-  /** Denomination base token for range display */
-  denominationBase?: string;
-
-  // Pre-formatted range prices (when not using priceOrdering)
+  // Pre-formatted range prices
   /** Pre-formatted min price string */
   formattedMinPrice?: string;
   /** Pre-formatted max price string */
@@ -142,14 +108,4 @@ export interface APRFeeStatProps {
   token0Symbol?: string;
   /** Token1 symbol (for tooltip) */
   token1Symbol?: string;
-}
-
-/**
- * Extended props for MinMaxRange with formatting context.
- */
-export interface MinMaxRangeProps extends LiquidityPositionMinMaxRangeProps {
-  /** Pool type for decimal formatting */
-  poolType?: string;
-  /** Denomination base token */
-  denominationBase?: string;
 }

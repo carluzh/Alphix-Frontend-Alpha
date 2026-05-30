@@ -23,6 +23,7 @@ import {
 } from './types';
 import { usePoolState } from '@/lib/apollo/hooks/usePoolState';
 import { getPoolBySlug, getPoolBySlugMultiChain, type NetworkMode } from '@/lib/pools-config';
+import { canUseConcurrentMode } from '@/lib/liquidity/utils/pool-type-guards';
 import { useDerivedPositionInfo } from '@/lib/liquidity/hooks/position/useDerivedPositionInfo';
 import type { CreatePositionInfo } from '@/lib/liquidity/types';
 
@@ -135,14 +136,20 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
     const poolConfig = initialPoolId ? (getPoolBySlugMultiChain(initialPoolId) ?? getPoolBySlug(initialPoolId)) : null;
     const defaultMode: LPMode = poolConfig?.yieldSources?.length ? 'rehypo' : 'concentrated';
 
+    // Enforce pool capability via centralized helper — pools that can't use concentrated are forced to rehypo
+    const requestedMode = urlMode || entryConfig?.mode || defaultMode;
+    const canConcurrent = canUseConcurrentMode(poolConfig);
+    const resolvedMode: LPMode = !canConcurrent
+      ? 'rehypo'
+      : (urlMode === 'rehypo' && !poolConfig?.yieldSources?.length) ? 'concentrated' : requestedMode;
+
     return {
       ...DEFAULT_WIZARD_STATE,
       currentStep: startStep,
       poolId: initialPoolId,
       token0Symbol: urlT0 || entryConfig?.token0Symbol || null,
       token1Symbol: urlT1 || entryConfig?.token1Symbol || null,
-      mode: (urlMode === 'rehypo' && !poolConfig?.yieldSources?.length) ? 'concentrated'
-        : (urlMode || entryConfig?.mode || defaultMode),
+      mode: resolvedMode,
     };
   }, [searchParams, entryConfig]);
 
@@ -266,9 +273,11 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   }, []);
 
   const setPoolIdFn = useCallback((newPoolId: string | null) => {
-    // Reset mode based on pool's yield sources
+    // Reset mode based on pool capability — UY pools (rehypoRange) without yieldSources still forced to rehypo
     const newPoolConfig = newPoolId ? (getPoolBySlugMultiChain(newPoolId) ?? getPoolBySlug(newPoolId)) : null;
-    const defaultMode: LPMode = newPoolConfig?.yieldSources?.length ? 'rehypo' : 'concentrated';
+    const hasYieldSources = !!newPoolConfig?.yieldSources?.length;
+    const canConcurrent = canUseConcurrentMode(newPoolConfig);
+    const defaultMode: LPMode = !canConcurrent || hasYieldSources ? 'rehypo' : 'concentrated';
 
     setState(prev => ({
       ...prev,
@@ -278,15 +287,20 @@ export function AddLiquidityProvider({ children, entryConfig }: AddLiquidityProv
   }, []);
 
   const setMode = useCallback((mode: LPMode) => {
-    setState(prev => ({
-      ...prev,
-      mode,
-      // Reset range when switching modes
-      tickLower: mode === 'rehypo' ? null : prev.tickLower,
-      tickUpper: mode === 'rehypo' ? null : prev.tickUpper,
-      isFullRange: mode === 'rehypo',
-      rangePreset: mode === 'rehypo' ? 'full' : prev.rangePreset,
-    }));
+    setState(prev => {
+      // Enforce pool capability via centralized helper — UY pools coerced to rehypo
+      const prevPoolConfig = prev.poolId ? (getPoolBySlugMultiChain(prev.poolId) ?? getPoolBySlug(prev.poolId)) : null;
+      const effectiveMode: LPMode = !canUseConcurrentMode(prevPoolConfig) ? 'rehypo' : mode;
+      return {
+        ...prev,
+        mode: effectiveMode,
+        // Reset range when switching modes
+        tickLower: effectiveMode === 'rehypo' ? null : prev.tickLower,
+        tickUpper: effectiveMode === 'rehypo' ? null : prev.tickUpper,
+        isFullRange: effectiveMode === 'rehypo',
+        rangePreset: effectiveMode === 'rehypo' ? 'full' : prev.rangePreset,
+      };
+    });
   }, []);
 
   const setRange = useCallback((tickLower: number | null, tickUpper: number | null) => {

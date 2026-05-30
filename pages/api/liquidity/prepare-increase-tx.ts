@@ -3,26 +3,32 @@
  *
  * No server-side computation. Validates input, forwards to /lp/increase and
  * /lp/check_approval, and returns the response verbatim.
+ *
+ * Shared boilerplate (rate-limit, position-pool resolution, permit validation,
+ * approval discovery, error handling) lives in @/lib/liquidity/api/prepare-tx-shared.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isAddress, getAddress } from 'viem';
 
-import { getAllPools } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
-import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
-import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
+import { validateChainId } from '@/lib/tx-validation';
 import { safeParseUnits } from '@/lib/liquidity/utils/parsing/amountParsing';
-import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
 import { getTokenSymbolByAddress, getToken } from '@/lib/pools-config';
 import {
   uniswapLPAPI,
   UniswapLPAPIError,
-  UniswapLPAPIRateLimitError,
-  normalizeV4BatchPermit,
   denormalizeV4BatchPermit,
 } from '@/lib/liquidity/uniswap-api/client';
-import { reportError, addReportBreadcrumb } from '@/lib/observability';
+import { addReportBreadcrumb } from '@/lib/observability';
+import {
+  enforcePostAndRateLimit,
+  validatePermitInput,
+  resolveAlphixPositionPool,
+  resolveApprovalDiscovery,
+  handlePrepareTxError,
+  type ApprovalTx,
+} from '@/lib/liquidity/api/prepare-tx-shared';
 
 interface PrepareIncreaseTxRequest extends NextApiRequest {
   body: {
@@ -43,9 +49,6 @@ interface PrepareIncreaseTxRequest extends NextApiRequest {
     permitBatchData?: import('@/lib/liquidity/uniswap-api/client').V4BatchPermit;
   };
 }
-
-/** Approval transaction forwarded from /lp/check_approval (ERC-20 approve — value always 0). */
-type ApprovalTx = { to: string; from?: string; data: string; chainId: number };
 
 interface ApprovalNeededResponse {
   needsApproval: true;
@@ -85,25 +88,11 @@ type PrepareIncreaseTxResponse =
   | TransactionPreparedResponse
   | { message: string; error?: any };
 
-function toApprovalTx(tx: { to: string; from?: string; data: string; chainId: number }): ApprovalTx {
-  return { to: tx.to, from: tx.from, data: tx.data, chainId: tx.chainId };
-}
-
 export default async function handler(
   req: PrepareIncreaseTxRequest,
   res: NextApiResponse<PrepareIncreaseTxResponse>,
 ) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
-  }
-
-  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket?.remoteAddress || 'unknown';
-  const rateCheck = checkTxRateLimit(clientIp);
-  if (!rateCheck.allowed) {
-    res.setHeader('Retry-After', String(rateCheck.retryAfter || 60));
-    return res.status(429).json({ message: 'Too many requests. Please try again later.' });
-  }
+  if (enforcePostAndRateLimit(req, res)) return;
 
   const networkMode = resolveNetworkMode(req);
 
@@ -130,18 +119,14 @@ export default async function handler(
       return res.status(400).json({ message: 'inputSide must be "token0" or "token1".' });
     }
 
-    const nftTokenId = BigInt(tokenId);
-    // Breadcrumb before the on-chain position lookup; if it throws it bubbles to the
-    // outer catch where reportError captures it.
-    addReportBreadcrumb({ domain: 'liquidity', action: 'fetchPositionDetails', data: { tokenId, chainId } });
-    const positionDetails = await getPositionDetails(nftTokenId, chainId);
-    const poolConfig = findPoolByPoolKey(getAllPools(networkMode), positionDetails.poolKey);
-    if (!poolConfig) {
-      return res.status(400).json({ message: 'Position is not in an Alphix pool.' });
-    }
-    if (isUnifiedYieldPool(poolConfig)) {
-      return res.status(400).json({ message: 'Unified Yield positions use a separate deposit flow.' });
-    }
+    const resolved = await resolveAlphixPositionPool({
+      tokenId,
+      chainId,
+      networkMode,
+      uyMessage: 'Unified Yield positions use a separate deposit flow.',
+    });
+    if (!resolved.ok) return res.status(400).json({ message: resolved.message });
+    const { nftTokenId, positionDetails } = resolved;
 
     const sym0 = getTokenSymbolByAddress(positionDetails.poolKey.currency0, networkMode);
     const sym1 = getTokenSymbolByAddress(positionDetails.poolKey.currency1, networkMode);
@@ -163,20 +148,9 @@ export default async function handler(
       return res.status(400).json({ message: 'Please enter a valid amount to add.' });
     }
 
-    if ((permitSignature == null) !== (permitBatchData == null)) {
-      return res.status(400).json({ message: 'permitSignature and permitBatchData must be provided together.' });
-    }
-    // H2 tightening: reject malformed signatures loudly rather than silently coercing
-    // empty/short strings downstream (a 64-byte signature is 0x + 130 hex = 132 chars).
-    if (permitSignature != null) {
-      if (typeof permitSignature !== 'string' || permitSignature.length === 0) {
-        return res.status(400).json({ message: 'permitSignature must be a non-empty string.' });
-      }
-      if (permitSignature.length < 132 || !permitSignature.startsWith('0x')) {
-        return res.status(400).json({ message: 'permitSignature is malformed (expected 0x-prefixed hex, >= 132 chars).' });
-      }
-    }
-    const hasSignedPermit = !!(permitSignature && permitSignature.length >= 132 && permitBatchData);
+    const permitCheck = validatePermitInput(permitSignature, permitBatchData);
+    if (!permitCheck.ok) return res.status(400).json({ message: permitCheck.message });
+    const hasSignedPermit = permitCheck.hasSignedPermit;
 
     const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
     const c0 = getAddress(positionDetails.poolKey.currency0);
@@ -229,61 +203,19 @@ export default async function handler(
 
     // --- 3. Branch on approval state ----------------------------------------
     if (!hasSignedPermit && needsApprovalDiscovery) {
-      const approvalCheck = await uniswapLPAPI.checkApproval({
+      const { status, body } = await resolveApprovalDiscovery({
+        action: 'INCREASE',
         walletAddress: getAddress(userAddress),
         chainId,
-        protocol: 'V4',
-        lpTokens: [
-          { tokenAddress: c0, amount: createResponse.token0.amount },
-          { tokenAddress: c1, amount: createResponse.token1.amount },
-        ].filter(t => BigInt(t.amount) > 0n),
-        action: 'INCREASE',
+        token0Addr: c0,
+        token1Addr: c1,
+        token0Amount: createResponse.token0.amount,
+        token1Amount: createResponse.token1.amount,
+        filterZeroAmounts: true,
+        passThroughTx: createResponse.increase,
+        details,
       });
-
-      const findApprovalFor = (currency: string): ApprovalTx | undefined => {
-        const match = approvalCheck.transactions.find(t =>
-          getAddress(t.tokenAddress ?? t.transaction.to).toLowerCase() === currency.toLowerCase()
-        );
-        return match ? toApprovalTx({ ...match.transaction, chainId }) : undefined;
-      };
-      const approveToken0Tx = findApprovalFor(c0);
-      const approveToken1Tx = findApprovalFor(c1);
-      const erc20Fields = (approveToken0Tx || approveToken1Tx) ? { approveToken0Tx, approveToken1Tx } : null;
-
-      if (approvalCheck.v4BatchPermitData) {
-        const v4 = normalizeV4BatchPermit(approvalCheck.v4BatchPermitData, chainId);
-        const primaryType = Object.keys(v4.types).find(k => k !== 'EIP712Domain') ?? 'PermitBatch';
-        return res.status(200).json({
-          needsApproval: true,
-          approvalType: 'PERMIT2_BATCH_SIGNATURE',
-          permitBatchData: v4,
-          signatureDetails: { domain: v4.domain, types: v4.types, primaryType },
-          ...(erc20Fields ?? {}),
-          details,
-        });
-      }
-      if (erc20Fields) {
-        // No fresh batch permit needed (existing Permit2 state still valid);
-        // pass the pre-fetched increase tx through so the FE can pair it with
-        // the approve(s) (atomic on 5792, sequential otherwise).
-        return res.status(200).json({
-          needsApproval: true,
-          approvalType: 'ERC20_TO_PERMIT2',
-          create: {
-            to: createResponse.increase.to,
-            from: createResponse.increase.from,
-            data: createResponse.increase.data,
-            value: createResponse.increase.value,
-            chainId,
-          },
-          ...erc20Fields,
-          details,
-        });
-      }
-      // Simulation failed but check_approval reported nothing missing — surface upstream failure.
-      return res.status(502).json({
-        message: 'Uniswap LP API: simulation failed but no approvals or permit were required.',
-      });
+      return res.status(status).json(body);
     }
 
     // --- 4. No approvals needed: return the tx ------------------------------
@@ -300,40 +232,12 @@ export default async function handler(
       details,
     });
   } catch (error: any) {
-    if (error instanceof UniswapLPAPIRateLimitError) {
-      console.warn('[prepare-increase-tx] Rate limit exhausted after retries');
-      // Rate limits are expected — do NOT capture; leave a breadcrumb trail only.
-      addReportBreadcrumb({ domain: 'liquidity', action: 'increase', level: 'warning', message: 'rate limited' });
-      res.setHeader('Retry-After', '2');
-      return res.status(429).json({ message: 'Busy — please retry in a moment.' });
-    }
-    if (error instanceof UniswapLPAPIError) {
-      console.error('[prepare-increase-tx] Uniswap LP API error:', error.status, error.message);
-      reportError(error, {
-        domain: 'liquidity',
-        action: 'increase',
-        component: 'prepare-increase-tx',
-        chainId: req.body?.chainId,
-        networkMode,
-        tags: { uniswapStatus: error.status, uniswapErrorCode: error.code },
-        extras: {
-          userAddress: req.body?.userAddress,
-          tokenId: req.body?.tokenId,
-          uniswapDetails: error.details,
-        },
-      });
-      return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
-    }
-    console.error('[API prepare-increase-tx] Error:', error);
-    reportError(error, {
-      domain: 'liquidity',
+    handlePrepareTxError(error, req, res, {
       action: 'increase',
       component: 'prepare-increase-tx',
-      chainId: req.body?.chainId,
       networkMode,
+      chainId: req.body?.chainId,
       extras: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId },
     });
-    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
-    return res.status(500).json({ message: errorMessage, error: process.env.NODE_ENV === 'development' ? error : undefined });
   }
 }

@@ -149,16 +149,6 @@
   }
 
   /* === ANIMATION UTILITIES === */
-  .animate-scroll {
-    animation: scroll 15s linear infinite;
-    display: inline-block;
-    padding-right: 2rem;
-  }
-
-  .animate-scroll:hover {
-    animation-play-state: paused;
-  }
-
   @keyframes skeleton-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
@@ -280,10 +270,6 @@
   }
 
   /* === BACKGROUND UTILITIES === */
-  .bg-main {
-    background-color: var(--main-bg);
-  }
-
   .bg-container {
     background-color: var(--container-bg);
   }
@@ -294,14 +280,6 @@
 
   .bg-surface {
     background-color: var(--surface-bg);
-  }
-
-  .bg-selector {
-    background-color: var(--selector-bg);
-  }
-
-  .bg-modal {
-    background-color: var(--modal-bg);
   }
 
   .bg-button {
@@ -321,25 +299,6 @@
     backface-visibility: hidden;
   }
 
-  /* === GHOST TAB BUTTON UTILITIES === */
-  /*
-   * Clean, minimal tab/toggle buttons for switching between views
-   * Used in: chart tabs, modal action buttons, view toggles
-   *
-   * Base: text-muted-foreground with transparent background
-   * Hover: text-foreground with subtle bg-muted/50 background
-   * Active: bg-muted/50 text-foreground (same as hover, persistent)
-   */
-  .ghost-tab {
-    @apply h-7 px-2.5 text-xs rounded-md transition-colors;
-    @apply text-muted-foreground bg-transparent;
-    @apply hover:text-foreground hover:bg-muted/50;
-  }
-
-  .ghost-tab-active {
-    @apply bg-muted/50 text-foreground;
-  }
-
   /* === BORDER UTILITIES === */
   .border-primary {
     border-color: var(--border-primary) !important;
@@ -355,113 +314,6 @@
     border-color: var(--border-primary);
   }
 
-  .surface-modal {
-    background-color: var(--modal-bg);
-    border-color: var(--border-primary);
-  }
-
-  /* === INTERACTION UTILITIES === */
-  .hover-surface {
-    @apply transition-colors duration-150;
-  }
-
-  .hover-surface:hover {
-    background-color: var(--hover-bg);
-  }
-
-  /* === BRAND GRADIENT UTILITIES === */
-  /* Animated dot gradient using brand colors */
-  .brand-gradient-bg {
-    background-image: 
-      radial-gradient(circle at 20% 30%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 60% 70%, #ff7919 0%, transparent 50%),
-      radial-gradient(circle at 80% 20%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 30% 80%, #ff7919 0%, transparent 50%),
-      radial-gradient(circle at 50% 50%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 90% 60%, #ff7919 0%, transparent 50%),
-      radial-gradient(circle at 10% 90%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 70% 10%, #ff7919 0%, transparent 50%);
-    background-size: 400% 400%;
-    animation: brandGradientMove 20s ease-in-out infinite;
-    mix-blend-mode: screen;
-  }
-
-  .brand-gradient-text {
-    background-image: 
-      radial-gradient(circle at 20% 30%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 60% 70%, #ff7919 0%, transparent 50%),
-      radial-gradient(circle at 80% 20%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 30% 80%, #ff7919 0%, transparent 50%),
-      radial-gradient(circle at 50% 50%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 90% 60%, #ff7919 0%, transparent 50%);
-    background-size: 400% 400%;
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    animation: brandGradientMove 20s ease-in-out infinite;
-  }
-
-  .brand-gradient-border {
-    position: relative;
-    border: 1px solid transparent;
-    background-clip: padding-box;
-  }
-
-  .brand-gradient-border::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    padding: 1px;
-    background: 
-      radial-gradient(circle at 20% 30%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 60% 70%, #ff7919 0%, transparent 50%),
-      radial-gradient(circle at 80% 20%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 30% 80%, #ff7919 0%, transparent 50%);
-    background-size: 400% 400%;
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    animation: brandGradientMove 20s ease-in-out infinite;
-    z-index: -1;
-  }
-
-  .brand-gradient-button {
-    position: relative;
-    background: 
-      radial-gradient(circle at 20% 30%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 60% 70%, #ff7919 0%, transparent 50%),
-      radial-gradient(circle at 80% 20%, #f94706 0%, transparent 50%),
-      radial-gradient(circle at 30% 80%, #ff7919 0%, transparent 50%);
-    background-size: 400% 400%;
-    background-clip: padding-box;
-    animation: brandGradientMove 20s ease-in-out infinite;
-    mix-blend-mode: screen;
-  }
-
-  @keyframes brandGradientMove {
-    0% {
-      background-position: 0% 0%, 100% 100%, 50% 50%, 25% 75%, 75% 25%, 90% 10%, 10% 90%, 60% 40%;
-    }
-    16.66% {
-      background-position: 5% 10%, 95% 90%, 55% 45%, 30% 70%, 70% 30%, 85% 15%, 15% 85%, 65% 35%;
-    }
-    33.33% {
-      background-position: 10% 5%, 90% 95%, 45% 55%, 35% 65%, 65% 35%, 80% 25%, 20% 75%, 55% 45%;
-    }
-    50% {
-      background-position: 15% 15%, 85% 85%, 40% 60%, 40% 60%, 60% 40%, 75% 35%, 25% 65%, 50% 50%;
-    }
-    66.66% {
-      background-position: 10% 20%, 90% 80%, 45% 55%, 35% 65%, 65% 35%, 80% 30%, 20% 70%, 55% 45%;
-    }
-    83.33% {
-      background-position: 5% 15%, 95% 85%, 50% 50%, 30% 70%, 70% 30%, 85% 20%, 15% 80%, 60% 40%;
-    }
-    100% {
-      background-position: 0% 0%, 100% 100%, 50% 50%, 25% 75%, 75% 25%, 90% 10%, 10% 90%, 60% 40%;
-    }
-  }
 }
 
 /* Custom AppKit Button Styles */
@@ -706,23 +558,6 @@ input[type=number] {
   animation: fade-in-only 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
-/* Activity feed item transitions (replacement for AnimatePresence) */
-.activity-item {
-  opacity: 1;
-  transform: translateY(0);
-  transition: opacity 0.3s ease-out, transform 0.3s ease-out;
-}
-
-.activity-item-enter {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-
-.activity-item-exit {
-  opacity: 0;
-  transform: translateY(8px);
-}
-
 /* Reduced motion support */
 @media (prefers-reduced-motion: reduce) {
   .animate-on-scroll,
@@ -902,58 +737,6 @@ input[type=number] {
   transform: translateY(-2px);
 }
 
-
-/* Noise texture overlay (very subtle) */
-.noise-overlay {
-  position: relative;
-}
-
-.noise-overlay::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  opacity: 0.015;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  border-radius: inherit;
-  z-index: 1;
-}
-
-/* Cursor-following glow (requires JS to set --mouse-x, --mouse-y) */
-.cursor-glow {
-  position: relative;
-  overflow: hidden;
-}
-
-.cursor-glow::before {
-  content: '';
-  position: absolute;
-  width: 300px;
-  height: 300px;
-  background: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.04) 0%,
-    transparent 70%
-  );
-  transform: translate(-50%, -50%);
-  left: var(--mouse-x, 50%);
-  top: var(--mouse-y, 50%);
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.cursor-glow:hover::before {
-  opacity: 1;
-}
-
-/* Glassmorphism card effect */
-.glass-card {
-  background: rgba(19, 19, 19, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
 
 /* Status glow effects */
 .status-glow-green {

@@ -7,67 +7,50 @@ import type { AnimationControls } from "framer-motion";
 
 export type PositionField = "TOKEN0" | "TOKEN1";
 
-export interface DepositInfo {
-  formattedAmounts?: { TOKEN0?: string; TOKEN1?: string };
-  currencyBalances?: { TOKEN0?: string; TOKEN1?: string };
-  currencyAmountsUSDValue?: { TOKEN0?: number; TOKEN1?: number };
+/**
+ * Per-token descriptor for one deposit input row.
+ * Replaces the previous flat `token0*`/`token1*` paired props.
+ */
+export interface TokenInputDescriptor {
+  symbol: string;
+  /** Current formatted amount; empty string renders the placeholder. */
+  amount: string;
+  /** Balance / max available; "0" hides the percentage buttons. */
+  balance: string;
+  usdPrice?: number;
+  /** When true the row is hidden entirely (single-sided / out-of-range deposit). */
+  disabled?: boolean;
+  /** Maps to TokenInputCard.disabled — input is non-interactive while loading. */
+  loading?: boolean;
+  isOverBalance?: boolean;
+  wiggleControls?: AnimationControls;
+  onPercentageClick?: (percentage: number) => string | void;
 }
 
-export interface DepositInputFormProps extends DepositInfo {
-  token0Symbol: string;
-  token1Symbol: string;
+export interface DepositInputFormProps {
+  token0: TokenInputDescriptor;
+  token1: TokenInputDescriptor;
   onUserInput: (field: PositionField, value: string) => void;
-  onSetMax?: (field: PositionField, amount: string) => void;
   onCalculateDependentAmount?: (value: string, field: "amount0" | "amount1") => void;
-  deposit0Disabled?: boolean;
-  deposit1Disabled?: boolean;
-  amount0Loading?: boolean;
-  amount1Loading?: boolean;
-  token0USDPrice?: number;
-  token1USDPrice?: number;
-  isAmount0OverBalance?: boolean;
-  isAmount1OverBalance?: boolean;
-  wiggleControls0?: AnimationControls;
-  wiggleControls1?: AnimationControls;
-  onToken0PercentageClick?: (percentage: number) => string | void;
-  onToken1PercentageClick?: (percentage: number) => string | void;
+  onSetMax?: (field: PositionField, amount: string) => void;
   inputLabel?: string;
   formatUsdAmount?: (amount: number) => React.ReactNode;
   hidePlusIcon?: boolean;
 }
 
 export function DepositInputForm({
-  token0Symbol,
-  token1Symbol,
-  formattedAmounts,
-  currencyBalances,
+  token0,
+  token1,
   onUserInput,
   onCalculateDependentAmount,
-  deposit0Disabled = false,
-  deposit1Disabled = false,
-  amount0Loading = false,
-  amount1Loading = false,
-  token0USDPrice = 0,
-  token1USDPrice = 0,
-  isAmount0OverBalance = false,
-  isAmount1OverBalance = false,
-  wiggleControls0,
-  wiggleControls1,
-  onToken0PercentageClick,
-  onToken1PercentageClick,
   inputLabel = "Add",
   formatUsdAmount,
   hidePlusIcon = false,
 }: DepositInputFormProps) {
-  const showBothInputs = !deposit0Disabled && !deposit1Disabled;
+  const showBothInputs = !token0.disabled && !token1.disabled;
 
   const handleUserInput = (field: PositionField) => (value: string) => {
     onUserInput(field, value);
-  };
-
-  const handlePercentageClick = (field: PositionField) => (percentage: number): string | void => {
-    if (field === "TOKEN0" && onToken0PercentageClick) return onToken0PercentageClick(percentage);
-    if (field === "TOKEN1" && onToken1PercentageClick) return onToken1PercentageClick(percentage);
   };
 
   const handleCalculateDependentAmount = (field: "amount0" | "amount1") => (value: string) => {
@@ -77,21 +60,21 @@ export function DepositInputForm({
   return (
     <div className="space-y-4">
       <TokenInputStyles />
-      {!deposit0Disabled && (
+      {!token0.disabled && (
         <TokenInputCard
           id="deposit-amount0"
-          tokenSymbol={token0Symbol}
-          value={formattedAmounts?.TOKEN0 || ""}
+          tokenSymbol={token0.symbol}
+          value={token0.amount || ""}
           onChange={handleUserInput("TOKEN0")}
           label={inputLabel}
-          maxAmount={currencyBalances?.TOKEN0 || "0"}
-          usdPrice={token0USDPrice}
+          maxAmount={token0.balance || "0"}
+          usdPrice={token0.usdPrice ?? 0}
           formatUsdAmount={formatUsdAmount}
-          isOverBalance={isAmount0OverBalance}
-          animationControls={wiggleControls0}
-          onPercentageClick={onToken0PercentageClick ? handlePercentageClick("TOKEN0") : undefined}
+          isOverBalance={token0.isOverBalance ?? false}
+          animationControls={token0.wiggleControls}
+          onPercentageClick={token0.onPercentageClick}
           onCalculateDependentAmount={onCalculateDependentAmount ? handleCalculateDependentAmount("amount0") : undefined}
-          disabled={amount0Loading}
+          disabled={token0.loading ?? false}
         />
       )}
       {showBothInputs && !hidePlusIcon && (
@@ -101,21 +84,21 @@ export function DepositInputForm({
           </div>
         </div>
       )}
-      {!deposit1Disabled && (
+      {!token1.disabled && (
         <TokenInputCard
           id="deposit-amount1"
-          tokenSymbol={token1Symbol}
-          value={formattedAmounts?.TOKEN1 || ""}
+          tokenSymbol={token1.symbol}
+          value={token1.amount || ""}
           onChange={handleUserInput("TOKEN1")}
           label={inputLabel}
-          maxAmount={currencyBalances?.TOKEN1 || "0"}
-          usdPrice={token1USDPrice}
+          maxAmount={token1.balance || "0"}
+          usdPrice={token1.usdPrice ?? 0}
           formatUsdAmount={formatUsdAmount}
-          isOverBalance={isAmount1OverBalance}
-          animationControls={wiggleControls1}
-          onPercentageClick={onToken1PercentageClick ? handlePercentageClick("TOKEN1") : undefined}
+          isOverBalance={token1.isOverBalance ?? false}
+          animationControls={token1.wiggleControls}
+          onPercentageClick={token1.onPercentageClick}
           onCalculateDependentAmount={onCalculateDependentAmount ? handleCalculateDependentAmount("amount1") : undefined}
-          disabled={amount1Loading}
+          disabled={token1.loading ?? false}
         />
       )}
     </div>

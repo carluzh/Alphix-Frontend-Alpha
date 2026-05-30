@@ -8,6 +8,7 @@
 import { maxUint256, type Address } from 'viem';
 import { reportError, addReportBreadcrumb } from '@/lib/observability';
 import type { ValidatedTransactionRequest } from '../../types';
+import { applyApprovalBuffer } from './approvalBuffer';
 
 /**
  * Build ERC20 approve calldata for the Unified Yield flow. Exact amount + 0.001%
@@ -41,7 +42,7 @@ export function buildApprovalCalldata(
   if (forceInfinite || !amount) {
     approvalAmount = maxUint256;
   } else {
-    approvalAmount = amount + amount / 100_000n;
+    approvalAmount = applyApprovalBuffer(amount);
   }
 
   const paddedAmount = approvalAmount.toString(16).padStart(64, '0');

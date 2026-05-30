@@ -394,13 +394,6 @@ export function PositionCardCompact({
                 cardHovered={isHovered}
                 isLoading={isLoadingPrices || !position.fee0Amount}
                 isLoadingApr={isLoadingAPR}
-                tickSpacing={tickSpacing}
-                tickLower={position.tickLower!}
-                tickUpper={position.tickUpper!}
-                pricesInverted={pricesInverted}
-                setPricesInverted={setPricesInverted}
-                poolType={poolType}
-                denominationBase={denominationBase}
                 formattedMinPrice={minPrice}
                 formattedMaxPrice={maxPrice}
                 isFullRange={isFullRange}

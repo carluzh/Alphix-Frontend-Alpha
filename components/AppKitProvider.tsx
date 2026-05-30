@@ -13,12 +13,20 @@ import { hashKey } from '@/lib/utils/hashKey'
 import { apolloClient } from '@/lib/apollo/client'
 import { PersistQueryClientProvider } from '@/components/PersistQueryClientProvider'
 import { TransactionProvider } from '@/lib/transactions/TransactionProvider'
+import { E2EAutoConnect } from '@/components/E2EAutoConnect'
+import { E2EPoolStateProbe } from '@/components/E2EPoolStateProbe'
 
 // Lazy-initialized AppKit instance — only created when AppKitProvider mounts
 // (i.e. inside the (app) route group), so the marketing/landing page never triggers it.
 let _appKit: ReturnType<typeof createAppKit> | null = null
 
 export function initializeAppKit() {
+  // E2E: skip Reown AppKit entirely. The WagmiProvider uses a plain fork-backed
+  // wagmi config (lib/wagmiConfig.ts) and we auto-connect a mock connector, so
+  // the AppKit modal/relay is unused — and initializing it would re-route the
+  // mock's RPC to the WalletConnect relay. getAppKit() returning null is safe
+  // (connect buttons call getAppKit()?.open() — a no-op when auto-connected).
+  if (process.env.NEXT_PUBLIC_E2E === 'true') return null
   if (!_appKit && typeof window !== 'undefined' && projectId) {
     _appKit = createAppKit({
       adapters: [wagmiAdapter],
@@ -63,8 +71,10 @@ function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: s
 
   return (
     <WagmiProvider config={config} initialState={initialState}>
+      <E2EAutoConnect />
       <PersistQueryClientProvider client={queryClient}>
         <ApolloProvider client={apolloClient}>
+          <E2EPoolStateProbe />
           <TransactionProvider>
             {children}
           </TransactionProvider>

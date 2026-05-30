@@ -11,11 +11,9 @@
  */
 
 import { ethers } from "ethers";
-import { Token } from '@uniswap/sdk-core';
-import { Pool as V4Pool, Position as V4Position } from "@uniswap/v4-sdk";
-import JSBI from 'jsbi';
 import { getAddress, type Address, type Hex, encodeAbiParameters, keccak256, parseAbi } from "viem";
-import { getTokenSymbolByAddress, getToken as getTokenConfig, getChainId, getPositionManagerAddress, getStateViewAddress, type NetworkMode } from "@/lib/pools-config";
+import { getChainId, getPositionManagerAddress, getStateViewAddress, type NetworkMode } from "@/lib/pools-config";
+import { assembleV4Position } from "./assembleV4Position";
 import { getPositionDetails, getPoolState, calculateUnclaimedFeesV4 } from "@/lib/liquidity/liquidity-utils";
 import { getAllAlphixSubgraphUrls } from "@/lib/subgraph-url-helper";
 import { STATE_VIEW_ABI } from "@/lib/abis/state_view_abi";
@@ -346,34 +344,6 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
                         continue;
                     }
 
-                    const t0Addr = details.poolKey.currency0 as Address;
-                    const t1Addr = details.poolKey.currency1 as Address;
-                    const sym0 = getTokenSymbolByAddress(t0Addr, networkMode) || 'T0';
-                    const sym1 = getTokenSymbolByAddress(t1Addr, networkMode) || 'T1';
-                    const cfg0 = sym0 ? getTokenConfig(sym0, networkMode) : undefined;
-                    const cfg1 = sym1 ? getTokenConfig(sym1, networkMode) : undefined;
-                    const dec0 = cfg0?.decimals ?? 18;
-                    const dec1 = cfg1?.decimals ?? 18;
-                    const t0 = new Token(chainId, t0Addr, dec0, sym0);
-                    const t1 = new Token(chainId, t1Addr, dec1, sym1);
-
-                    const v4Pool = new V4Pool(
-                        t0, t1,
-                        details.poolKey.fee,
-                        details.poolKey.tickSpacing,
-                        details.poolKey.hooks,
-                        state.sqrtPriceX96,
-                        JSBI.BigInt(state.poolLiquidity),
-                        state.tick
-                    );
-                    const v4Position = new V4Position({
-                        pool: v4Pool,
-                        tickLower: details.tickLower,
-                        tickUpper: details.tickUpper,
-                        liquidity: JSBI.BigInt(details.liquidity.toString()),
-                    });
-                    const raw0 = v4Position.amount0.quotient.toString();
-                    const raw1 = v4Position.amount1.quotient.toString();
                     const createdTs = Number(r.creationTimestamp || (r as any).createdAtTimestamp || 0);
                     const lastTs = Number(r.lastTimestamp || 0);
 
@@ -384,21 +354,33 @@ export async function fetchUserPositions(ownerAddress: string, networkMode: Netw
                         : (r.id || '');
 
                     processed.push({
-                        type: 'v4',
-                        positionId: positionIdDecimal,
-                        owner: r.owner,
-                        poolId: poolIdStr,
-                        token0: { address: t0.address, symbol: t0.symbol || 'T0', amount: ethers.utils.formatUnits(raw0, t0.decimals), rawAmount: raw0 },
-                        token1: { address: t1.address, symbol: t1.symbol || 'T1', amount: ethers.utils.formatUnits(raw1, t1.decimals), rawAmount: raw1 },
-                        tickLower: Number((r as any).tickLower ?? details.tickLower),
-                        tickUpper: Number((r as any).tickUpper ?? details.tickUpper),
-                        liquidityRaw: ((r as any).liquidity ?? details.liquidity.toString()).toString(),
-                        ageSeconds: Math.max(0, Math.floor(Date.now()/1000) - createdTs),
-                        blockTimestamp: createdTs || 0,
-                        lastTimestamp: lastTs || createdTs || 0,
-                        isInRange: state.tick >= details.tickLower && state.tick < details.tickUpper,
-                        token0UncollectedFees: feeData?.token0UncollectedFees,
-                        token1UncollectedFees: feeData?.token1UncollectedFees,
+                        ...assembleV4Position({
+                            chainId,
+                            configMode: networkMode,
+                            poolKey: {
+                                currency0: details.poolKey.currency0,
+                                currency1: details.poolKey.currency1,
+                                fee: details.poolKey.fee,
+                                tickSpacing: details.poolKey.tickSpacing,
+                                hooks: details.poolKey.hooks,
+                            },
+                            poolId: poolIdStr,
+                            poolState: state,
+                            liquidity: details.liquidity.toString(),
+                            mathTickLower: details.tickLower,
+                            mathTickUpper: details.tickUpper,
+                            displayTickLower: Number((r as any).tickLower ?? details.tickLower),
+                            displayTickUpper: Number((r as any).tickUpper ?? details.tickUpper),
+                            displayLiquidityRaw: ((r as any).liquidity ?? details.liquidity.toString()).toString(),
+                            positionId: positionIdDecimal,
+                            owner: r.owner,
+                            blockTimestamp: createdTs || 0,
+                            lastTimestamp: lastTs || createdTs || 0,
+                            ageSeconds: Math.max(0, Math.floor(Date.now()/1000) - createdTs),
+                            formatAmount: (raw, dec) => ethers.utils.formatUnits(raw, dec),
+                            token0UncollectedFees: feeData?.token0UncollectedFees,
+                            token1UncollectedFees: feeData?.token1UncollectedFees,
+                        }),
                         networkMode,
                     });
                 } catch (e: any) {

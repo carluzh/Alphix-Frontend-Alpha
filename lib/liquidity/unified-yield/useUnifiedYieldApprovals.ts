@@ -12,6 +12,7 @@ import { useReadContract } from 'wagmi';
 import { type Address } from 'viem';
 import { ERC20_ABI } from '@/lib/abis/erc20';
 import { NATIVE_TOKEN_ADDRESS } from '@/lib/pools-config';
+import { applyApprovalBuffer } from '../hooks/approval/approvalBuffer';
 import type {
   UnifiedYieldApprovalParams,
   UnifiedYieldApprovalStatus,
@@ -139,10 +140,10 @@ export function useUnifiedYieldApprovals(
     const t1Allowance = (token1Allowance as bigint) ?? 0n;
 
     const token0NeedsApproval =
-      !isToken0Native && amount0Wei > 0n && t0Allowance < amount0Wei + amount0Wei / 100_000n;
+      !isToken0Native && amount0Wei > 0n && t0Allowance < applyApprovalBuffer(amount0Wei);
 
     const token1NeedsApproval =
-      !isToken1Native && amount1Wei > 0n && t1Allowance < amount1Wei + amount1Wei / 100_000n;
+      !isToken1Native && amount1Wei > 0n && t1Allowance < applyApprovalBuffer(amount1Wei);
 
     return {
       token0NeedsApproval,
@@ -182,9 +183,9 @@ export function useUnifiedYieldApprovals(
     const checkAmount1 = overrideAmounts?.amount1Wei ?? amount1Wei;
 
     const token0NeedsApproval =
-      !isToken0Native && checkAmount0 > 0n && t0Allowance < checkAmount0 + checkAmount0 / 100_000n;
+      !isToken0Native && checkAmount0 > 0n && t0Allowance < applyApprovalBuffer(checkAmount0);
     const token1NeedsApproval =
-      !isToken1Native && checkAmount1 > 0n && t1Allowance < checkAmount1 + checkAmount1 / 100_000n;
+      !isToken1Native && checkAmount1 > 0n && t1Allowance < applyApprovalBuffer(checkAmount1);
 
     return {
       token0NeedsApproval,

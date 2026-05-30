@@ -292,6 +292,14 @@ const useSwap = ({
       feeReceiver,
     }
 
+    // E2E (forked chain only): Kyber cannot build or execute a route through
+    // Alphix's hooked Uniswap V4 pool against a local Anvil fork. Pin the route to
+    // vanilla Uniswap V3 so the swap journey submits a real tx on the fork. Inert
+    // in every normal build (NEXT_PUBLIC_E2E is unset).
+    if (process.env.NEXT_PUBLIC_E2E === 'true') {
+      params.includedSources = 'uniswapv3'
+    }
+
     const search = Object.keys(params).reduce(
       (searchString, key) => (params[key] !== undefined ? `${searchString}&${key}=${params[key]}` : searchString),
       '',

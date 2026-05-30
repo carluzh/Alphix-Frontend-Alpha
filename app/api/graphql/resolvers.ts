@@ -52,24 +52,6 @@ export const resolvers = {
     // Health check
     _health: () => 'ok',
 
-    // Token queries (prices now served via /api/prices/batch)
-
-    token: async (
-      _: unknown,
-      args: { chain: string; address: string },
-      ctx: Context
-    ) => {
-      // Token data - minimal implementation
-      return {
-        id: `${args.chain}:${args.address}`,
-        chain: args.chain,
-        address: args.address,
-        symbol: args.address,
-        decimals: 18,
-        priceUSD: null,
-      }
-    },
-
     // Pool queries
     pool: async (
       _: unknown,
@@ -167,51 +149,6 @@ export const resolvers = {
       }))
     },
 
-    poolTicks: async (
-      _: unknown,
-      args: { chain: string; poolId: string; skip?: number; first?: number },
-      ctx: Context
-    ) => {
-      // Cap maximum ticks to prevent amplification attacks
-      const MAX_TICKS = 1000;
-      const requestedFirst = args.first ?? 500;
-      const cappedFirst = Math.min(requestedFirst, MAX_TICKS);
-
-      const data = await fetchInternal(
-        ctx,
-        `/api/liquidity/get-ticks`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            poolId: args.poolId,
-            first: cappedFirst,
-          }),
-        }
-      )
-
-      if (!data.ticks || !Array.isArray(data.ticks)) {
-        return []
-      }
-
-      // Apply pagination
-      let ticks = data.ticks
-      if (args.skip) {
-        ticks = ticks.slice(args.skip)
-      }
-      if (args.first) {
-        ticks = ticks.slice(0, args.first)
-      }
-
-      return ticks.map((tick: any) => ({
-        id: `${args.poolId}:${tick.tickIdx}`,
-        tickIdx: tick.tickIdx,
-        liquidityGross: tick.liquidityGross,
-        liquidityNet: tick.liquidityNet,
-        price0: tick.price0,
-        price1: tick.price1,
-      }))
-    },
-
     // Position queries
     position: async (
       _: unknown,
@@ -241,15 +178,6 @@ export const resolvers = {
       }
     },
 
-    positionFees: async (
-      _: unknown,
-      args: { chain: string; positionId: string },
-      ctx: Context
-    ) => {
-      // Fees are already included in positions response
-      // This would be for fetching fees separately
-      return null
-    },
   },
 
   Mutation: {},
@@ -282,40 +210,6 @@ export const resolvers = {
       }))
     },
 
-    ticks: async (
-      parent: any,
-      args: { skip?: number; first?: number },
-      ctx: Context
-    ) => {
-      if (!parent.poolId) return []
-
-      const data = await fetchInternal(
-        ctx,
-        `/api/liquidity/get-ticks?poolId=${encodeURIComponent(parent.poolId)}`
-      )
-
-      if (!data.ticks || !Array.isArray(data.ticks)) {
-        return []
-      }
-
-      // Cap maximum ticks to prevent amplification attacks
-      const MAX_TICKS = 1000;
-      let ticks = data.ticks
-      if (args.skip) {
-        ticks = ticks.slice(args.skip)
-      }
-      const cappedFirst = args.first ? Math.min(args.first, MAX_TICKS) : MAX_TICKS;
-      ticks = ticks.slice(0, cappedFirst);
-
-      return ticks.map((tick: any) => ({
-        id: `${parent.poolId}:${tick.tickIdx}`,
-        tickIdx: tick.tickIdx,
-        liquidityGross: tick.liquidityGross,
-        liquidityNet: tick.liquidityNet,
-        price0: tick.price0,
-        price1: tick.price1,
-      }))
-    },
   },
 
   Position: {

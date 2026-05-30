@@ -20,7 +20,6 @@ import { getPoolBySlug, getToken, type NetworkMode } from '@/lib/pools-config';
 import { chainIdForMode } from '@/lib/network-mode';
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
-import { getOptimalBaseToken } from '@/lib/denomination-utils';
 import { useQuery } from '@tanstack/react-query';
 import { fetchAaveRates, getLendingAprForPair } from '@/lib/aave-rates';
 import { fetchUnifiedYieldPositionCompoundedFees } from '@/lib/backend-client';
@@ -110,11 +109,6 @@ export function UnifiedYieldPositionCard({
     const aaveApr = useMemo(() => {
         return getLendingAprForPair(aaveRatesData, token0Symbol, token1Symbol) ?? undefined;
     }, [aaveRatesData, token0Symbol, token1Symbol]);
-
-    // Determine denomination base
-    const denominationBase = useMemo(() => {
-        return getOptimalBaseToken(token0Symbol, token1Symbol);
-    }, [token0Symbol, token1Symbol]);
 
     // Parse tick values from pool config's rehypoRange
     const { isFullRange, tickLower, tickUpper } = useMemo(() => {
@@ -286,8 +280,6 @@ export function UnifiedYieldPositionCard({
                 formattedUsdFees={formattedCompoundedFees}
                 feesLabel="Compounded Fees"
                 hideRangeContent
-                token0Amount={position.token0Amount}
-                token1Amount={position.token1Amount}
                 apr={poolAPR ?? undefined}
                 formattedApr={formattedApr}
                 isAprFallback={false}
@@ -298,13 +290,6 @@ export function UnifiedYieldPositionCard({
                 cardHovered={isHovered}
                 isLoading={isLoadingPrices || isLoadingCompoundedFees}
                 isLoadingApr={!aaveRatesData}
-                tickSpacing={poolConfig?.tickSpacing}
-                tickLower={tickLower}
-                tickUpper={tickUpper}
-                pricesInverted={pricesInverted}
-                setPricesInverted={setPricesInverted}
-                poolType={poolConfig?.type}
-                denominationBase={denominationBase}
                 formattedMinPrice={isFullRange ? '0' : minPrice}
                 formattedMaxPrice={isFullRange ? '∞' : maxPrice}
                 isFullRange={isFullRange}

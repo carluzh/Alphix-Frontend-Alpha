@@ -52,6 +52,7 @@ export {
   type OnChainTransactionFieldsBatched,
   type SignTypedDataStepFields,
   type TokenInfo,
+  type TokenCfg,
   // Step interfaces
   type TokenApprovalTransactionStep,
   type TokenRevocationTransactionStep,

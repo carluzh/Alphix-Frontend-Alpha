@@ -49,9 +49,10 @@ export function useLiquidityChartData({
   // Get the subgraph pool ID for API calls
   const subgraphPoolId = poolId ? (getPoolId(poolId, networkMode) || poolId) : undefined;
 
-  // Fetch raw liquidity data
+  // Fetch raw liquidity data — debounce + AbortController to coalesce rapid tick-button clicks and unstable token refs into a single request
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     const fetchData = async () => {
       if (!poolId || !subgraphPoolId) {
@@ -68,6 +69,7 @@ export function useLiquidityChartData({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ poolId: subgraphPoolId, first: 500, networkMode }),
+          signal: controller.signal,
         });
 
         if (!resp.ok) throw new Error(`API failed: ${resp.status}`);
@@ -114,17 +116,20 @@ export function useLiquidityChartData({
 
         setRawData(chartEntries);
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err : new Error('Failed to fetch liquidity data'));
-          setRawData([]);
-        }
+        if (cancelled || (err instanceof DOMException && err.name === 'AbortError')) return;
+        setError(err instanceof Error ? err : new Error('Failed to fetch liquidity data'));
+        setRawData([]);
       } finally {
         if (!cancelled) setIsLoading(false);
       }
     };
 
-    fetchData();
-    return () => { cancelled = true; };
+    const timer = setTimeout(fetchData, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [poolId, subgraphPoolId, token0, token1, networkMode]);
 
   // Transform and sort by price0 (inverts if needed)

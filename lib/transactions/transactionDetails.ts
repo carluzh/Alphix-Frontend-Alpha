@@ -61,8 +61,6 @@ export interface EthTransaction {
 }
 
 export enum Protocol {
-  V2 = 'V2',
-  V3 = 'V3',
   V4 = 'V4',
   MIXED = 'MIXED',
 }
@@ -296,10 +294,6 @@ export enum TransactionType {
   CreatePool = 'create-pool',
   LiquidityIncrease = 'liquidity-increase',
   LiquidityDecrease = 'liquidity-decrease',
-
-  // Liquidity Migration
-  MigrateLiquidityV2ToV3 = 'migrate-liquidity-v2-to-v3',
-  MigrateLiquidityV3ToV4 = 'migrate-liquidity-v3-to-v4',
 
   // moved/converted from interface's type
   ClaimUni = 'claim-uni',
@@ -560,7 +554,6 @@ export type LiquidityIncreaseTransactionInfo = LiquidityTransactionInfoBase<Tran
 export type LiquidityDecreaseTransactionInfo = LiquidityTransactionInfoBase<TransactionType.LiquidityDecrease>
 export type CreatePairTransactionInfo = LiquidityTransactionInfoBase<TransactionType.CreatePair>
 export type CreatePoolTransactionInfo = LiquidityTransactionInfoBase<TransactionType.CreatePool>
-export type MigrateV3LiquidityToV4TransactionInfo = LiquidityTransactionInfoBase<TransactionType.MigrateLiquidityV3ToV4>
 export type CollectFeesTransactionInfo = Optional<
   LiquidityTransactionInfoBase<TransactionType.CollectFees>,
   'currency1AmountRaw' | 'currency1Id'
@@ -571,19 +564,11 @@ export type LiquidityTransactionBaseInfos =
   | LiquidityDecreaseTransactionInfo
   | CreatePairTransactionInfo
   | CreatePoolTransactionInfo
-  | MigrateV3LiquidityToV4TransactionInfo
   | CollectFeesTransactionInfo
 
 export interface LpIncentivesClaimTransactionInfo extends BaseTransactionInfo {
   type: TransactionType.LPIncentivesClaimRewards
   tokenAddress: string
-}
-
-export interface MigrateV2LiquidityToV3TransactionInfo extends BaseTransactionInfo {
-  type: TransactionType.MigrateLiquidityV2ToV3
-  baseCurrencyId: string
-  quoteCurrencyId: string
-  isFork: boolean
 }
 
 export type TransactionTypeInfo =
@@ -614,8 +599,6 @@ export type TransactionTypeInfo =
   | LiquidityDecreaseTransactionInfo
   | RemoveDelegationTransactionInfo
   | ClaimUniTransactionInfo
-  | MigrateV2LiquidityToV3TransactionInfo
-  | MigrateV3LiquidityToV4TransactionInfo
   | LpIncentivesClaimTransactionInfo
 
 /**

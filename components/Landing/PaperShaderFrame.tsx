@@ -3,6 +3,7 @@
 import { GrainGradient } from '@paper-design/shaders-react'
 import { useInView } from '@/hooks/useInView'
 import { useState, useEffect } from 'react'
+import { isWebGL2Supported } from '@/lib/webgl'
 
 const FRAME_THICKNESS = 10
 const OUTER_RADIUS = 18
@@ -20,14 +21,9 @@ export const PaperShaderFrame = () => {
   useEffect(() => {
     if (window.innerWidth < 768) return // Skip heavy WebGL on mobile
 
-    // Check WebGL support before mounting shader
-    try {
-      const canvas = document.createElement('canvas')
-      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
-      if (!gl) return
-    } catch {
-      return
-    }
+    // GrainGradient requires WebGL2 — a webgl1-only context still throws an
+    // uncatchable async rejection. Gate on real webgl2 support (see lib/webgl).
+    if (!isWebGL2Supported()) return
 
     setMounted(true)
 

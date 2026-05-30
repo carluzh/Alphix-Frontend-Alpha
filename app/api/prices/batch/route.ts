@@ -40,6 +40,13 @@ export async function POST(request: Request) {
       { headers: { 'Cache-Control': 'no-store' } }
     );
   } catch (error) {
+    // Client-aborted / truncated request (socket closed mid-read while we awaited
+    // request.json()). Not an app bug — skip reporting AND the console.error so it
+    // is not forwarded by consoleLoggingIntegration. The 500 below is moot since
+    // the client is already gone.
+    if (isClientAbortError(error)) {
+      return NextResponse.json({ error: 'aborted' }, { status: 499 });
+    }
     console.error('[/api/prices/batch] Error:', error);
     reportError(error, {
       domain: 'backend',
@@ -53,4 +60,25 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * Detect a client-aborted request: the socket closed before the body finished
+ * (Error: 'aborted'), an abort signal fired (AbortError / err.name), or the
+ * connection reset (ECONNRESET). These are not server faults and must not be
+ * reported as errors.
+ */
+function isClientAbortError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { name?: unknown; code?: unknown; message?: unknown };
+  const name = typeof e.name === 'string' ? e.name : '';
+  const code = typeof e.code === 'string' ? e.code : '';
+  const message = typeof e.message === 'string' ? e.message : '';
+  return (
+    name === 'AbortError' ||
+    code === 'ECONNRESET' ||
+    code === 'ECONNABORTED' ||
+    message === 'aborted' ||
+    message.includes('Unexpected end of form')
+  );
 }

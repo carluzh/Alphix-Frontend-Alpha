@@ -1,7 +1,5 @@
 import { PositionStatus, ProtocolVersion } from './pool-types'
 import { Currency, CurrencyAmount, Price, Token } from '@uniswap/sdk-core'
-import { Pair } from '@uniswap/v2-sdk'
-import { Pool as V3Pool, Position as V3Position } from '@uniswap/v3-sdk'
 import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk'
 
 /** Fee tier configuration (inlined from deleted Create/types.ts) */
@@ -44,25 +42,6 @@ interface BasePositionInfo {
   isHidden?: boolean
 }
 
-type V2PairInfo = BasePositionInfo & {
-  version: ProtocolVersion.V2
-  poolOrPair?: Pair
-  liquidityToken: Token
-  feeTier: undefined
-  v4hook: undefined
-  owner: undefined
-}
-
-type V3PositionInfo = BasePositionInfo & {
-  version: ProtocolVersion.V3
-  tokenId: string
-  poolOrPair?: V3Pool
-  feeTier?: FeeData
-  position?: V3Position
-  v4hook: undefined
-  owner: string
-}
-
 type V4PositionInfo = BasePositionInfo & {
   version: ProtocolVersion.V4
   tokenId: string
@@ -76,4 +55,5 @@ type V4PositionInfo = BasePositionInfo & {
   boostedApr?: number
 }
 
-export type PositionInfo = V2PairInfo | V3PositionInfo | V4PositionInfo
+// Alphix only mints V4 positions; the V2/V3 union arms were removed as dead scaffolding.
+export type PositionInfo = V4PositionInfo

@@ -13,7 +13,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { useAccount } from 'wagmi';
-import { formatUnits, parseUnits } from 'viem';
+import { formatUnits } from 'viem';
 
 import { useAddLiquidityContext } from './AddLiquidityContext';
 import { useAddLiquidityCalculation, type CalculatedLiquidityData } from '@/lib/liquidity/hooks/transaction/useAddLiquidityCalculation';
@@ -26,10 +26,9 @@ import { chainIdForMode } from '@/lib/network-mode';
 import { formatTokenDisplayAmount } from '@/lib/utils';
 
 import { useUnifiedYieldApprovals } from '@/lib/liquidity/unified-yield/useUnifiedYieldApprovals';
-import { previewDeposit } from '@/lib/liquidity/unified-yield/buildUnifiedYieldDepositTx';
 import type { DepositPreviewResult, UnifiedYieldApprovalStatus } from '@/lib/liquidity/unified-yield/types';
 import { createNetworkClient } from '@/lib/viemClient';
-import { reportError } from '@/lib/observability';
+import { useUnifiedYieldDepositPreview } from './hooks/useUnifiedYieldDepositPreview';
 
 export interface TokenApprovalState {
   needsApproval: boolean;
@@ -103,9 +102,6 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     inputSide,
     mode,
   } = state;
-
-  const [depositPreview, setDepositPreview] = useState<DepositPreviewResult | null>(null);
-  const [isUnifiedYieldCalculating, setIsUnifiedYieldCalculating] = useState(false);
 
   const effectiveNetworkMode = poolNetworkMode ?? 'base';
   const chainId = chainIdForMode(effectiveNetworkMode);
@@ -210,99 +206,18 @@ export function CreatePositionTxContextProvider({ children }: PropsWithChildren)
     }
   }, [calculationError]);
 
-  useEffect(() => {
-    if (!isUnifiedYield || !hookAddress || !poolChainClient) {
-      setDepositPreview(null);
-      return;
-    }
-
-    const activeInputSide = inputSide === 'token0' ? 'token0' : inputSide === 'token1' ? 'token1' : null;
-    if (!activeInputSide) {
-      setDepositPreview(null);
-      return;
-    }
-
-    const inputAmount = activeInputSide === 'token0' ? amount0 : amount1;
-    const inputDecimals = activeInputSide === 'token0'
-      ? (token0Config?.decimals ?? 18)
-      : (token1Config?.decimals ?? 18);
-
-    if (!inputAmount || parseFloat(inputAmount) <= 0) {
-      setDepositPreview(null);
-      return;
-    }
-
-    const inputWei = parseUnits(inputAmount, inputDecimals);
-
-    if (depositPreview && depositPreview.inputSide === activeInputSide) {
-      const existingInputAmount = activeInputSide === 'token0'
-        ? depositPreview.amount0
-        : depositPreview.amount1;
-      if (existingInputAmount === inputWei) {
-        return;
-      }
-    }
-
-    let cancelled = false;
-    setIsUnifiedYieldCalculating(true);
-
-    previewDeposit(
-      hookAddress,
-      inputWei,
-      activeInputSide,
-      token0Config?.decimals ?? 18,
-      token1Config?.decimals ?? 18,
-      18,
-      poolChainClient
-    )
-      .then((preview) => {
-        if (!cancelled && preview) {
-          setDepositPreview(preview);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          console.warn('Unified Yield preview failed:', err);
-          setDepositPreview(null);
-          reportError(err, {
-            domain: 'unified-yield',
-            action: 'preview',
-            component: 'CreatePositionTxContext',
-            networkMode: effectiveNetworkMode,
-            chainId,
-            tags: { inputSide: activeInputSide || 'unknown' },
-            extras: {
-              hookAddress,
-              inputAmount: inputWei.toString(),
-              inputSide: activeInputSide,
-              token0Decimals: token0Config?.decimals,
-              token1Decimals: token1Config?.decimals,
-              cause: err?.cause?.message || err?.cause,
-              shortMessage: err?.shortMessage,
-            },
-          });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsUnifiedYieldCalculating(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
+  const { depositPreview, isCalculating: isUnifiedYieldCalculating } = useUnifiedYieldDepositPreview({
     isUnifiedYield,
     hookAddress,
     poolChainClient,
     inputSide,
     amount0,
     amount1,
-    token0Config?.decimals,
-    token1Config?.decimals,
-    depositPreview,
-  ]);
+    token0Decimals: token0Config?.decimals,
+    token1Decimals: token1Config?.decimals,
+    networkMode: effectiveNetworkMode,
+    chainId,
+  });
 
   const {
     data: unifiedYieldApprovalStatus,

@@ -10,11 +10,9 @@
 
 // Types
 export type {
-  LiquidityPositionMinMaxRangeProps,
   LiquidityPositionFeeStatsProps,
   FeeStatProps,
   APRFeeStatProps,
-  MinMaxRangeProps,
 } from './types';
 
 // Sub-components

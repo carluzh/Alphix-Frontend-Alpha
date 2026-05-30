@@ -136,22 +136,11 @@ type Pool {
   apr: Float
   # History
   priceHistory(duration: HistoryDuration!): [TimestampedPoolPrice!]
-  # Ticks data
-  ticks(skip: Int, first: Int): [PoolTick!]
 }
 
 type PoolHook {
   id: ID!
   address: String!
-}
-
-type PoolTick {
-  id: ID!
-  tickIdx: Int!
-  liquidityGross: String!
-  liquidityNet: String!
-  price0: String
-  price1: String
 }
 
 type PoolState {
@@ -164,15 +153,6 @@ type PoolState {
   lpFee: Int!
   currentPrice: String!
   currentPoolTick: Int!
-}
-
-type PoolMetrics {
-  poolId: String!
-  tvlUSD: Float!
-  volume24hUSD: Float!
-  fees24hUSD: Float!
-  dynamicFeeBps: Float!
-  apr: Float!
 }
 
 # =============================================================================
@@ -219,64 +199,6 @@ type FeeItem {
 }
 
 # =============================================================================
-# SWAP TYPES
-# =============================================================================
-
-type SwapQuote {
-  amountIn: String!
-  amountOut: String!
-  path: [String!]!
-  fees: [Int!]!
-  priceImpact: Float
-  minimumReceived: String
-}
-
-type SwapTransaction {
-  to: String!
-  data: String!
-  value: String!
-  gasLimit: String
-}
-
-# =============================================================================
-# PRICE TYPES
-# =============================================================================
-
-type TokenPrice {
-  symbol: String!
-  priceUSD: Float!
-  priceChange24h: Float
-  timestamp: Int!
-}
-
-# =============================================================================
-# INPUT TYPES
-# =============================================================================
-
-input SwapQuoteInput {
-  tokenIn: String!
-  tokenOut: String!
-  amount: String!
-  exactIn: Boolean!
-  slippageTolerance: Float
-}
-
-input BuildSwapTxInput {
-  tokenIn: String!
-  tokenOut: String!
-  amountIn: String!
-  amountOutMin: String!
-  recipient: String!
-  deadline: Int!
-}
-
-input TicksInput {
-  poolId: String!
-  skip: Int
-  first: Int
-}
-
-# =============================================================================
 # QUERIES
 # =============================================================================
 
@@ -284,24 +206,15 @@ type Query {
   # Health check
   _health: String
 
-  # Token queries
-  token(chain: Chain!, address: String): Token
-
   # Pool queries
   pool(chain: Chain!, poolId: String!): Pool
   pools(chain: Chain!, first: Int, skip: Int): [Pool!]!
   poolState(chain: Chain!, poolId: String!): PoolState
-  poolMetrics(chain: Chain!, poolId: String!): PoolMetrics
   poolPriceHistory(chain: Chain!, poolId: String!, duration: HistoryDuration!): [TimestampedPoolPrice!]!
-  poolTicks(chain: Chain!, poolId: String!, skip: Int, first: Int): [PoolTick!]!
 
   # Position queries
   position(chain: Chain!, positionId: String!): Position
   userPositions(chain: Chain!, owner: String!): [Position!]!
-  positionFees(chain: Chain!, positionId: String!): FeeItem
-
-  # Swap queries
-  swapQuote(chain: Chain!, input: SwapQuoteInput!): SwapQuote
 }
 
 # =============================================================================
@@ -309,7 +222,6 @@ type Query {
 # =============================================================================
 
 type Mutation {
-  # Swap mutations
-  buildSwapTransaction(chain: Chain!, input: BuildSwapTxInput!): SwapTransaction
+  _placeholder: String
 }
 `

@@ -3,18 +3,22 @@
  *
  * No approvals needed (user is withdrawing). No server-side computation.
  * Validates input, forwards to /lp/decrease, and returns the response verbatim.
+ *
+ * Shared boilerplate (rate-limit, position-pool resolution, error handling)
+ * lives in @/lib/liquidity/api/prepare-tx-shared.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isAddress, getAddress } from 'viem';
 
-import { getAllPools } from '@/lib/pools-config';
 import { resolveNetworkMode } from '@/lib/network-mode';
-import { validateChainId, checkTxRateLimit } from '@/lib/tx-validation';
-import { getPositionDetails } from '@/lib/liquidity/liquidity-utils';
-import { findPoolByPoolKey, isUnifiedYieldPool } from '@/lib/liquidity/utils/pool-type-guards';
-import { uniswapLPAPI, UniswapLPAPIError, UniswapLPAPIRateLimitError } from '@/lib/liquidity/uniswap-api/client';
-import { reportError, addReportBreadcrumb } from '@/lib/observability';
+import { validateChainId } from '@/lib/tx-validation';
+import { uniswapLPAPI } from '@/lib/liquidity/uniswap-api/client';
+import {
+  enforcePostAndRateLimit,
+  resolveAlphixPositionPool,
+  handlePrepareTxError,
+} from '@/lib/liquidity/api/prepare-tx-shared';
 
 interface PrepareDecreaseTxRequest extends NextApiRequest {
   body: {
@@ -43,17 +47,7 @@ export default async function handler(
   req: PrepareDecreaseTxRequest,
   res: NextApiResponse<PrepareDecreaseTxResponse>,
 ) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ message: `Method ${req.method} Not Allowed` });
-  }
-
-  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || req.socket?.remoteAddress || 'unknown';
-  const rateCheck = checkTxRateLimit(clientIp);
-  if (!rateCheck.allowed) {
-    res.setHeader('Retry-After', String(rateCheck.retryAfter || 60));
-    return res.status(429).json({ message: 'Too many requests. Please try again later.' });
-  }
+  if (enforcePostAndRateLimit(req, res)) return;
 
   const networkMode = resolveNetworkMode(req);
 
@@ -76,20 +70,16 @@ export default async function handler(
       return res.status(400).json({ message: 'decreasePercentage must be between 1 and 100.' });
     }
 
-    const nftTokenId = BigInt(tokenId);
     const pct = Math.round(decreasePercentage);
 
-    // Breadcrumb before the on-chain position lookup; if it throws it bubbles to the
-    // outer catch where reportError captures it.
-    addReportBreadcrumb({ domain: 'liquidity', action: 'fetchPositionDetails', data: { tokenId, chainId } });
-    const positionDetails = await getPositionDetails(nftTokenId, chainId);
-    const poolConfig = findPoolByPoolKey(getAllPools(networkMode), positionDetails.poolKey);
-    if (!poolConfig) {
-      return res.status(400).json({ message: 'Position is not in an Alphix pool.' });
-    }
-    if (isUnifiedYieldPool(poolConfig)) {
-      return res.status(400).json({ message: 'Unified Yield positions use a separate withdraw flow.' });
-    }
+    const resolved = await resolveAlphixPositionPool({
+      tokenId,
+      chainId,
+      networkMode,
+      uyMessage: 'Unified Yield positions use a separate withdraw flow.',
+    });
+    if (!resolved.ok) return res.status(400).json({ message: resolved.message });
+    const { nftTokenId, positionDetails } = resolved;
 
     const deadlineSeconds = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
 
@@ -126,41 +116,13 @@ export default async function handler(
       },
     });
   } catch (error: any) {
-    if (error instanceof UniswapLPAPIRateLimitError) {
-      console.warn('[prepare-decrease-tx] Rate limit exhausted after retries');
-      // Rate limits are expected — do NOT capture; leave a breadcrumb trail only.
-      addReportBreadcrumb({ domain: 'liquidity', action: 'decrease', level: 'warning', message: 'rate limited' });
-      res.setHeader('Retry-After', '2');
-      return res.status(429).json({ message: 'Busy — please retry in a moment.' });
-    }
-    if (error instanceof UniswapLPAPIError) {
-      console.error('[prepare-decrease-tx] Uniswap LP API error:', error.status, error.message);
-      reportError(error, {
-        domain: 'liquidity',
-        action: 'decrease',
-        component: 'prepare-decrease-tx',
-        chainId: req.body?.chainId,
-        networkMode,
-        tags: { uniswapStatus: error.status, uniswapErrorCode: error.code },
-        extras: {
-          userAddress: req.body?.userAddress,
-          tokenId: req.body?.tokenId,
-          decreasePercentage: req.body?.decreasePercentage,
-          uniswapDetails: error.details,
-        },
-      });
-      return res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
-    }
-    console.error('[API prepare-decrease-tx] Error:', error);
-    reportError(error, {
-      domain: 'liquidity',
+    handlePrepareTxError(error, req, res, {
       action: 'decrease',
       component: 'prepare-decrease-tx',
-      chainId: req.body?.chainId,
       networkMode,
+      chainId: req.body?.chainId,
       extras: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId },
+      uniswapExtras: { decreasePercentage: req.body?.decreasePercentage },
     });
-    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
-    return res.status(500).json({ message: errorMessage, error: process.env.NODE_ENV === 'development' ? error : undefined });
   }
 }
