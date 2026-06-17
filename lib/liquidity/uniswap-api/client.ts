@@ -324,6 +324,23 @@ function getApiKey(): string {
  *  clients collide at the same wall-clock instant. */
 const RATE_LIMIT_RETRY_BASE_MS = [200, 500, 1100];
 
+/** Hard wall-clock budget for the ENTIRE call — all retries + backoffs combined.
+ *  Each attempt is granted only the *remaining* budget as its abort timeout, so a
+ *  slow/hung Uniswap simulate can never pin the request beyond this. The worst case
+ *  is one clean failure at ~TOTAL_BUDGET_MS instead of the multi-minute hang that
+ *  unbounded per-attempt retries produced.
+ *
+ *  Tuned for an INTERACTIVE caller (user staring at a spinner): the happy-path
+ *  simulate is ~1-3s, so 6s surfaces a clean error fast and lets the user re-click
+ *  (the user is the retry loop) rather than waiting. Kept under the serverless
+ *  function timeout so we surface our own 504 before the platform kills the route.
+ *  Bump it if legitimately-slow simulates start failing spuriously. */
+const TOTAL_BUDGET_MS = 6_000;
+
+/** Floor for an attempt's abort timeout — never start a fetch with less than this,
+ *  so a retry kicked off near the deadline still gets a usable (if short) window. */
+const MIN_ATTEMPT_TIMEOUT_MS = 1_200;
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 /** Returns base delay ±50% for jitter. */
@@ -333,6 +350,13 @@ function jitter(baseMs: number): number {
 }
 
 async function post<Req, Res>(path: string, body: Req): Promise<Res> {
+  const start = Date.now();
+  const remaining = () => TOTAL_BUDGET_MS - (Date.now() - start);
+  // Retry only while attempts remain AND enough budget is left to make another
+  // attempt worthwhile — so the whole call stays within ~TOTAL_BUDGET_MS.
+  const canRetry = (attempt: number) =>
+    attempt < RATE_LIMIT_RETRY_BASE_MS.length && remaining() > MIN_ATTEMPT_TIMEOUT_MS;
+
   // N+1 iterations: N retry-sleeps + 1 final attempt without sleep.
   for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_BASE_MS.length; attempt++) {
     // Pre-fetch lifecycle breadcrumb so a subsequent failure correlates to the
@@ -344,15 +368,47 @@ async function post<Req, Res>(path: string, body: Req): Promise<Res> {
       data: { attempt, path },
     });
 
-    const res = await fetch(`${BASE_URL}${path}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': getApiKey(),
-        Accept: 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': getApiKey(),
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(body),
+        // Grant this attempt only the remaining budget (floored) — guarantees the
+        // whole call (every retry + backoff) can never exceed ~TOTAL_BUDGET_MS, so a
+        // hung/slow simulate is aborted instead of waiting out nginx's ~30s timeout.
+        signal: AbortSignal.timeout(Math.max(MIN_ATTEMPT_TIMEOUT_MS, remaining())),
+      });
+    } catch (err) {
+      // The fetch threw before any Response — an abort-by-timeout or a transport-level
+      // network failure. Treat like a transient 5xx (retry within budget); on
+      // exhaustion surface a clean 504 so the route maps it to a real error instead of
+      // leaving the user on an endless spinner.
+      const isTimeout = err instanceof DOMException && err.name === 'TimeoutError';
+      addReportBreadcrumb({
+        domain: 'liquidity',
+        action: 'uniswapLPApi',
+        level: 'warning',
+        message: `${path} ${isTimeout ? 'timed out' : 'network error'}${canRetry(attempt) ? ' — retrying' : ''}`,
+        data: { path, attempt, isTimeout },
+      });
+      if (canRetry(attempt)) {
+        await sleep(jitter(RATE_LIMIT_RETRY_BASE_MS[attempt]));
+        continue;
+      }
+      throw new UniswapLPAPIError(
+        504,
+        isTimeout ? 'upstream_timeout' : 'network_error',
+        isTimeout
+          ? `Uniswap LP API request to ${path} timed out.`
+          : (err instanceof Error ? err.message : 'Network error contacting Uniswap LP API.'),
+      );
+    }
+
     const text = await res.text();
     let parsed: any;
     try { parsed = JSON.parse(text); } catch { parsed = text; }
@@ -362,7 +418,7 @@ async function post<Req, Res>(path: string, body: Req): Promise<Res> {
     // coupling to the body string is fragile — accept either status code so we survive
     // a future migration to spec-compliant 429s or any body-shape change.
     const isRateLimit = res.status === 403 || res.status === 429;
-    if (isRateLimit && attempt < RATE_LIMIT_RETRY_BASE_MS.length) {
+    if (isRateLimit && canRetry(attempt)) {
       await sleep(jitter(RATE_LIMIT_RETRY_BASE_MS[attempt]));
       continue;
     }
@@ -370,6 +426,28 @@ async function post<Req, Res>(path: string, body: Req): Promise<Res> {
       // Rate-limits are expected; routes decide whether to surface them. We do NOT
       // capture here — only leave a breadcrumb trail.
       throw new UniswapLPAPIRateLimitError();
+    }
+
+    // Transient upstream gateway failures (502/503/504 and any other 5xx) are NOT
+    // deterministic like a 4xx — Uniswap's hosted LP simulator intermittently
+    // returns an nginx 5xx HTML page during load spikes/timeouts. Every /lp/* call
+    // here is a non-mutating simulate-and-return builder, so retrying is
+    // idempotent-safe. Ride out a transient blip with the same bounded backoff used
+    // for rate limits before surfacing the error (which the prepare-tx routes map to
+    // a 502 → the user-facing "Failed to prepare transaction"). The overall deadline
+    // (canRetry) ensures a slow 5xx does not compound; on exhaustion we fall through
+    // to the generic !res.ok throw below with the real upstream status.
+    const isTransient5xx = res.status >= 500;
+    if (isTransient5xx && canRetry(attempt)) {
+      addReportBreadcrumb({
+        domain: 'liquidity',
+        action: 'uniswapLPApi',
+        level: 'warning',
+        message: `${path} ${res.status} — retrying transient upstream error`,
+        data: { path, status: res.status, attempt },
+      });
+      await sleep(jitter(RATE_LIMIT_RETRY_BASE_MS[attempt]));
+      continue;
     }
 
     if (!res.ok) {

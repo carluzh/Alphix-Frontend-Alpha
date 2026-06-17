@@ -7,7 +7,7 @@
  * Uses consolidated tick-price utilities for proper alignment.
  */
 
-import { nearestUsableTick, priceToTickSimple } from '../tick-price';
+import { nearestUsableTick, priceToTickSimple, clampTick } from '../tick-price';
 
 /**
  * Calculates tick lower and upper bounds based on percentage range around current pool tick.
@@ -37,11 +37,15 @@ export function calculateTicksFromPercentage(
   const rawLower = currentPoolTick + lowerTickDelta;
   const rawUpper = currentPoolTick + upperTickDelta;
 
-  // Align to tick spacing using nearestUsableTick
-  // For lower bound: floor to ensure range starts at or below requested price
-  // For upper bound: ceil to ensure range ends at or above requested price
-  const lower = nearestUsableTick(Math.floor(rawLower), tickSpacing);
-  const upper = nearestUsableTick(Math.ceil(rawUpper), tickSpacing);
+  // Align to tick spacing using nearestUsableTick.
+  // For lower bound: floor to ensure range starts at or below requested price.
+  // For upper bound: ceil to ensure range ends at or above requested price.
+  // Clamp the raw tick to [MIN_TICK, MAX_TICK] BEFORE nearestUsableTick — the SDK
+  // asserts ("Invariant failed") when handed an out-of-range tick, which fires on a
+  // normal preset click for stable pools (e.g. USDC/USDT) whose current tick sits
+  // near the MAX_TICK edge so currentPoolTick + delta overflows the valid range.
+  const lower = nearestUsableTick(clampTick(Math.floor(rawLower)), tickSpacing);
+  const upper = nearestUsableTick(clampTick(Math.ceil(rawUpper)), tickSpacing);
 
   return [lower, upper];
 }

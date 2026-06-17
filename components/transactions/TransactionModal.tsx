@@ -222,6 +222,23 @@ export function TransactionModal({
   // ─── Disabled state ─────────────────────────────────────────────────────
   const isConfirmDisabled = isExecuting || view === 'executing' || confirmDisabled;
 
+  // While generateSteps is in flight (steps not generated yet) the confirm button
+  // ITSELF shows the working state — a button state, not a separate spinner — so the
+  // footprint never jumps. It then advances to the progress steps on success, or
+  // returns to review with an inline error to re-click.
+  const isPreparing = view === 'executing' && uiSteps.length === 0;
+  const confirmContent = isPreparing ? (
+    <span className="flex items-center justify-center gap-2">
+      <span
+        className="h-4 w-4 animate-spin rounded-full border-2 border-sidebar-primary/30 border-t-sidebar-primary"
+        aria-hidden
+      />
+      {statusText ?? 'Preparing transaction…'}
+    </span>
+  ) : (
+    confirmText
+  );
+
   // ─── Render ──────────────────────────────────────────────────────────────
   return (
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
@@ -290,7 +307,7 @@ export function TransactionModal({
                     <Button
                       variant="outline"
                       onClick={onBack}
-                      disabled={isExecuting}
+                      disabled={isExecuting || view === 'executing'}
                       className="h-12 text-base font-semibold"
                     >
                       Back
@@ -300,7 +317,7 @@ export function TransactionModal({
                       disabled={isConfirmDisabled}
                       className="h-12 text-base font-semibold bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90"
                     >
-                      {confirmText}
+                      {confirmContent}
                     </Button>
                   </div>
                 ) : (
@@ -310,7 +327,7 @@ export function TransactionModal({
                     disabled={isConfirmDisabled}
                     className="w-full h-12 text-base font-semibold bg-button-primary border border-sidebar-primary text-sidebar-primary hover:bg-button-primary/90"
                   >
-                    {confirmText}
+                    {confirmContent}
                   </Button>
                 )
               ) : null}

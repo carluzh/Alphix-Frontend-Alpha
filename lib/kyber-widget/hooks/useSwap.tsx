@@ -349,15 +349,20 @@ const useSwap = ({
       if (connectedAccount.address && tokenInBalance >= amountIn) setError('')
     } else {
       // Not an exception — the route call succeeded but returned no fillable
-      // amountOut. Soft-report so we can track persistent no-liquidity pairs.
-      reportMessage('Insufficient liquidity for swap', {
-        domain: 'swap',
-        action: 'getRate',
-        component: 'useSwap',
-        level: 'warning',
-        chainId,
-        extras: { tokenIn, tokenOut, amountIn: amountIn.toString() },
-      })
+      // amountOut. Only soft-report when a CONNECTED, sufficiently-funded user
+      // still can't be filled (the actionable persistent no-liquidity case);
+      // skip the no-wallet / insufficient-balance rate-preview noise that fired
+      // on every unconnected quote.
+      if (connectedAccount.address && tokenInBalance >= amountIn) {
+        reportMessage('Insufficient liquidity for swap', {
+          domain: 'swap',
+          action: 'getRate',
+          component: 'useSwap',
+          level: 'warning',
+          chainId,
+          extras: { tokenIn, tokenOut, amountIn: amountIn.toString() },
+        })
+      }
       setTrade(null)
       setError('Insufficient liquidity')
     }

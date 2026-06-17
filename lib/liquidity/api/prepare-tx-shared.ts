@@ -297,6 +297,15 @@ export function handlePrepareTxError(
     return;
   }
   if (error instanceof UniswapLPAPIError) {
+    // Dust input that computes to zero liquidity is an expected user-input 4xx, not
+    // an actionable error — return friendly copy and a breadcrumb only (do NOT
+    // reportError; mirrors the rate-limit branch above) so the user sees guidance
+    // instead of "Uniswap LP API: InputValidationError: Invariant failed: ZERO_LIQUIDITY".
+    if (/ZERO_LIQUIDITY/i.test(error.message)) {
+      addReportBreadcrumb({ domain: 'liquidity', action, level: 'warning', message: 'zero-liquidity dust input' });
+      res.status(400).json({ message: 'Amount too small for this range. Increase the deposit or adjust the range.' });
+      return;
+    }
     console.error(`[${component}] Uniswap LP API error:`, error.status, error.message);
     reportError(error, {
       domain: 'liquidity',
@@ -307,7 +316,15 @@ export function handlePrepareTxError(
       tags: { uniswapStatus: error.status, uniswapErrorCode: error.code },
       extras: { ...extras, ...(uniswapExtras ?? {}), uniswapDetails: error.details },
     });
-    res.status(error.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${error.message}` });
+    // Upstream/gateway/timeout (5xx) is the API's fault, not the user's — say so
+    // plainly and don't leak the internal path/message. 4xx is request-specific
+    // (validation etc.), so keep its actionable detail.
+    const isUpstream = error.status >= 500;
+    res.status(isUpstream ? 502 : 400).json({
+      message: isUpstream
+        ? "Our API failed to process the request. Please try again — sorry for the inconvenience."
+        : `Uniswap LP API: ${error.message}`,
+    });
     return;
   }
   console.error(`[API ${component}] Error:`, error);

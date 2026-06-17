@@ -114,7 +114,12 @@ export function isNetworkError(error: unknown): boolean {
     message.includes('connection') ||
     message.includes('socket') ||
     message.includes('enotfound') ||
-    message.includes('econnrefused')
+    message.includes('econnrefused') ||
+    // undici transport drops + iOS Safari's "Load failed" sibling of "Failed to fetch"
+    message.includes('terminated') ||
+    message.includes('load failed') ||
+    message.includes('other side closed') ||
+    message.includes('und_err')
   );
 }
 
@@ -150,7 +155,11 @@ function isSlippageError(error: unknown): boolean {
     message.includes('price moved') ||
     message.includes('too little received') ||
     message.includes('too much requested') ||
-    message.includes('price impact')
+    message.includes('price impact') ||
+    // Empty-revert-data on a mint the LP API already simulated OK is, in practice,
+    // a price/tick move or consumed nonce between prepare and submit — treat it as
+    // a "price moved, try again" class rather than an opaque contract error.
+    message.includes('reverted for an unknown reason')
   );
 }
 

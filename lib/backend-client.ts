@@ -3,9 +3,77 @@
 import { type NetworkMode } from './network-mode';
 import { CHAIN_REGISTRY } from './chain-registry';
 import { apiFetch } from './fetch-client';
-import { reportError } from '@/lib/observability';
+import { reportError, addReportBreadcrumb, type ReportContext } from '@/lib/observability';
+import { isNetworkError, extractErrorMessage } from '@/lib/liquidity/utils/validation/errorHandling';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_ALPHIX_BACKEND_URL || 'http://localhost:3001';
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * A transient transport-layer failure worth exactly one retry (undici socket drop
+ * "terminated" / "other side closed", "fetch failed", abort timeouts) — as opposed
+ * to an HTTP error *response*, which resolves rather than throws.
+ */
+function isTransientTransportError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const code = typeof (err as { code?: unknown })?.code === 'string' ? (err as { code: string }).code : '';
+  const causeMsg = ((err as { cause?: { message?: unknown } })?.cause?.message ?? '').toString().toLowerCase();
+  return (
+    (err instanceof DOMException && err.name === 'TimeoutError') ||
+    code.startsWith('UND_ERR') ||
+    msg.includes('terminated') ||
+    msg.includes('fetch failed') ||
+    msg.includes('other side closed') ||
+    msg.includes('socket') ||
+    msg.includes('timeout') ||
+    causeMsg.includes('terminated') ||
+    causeMsg.includes('other side closed')
+  );
+}
+
+/**
+ * Resilient fetch for backend GETs: 8s timeout + retry-once on a transient
+ * transport error. Single source of transport resilience for every bare-fetch
+ * helper in this module. Read-only / idempotent calls only.
+ */
+async function backendFetch(url: string, init?: RequestInit): Promise<Response> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const withTimeout: RequestInit = { ...init, signal: init?.signal ?? AbortSignal.timeout(8000) };
+      return await fetch(url, withTimeout);
+    } catch (err) {
+      if (attempt === 0 && isTransientTransportError(err)) {
+        await sleep(500);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('backendFetch: retries exhausted');
+}
+
+/**
+ * Report a backend fetch failure — but DOWNGRADE transient client/transport
+ * network errors (user offline, iOS "Load failed", undici "terminated" / socket
+ * drop) to a breadcrumb instead of a Sentry error. Callers already degrade the UI
+ * gracefully for these non-actionable client/upstream conditions; only genuine
+ * failures (HTTP error bodies, JSON parse errors) reach reportError. This is
+ * handling-at-source, NOT a Sentry inbound whitelist.
+ */
+function reportBackendError(err: unknown, ctx: ReportContext): void {
+  if (isNetworkError(err)) {
+    addReportBreadcrumb({
+      domain: ctx.domain,
+      action: ctx.action,
+      level: 'warning',
+      message: `${ctx.action}: transient network error (not reported)`,
+      data: { error: extractErrorMessage(err) },
+    });
+    return;
+  }
+  reportError(err, ctx);
+}
 
 /** Map frontend NetworkMode to backend network query param */
 export function getNetworkParam(networkMode: NetworkMode): string {
@@ -123,7 +191,7 @@ export async function fetchPositionsChart(
       period: period,
     });
 
-    const response = await fetch(url, {
+    const response = await backendFetch(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -135,7 +203,7 @@ export async function fetchPositionsChart(
 
     return await response.json();
   } catch (error) {
-    reportError(error, {
+    reportBackendError(error, {
       domain: 'backend',
       action: 'fetchPositionsChart',
       component: 'backend-client',
@@ -193,7 +261,7 @@ export async function fetchPoolHistory(
       period: period,
     });
 
-    const response = await fetch(url, {
+    const response = await backendFetch(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -205,7 +273,7 @@ export async function fetchPoolHistory(
 
     return await response.json();
   } catch (error) {
-    reportError(error, {
+    reportBackendError(error, {
       domain: 'backend',
       action: 'fetchPoolHistory',
       component: 'backend-client',
@@ -271,7 +339,7 @@ export async function fetchPositionFees(
       period: backendPeriod,
     });
 
-    const response = await fetch(url, {
+    const response = await backendFetch(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -283,7 +351,7 @@ export async function fetchPositionFees(
 
     return await response.json();
   } catch (error) {
-    reportError(error, {
+    reportBackendError(error, {
       domain: 'backend',
       action: 'fetchPositionFees',
       component: 'backend-client',
@@ -337,7 +405,7 @@ export async function fetchPositionApr(
   try {
     const url = buildBackendUrl(`/position/${encodeURIComponent(fullHexPositionId)}/apr`, networkMode);
 
-    const response = await fetch(url, {
+    const response = await backendFetch(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -349,7 +417,7 @@ export async function fetchPositionApr(
 
     return await response.json();
   } catch (error) {
-    reportError(error, {
+    reportBackendError(error, {
       domain: 'backend',
       action: 'fetchPositionApr',
       component: 'backend-client',
@@ -398,7 +466,7 @@ export async function fetchUnifiedYieldPoolApr(
   try {
     const url = buildBackendUrl(`/unified-yield/pool/${encodeURIComponent(poolId)}/apr`, networkMode);
 
-    const response = await fetch(url, {
+    const response = await backendFetch(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -410,7 +478,7 @@ export async function fetchUnifiedYieldPoolApr(
 
     return await response.json();
   } catch (error) {
-    reportError(error, {
+    reportBackendError(error, {
       domain: 'backend',
       action: 'fetchUnifiedYieldPoolApr',
       component: 'backend-client',
@@ -464,7 +532,7 @@ export async function fetchUnifiedYieldPoolAprHistory(
       period: period,
     });
 
-    const response = await fetch(url, {
+    const response = await backendFetch(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -476,7 +544,7 @@ export async function fetchUnifiedYieldPoolAprHistory(
 
     return await response.json();
   } catch (error) {
-    reportError(error, {
+    reportBackendError(error, {
       domain: 'backend',
       action: 'fetchUnifiedYieldPoolAprHistory',
       component: 'backend-client',
@@ -542,7 +610,7 @@ export async function fetchUnifiedYieldPositionCompoundedFees(
       networkMode
     );
 
-    const response = await fetch(url, {
+    const response = await backendFetch(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -554,7 +622,7 @@ export async function fetchUnifiedYieldPositionCompoundedFees(
 
     return await response.json();
   } catch (error) {
-    reportError(error, {
+    reportBackendError(error, {
       domain: 'backend',
       action: 'fetchUnifiedYieldPositionCompoundedFees',
       component: 'backend-client',
@@ -683,7 +751,7 @@ export async function fetchPoolsMetrics(
 
     return await response.json();
   } catch (error) {
-    reportError(error, {
+    reportBackendError(error, {
       domain: 'backend',
       action: 'fetchPoolsMetrics',
       component: 'backend-client',
@@ -710,7 +778,7 @@ export async function fetchAllPoolsMetrics(): Promise<PoolsMetricsResponse> {
     }
     return await response.json();
   } catch (error) {
-    reportError(error, {
+    reportBackendError(error, {
       domain: 'backend',
       action: 'fetchAllPoolsMetrics',
       component: 'backend-client',

@@ -41,7 +41,23 @@ export async function apiFetch(
     let lastResponse: Response | undefined;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const response = await fetch(url, fetchOpts);
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          ...fetchOpts,
+          signal: fetchOpts.signal ?? AbortSignal.timeout(8000),
+        });
+      } catch (err) {
+        // A thrown transport error (undici socket drop / timeout / offline) never
+        // produces a Response, so the status-based retry below cannot catch it.
+        // Retry once like a 5xx, then re-throw to the caller.
+        if (attempt < maxRetries) {
+          console.warn(`[apiFetch] transport error on ${url}, retry ${attempt + 1}/${maxRetries}`);
+          await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
+          continue;
+        }
+        throw err;
+      }
       lastResponse = response;
 
       // Rate limited — respect Retry-After header

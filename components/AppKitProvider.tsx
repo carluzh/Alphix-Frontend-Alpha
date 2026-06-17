@@ -13,8 +13,6 @@ import { hashKey } from '@/lib/utils/hashKey'
 import { apolloClient } from '@/lib/apollo/client'
 import { PersistQueryClientProvider } from '@/components/PersistQueryClientProvider'
 import { TransactionProvider } from '@/lib/transactions/TransactionProvider'
-import { E2EAutoConnect } from '@/components/E2EAutoConnect'
-import { E2EPoolStateProbe } from '@/components/E2EPoolStateProbe'
 
 // Lazy-initialized AppKit instance — only created when AppKitProvider mounts
 // (i.e. inside the (app) route group), so the marketing/landing page never triggers it.
@@ -71,10 +69,8 @@ function AppKitProvider({ children, cookies }: { children: ReactNode, cookies: s
 
   return (
     <WagmiProvider config={config} initialState={initialState}>
-      <E2EAutoConnect />
       <PersistQueryClientProvider client={queryClient}>
         <ApolloProvider client={apolloClient}>
-          <E2EPoolStateProbe />
           <TransactionProvider>
             {children}
           </TransactionProvider>

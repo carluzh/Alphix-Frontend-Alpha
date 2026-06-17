@@ -110,7 +110,14 @@ export default async function handler(
           tags: { uniswapStatus: e.status, uniswapErrorCode: e.code },
           extras: { userAddress: req.body?.userAddress, tokenId: req.body?.tokenId, uniswapDetails: e.details },
         });
-        return res.status(e.status >= 500 ? 502 : 400).json({ message: `Uniswap LP API: ${e.message}` });
+        // Upstream/gateway/timeout (5xx) is the API's fault, not the user's — say so
+        // plainly and don't leak the internal path/message. 4xx keeps its detail.
+        const isUpstream = e.status >= 500;
+        return res.status(isUpstream ? 502 : 400).json({
+          message: isUpstream
+            ? "Our API failed to process the request. Please try again — sorry for the inconvenience."
+            : `Uniswap LP API: ${e.message}`,
+        });
       }
       throw e;
     }

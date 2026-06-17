@@ -96,6 +96,20 @@ export default function AppProviders({
           return;
         }
 
+        // Code-LESS connector noise: failures that arrive as a plain message with no
+        // EIP-1193 code, so the numeric-code branch above misses them. These come from
+        // wagmi/AppKit/MetaMask-SDK eager-reconnect internals — a missing/locked
+        // extension, an aborted connect, or a message-only user denial — none of which
+        // are app bugs. Without this, isWalletProviderError() matches on the "metamask"
+        // substring but the event slips past the code check straight into reportError
+        // (a ~25-event/non-actionable class, e.g. "Failed to connect to MetaMask").
+        // Silence them the same way as the coded noise above.
+        const noiseMsg = typeof errorObj.message === 'string' ? errorObj.message.toLowerCase() : '';
+        if (/failed to connect|extension not found|no extension found with id|user denied|user rejected/.test(noiseMsg)) {
+          event.preventDefault();
+          return;
+        }
+
         // Genuinely-novel wallet errors (unrecognised code) still report.
         reportError(error, {
           domain: 'wallet',
