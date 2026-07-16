@@ -1,14 +1,15 @@
 // Subgraph URL resolution per chain. Env vars per chain are required.
+// Base: SUBGRAPH_URL_BASE_LVRFEE (lean lvrfee subgraph indexes ALL Base pools).
+// Arbitrum: SUBGRAPH_URL_ARBITRUM_ALPHIX.
 
 import { type NetworkMode } from './network-mode';
-import { isVolatilePool } from './liquidity/utils/pool-type-guards';
 import type { PoolConfig } from './pools-config';
 
 function resolveSubgraphUrl(mode: NetworkMode): string {
   switch (mode) {
     case 'base': {
-      const url = process.env.SUBGRAPH_URL_MAINNET_ALPHIX;
-      if (!url) throw new Error('SUBGRAPH_URL_MAINNET_ALPHIX env var is required for Base');
+      const url = process.env.SUBGRAPH_URL_BASE_LVRFEE;
+      if (!url) throw new Error('SUBGRAPH_URL_BASE_LVRFEE env var is required for Base');
       return url;
     }
     case 'arbitrum': {
@@ -19,32 +20,20 @@ function resolveSubgraphUrl(mode: NetworkMode): string {
   }
 }
 
-function resolveVolatileSubgraphUrl(): string | null {
-  return process.env.SUBGRAPH_URL_BASE_LVRFEE || null;
-}
-
 /** Primary Alphix subgraph URL for a network. */
 export function getAlphixSubgraphUrl(networkMode: NetworkMode): string {
   return resolveSubgraphUrl(networkMode);
 }
 
-/** Return the correct subgraph URL for a specific pool. */
+/** Return the correct subgraph URL for a specific pool.
+ *  Each network has a single subgraph indexing all of its pools. */
 export function getSubgraphUrlForPool(pool: PoolConfig, networkMode: NetworkMode): string {
-  if (isVolatilePool(pool)) {
-    const volatileUrl = resolveVolatileSubgraphUrl();
-    if (volatileUrl) return volatileUrl;
-  }
   return resolveSubgraphUrl(networkMode);
 }
 
-/** Return all subgraph URLs for a network (primary + Volatile). */
+/** Return all subgraph URLs for a network (one per network). */
 export function getAllAlphixSubgraphUrls(networkMode: NetworkMode): string[] {
-  const urls = [resolveSubgraphUrl(networkMode)];
-  if (networkMode === 'base') {
-    const volatileUrl = resolveVolatileSubgraphUrl();
-    if (volatileUrl) urls.push(volatileUrl);
-  }
-  return urls;
+  return [resolveSubgraphUrl(networkMode)];
 }
 
 export function isBaseSubgraphMode(networkMode: NetworkMode): boolean {

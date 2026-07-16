@@ -51,8 +51,6 @@ const BASE_CSP: Record<string, string[]> = {
     // Alphix
     "https://api.alphix.fi",
     "wss://api.alphix.fi",
-    "https://api.goldsky.com",
-    "https://gateway.thegraph.com",
     // KyberSwap (aggregator API for quotes + build, token/dex settings, RPC rotation)
     "https://*.kyberswap.com",
     "https://*.kyberengineering.io",
