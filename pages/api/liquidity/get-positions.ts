@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { type NetworkMode } from "../../../lib/pools-config";
 import { resolveNetworkMode } from "../../../lib/network-mode";
 import { getAllAlphixSubgraphUrls } from "../../../lib/subgraph-url-helper";
-import { fetchUserPositions } from "@/lib/positions/fetchPositions";
+import { fetchUserPositions, GET_USER_HOOK_POSITIONS_QUERY } from "@/lib/positions/fetchPositions";
 
 /**
  * Recursively convert BigInt values to strings for JSON serialization.
@@ -37,22 +37,6 @@ interface SubgraphPosition {
     lastTimestamp: string;
     poolId: string;
 }
-
-// All networks use poolId directly (Goldsky subgraph)
-const GET_USER_HOOK_POSITIONS_QUERY = `
-  query GetUserPositions($owner: Bytes!) {
-    hookPositions(first: 200, orderBy: id, orderDirection: desc, where: { owner: $owner, liquidity_gt: 0 }) {
-      id
-      owner
-      tickLower
-      tickUpper
-      liquidity
-      creationTimestamp
-      lastTimestamp
-      poolId
-    }
-  }
-`;
 
 // --- Interface for Processed Position Data ---
 interface ProcessedPositionToken {

@@ -72,7 +72,7 @@ export type Position = V4ProcessedPosition;
 // Subgraph queries
 // ---------------------------------------------------------------------------
 
-const GET_USER_HOOK_POSITIONS_QUERY = `
+export const GET_USER_HOOK_POSITIONS_QUERY = `
   query GetUserPositions($owner: Bytes!) {
     hookPositions(first: 200, orderBy: id, orderDirection: desc, where: { owner: $owner, liquidity_gt: 0 }) {
       id
