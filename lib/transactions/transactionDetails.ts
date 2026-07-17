@@ -15,8 +15,6 @@ type Address = string
 type UniverseChainId = number
 type Maybe<T> = T | null | undefined
 type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>
-type AllKeysOf<T> = T extends unknown ? keyof T : never
-type ExtractPropertyType<T, K extends AllKeysOf<T>> = T extends Record<K, infer V> ? V : never
 
 // Stub types for Uniswap compatibility (not used in Alphix but needed for type definitions)
 export interface DappRequestInfo {
@@ -185,13 +183,7 @@ export enum QueuedOrderStatus {
 // Platform-specific type aliases
 export type InterfaceTransactionDetails = TransactionDetails<InterfaceBaseTransactionDetails>
 
-export const TEMPORARY_TRANSACTION_STATUSES = [
-  TransactionStatus.Pending,
-  TransactionStatus.Replacing,
-  TransactionStatus.Cancelling,
-]
-
-export const FINAL_STATUSES = [
+const FINAL_STATUSES = [
   TransactionStatus.Success,
   TransactionStatus.Failed,
   TransactionStatus.Canceled,
@@ -314,12 +306,6 @@ export interface BaseTransactionInfo {
   includesDelegation?: boolean
   isSmartWalletTransaction?: boolean
 }
-
-export const INFINITE_APPROVAL_AMOUNT = 'INF'
-// The maximum approval amount, used to detect max approvals and improve their display in the UI
-export const INFINITE_APPROVAL_NUMBER = '1.157920892373162e+71'
-export const INFINITE_APPROVAL_NUMBER_PERMIT2 = '1.157920892373162e+59'
-export const REVOKE_APPROVAL_AMOUNT = '0.0'
 
 export interface ApproveTransactionInfo extends BaseTransactionInfo {
   type: TransactionType.Approve
@@ -600,32 +586,6 @@ export type TransactionTypeInfo =
   | RemoveDelegationTransactionInfo
   | ClaimUniTransactionInfo
   | LpIncentivesClaimTransactionInfo
-
-/**
- * Typeguard to check if a `TransactionTypeInfo` has a specific attribute.
- * Useful when you need to access an attribute that is only in a subset of `TransactionTypeInfo`s.
- */
-export function transactionTypeInfoHasAttribute<K extends AllKeysOf<TransactionTypeInfo>>(
-  typeInfo: TransactionTypeInfo,
-  attribute: K,
-): typeInfo is TransactionTypeInfo & Record<K, ExtractPropertyType<TransactionTypeInfo, K>> {
-  return attribute in typeInfo
-}
-
-/**
- * Extracts an attribute from a `TransactionTypeInfo` if it exists, otherwise returns undefined.
- * Useful when you need to safely access an attribute that is only in a subset of `TransactionTypeInfo`s.
- */
-export function extractTransactionTypeInfoAttribute<K extends AllKeysOf<TransactionTypeInfo>>(
-  typeInfo: TransactionTypeInfo,
-  attribute: K,
-): ExtractPropertyType<TransactionTypeInfo, K> | undefined {
-  if (transactionTypeInfoHasAttribute(typeInfo, attribute)) {
-    // Type assertion is safe here because the type guard verifies the attribute exists
-    return (typeInfo as Record<K, unknown>)[attribute] as ExtractPropertyType<TransactionTypeInfo, K>
-  }
-  return undefined
-}
 
 export enum TransactionDetailsType {
   Transaction = 'TransactionDetails',

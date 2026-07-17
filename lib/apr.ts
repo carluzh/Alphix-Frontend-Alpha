@@ -7,32 +7,9 @@
  */
 
 import { Percent } from '@uniswap/sdk-core'
-import { Pool as V4Pool, Position as V4Position } from '@uniswap/v4-sdk'
-import JSBI from 'jsbi'
-import { batchQuotePrices } from '@/lib/swap/quote-prices'
-
-export interface PoolMetrics {
-  totalFeesToken0: number
-  avgTVLToken0: number
-  days: number
-}
 
 const DAYS_PER_YEAR = 365
 const BIPS_BASE = 10000
-
-async function resolveTokenPrices(
-  pool: V4Pool, token0Symbol: string, token1Symbol: string
-): Promise<{ token0: number; token1: number } | null> {
-  try {
-    const prices = await batchQuotePrices([token0Symbol, token1Symbol])
-    let p0 = prices[token0Symbol] || 0, p1 = prices[token1Symbol] || 0
-    if (p0 === 0 && p1 === 0) return null
-    if (p0 === 0 && p1 > 0) p0 = p1 * parseFloat(pool.token0Price.toSignificant(18))
-    else if (p1 === 0 && p0 > 0) p1 = p0 * parseFloat(pool.token1Price.toSignificant(18))
-    if (!isFinite(p0) || !isFinite(p1) || p0 === 0 || p1 === 0) return null
-    return { token0: p0, token1: p1 }
-  } catch { return null }
-}
 
 function clampBps(bps: number): number {
   if (!isFinite(bps) || isNaN(bps)) return 0
@@ -41,73 +18,6 @@ function clampBps(bps: number): number {
 
 function numberToPercent(value: number): Percent {
   return new Percent(clampBps(value * 100), BIPS_BASE)
-}
-
-/**
- * Convert a simple APR (linear annualization) to APY (daily compounding).
- * APY = (1 + APR/365)^365 - 1
- */
-function aprToApy(aprPercent: number): number {
-  const dailyRate = aprPercent / 100 / DAYS_PER_YEAR
-  return ((1 + dailyRate) ** DAYS_PER_YEAR - 1) * 100
-}
-
-export async function calculatePositionApy(
-  pool: V4Pool, tickLower: number, tickUpper: number, metrics: PoolMetrics,
-  investmentUSD: number = 100, userAmounts?: { amount0: string; amount1: string; liquidity?: string }
-): Promise<Percent> {
-  const ZERO = new Percent(0, BIPS_BASE)
-  try {
-    const tick = pool.tickCurrent
-    if (tick < tickLower || tick >= tickUpper) return ZERO
-    if (metrics.days === 0 || metrics.avgTVLToken0 === 0) return ZERO
-
-    const poolLiquidity = parseFloat(pool.liquidity.toString())
-    if (poolLiquidity === 0 || !isFinite(poolLiquidity)) return ZERO
-
-    const tokenPrices = await resolveTokenPrices(pool, pool.token0.symbol || '', pool.token1.symbol || '')
-    if (!tokenPrices) return ZERO
-
-    const dailyFees = metrics.totalFeesToken0 / metrics.days
-    let positionLiquidity: number, positionValueUSD: number
-
-    if (userAmounts?.liquidity) {
-      positionLiquidity = parseFloat(userAmounts.liquidity)
-      const amount0 = parseFloat(userAmounts.amount0 || '0'), amount1 = parseFloat(userAmounts.amount1 || '0')
-      positionValueUSD = amount0 * tokenPrices.token0 + amount1 * tokenPrices.token1
-      if (positionValueUSD <= 0) return ZERO
-    } else if (userAmounts?.amount0 || userAmounts?.amount1) {
-      const amount0 = parseFloat(userAmounts.amount0 || '0'), amount1 = parseFloat(userAmounts.amount1 || '0')
-      if (amount0 <= 0 && amount1 <= 0) return ZERO
-      positionValueUSD = amount0 * tokenPrices.token0 + amount1 * tokenPrices.token1
-      const poolTVLUSD = metrics.avgTVLToken0 * tokenPrices.token0 * 2 // Assumes 50/50 split
-      if (poolTVLUSD === 0) return ZERO
-      positionLiquidity = poolLiquidity * (positionValueUSD / poolTVLUSD)
-    } else {
-      try {
-        const testPos = V4Position.fromAmounts({
-          pool, tickLower, tickUpper, useFullPrecision: true,
-          amount0: JSBI.BigInt(1000 * 10 ** pool.token0.decimals),
-          amount1: JSBI.BigInt(1000 * 10 ** pool.token1.decimals),
-        })
-        const usd = parseFloat(testPos.amount0.toSignificant(18)) * tokenPrices.token0 +
-                    parseFloat(testPos.amount1.toSignificant(18)) * tokenPrices.token1
-        positionLiquidity = parseFloat(testPos.liquidity.toString()) * (investmentUSD / usd)
-        positionValueUSD = investmentUSD
-      } catch {
-        const avgTVLUSD = metrics.avgTVLToken0 * tokenPrices.token0
-        if (avgTVLUSD === 0) return ZERO
-        // Fallback: simple fee/TVL ratio → convert to APY
-        const simpleApr = (dailyFees * DAYS_PER_YEAR * tokenPrices.token0 / avgTVLUSD) * 100
-        return numberToPercent(aprToApy(simpleApr))
-      }
-    }
-    if (!isFinite(positionLiquidity) || positionLiquidity <= 0) return ZERO
-    // Fee share: position's share of total liquidity in range
-    const dailyReturn = (dailyFees * (positionLiquidity / (poolLiquidity + positionLiquidity)) * tokenPrices.token0) / positionValueUSD
-    const apy = ((1 + dailyReturn) ** DAYS_PER_YEAR - 1) * 100
-    return numberToPercent(apy)
-  } catch { return new Percent(0, BIPS_BASE) }
 }
 
 export function calculateRealizedApy(
@@ -142,10 +52,6 @@ function formatApyCore(apy: Percent | null | undefined, includePercent: boolean)
 
 export function formatApy(apy: Percent | null | undefined): string {
   return formatApyCore(apy, true)
-}
-
-export function formatApyValue(apy: Percent | null | undefined): string {
-  return formatApyCore(apy, false)
 }
 
 // =============================================================================

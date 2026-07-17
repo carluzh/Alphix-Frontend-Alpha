@@ -14,7 +14,6 @@
 "use client"
 
 import React from 'react';
-import { cn } from '@/lib/utils';
 import type { PositionStatus } from '@/types';
 
 // =============================================================================
@@ -31,7 +30,7 @@ import type { PositionStatus } from '@/types';
  * - $statusCritical → text-red-500 (Out of Range)
  * - $neutral2 → text-muted-foreground (Closed)
  */
-export const lpStatusConfig: Record<PositionStatus, {
+const lpStatusConfig: Record<PositionStatus, {
   label: string;
   color: string;
 } | undefined> = {
@@ -53,7 +52,7 @@ export const lpStatusConfig: Record<PositionStatus, {
  * Special configuration for Full Range positions.
  * Full Range is a display variant of IN_RANGE, not a separate status.
  */
-export const FULL_RANGE_CONFIG = {
+const FULL_RANGE_CONFIG = {
   label: 'Full Range',
   color: 'text-green-500',
 } as const;

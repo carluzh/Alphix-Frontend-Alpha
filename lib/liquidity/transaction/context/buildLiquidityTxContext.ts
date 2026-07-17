@@ -241,7 +241,7 @@ function buildPermitData(apiResponse: MintTxApiResponse): SignTypedDataStepField
  *
  * For Unified Yield positions, includes UY-specific fields for step generation.
  */
-export function buildCreatePositionContext(
+function buildCreatePositionContext(
   params: BuildLiquidityContextParams,
 ): CreatePositionTxAndGasInfo {
   const {
@@ -295,7 +295,7 @@ export function buildCreatePositionContext(
  *
  * For Unified Yield positions, includes UY-specific fields for step generation.
  */
-export function buildIncreasePositionContext(
+function buildIncreasePositionContext(
   params: BuildLiquidityContextParams,
 ): IncreasePositionTxAndGasInfo {
   const {
@@ -348,7 +348,7 @@ export function buildIncreasePositionContext(
  *
  * For Unified Yield positions, includes UY-specific fields for step generation.
  */
-export function buildDecreasePositionContext(
+function buildDecreasePositionContext(
   params: BuildLiquidityContextParams,
 ): DecreasePositionTxAndGasInfo {
   const {
@@ -394,7 +394,7 @@ export function buildDecreasePositionContext(
 /**
  * Builds Collect Fees context
  */
-export function buildCollectFeesContext(
+function buildCollectFeesContext(
   params: BuildLiquidityContextParams,
 ): CollectFeesTxAndGasInfo {
   const { apiResponse, token0, token1, amount0, amount1, chainId } = params;

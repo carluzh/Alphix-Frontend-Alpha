@@ -10,7 +10,7 @@ export const zIndexes = {
   mask: 40,
 }
 
-export const padding = {
+const padding = {
   padding8: 8,
   padding12: 12,
   padding16: 16,

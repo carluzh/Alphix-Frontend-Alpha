@@ -9,7 +9,7 @@ export interface PriceStrategyConfig {
 }
 
 // Stable pool strategies (tick-based for tight ranges around peg)
-export const STABLE_POOL_STRATEGIES: PriceStrategyConfig[] = [
+const STABLE_POOL_STRATEGIES: PriceStrategyConfig[] = [
   {
     id: 'stable_narrow',
     title: 'Narrow',
@@ -37,7 +37,7 @@ export const STABLE_POOL_STRATEGIES: PriceStrategyConfig[] = [
 ];
 
 // Standard/Volatile pool strategies (percentage-based)
-export const STANDARD_POOL_STRATEGIES: PriceStrategyConfig[] = [
+const STANDARD_POOL_STRATEGIES: PriceStrategyConfig[] = [
   {
     id: 'narrow',
     title: 'Narrow',

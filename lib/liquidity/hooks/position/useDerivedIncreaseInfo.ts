@@ -26,7 +26,7 @@ export interface UseDerivedIncreaseInfoParams {
   networkMode: NetworkMode;
 }
 
-export interface DerivedIncreaseInfo {
+interface DerivedIncreaseInfo {
   /** Calculated dependent amount for display */
   dependentAmount: string;
   /** Full precision dependent amount (for transaction) */

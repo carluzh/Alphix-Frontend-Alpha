@@ -5,19 +5,12 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  SlippageTolerance,
   SLIPPAGE_STORAGE_KEY,
   SLIPPAGE_AUTO_FLAG_KEY,
   DEFAULT_SWAP_SLIPPAGE,
   MAX_AUTO_SLIPPAGE_SAFE,
   MAX_CUSTOM_SLIPPAGE_TOLERANCE,
 } from '@/lib/slippage/slippage-constants';
-import {
-  validateUserSlippageTolerance,
-  getSlippageWarningMessage,
-  isSlippageCritical,
-  shouldShowSlippageWarning,
-} from '@/lib/slippage/slippage-validation';
 
 /**
  * Hook for managing user slippage tolerance with persistence
@@ -102,123 +95,5 @@ export function useUserSlippageTolerance() {
     setAutoMode,
     setCustomMode,
     updateAutoSlippage,
-  };
-}
-
-/**
- * Hook for slippage validation and warnings
- */
-export function useSlippageValidation(slippage: number) {
-  const validationResult = useMemo(() => {
-    return validateUserSlippageTolerance(slippage);
-  }, [slippage]);
-
-  const warningMessage = useMemo(() => {
-    return getSlippageWarningMessage(validationResult);
-  }, [validationResult]);
-
-  const isCritical = useMemo(() => {
-    return isSlippageCritical(slippage);
-  }, [slippage]);
-
-  const showWarning = useMemo(() => {
-    return shouldShowSlippageWarning(slippage);
-  }, [slippage]);
-
-  return {
-    validationResult,
-    warningMessage,
-    isCritical,
-    showWarning,
-  };
-}
-
-/**
- * Hook for slippage input management
- */
-export function useSlippageInput(
-  currentSlippage: number,
-  setSlippage: (value: number) => void
-) {
-  const [inputValue, setInputValue] = useState<string>('');
-  const [isEditing, setIsEditing] = useState<boolean>(false);
-
-  // Update input value when slippage changes externally (and not editing)
-  useEffect(() => {
-    if (!isEditing) {
-      setInputValue(currentSlippage.toFixed(2));
-    }
-  }, [currentSlippage, isEditing]);
-
-  const handleInputChange = useCallback((value: string) => {
-    // Allow empty input
-    if (value === '') {
-      setInputValue('');
-      return;
-    }
-
-    // Allow decimal point
-    if (value === '.') {
-      setInputValue('0.');
-      return;
-    }
-
-    // Validate numeric input
-    if (!/^\d*\.?\d*$/.test(value)) {
-      return;
-    }
-
-    // Limit to 2 decimal places
-    const parts = value.split('.');
-    if (parts[1] && parts[1].length > 2) {
-      return;
-    }
-
-    setInputValue(value);
-
-    // Parse and validate
-    const parsed = parseFloat(value);
-    if (!isNaN(parsed)) {
-      // Cap at max custom tolerance
-      const capped = Math.min(parsed, MAX_CUSTOM_SLIPPAGE_TOLERANCE);
-      setSlippage(capped);
-    }
-  }, [setSlippage]);
-
-  const handleFocus = useCallback(() => {
-    setIsEditing(true);
-  }, []);
-
-  const handleBlur = useCallback(() => {
-    setIsEditing(false);
-
-    // Ensure input shows formatted value
-    const parsed = parseFloat(inputValue);
-    if (!isNaN(parsed)) {
-      setInputValue(parsed.toFixed(2));
-    } else {
-      // Reset to current slippage if invalid
-      setInputValue(currentSlippage.toFixed(2));
-    }
-  }, [inputValue, currentSlippage]);
-
-  const increment = useCallback(() => {
-    const newValue = Math.min(currentSlippage + 0.1, MAX_CUSTOM_SLIPPAGE_TOLERANCE);
-    setSlippage(newValue);
-  }, [currentSlippage, setSlippage]);
-
-  const decrement = useCallback(() => {
-    const newValue = Math.max(currentSlippage - 0.1, 0.01);
-    setSlippage(newValue);
-  }, [currentSlippage, setSlippage]);
-
-  return {
-    inputValue,
-    isEditing,
-    handleInputChange,
-    handleFocus,
-    handleBlur,
-    increment,
-    decrement,
   };
 }

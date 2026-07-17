@@ -3,7 +3,6 @@
 // Arbitrum: SUBGRAPH_URL_ARBITRUM_ALPHIX.
 
 import { type NetworkMode } from './network-mode';
-import type { PoolConfig } from './pools-config';
 
 function resolveSubgraphUrl(mode: NetworkMode): string {
   switch (mode) {
@@ -25,17 +24,7 @@ export function getAlphixSubgraphUrl(networkMode: NetworkMode): string {
   return resolveSubgraphUrl(networkMode);
 }
 
-/** Return the correct subgraph URL for a specific pool.
- *  Each network has a single subgraph indexing all of its pools. */
-export function getSubgraphUrlForPool(pool: PoolConfig, networkMode: NetworkMode): string {
-  return resolveSubgraphUrl(networkMode);
-}
-
 /** Return all subgraph URLs for a network (one per network). */
 export function getAllAlphixSubgraphUrls(networkMode: NetworkMode): string[] {
   return [resolveSubgraphUrl(networkMode)];
-}
-
-export function isBaseSubgraphMode(networkMode: NetworkMode): boolean {
-  return networkMode === 'base';
 }

@@ -6,7 +6,7 @@ import { onError } from '@apollo/client/link/error'
 const APOLLO_GRAPHQL_ERROR_SAMPLING_RATE = 0.1
 const APOLLO_NETWORK_ERROR_SAMPLING_RATE = 0.01
 
-export function sample(cb: () => void, rate: number): void {
+function sample(cb: () => void, rate: number): void {
   if (Math.random() < rate) {
     cb()
   }

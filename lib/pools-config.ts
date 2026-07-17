@@ -1,5 +1,4 @@
 import { getAddress, type Address } from 'viem';
-import { Token } from '@uniswap/sdk-core';
 import basePoolsConfig from '../config/base_pools.json';
 import arbitrumPoolsConfig from '../config/arbitrum_pools.json';
 import { getStoredNetworkMode, type NetworkMode } from './network-mode';
@@ -9,8 +8,7 @@ export type { NetworkMode };
 
 interface PoolsConfigFile {
   meta: { chainId: number; chainName: string };
-  contracts: { poolManager: string; universalRouter?: string; quoter: string; positionManager: string; stateView: string };
-  hooks: { alphixHookId: string; alphixProHookId?: string };
+  contracts: { poolManager: string; positionManager: string; stateView: string };
   tokens: Record<string, { symbol: string; name: string; address: string; decimals: number; icon: string; color?: string }>;
   pools: Array<{
     slug: string;
@@ -22,7 +20,6 @@ interface PoolsConfigFile {
     tickSpacing: number;
     hooks: string;
     enabled: boolean;
-    featured: boolean;
     type?: string;
     yieldSources?: Array<'aave'>;
     rehypoRange?: { min: string; max: string; isFullRange: boolean };
@@ -79,15 +76,13 @@ export interface PoolCurrency {
   address: string;
 }
 
-export interface RehypoRangeConfig {
+interface RehypoRangeConfig {
   min: string;
   max: string;
   isFullRange: boolean;
 }
 
 export type YieldSource = 'aave';
-
-export type PoolType = 'Stable' | 'Volatile' | 'Pro';
 
 export interface ProMeta {
   projectName: string;
@@ -113,7 +108,6 @@ export interface PoolConfig {
   tickSpacing: number;
   hooks: string;
   enabled: boolean;
-  featured: boolean;
   type?: string;
   yieldSources?: YieldSource[];
   rehypoRange?: RehypoRangeConfig;
@@ -121,20 +115,8 @@ export interface PoolConfig {
   networkMode: NetworkMode;
 }
 
-export interface ContractsConfig {
-  poolManager: string;
-  universalRouter?: string;
-  quoter: string;
-  positionManager: string;
-  stateView: string;
-}
-
 export function getAllTokens(networkModeOverride?: NetworkMode): Record<string, TokenConfig> {
   return getPoolsConfig(networkModeOverride).tokens;
-}
-
-export function getAllTokenSymbols(networkModeOverride?: NetworkMode): string[] {
-  return Object.keys(getAllTokens(networkModeOverride));
 }
 
 export function getToken(symbol: string, networkModeOverride?: NetworkMode): TokenConfig | null {
@@ -164,11 +146,6 @@ const TOKEN_ICONS: Record<string, string> = {
 export function resolveTokenIcon(symbol: string): string {
   if (!symbol) return '/tokens/placeholder.svg';
   return TOKEN_ICONS[symbol] ?? '/tokens/placeholder.svg';
-}
-
-export function getTokenDecimals(symbol: string, networkModeOverride?: NetworkMode): number | null {
-  const token = getToken(symbol, networkModeOverride);
-  return token?.decimals || null;
 }
 
 export function getAllPools(networkModeOverride?: NetworkMode): PoolConfig[] {
@@ -238,82 +215,9 @@ export function getPoolBySlugMultiChain(slug: string): PoolConfig | null {
   return null;
 }
 
-export function createTokenSDK(tokenSymbol: string, chainId: number, networkModeOverride?: NetworkMode): Token | null {
-  const tokenConfig = getToken(tokenSymbol, networkModeOverride);
-  if (!tokenConfig) {
-    return null;
-  }
-
-  try {
-    const checksummedAddress = getAddress(tokenConfig.address);
-
-    const token = new Token(
-      chainId,
-      checksummedAddress,
-      tokenConfig.decimals,
-      tokenConfig.symbol
-    );
-
-    return token;
-  } catch (error) {
-    console.error(`[createTokenSDK] Error creating token for ${tokenSymbol}:`, error);
-    return null;
-  }
-}
-
-export function getPoolConfigForTokens(fromToken: string, toToken: string, networkModeOverride?: NetworkMode) {
-  const pool = getPoolByTokens(fromToken, toToken, networkModeOverride);
-  if (!pool) return null;
-
-  const fromTokenConfig = getToken(fromToken, networkModeOverride);
-  const toTokenConfig = getToken(toToken, networkModeOverride);
-
-  if (!fromTokenConfig || !toTokenConfig) return null;
-
-  return {
-    pool,
-    fromToken: fromTokenConfig,
-    toToken: toTokenConfig
-  };
-}
-
-export function createPoolKeyFromConfig(pool: PoolConfig) {
-  return {
-    currency0: getAddress(pool.currency0.address),
-    currency1: getAddress(pool.currency1.address),
-    fee: pool.fee,
-    tickSpacing: pool.tickSpacing,
-    hooks: getAddress(pool.hooks)
-  };
-}
-
-export function createCanonicalPoolKey(tokenA: Token, tokenB: Token, pool: PoolConfig) {
-  const currency0 = getAddress(tokenA.sortsBefore(tokenB) ? tokenA.address : tokenB.address);
-  const currency1 = getAddress(tokenA.sortsBefore(tokenB) ? tokenB.address : tokenA.address);
-  return {
-    currency0,
-    currency1,
-    fee: pool.fee,
-    tickSpacing: pool.tickSpacing,
-    hooks: getAddress(pool.hooks)
-  };
-}
-
 export function getPoolId(slug: string, networkModeOverride?: NetworkMode): string | null {
   const pool = getPoolBySlug(slug, networkModeOverride);
   return pool?.poolId || null;
-}
-
-export function getQuoterAddress(networkModeOverride?: NetworkMode): Address {
-  return getAddress(getPoolsConfig(networkModeOverride).contracts.quoter);
-}
-
-export function getUniversalRouterAddress(networkModeOverride?: NetworkMode): Address {
-  const config = getPoolsConfig(networkModeOverride);
-  if (!config.contracts.universalRouter) {
-    throw new Error('Missing contracts.universalRouter in pool config');
-  }
-  return getAddress(config.contracts.universalRouter);
 }
 
 export function getPositionManagerAddress(networkModeOverride?: NetworkMode): Address {
@@ -322,14 +226,6 @@ export function getPositionManagerAddress(networkModeOverride?: NetworkMode): Ad
 
 export function getStateViewAddress(networkModeOverride?: NetworkMode): Address {
   return getAddress(getPoolsConfig(networkModeOverride).contracts.stateView);
-}
-
-export function getPoolManagerAddress(networkModeOverride?: NetworkMode): Address {
-  return getAddress(getPoolsConfig(networkModeOverride).contracts.poolManager);
-}
-
-export function getHooksAddress(networkModeOverride?: NetworkMode): Address {
-  return getAddress(getPoolsConfig(networkModeOverride).hooks.alphixHookId);
 }
 
 export type TokenDefinitions = Record<string, {
@@ -352,9 +248,6 @@ export function getTokenDefinitions(networkModeOverride?: NetworkMode): TokenDef
   );
 }
 
-/** @deprecated Use getTokenDefinitions(mode) for chain-aware usage */
-export const TOKEN_DEFINITIONS = getTokenDefinitions();
-
 export type TokenSymbol = string;
 
 export function getTokenSymbolByAddress(address: string, networkModeOverride?: NetworkMode): TokenSymbol | null {
@@ -372,12 +265,4 @@ export function getChainId(networkModeOverride?: NetworkMode): number {
   return getPoolsConfig(networkModeOverride).meta.chainId;
 }
 
-export function getChainName(networkModeOverride?: NetworkMode): string {
-  return getPoolsConfig(networkModeOverride).meta.chainName;
-}
-
-/** @deprecated Use getChainId(mode) for chain-aware usage */
-export const CHAIN_ID = getChainId();
-/** @deprecated Use getChainName(mode) for chain-aware usage */
-export const CHAIN_NAME = getChainName();
-export const NATIVE_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000'; 
+export const NATIVE_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000';

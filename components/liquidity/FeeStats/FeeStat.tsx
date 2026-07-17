@@ -71,26 +71,3 @@ export function FeeStatLoader() {
     </div>
   );
 }
-
-// =============================================================================
-// LIQUIDITY POSITION FEE STATS LOADER
-// Mirrors Uniswap's LiquidityPositionFeeStatsLoader from lines 78-86
-// =============================================================================
-
-/**
- * Full skeleton loader for LiquidityPositionFeeStats.
- * Displays three FeeStatLoader components in a row.
- *
- * Mirrors Uniswap's LiquidityPositionFeeStatsLoader:
- * - Flex row gap="$gap20" justifyContent="space-between" width="50%"
- * - Three FeeStatLoader children
- */
-export function LiquidityPositionFeeStatsLoader() {
-  return (
-    <div className="flex items-center justify-between gap-5 w-1/2 md:w-full">
-      <FeeStatLoader />
-      <FeeStatLoader />
-      <FeeStatLoader />
-    </div>
-  );
-}

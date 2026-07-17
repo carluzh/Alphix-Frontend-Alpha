@@ -1,4 +1,4 @@
-// useUSDCPrice - On-chain pricing via V4 Quoter
+// useUSDCPrice - USD pricing via backend pool metrics + CoinGecko fallback
 // Mirrors Uniswap's useUSDCPrice pattern using our existing quote infrastructure
 
 import { Currency, CurrencyAmount, Price } from '@uniswap/sdk-core'
@@ -14,7 +14,7 @@ export function useUSDCPrice(
   const symbol = currency?.symbol
   const stablecoin = chainId ? getStablecoin(chainId) : undefined
 
-  // Fetch price via unified batch pipeline (V4 Quoter + CoinGecko fallback)
+  // Fetch price via unified batch pipeline (backend pool metrics + CoinGecko fallback)
   // batchQuotePrices already handles stablecoins ($1.00), hardcoded configs, and quote currencies
   const symbols = useMemo(() => (symbol ? [symbol] : []), [symbol])
   const { prices, isLoading } = useTokenPrices(symbols, { pollInterval })
@@ -48,21 +48,6 @@ export function useUSDCValue(
       return null
     }
   }, [currencyAmount, price])
-}
-
-export function useUSDCValueWithStatus(
-  currencyAmount: CurrencyAmount<Currency> | undefined | null,
-): { value: CurrencyAmount<Currency> | null; isLoading: boolean } {
-  const { price, isLoading } = useUSDCPrice(currencyAmount?.currency)
-
-  return useMemo(() => {
-    if (!price || !currencyAmount) return { value: null, isLoading }
-    try {
-      return { value: price.quote(currencyAmount), isLoading }
-    } catch {
-      return { value: null, isLoading: false }
-    }
-  }, [currencyAmount, isLoading, price])
 }
 
 export function useUSDCPriceRaw(currency?: Currency): { price: number | undefined; isLoading: boolean } {

@@ -8,10 +8,6 @@
 // Execution store — authoritative source of truth for step execution state
 export {
   useExecutionStore,
-  selectIsLocked,
-  selectCurrentStepState,
-  selectSteps,
-  selectExecutionStatus,
   type ExecutionState,
   type ExecutionStore,
 } from './executionStore';

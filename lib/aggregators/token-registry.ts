@@ -23,24 +23,6 @@ const WETH_ADDRESSES: Record<string, { address: string; chainId: number }> = {
   arbitrum: { address: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', chainId: 42161 },
 };
 
-// Canonical-by-symbol overrides per chain. When the CoinGecko list contains
-// multiple tokens with the same symbol, pick this one.
-const CANONICAL_TOKEN_ADDRESSES: Record<string, Record<string, string>> = {
-  base: {
-    USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
-  },
-  arbitrum: {},
-};
-
-// Fallback metadata used only when the CoinGecko payload doesn't include the
-// canonical address, so we can still add a registry entry for it.
-const CANONICAL_TOKEN_FALLBACK: Record<string, Record<string, { name: string; decimals: number; logoURI: string }>> = {
-  base: {
-    USDT: { name: 'Tether USD', decimals: 6, logoURI: '/tokens/USDT.png' },
-  },
-  arbitrum: {},
-};
-
 function getTokenMapForChain(mode?: NetworkMode): Map<string, TokenInfo> {
   const networkMode = mode ?? getStoredNetworkMode();
   let map = chainTokenMaps.get(networkMode);
@@ -82,96 +64,6 @@ function getTokenMapForChain(mode?: NetworkMode): Map<string, TokenInfo> {
 
   chainTokenMaps.set(networkMode, map);
   return map;
-}
-
-const COINGECKO_LIST_URLS: Record<string, string> = {
-  base: 'https://tokens.coingecko.com/base/all.json',
-  arbitrum: 'https://tokens.coingecko.com/arbitrum-one/all.json',
-};
-
-const TOKEN_LIST_CACHE_TTL = 6 * 60 * 60 * 1000;
-const tokenListFetchedAt: Record<string, number> = {};
-let tokenListPromise: Promise<void> | null = null;
-
-export async function ensureTokenListLoaded(mode?: NetworkMode): Promise<void> {
-  const networkMode = mode ?? getStoredNetworkMode();
-  const lastFetched = tokenListFetchedAt[networkMode] ?? 0;
-  if (Date.now() - lastFetched < TOKEN_LIST_CACHE_TTL) return;
-  if (tokenListPromise) return tokenListPromise;
-
-  const listUrl = COINGECKO_LIST_URLS[networkMode];
-  if (!listUrl) return;
-
-  const map = getTokenMapForChain(networkMode);
-  const chainId = chainIdForMode(networkMode);
-
-  tokenListPromise = (async () => {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-      const res = await fetch(listUrl, {
-        signal: controller.signal,
-        headers: { 'Accept': 'application/json' },
-      });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) return;
-
-      const data = await res.json() as { tokens?: Array<{ address: string; symbol: string; name: string; decimals: number; logoURI?: string }> };
-      if (!Array.isArray(data.tokens)) return;
-
-      const canonicalForChain = CANONICAL_TOKEN_ADDRESSES[networkMode] || {};
-      const canonicalAddressBySymbol = new Map<string, string>(
-        Object.entries(canonicalForChain).map(([sym, addr]) => [sym, normalizeAddress(addr)])
-      );
-
-      let added = 0;
-      for (const t of data.tokens) {
-        const addr = normalizeAddress(t.address);
-        const canonicalAddr = canonicalAddressBySymbol.get(t.symbol);
-        // Symbol has a canonical override and this isn't it — skip the impostor.
-        if (canonicalAddr && canonicalAddr !== addr) continue;
-        if (!map.has(addr)) {
-          map.set(addr, {
-            chainId,
-            address: t.address,
-            name: t.name,
-            symbol: t.symbol,
-            decimals: t.decimals,
-            logoURI: t.logoURI,
-          });
-          added++;
-        }
-      }
-
-      // CoinGecko didn't include the canonical address — synthesize an entry.
-      const fallbacks = CANONICAL_TOKEN_FALLBACK[networkMode] || {};
-      for (const [sym, canonicalAddr] of canonicalAddressBySymbol) {
-        if (map.has(canonicalAddr)) continue;
-        const fb = fallbacks[sym];
-        if (!fb) continue;
-        map.set(canonicalAddr, {
-          chainId,
-          address: canonicalForChain[sym],
-          name: fb.name,
-          symbol: sym,
-          decimals: fb.decimals,
-          logoURI: fb.logoURI,
-        });
-      }
-
-      tokenListFetchedAt[networkMode] = Date.now();
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        console.warn('[TokenRegistry] CoinGecko fetch failed:', err?.message);
-      }
-    } finally {
-      tokenListPromise = null;
-    }
-  })();
-
-  return tokenListPromise;
 }
 
 /**

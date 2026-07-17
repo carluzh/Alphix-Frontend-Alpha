@@ -7,7 +7,7 @@ export interface CookieConsentPreferences {
 }
 
 /** Cookie max age: 12 months in seconds */
-export const COOKIE_CONSENT_MAX_AGE = 365 * 24 * 60 * 60
+const COOKIE_CONSENT_MAX_AGE = 365 * 24 * 60 * 60
 
 export function getCookieConsent(): CookieConsentPreferences | null {
   if (typeof document === 'undefined') return null
@@ -28,6 +28,3 @@ export function setCookieConsent(prefs: Omit<CookieConsentPreferences, 'timestam
   document.cookie = `${COOKIE_CONSENT_KEY}=${encodeURIComponent(JSON.stringify(value))};path=/;max-age=${COOKIE_CONSENT_MAX_AGE};SameSite=Lax`
 }
 
-export function hasConsentCookie(): boolean {
-  return getCookieConsent() !== null
-}

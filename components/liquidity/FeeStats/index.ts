@@ -16,7 +16,7 @@ export type {
 } from './types';
 
 // Sub-components
-export { FeeStat, FeeStatLoader, LiquidityPositionFeeStatsLoader } from './FeeStat';
+export { FeeStat, FeeStatLoader } from './FeeStat';
 export { APRFeeStat } from './APRFeeStat';
 export { MinMaxRange } from './MinMaxRange';
 

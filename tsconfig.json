@@ -44,7 +44,6 @@
     "node_modules",
     "interface",
     ".next",
-    "polar",
     "**/*.test.ts",
     "**/*.test.tsx",
     "test/**/*",

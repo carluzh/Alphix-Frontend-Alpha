@@ -295,28 +295,6 @@ function EarningOnCard({ source, apr }: { source: 'aave'; apr?: number }) {
   );
 }
 
-function EarningPointsCard() {
-  return (
-    <div className="relative flex items-center gap-2.5 rounded-lg bg-muted/30 border border-sidebar-border/60 p-3 overflow-hidden">
-      <div
-        className="absolute inset-0 pointer-events-none opacity-60"
-        style={{
-          backgroundImage: `url(/patterns/button-default.svg)`,
-          backgroundSize: '200px',
-        }}
-      />
-      <PointsIcon className="w-[18px] h-[18px] text-muted-foreground relative z-10" />
-      <span className="text-sm text-muted-foreground flex-1 relative z-10">Earning Points</span>
-      <span
-        className="px-2.5 py-0.5 rounded-md text-xs font-semibold font-mono relative z-10"
-        style={{ backgroundColor: 'rgba(255, 255, 255, 0.1)', color: 'rgba(255, 255, 255, 0.7)' }}
-      >
-        Active
-      </span>
-    </div>
-  );
-}
-
 // ─── Contracts ────────────────────────────────────────────────────────────────
 
 function ContractsSection({ poolConfig }: { poolConfig: PoolConfig }) {

@@ -17,11 +17,8 @@
  * - Edge cases at min/max ticks
  */
 
-import { Currency, CurrencyAmount, Price, Token } from '@uniswap/sdk-core';
-import {
-  nearestUsableTick,
-  TickMath,
-} from '@uniswap/v3-sdk';
+import { Currency, CurrencyAmount, Price } from '@uniswap/sdk-core';
+import { TickMath } from '@uniswap/v3-sdk';
 import {
   tickToPrice as tickToPriceV4SDK,
   priceToClosestTick as priceToClosestV4Tick,
@@ -88,7 +85,7 @@ export function tickToPriceNumber(
  * @param significantDigits - Number of significant digits (default 8)
  * @returns Formatted price string or undefined
  */
-export function tickToPriceString(
+function tickToPriceString(
   tick: number,
   baseCurrency?: Currency,
   quoteCurrency?: Currency,
@@ -131,7 +128,7 @@ export function tickToPriceSimple(tick: number): number {
  * @param significantDigits - Number of significant digits (default 8)
  * @returns Formatted price string
  */
-export function tickToPriceStringSimple(
+function tickToPriceStringSimple(
   tick: number,
   significantDigits = 8
 ): string {
@@ -184,21 +181,6 @@ export function priceToTickSimple(price: number): number {
 
   // Clamp to valid range
   return clampTick(tick);
-}
-
-/**
- * Convert price number to nearest usable tick
- *
- * @param price - Price as number
- * @param tickSpacing - Tick spacing for the pool
- * @returns Nearest usable tick value
- */
-export function priceToNearestUsableTick(
-  price: number,
-  tickSpacing: number
-): number {
-  const rawTick = priceToTickSimple(price);
-  return nearestUsableTick(rawTick, tickSpacing);
 }
 
 /**
@@ -280,58 +262,6 @@ export function priceNumberToTick(
 // =============================================================================
 
 /**
- * Align a tick to the nearest usable tick for a given tick spacing
- *
- * @param tick - Raw tick value
- * @param tickSpacing - Tick spacing for the pool
- * @returns Nearest usable tick
- */
-export function alignTickToSpacing(tick: number, tickSpacing: number): number {
-  return nearestUsableTick(tick, tickSpacing);
-}
-
-/**
- * Get the minimum and maximum usable ticks for a given tick spacing
- *
- * @param tickSpacing - Tick spacing for the pool
- * @returns [minTick, maxTick] tuple
- */
-export function getTickBounds(tickSpacing: number): [number, number] {
-  return [
-    nearestUsableTick(TickMath.MIN_TICK, tickSpacing),
-    nearestUsableTick(TickMath.MAX_TICK, tickSpacing),
-  ];
-}
-
-/**
- * Check if a tick is at the limit (min or max)
- *
- * @param tick - Tick to check
- * @param tickSpacing - Tick spacing for the pool
- * @returns Object with isAtMin and isAtMax booleans
- */
-export function isTickAtLimit(
-  tick: number,
-  tickSpacing: number
-): { isAtMin: boolean; isAtMax: boolean } {
-  const [minTick, maxTick] = getTickBounds(tickSpacing);
-  return {
-    isAtMin: tick <= minTick,
-    isAtMax: tick >= maxTick,
-  };
-}
-
-/**
- * Check if a tick is within valid range
- *
- * @param tick - Tick to check
- * @returns true if tick is within min/max bounds
- */
-export function isTickValid(tick: number): boolean {
-  return tick >= TickMath.MIN_TICK && tick <= TickMath.MAX_TICK;
-}
-
-/**
  * Clamp a tick value to valid V4 SDK bounds
  *
  * Prevents assertion crashes when tick arithmetic approaches MIN/MAX_TICK bounds
@@ -365,31 +295,6 @@ export function tickToPriceRelative(
 ): number {
   const priceDelta = Math.pow(1.0001, tick - currentTick);
   return currentPrice * priceDelta;
-}
-
-/**
- * Calculate price at a tick relative to current, with denomination handling
- *
- * @param tick - Target tick
- * @param currentTick - Current pool tick
- * @param currentPrice - Current pool price (in token1/token0 format)
- * @param baseToken - Token symbol for desired denomination
- * @param token0Symbol - Symbol of token0
- * @returns Price in desired denomination
- */
-export function tickToPriceWithDenomination(
-  tick: number,
-  currentTick: number,
-  currentPrice: number,
-  baseToken: string,
-  token0Symbol: string
-): number {
-  const priceInToken1PerToken0 = tickToPriceRelative(tick, currentTick, currentPrice);
-
-  // If we want token0 denomination (token0/token1), invert
-  return baseToken === token0Symbol
-    ? 1 / priceInToken1PerToken0
-    : priceInToken1PerToken0;
 }
 
 // =============================================================================

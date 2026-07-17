@@ -11,4 +11,4 @@ export const YIELD_SOURCES = {
   },
 } as const;
 
-export type YieldSourceKey = keyof typeof YIELD_SOURCES;
+

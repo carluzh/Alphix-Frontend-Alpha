@@ -1,5 +1,4 @@
-import { type Address, type Hex, getAddress } from 'viem';
-import { PERMIT2_TYPES } from '@/lib/permit-types';
+import { type Address, type Hex } from 'viem';
 
 import { createNetworkClient } from '@/lib/viemClient';
 import { getPositionManagerAddress, getStateViewAddress } from '@/lib/pools-config';
@@ -8,17 +7,16 @@ import { STATE_VIEW_ABI } from '@/lib/abis/state_view_abi';
 import { parseAbi } from 'viem';
 import { position_manager_abi } from '@/lib/abis/PositionManager_abi';
 import type { Abi } from 'viem';
-import { PERMIT2_ADDRESS, PERMIT2_DOMAIN_NAME, Permit2Abi_allowance, PERMIT_EXPIRATION_DURATION_SECONDS } from '@/lib/swap/swap-constants';
 
 // Position details helpers
 
-export interface DecodedPositionInfo {
+interface DecodedPositionInfo {
     tickLower: number;
     tickUpper: number;
     hasSubscriber: boolean;
 }
 
-export function decodePositionInfo(value: bigint): DecodedPositionInfo {
+function decodePositionInfo(value: bigint): DecodedPositionInfo {
     // Per v4 guide: signed 24-bit ticks; lower at bits [8..31], upper at [32..55]; lowest byte has flags
     const toSigned24 = (raw: number): number => (raw >= 0x800000 ? raw - 0x1000000 : raw);
     const rawLower = Number((value >> 8n) & 0xFFFFFFn);
@@ -133,100 +131,6 @@ export async function getPoolState(poolId: Hex, chainId: number): Promise<PoolSt
         sqrtPriceX96: slot0[0],
         tick: Number(slot0[1]),
         liquidity: poolLiquidity,
-    };
-}
-
-// --- Permit2 batch permit (EIP-712) preparation per guide ---
-// PERMIT2_TYPES imported from lib/permit-types.ts (consolidated source)
-// Re-export for backwards compatibility with existing imports
-export { PERMIT2_TYPES } from '@/lib/permit-types';
-
-export type Permit2Details = {
-    token: Address;
-    amount: string; // uint160 as string
-    expiration: string; // uint48 as string
-    nonce: string; // uint48 as string
-};
-
-export type PreparedPermit2Batch = {
-    domain: { name: string; chainId: number; verifyingContract: Address };
-    types: typeof PERMIT2_TYPES;
-    primaryType: 'PermitBatch';
-    message: { details: Permit2Details[]; spender: Address; sigDeadline: string };
-};
-
-export async function preparePermit2BatchForPosition(
-    tokenId: bigint,
-    userAddress: Address,
-    chainId: number,
-    sigDeadlineSeconds: number,
-    amount0?: bigint,
-    amount1?: bigint,
-): Promise<PreparedPermit2Batch> {
-    const networkMode: NetworkMode = modeForChainId(chainId) ?? 'base';
-    const publicClient = createNetworkClient(networkMode);
-    const pm = getPositionManagerAddress(networkMode) as Address;
-    const details = await getPositionDetails(tokenId, chainId);
-    const tokens: Address[] = [getAddress(details.poolKey.currency0), getAddress(details.poolKey.currency1)];
-    const amounts = [amount0 || 0n, amount1 || 0n];
-    const now = Math.floor(Date.now() / 1000);
-
-    // Filter to tokens with non-zero amounts
-    const tokensToCheck = tokens
-        .map((t, i) => ({ token: t, amount: amounts[i], index: i }))
-        .filter(item => item.amount > 0n);
-
-    const detailEntries: Permit2Details[] = [];
-
-    if (tokensToCheck.length > 0) {
-        try {
-            // Batch all Permit2 allowance checks into single multicall
-            const results = await publicClient.multicall({
-                contracts: tokensToCheck.map(item => ({
-                    address: PERMIT2_ADDRESS,
-                    abi: Permit2Abi_allowance,
-                    functionName: 'allowance',
-                    args: [getAddress(userAddress), getAddress(item.token), getAddress(pm)],
-                })),
-                allowFailure: false,
-            });
-
-            const MAX_UINT160 = BigInt("1461501637330902918203684832716283019655932542975");
-
-            tokensToCheck.forEach((item, i) => {
-                const [currentAmount, currentExpiration, nonce] = results[i] as readonly [bigint, bigint, bigint];
-
-                if (currentAmount >= item.amount && currentExpiration > now) return;
-
-                const permitAmount = item.amount + 1n;
-                if (permitAmount > MAX_UINT160) {
-                    throw new Error(`Permit amount ${permitAmount} exceeds uint160 max. Required: ${item.amount}`);
-                }
-
-                detailEntries.push({
-                    token: getAddress(item.token),
-                    amount: permitAmount.toString(),
-                    expiration: (now + PERMIT_EXPIRATION_DURATION_SECONDS).toString(),
-                    nonce: nonce.toString(),
-                });
-            });
-        } catch (error) {
-            console.error('[preparePermit2BatchForPosition] Permit2 allowance check failed:', error);
-            throw new Error(
-                `Failed to check Permit2 allowances for position ${tokenId}: ${error instanceof Error ? error.message : String(error)}`
-            );
-        }
-    }
-
-    return {
-        domain: { name: PERMIT2_DOMAIN_NAME, chainId, verifyingContract: PERMIT2_ADDRESS } as unknown as { name: string; chainId: number; verifyingContract: Address },
-        types: PERMIT2_TYPES,
-        primaryType: 'PermitBatch',
-        message: {
-            details: detailEntries,
-            spender: pm,
-            sigDeadline: BigInt(sigDeadlineSeconds).toString(),
-        },
     };
 }
 

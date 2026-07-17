@@ -23,7 +23,7 @@ import { YIELD_SOURCES } from "./yield-sources";
 // TYPES
 // =============================================================================
 
-export interface APYBreakdownData {
+interface APYBreakdownData {
   /** Swap/Pool APY from trading fees */
   swapApy?: number;
   /** Lending Yield APY (Aave lending) */
@@ -72,7 +72,7 @@ function TokenPairLogo({ token0Symbol, token1Symbol }: TokenPairLogoProps) {
   );
 }
 
-export function LendingSourceIcons(_props: { sources: Array<'aave'> }) {
+function LendingSourceIcons(_props: { sources: Array<'aave'> }) {
   return <Image src={YIELD_SOURCES.aave.logo} alt={YIELD_SOURCES.aave.name} width={14} height={14} className="rounded-full" loading="eager" />;
 }
 

@@ -195,35 +195,6 @@ export function WizardProgressHeader() {
 }
 
 /**
- * Compact dot indicator for very small screens
- */
-export function WizardProgressDots() {
-  const { currentStep, setStep } = useAddLiquidityContext();
-  const steps = getVisibleSteps(currentStep, setStep);
-
-  return (
-    <div className="flex flex-row gap-2 justify-center py-4">
-      {steps.map((step) => (
-        <button
-          key={step.id}
-          onClick={() => step.canNavigate && step.onClick?.()}
-          disabled={!step.canNavigate}
-          className={cn(
-            'w-2 h-2 rounded-full transition-colors',
-            step.active
-              ? 'bg-foreground/60'
-              : step.completed
-                ? 'bg-green-500'
-                : 'bg-sidebar-accent',
-            step.canNavigate && 'cursor-pointer hover:opacity-80'
-          )}
-        />
-      ))}
-    </div>
-  );
-}
-
-/**
  * Helper to get visible steps (just 2 now)
  * Allows clicking to go back (not forward)
  */

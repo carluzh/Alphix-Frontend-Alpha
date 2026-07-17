@@ -90,7 +90,7 @@ export function PositionCardCompact({
     positionNetworkMode,
 }: PositionCardCompactProps) {
     const [isHovered, setIsHovered] = useState(false);
-    const [pricesInverted, setPricesInverted] = useState(false);
+    const [pricesInverted] = useState(false);
     const networkMode = positionNetworkMode;
     const chainId = positionNetworkMode ? chainIdForMode(positionNetworkMode) : 8453;
 
@@ -134,7 +134,7 @@ export function PositionCardCompact({
     const fee1USD = useUSDCValue(position.fee1Amount);
 
     // Calculate fees USD from Uniswap routing prices
-    const { feesUSD, hasZeroFees } = useMemo(() => {
+    const { feesUSD } = useMemo(() => {
         const fee0Amount = position.fee0Amount;
         const fee1Amount = position.fee1Amount;
 
@@ -180,13 +180,6 @@ export function PositionCardCompact({
 
     const formattedUsdFees = useMemo(() => `$${feesUSD.toFixed(2)}`, [feesUSD]);
 
-    const displayedCurrentPrice = useMemo(() => {
-        if (!currentPrice) return null;
-        const priceNum = parseFloat(currentPrice);
-        if (!isFinite(priceNum)) return null;
-        return shouldInvert ? (1 / priceNum) : priceNum;
-    }, [currentPrice, shouldInvert]);
-
     // Get tickSpacing from position or pool config
     const tickSpacing = useMemo(() => {
         if (position.tickSpacing) return position.tickSpacing;
@@ -228,7 +221,6 @@ export function PositionCardCompact({
         }
     }, [position.status]);
 
-    const isInRange = position.status === PositionStatus.IN_RANGE;
 
     // Calculate APR - prefer backend 7d APR, fallback to local calculation
     const { formattedAPR, rawSwapApr, isFallback: isAPRFallback, isLoading: isLoadingAPR } = useMemo(() => {

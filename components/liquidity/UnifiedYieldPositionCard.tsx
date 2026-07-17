@@ -68,11 +68,11 @@ export function UnifiedYieldPositionCard({
     positionNetworkMode,
 }: UnifiedYieldPositionCardProps) {
     const [isHovered, setIsHovered] = useState(false);
-    const [pricesInverted, setPricesInverted] = useState(false);
+    const [pricesInverted] = useState(false);
     const networkMode = positionNetworkMode;
     const chainId = positionNetworkMode ? chainIdForMode(positionNetworkMode) : 8453;
 
-    const { currentPrice, isLoadingPrices, poolAPR } = poolContext;
+    const { isLoadingPrices, poolAPR } = poolContext;
 
     // Token info directly from position
     const token0Symbol = position.token0Symbol;

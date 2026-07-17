@@ -51,7 +51,7 @@ export interface HandlePositionStepParams {
  *
  * COPIED FROM interface/apps/web/src/state/sagas/liquidity/liquiditySaga.ts
  */
-export async function getLiquidityTxRequest(
+async function getLiquidityTxRequest(
   step: PositionStep,
   signature: string | undefined,
 ): Promise<{ txRequest: ValidatedTransactionRequest }> {

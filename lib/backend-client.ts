@@ -443,62 +443,10 @@ export async function fetchPositionApr(
 // =============================================================================
 
 /**
- * Fetch swap APR for a Unified Yield pool
- *
- * @param poolId - Pool ID
- * @param networkMode - Network mode ('base' | 'arbitrum')
- */
-export async function fetchUnifiedYieldPoolApr(
-  poolId: string,
-  networkMode: NetworkMode = 'base'
-): Promise<{
-  success: boolean;
-  network?: string;
-  poolName?: string;
-  poolId: string;
-  swapApr7d: number | null;
-  swapApr24h?: number | null;
-  volume24hUsd?: number;
-  tvlUsd?: number;
-  calculatedAt?: number;
-  error?: string;
-}> {
-  try {
-    const url = buildBackendUrl(`/unified-yield/pool/${encodeURIComponent(poolId)}/apr`, networkMode);
-
-    const response = await backendFetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    reportBackendError(error, {
-      domain: 'backend',
-      action: 'fetchUnifiedYieldPoolApr',
-      component: 'backend-client',
-      networkMode,
-      extras: { poolId },
-    });
-    return {
-      success: false,
-      poolId,
-      swapApr7d: null,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-/**
  * Historical APR point from UY pool APR history endpoint.
  * Backend returns `swapApr` (the pool's swap fee APR) and `tvlUsd`.
  */
-export interface AprHistoryPoint {
+interface AprHistoryPoint {
   timestamp: number;
   swapApr: number;
   tvlUsd?: number;

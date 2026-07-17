@@ -30,12 +30,6 @@ import type { DepositPreviewResult, UnifiedYieldApprovalStatus } from '@/lib/liq
 import { createNetworkClient } from '@/lib/viemClient';
 import { useUnifiedYieldDepositPreview } from './hooks/useUnifiedYieldDepositPreview';
 
-export interface TokenApprovalState {
-  needsApproval: boolean;
-  isApproving: boolean;
-  isApproved: boolean;
-}
-
 export interface CreatePositionTxInfo {
   needsToken0Approval: boolean;
   needsToken1Approval: boolean;

@@ -81,13 +81,3 @@ export function formatPercent(
   }).format(decimalValue);
 }
 
-/**
- * Format APR for tooltip display.
- * Convenience wrapper that handles undefined pool APR.
- *
- * @param apr - APR value or undefined
- * @returns Formatted string (0.00% for undefined)
- */
-export function formatAprForTooltip(apr: number | undefined): string {
-  return apr !== undefined ? formatPercent(apr) : '0.00%';
-}

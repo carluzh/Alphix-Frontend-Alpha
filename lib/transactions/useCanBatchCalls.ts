@@ -17,7 +17,7 @@ import { useCapabilities } from 'wagmi';
  * Looks up `capabilities[chainId].atomic.status` and returns true for
  * `'supported'` (native EIP-5792) or `'ready'` (upgradeable via EIP-7702).
  */
-export function canBatchFromCapabilities(
+function canBatchFromCapabilities(
   capabilities: unknown,
   chainId: number | undefined,
 ): boolean {

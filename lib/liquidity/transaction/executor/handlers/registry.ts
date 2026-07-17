@@ -274,13 +274,6 @@ export function isRegisteredStepType(type: TransactionStepType): boolean {
 }
 
 /**
- * Get handler entry for a step type
- */
-export function getStepHandler(type: TransactionStepType): StepHandlerEntry | undefined {
-  return STEP_HANDLER_REGISTRY[type];
-}
-
-/**
  * Execute a step using the registry
  *
  * @returns txHash on success, undefined for unhandled types

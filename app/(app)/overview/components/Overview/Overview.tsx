@@ -83,7 +83,6 @@ export const Overview = memo(function Overview({
   leaderboardPosition,
 }: OverviewProps) {
   const router = useRouter();
-  const isPortfolioZero = totalValue === 0 && activePositions.length === 0 && unifiedYieldPositions.length === 0;
 
   // Navigate to position detail page (include chain so detail page can fetch from correct network)
   // Use backendNetwork name (base/arbitrum) from CHAIN_REGISTRY
@@ -180,7 +179,7 @@ export const Overview = memo(function Overview({
   const [currentPage, setCurrentPage] = useState(0);
 
   // Combine all positions, sort by USD value descending
-  const { allSortedPositions, hasMorePositions, totalPositionsValue, totalPages } = useMemo(() => {
+  const { allSortedPositions, hasMorePositions, totalPages } = useMemo(() => {
     const allPositions: DisplayPosition[] = [
       ...v4PositionsWithValue.map(p => ({ type: 'v4' as const, position: p.position, usdValue: p.usdValue, networkMode: p.networkMode })),
       ...unifiedYieldPositions.map(pos => ({

@@ -1,5 +1,4 @@
 import { createSchema, createYoga } from 'graphql-yoga'
-import { cookies } from 'next/headers'
 import { checkRateLimit } from '@/lib/api/ratelimit'
 
 // Import resolvers and schema as string (works in serverless)

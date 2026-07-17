@@ -38,24 +38,6 @@ export interface QuoteRequest {
 }
 
 /**
- * Result of comparing multiple aggregator quotes
- */
-export interface QuoteComparison {
-  alphixQuote: AggregatorQuote | null;
-  kyberQuote: AggregatorQuote | null;
-  selectedQuote: AggregatorQuote;
-  selectedSource: AggregatorSource;
-  reason: QuoteSelectionReason;
-}
-
-export type QuoteSelectionReason =
-  | 'alphix_best_price'           // Alphix has better or equal output
-  | 'alphix_within_tolerance'     // Alphix is within slippage tolerance of best
-  | 'aggregator_better'           // Aggregator has significantly better price
-  | 'alphix_only'                 // Aggregator unavailable, using Alphix
-  | 'aggregator_only';            // Alphix route unavailable
-
-/**
  * Structured error from Kyberswap API calls.
  * Replaces the old `null` return — callers can now make informed retry/display decisions.
  */
@@ -65,11 +47,6 @@ export interface KyberswapError {
   retryable: boolean;               // Whether the caller should retry
   kind: 'rate_limit' | 'stale_route' | 'gas_estimation' | 'token_not_found' | 'bad_request' | 'timeout' | 'server_error';
   suggestedSlippage?: number;       // Bps — only present on 4227 "return amount is not enough"
-}
-
-/** Type guard: is this a KyberswapError, not a successful response? */
-export function isKyberswapError(v: unknown): v is KyberswapError {
-  return typeof v === 'object' && v !== null && 'code' in v && 'kind' in v && 'retryable' in v;
 }
 
 /**
@@ -94,7 +71,7 @@ export interface KyberswapRouteSummary {
   route: KyberswapRouteStep[][];
 }
 
-export interface KyberswapRouteStep {
+interface KyberswapRouteStep {
   pool: string;
   tokenIn: string;
   tokenOut: string;

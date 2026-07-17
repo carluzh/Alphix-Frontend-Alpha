@@ -31,15 +31,12 @@ export {
   createTickScale,
   priceToY,
   yToPrice,
-  createScaleFunctions,
   findClosestTick,
-  getPriceBounds,
 } from './utils/scaleUtils';
 
 export {
   getColorForPrice,
   getOpacityForPrice,
-  isPriceInRange,
 } from './utils/colorUtils';
 
 export {

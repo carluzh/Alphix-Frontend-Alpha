@@ -20,13 +20,13 @@ import {
 } from '@/lib/pools-config';
 
 /** Resolved current pool state, as decimal strings + numeric tick. */
-export interface AssemblyPoolState {
+interface AssemblyPoolState {
   sqrtPriceX96: string;
   tick: number;
   poolLiquidity: string;
 }
 
-export type AmountFormatter = (rawAmount: string, decimals: number) => string;
+type AmountFormatter = (rawAmount: string, decimals: number) => string;
 
 export interface AssembleV4PositionParams {
   chainId: number;

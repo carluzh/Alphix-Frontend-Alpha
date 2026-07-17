@@ -77,16 +77,6 @@ export async function getCachedDataWithStale<T>(
   }
 }
 
-export async function deleteCachedData(key: string): Promise<void> {
-  if (!redis) return;
-
-  try {
-    await redis.del(key);
-  } catch (error) {
-    console.error('[Redis] Delete failed:', error);
-  }
-}
-
 const INVALIDATION_COOLDOWN_MS = 15000;
 
 export async function invalidateCachedData(key: string, cooldownMs: number = INVALIDATION_COOLDOWN_MS): Promise<void> {

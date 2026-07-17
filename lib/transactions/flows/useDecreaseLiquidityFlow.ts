@@ -5,7 +5,6 @@
  * No approvals or permits needed (user is withdrawing, not depositing).
  * Supports both V4 and Unified Yield positions.
  *
- * @see ../EXECUTION_REFACTOR_BRIEF.md — Layer 3
  */
 
 import { useCallback, useMemo } from 'react';

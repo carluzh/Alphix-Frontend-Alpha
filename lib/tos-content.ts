@@ -4,7 +4,6 @@
  * Source: TERMS_OF_SERVICE.pdf (Last Revised: 4 February 2026)
  */
 
-export const TOS_LAST_UPDATED = '4 February 2026'
 
 /** Semantic version string used for localStorage + Redis versioning */
 export const TOS_VERSION = '2026-02-04'

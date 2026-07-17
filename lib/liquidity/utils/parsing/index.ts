@@ -4,8 +4,6 @@
 
 export {
   safeParseUnits,
-  safeParseUnitsResult,
-  type SafeParseResult,
   parseDisplayAmount,
   cleanAmountForAPI,
   formatAmountDisplay,

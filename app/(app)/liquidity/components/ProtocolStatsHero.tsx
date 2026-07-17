@@ -80,7 +80,7 @@ function TvlSparkline() {
   const H = 40;
   const PAD = 2;
 
-  const { pathD, coords, min, max } = useMemo(() => {
+  const { pathD, coords } = useMemo(() => {
     if (!points || points.length < 2) return { pathD: null, coords: [], min: 0, max: 0 };
 
     const values = points.map((p) => p.tvlUsd);

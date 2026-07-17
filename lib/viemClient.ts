@@ -31,10 +31,6 @@ export function createNetworkClient(networkMode: NetworkMode): PublicClient {
   return client;
 }
 
-export function getChainForNetwork(networkMode: NetworkMode): Chain {
-  return getChainForMode(networkMode);
-}
-
 export function getRpcUrlForNetwork(networkMode: NetworkMode): string {
   return getOrderedRpcUrls(getChainForMode(networkMode))[0];
 }

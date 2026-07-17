@@ -51,37 +51,3 @@ export function getOpacityForPrice({
   }
   return inactiveOpacity;
 }
-
-/**
- * Check if a price is within the selected range.
- */
-export function isPriceInRange(
-  price: number,
-  minPrice?: number,
-  maxPrice?: number
-): boolean {
-  if (minPrice === undefined || maxPrice === undefined) {
-    return false;
-  }
-  return price >= minPrice && price <= maxPrice;
-}
-
-/**
- * Get interpolated color based on distance from range boundaries.
- * Useful for gradient effects.
- */
-export function getGradientColor(
-  price: number,
-  minPrice: number,
-  maxPrice: number,
-  _inRangeColor: string,
-  _outOfRangeColor: string
-): string {
-  const isInRange = price >= minPrice && price <= maxPrice;
-
-  if (isInRange) {
-    return CHART_COLORS.barsInRange;
-  }
-
-  return CHART_COLORS.barsOutOfRange;
-}

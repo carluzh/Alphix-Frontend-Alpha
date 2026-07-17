@@ -2,10 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useAccount } from "wagmi";
-import { getAllPools, getMultiChainEnabledPools } from "@/lib/pools-config";
+import { getMultiChainEnabledPools } from "@/lib/pools-config";
 import { fetchPoolsMetrics } from "@/lib/backend-client";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
-import type { NetworkMode } from "@/lib/network-mode";
 import { ALL_MODES } from "@/lib/chain-registry";
 
 export interface TokenBalance {
@@ -44,9 +43,9 @@ const TOKEN_COLORS = [
  * Hook to aggregate overview data from user positions
  * Adapted from Uniswap's portfolio data fetching pattern
  *
- * Prices are fetched via useTokenPrices (React Query polling + V4 Quoter + CoinGecko fallback).
+ * Prices are fetched via useTokenPrices (React Query polling + backend pool metrics + CoinGecko fallback).
  */
-export function useOverviewData(
+function useOverviewData(
   refreshKey: number = 0,
   userPositionsData?: any[],
   pricesData?: any
@@ -307,18 +306,4 @@ export function useOverview(
     setIsLoadingPositions,
     setAprByPoolId,
   };
-}
-
-/**
- * Mark a position as optimistically removed (for instant UI feedback)
- */
-export function markPositionAsRemoved(positionId: string) {
-  optimisticallyRemovedIds.add(positionId);
-}
-
-/**
- * Clear optimistic removal tracking
- */
-export function clearOptimisticRemovals() {
-  optimisticallyRemovedIds.clear();
 }

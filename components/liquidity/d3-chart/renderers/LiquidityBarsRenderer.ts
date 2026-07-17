@@ -8,7 +8,7 @@
  */
 
 import * as d3 from 'd3';
-import { CHART_DIMENSIONS, CHART_COLORS, CHART_CLASSES } from '../constants';
+import { CHART_DIMENSIONS, CHART_CLASSES } from '../constants';
 import { getColorForPrice, getOpacityForPrice } from '../utils/colorUtils';
 import type { ChartEntry, ChartState, TickScale, Renderer } from '../types';
 

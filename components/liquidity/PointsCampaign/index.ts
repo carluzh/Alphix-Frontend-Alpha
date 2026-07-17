@@ -11,17 +11,9 @@
  * Uses Alphix branding instead of UNI token.
  */
 
-// Constants
-export {
-  POINTS_CAMPAIGN_ICON,
-  POINTS_CAMPAIGN_NAME,
-  POINTS_UNIT,
-} from './constants';
-
 // Formatters (backend logic identical to Uniswap)
 export {
   formatPercent,
-  formatAprForTooltip,
   PLACEHOLDER_TEXT,
   type PercentNumberDecimals,
 } from './formatters';

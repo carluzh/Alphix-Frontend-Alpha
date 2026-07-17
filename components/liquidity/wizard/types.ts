@@ -66,36 +66,6 @@ export type RangePreset =
   | 'one_sided_upper'   // Legacy: +100%
   | 'custom';           // User-defined
 
-export interface WizardNavigationConfig {
-  canGoBack: boolean;
-  canGoForward: boolean;
-  nextLabel: string;
-  backLabel: string;
-  showProgress: boolean;
-}
-
-export interface PoolOption {
-  poolId: string;
-  token0Symbol: string;
-  token1Symbol: string;
-  feeTier: number;
-  tickSpacing: number;
-  isStable: boolean;
-}
-
-// URL State sync interface
-export interface WizardUrlState {
-  step?: string;
-  pool?: string;
-  mode?: LPMode;
-  t0?: string;  // token0 symbol
-  t1?: string;  // token1 symbol
-  tl?: string;  // tickLower
-  tu?: string;  // tickUpper
-  a0?: string;  // amount0
-  a1?: string;  // amount1
-}
-
 // Step configuration - 2 steps only
 export interface StepConfig {
   id: WizardStep;
@@ -135,7 +105,7 @@ export const DEFAULT_WIZARD_STATE: WizardState = {
 };
 
 // Transaction step status for modal
-export type TransactionStatus = 'idle' | 'pending' | 'in_progress' | 'completed' | 'error';
+type TransactionStatus = 'idle' | 'pending' | 'in_progress' | 'completed' | 'error';
 
 export interface TransactionStep {
   id: string;

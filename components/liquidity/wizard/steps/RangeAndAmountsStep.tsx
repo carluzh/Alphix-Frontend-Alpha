@@ -43,8 +43,6 @@ import {
   tickToPriceNumber,
   priceToTickSimple,
   priceNumberToTick,
-  tickToPriceSmart,
-  TickMath,
   clampTick,
 } from '@/lib/liquidity/utils/tick-price';
 import { D3LiquidityRangeChart, LiquidityChartSkeleton, CHART_DIMENSIONS } from '@/components/liquidity/d3-chart';
@@ -69,7 +67,6 @@ export function RangeAndAmountsStep() {
     goBack,
     // NEW: Get pool data from context (Uniswap pattern)
     poolStateData,
-    derivedPositionInfo,
     pool: sdkPool, // V4Pool SDK instance
     poolNetworkMode,
   } = useAddLiquidityContext();
@@ -100,7 +97,7 @@ export function RangeAndAmountsStep() {
   amount1Ref.current = amount1;
   const [isAmount0OverBalance, setIsAmount0OverBalance] = useState(false);
   const [isAmount1OverBalance, setIsAmount1OverBalance] = useState(false);
-  const [chartDuration, setChartDuration] = useState<HistoryDuration>(HistoryDuration.MONTH);
+  const [chartDuration] = useState<HistoryDuration>(HistoryDuration.MONTH);
   const [showPriceDeviationModal, setShowPriceDeviationModal] = useState(false);
 
   // Use isCalculating from TxContext
@@ -327,16 +324,6 @@ export function RangeAndAmountsStep() {
   // Selected preset
   const selectedPreset = state.rangePreset || 'full';
 
-  // Price denomination string (Uniswap pattern: "USDC per ETH")
-  const priceDenomination = useMemo(() => {
-    if (!token0Symbol || !token1Symbol) return '';
-    // When inverted: show "token0 per token1" (e.g., "ETH per USDC")
-    // When not inverted: show "token1 per token0" (e.g., "USDC per ETH")
-    return priceInverted
-      ? `${token0Symbol} per ${token1Symbol}`
-      : `${token1Symbol} per ${token0Symbol}`;
-  }, [token0Symbol, token1Symbol, priceInverted]);
-
   // Calculate percentage difference from current price (Uniswap pattern)
   const minPricePercent = useMemo(() => {
     if (minPrice === '0' || minPrice === '') return '-100.00%';
@@ -442,75 +429,6 @@ export function RangeAndAmountsStep() {
   const noopRangeChange = useCallback(() => {}, []);
 
   // Chart range change handler - must be memoized to prevent chart reinitialization
-  // IMPORTANT: Only processes range changes when SDK pool is available to ensure
-  // consistent price-to-tick conversion (chart data uses SDK prices when tokens available)
-  const handleChartRangeChange = useCallback((newMinPrice: number, newMaxPrice: number) => {
-    // Guard: Don't process if SDK pool isn't ready - this prevents scale mismatch
-    // between chart's liquidity data and tick conversion
-    if (!sdkPool?.token0 || !sdkPool?.token1) {
-      console.warn('[handleChartRangeChange] SDK pool not ready, ignoring range change');
-      return;
-    }
-
-    // Validate input prices
-    if (!isFinite(newMinPrice) || !isFinite(newMaxPrice) || newMinPrice <= 0 || newMaxPrice <= 0) {
-      console.warn('[handleChartRangeChange] Invalid prices:', { newMinPrice, newMaxPrice });
-      return;
-    }
-
-    setRangePreset('custom');
-
-    // Convert prices to ticks and update context
-    // When inverted, prices are in inverted form (e.g., USDC/ETH instead of ETH/USDC)
-    // We need canonical prices (token1/token0) for tick calculation
-    let canonicalMinPrice: number;
-    let canonicalMaxPrice: number;
-
-    if (priceInverted) {
-      canonicalMinPrice = 1 / newMaxPrice;
-      canonicalMaxPrice = 1 / newMinPrice;
-    } else {
-      canonicalMinPrice = newMinPrice;
-      canonicalMaxPrice = newMaxPrice;
-    }
-
-    // Convert prices to ticks using SDK (handles token decimals properly)
-    const tickLower = priceToTick(canonicalMinPrice);
-    const tickUpper = priceToTick(canonicalMaxPrice);
-
-    // If SDK conversion fails, don't proceed - this prevents scale mismatch
-    if (tickLower === undefined || tickUpper === undefined) {
-      console.warn('[handleChartRangeChange] SDK tick conversion failed');
-      return;
-    }
-
-    // Align to tick spacing using nearestUsableTick for proper alignment
-    const tickSpacingVal = poolConfig?.tickSpacing || DEFAULT_TICK_SPACING;
-    const alignedTickLower = nearestUsableTick(tickLower, tickSpacingVal);
-    const alignedTickUpper = nearestUsableTick(tickUpper, tickSpacingVal);
-
-    // Convert aligned ticks back to canonical prices
-    const alignedPriceLower = tickToPrice(alignedTickLower);
-    const alignedPriceUpper = tickToPrice(alignedTickUpper);
-
-    // Guard: if conversion fails, just set ticks without updating display prices
-    if (alignedPriceLower === undefined || alignedPriceUpper === undefined) {
-      setRange(alignedTickLower, alignedTickUpper);
-      return;
-    }
-
-    // Update display with aligned prices (inverted if needed)
-    if (priceInverted) {
-      setMinPrice(formatPriceForDisplay(1 / alignedPriceUpper, true));
-      setMaxPrice(formatPriceForDisplay(1 / alignedPriceLower, true));
-    } else {
-      setMinPrice(formatPriceForDisplay(alignedPriceLower, false));
-      setMaxPrice(formatPriceForDisplay(alignedPriceUpper, false));
-    }
-
-    setRange(alignedTickLower, alignedTickUpper);
-  }, [sdkPool, priceInverted, poolConfig?.tickSpacing, priceToTick, tickToPrice, formatPriceForDisplay, setRangePreset, setRange]);
-
   // Price strategy selection - pool-type dependent
   const handleSelectStrategy = useCallback((strategy: RangePreset) => {
     setRangePreset(strategy);

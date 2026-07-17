@@ -10,7 +10,6 @@
  * tick marks, and data will only appear where it actually exists.
  */
 
-import { UTCTimestamp } from "lightweight-charts";
 
 // Period types used across charts
 export type ChartPeriodOverview = "DAY" | "WEEK" | "MONTH";
@@ -61,40 +60,6 @@ export function calculatePeriodRange(
   const periodSeconds = Math.floor(periodMs / 1000);
 
   return [now - periodSeconds, now];
-}
-
-/**
- * Calculate the time range that includes both the selected period AND the actual data.
- * For "ALL" period, uses the actual data range.
- * For other periods, ensures the full period is shown even if data is sparse.
- *
- * @param period - The selected time period
- * @param dataTimestamps - Array of data point timestamps (in seconds)
- * @returns Tuple of [fromTimestamp, toTimestamp] in seconds
- */
-export function calculateEffectiveRange(
-  period: ChartPeriodOverview | ChartPeriodPosition | ChartPeriodPool,
-  dataTimestamps: number[]
-): [number, number] {
-  const [periodFrom, periodTo] = calculatePeriodRange(period);
-
-  // If no data, return period range
-  if (dataTimestamps.length === 0) {
-    return [periodFrom, periodTo];
-  }
-
-  const dataMin = Math.min(...dataTimestamps);
-  const dataMax = Math.max(...dataTimestamps);
-
-  // For ALL period, use actual data range with some padding
-  if (period === "ALL" || period === "All") {
-    const padding = Math.floor((dataMax - dataMin) * 0.05) || 3600; // 5% or 1 hour
-    return [dataMin - padding, dataMax + padding];
-  }
-
-  // For specific periods, use the full period range
-  // This ensures the chart shows the complete timeframe even with sparse data
-  return [periodFrom, periodTo];
 }
 
 /**
@@ -201,16 +166,4 @@ export function formatTickForPeriod(
   }
 }
 
-/**
- * Convert range to lightweight-charts format (UTCTimestamp)
- */
-export function toUTCTimestampRange(
-  from: number,
-  to: number
-): { from: UTCTimestamp; to: UTCTimestamp } {
-  return {
-    from: from as UTCTimestamp,
-    to: to as UTCTimestamp,
-  };
-}
 

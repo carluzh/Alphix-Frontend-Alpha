@@ -12,7 +12,6 @@ export {
   type UseDerivedPositionInfoParams,
   useDerivedIncreaseInfo,
   type UseDerivedIncreaseInfoParams,
-  type DerivedIncreaseInfo,
   type UseDerivedIncreaseInfoResult,
 } from './position'
 

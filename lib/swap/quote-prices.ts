@@ -70,8 +70,8 @@ async function fetchPriceFromPoolMetrics(
 }
 
 /**
- * Fetch price from CoinGecko API (fallback when quoter has insufficient liquidity)
- * Returns 0 on failure to match quoter contract
+ * Fetch price from CoinGecko API (fallback when backend pool metrics are unavailable)
+ * Returns 0 on failure
  */
 async function fetchCoinGeckoFallback(symbol: string): Promise<number> {
   const coinId = COINGECKO_IDS[symbol]
@@ -131,7 +131,7 @@ export async function getQuotePrice(
     if (typeof cached.data === 'number' && cached.data > 0) {
       if (cached.isStale) {
         // Background refresh - fire and forget
-        // Same priority as fresh fetch: CoinGecko first for known tokens, quoter for others
+        // Same priority as fresh fetch: CoinGecko first for known tokens, backend pool metrics for others
         const hasCgId = symbol in COINGECKO_IDS
         const refreshPrice = async () => {
           let price: number
@@ -156,8 +156,8 @@ export async function getQuotePrice(
 
   // No cache or cache miss - fetch fresh price
   // For tokens with CoinGecko IDs (ETH, BTC, etc.), prefer CoinGecko for accurate market prices
-  // since our pool liquidity may cause slippage-distorted pricing via the quoter.
-  // For protocol-specific tokens without CoinGecko IDs, use the on-chain quoter.
+  // since our pool liquidity may cause slippage-distorted pricing.
+  // For protocol-specific tokens without CoinGecko IDs, use backend pool metrics.
   const hasCoinGeckoId = symbol in COINGECKO_IDS
   let price: number
   if (hasCoinGeckoId) {

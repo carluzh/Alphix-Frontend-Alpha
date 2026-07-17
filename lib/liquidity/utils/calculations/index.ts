@@ -23,7 +23,6 @@ export {
   tryParseCurrencyAmount,
   getFieldsDisabled,
   createMockV4Pool,
-  getV4PriceRangeInfo,
   getBaseAndQuoteCurrencies,
   type PriceRangeInput,
 } from './priceRangeInfo';

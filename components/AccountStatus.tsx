@@ -3,9 +3,9 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
 import { Button } from '@/components/ui/button'
-import { MoreVerticalIcon, XIcon } from "lucide-react"
+import { MoreVerticalIcon } from "lucide-react"
 import { IconClone2, IconCheck, IconPowerOff } from "nucleo-micro-bold-essential"
-import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar"
 import { motion, AnimatePresence } from "framer-motion"
 import { DeterministicAvatar } from "@/lib/icons/avatar"
 import { cn } from "@/lib/utils"
@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils"
 export function AccountStatus() {
   const { address, isConnected } = useAccount()
   const { disconnect } = useDisconnect()
-  const { isMobile } = useSidebar() 
 
   const [displayedName, setDisplayedName] = useState("");
   const [copied, setCopied] = useState(false);

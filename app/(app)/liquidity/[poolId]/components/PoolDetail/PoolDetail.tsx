@@ -280,9 +280,6 @@ export const PoolDetail = memo(function PoolDetail({
     router.push(`/liquidity/position/${position.positionId}?from=pool${chainParam}`);
   }, [router, networkMode]);
 
-  const token0Symbol = poolConfig?.tokens?.[0]?.symbol || "";
-  const token1Symbol = poolConfig?.tokens?.[1]?.symbol || "";
-
   // =========================================================================
   // RENDER
   // =========================================================================

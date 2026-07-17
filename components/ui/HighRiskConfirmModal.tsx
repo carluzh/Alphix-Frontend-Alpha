@@ -21,7 +21,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import { IconTriangleWarningFilled } from 'nucleo-micro-bold-essential';
 
-export interface WarningDetail {
+interface WarningDetail {
   label: string;
   value: string;
   isHighlighted?: boolean;
@@ -213,14 +213,6 @@ export function HighRiskConfirmModal({
 
 // Helper functions to create warning configs for common warning types
 
-export interface PriceImpactWarningData {
-  priceImpact: number;
-}
-
-export interface SlippageWarningData {
-  slippage: number;
-}
-
 export interface PriceDeviationWarningData {
   poolPrice: number | null;
   marketPrice: number | null;
@@ -228,28 +220,6 @@ export interface PriceDeviationWarningData {
   direction: 'above' | 'below';
   token0Symbol: string;
   token1Symbol: string;
-}
-
-export function createPriceImpactWarning(data: PriceImpactWarningData): WarningPage {
-  return {
-    title: 'Very High Price Impact',
-    description: 'This trade will significantly move the market price. You may receive much less than expected due to low liquidity.',
-    details: [
-      { label: 'Price Impact', value: `${data.priceImpact.toFixed(2)}%`, isHighlighted: true },
-    ],
-    learnMoreUrl: 'https://support.uniswap.org/hc/en-us/articles/8671539602317-What-is-Price-Impact',
-  };
-}
-
-export function createSlippageWarning(data: SlippageWarningData): WarningPage {
-  return {
-    title: 'Very High Slippage',
-    description: 'Your trade may be vulnerable to frontrunning and sandwich attacks with this slippage tolerance.',
-    details: [
-      { label: 'Slippage Tolerance', value: `${data.slippage.toFixed(2)}%`, isHighlighted: true },
-    ],
-    learnMoreUrl: 'https://support.uniswap.org/hc/en-us/articles/8643879653261-What-is-slippage',
-  };
 }
 
 export function createPriceDeviationWarning(data: PriceDeviationWarningData): WarningPage {
@@ -284,5 +254,3 @@ export function createPriceDeviationWarning(data: PriceDeviationWarningData): Wa
     ],
   };
 }
-
-export default HighRiskConfirmModal;

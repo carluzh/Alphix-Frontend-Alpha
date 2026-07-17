@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { formatUnits, parseUnits } from 'viem';
+import { formatUnits } from 'viem';
 
 /**
  * Custom hook for handling percentage-based input calculations with bigint precision
@@ -60,37 +60,4 @@ export function usePercentageInput(
     },
     [balanceData, token.decimals, token.symbol, setAmount]
   );
-}
-
-/**
- * Variant of usePercentageInput that returns both 'from' and 'to' handlers
- * Useful for swap interfaces where you need to handle two different tokens
- *
- * @example
- * ```tsx
- * const { handleFromPercentage, handleToPercentage } = useSwapPercentageInput(
- *   fromTokenBalanceData,
- *   toTokenBalanceData,
- *   fromToken,
- *   toToken,
- *   setFromAmount,
- *   setToAmount
- * );
- * ```
- */
-export function useSwapPercentageInput(
-  fromBalanceData: { value?: bigint; formatted?: string } | undefined,
-  toBalanceData: { value?: bigint; formatted?: string } | undefined,
-  fromToken: { decimals: number; symbol: string },
-  toToken: { decimals: number; symbol: string },
-  setFromAmount: (value: string) => void,
-  setToAmount: (value: string) => void
-) {
-  const handleFromPercentage = usePercentageInput(fromBalanceData, fromToken, setFromAmount);
-  const handleToPercentage = usePercentageInput(toBalanceData, toToken, setToAmount);
-
-  return {
-    handleFromPercentage,
-    handleToPercentage,
-  };
 }

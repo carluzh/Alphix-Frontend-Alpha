@@ -205,25 +205,3 @@ export const useExecutionStore = create<ExecutionStore>((set, get) => ({
     set(INITIAL_STATE);
   },
 }));
-
-// =============================================================================
-// SELECTORS — for fine-grained subscriptions
-// =============================================================================
-
-/** Whether execution is currently locked (in-flight) */
-export const selectIsLocked = (state: ExecutionStore) => state.executionLockId !== null;
-
-/** Current step state (for ProgressIndicator) */
-export const selectCurrentStepState = (state: ExecutionStore) =>
-  state.steps[state.currentStepIndex] ?? null;
-
-/** All step states */
-export const selectSteps = (state: ExecutionStore) => state.steps;
-
-/** Execution status */
-export const selectExecutionStatus = (state: ExecutionStore) => ({
-  isExecuting: state.isExecuting,
-  status: state.status,
-  error: state.error,
-  currentStepIndex: state.currentStepIndex,
-});

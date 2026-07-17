@@ -111,7 +111,6 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
     // Check if we're before Week 1 start (for week display purposes)
     const beforeWeek1 = now < week1Start;
     const msUntilWeek1 = week1Start.getTime() - now.getTime();
-    const daysUntilWeek1 = Math.ceil(msUntilWeek1 / ONE_DAY_MS);
 
     // Season progress uses effective season start
     const beforeSeason = now < effectiveSeasonStart;
