@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useAccount } from "wagmi";
 import { usePoolState } from "@/lib/apollo/hooks";
 import { useTokenPrices } from "@/hooks/useTokenPrices";
 import { useWSPool } from "@/lib/websocket";
@@ -24,7 +23,7 @@ type Position = V4ProcessedPosition | UnifiedYieldPosition;
 function isV4Position(position: Position): position is V4ProcessedPosition {
   return position.type === 'v4';
 }
-import { TickMath, tickToPriceRelative, tickToPriceSimple } from "@/lib/liquidity/utils/tick-price";
+import { tickToPriceRelative, tickToPriceSimple } from "@/lib/liquidity/utils/tick-price";
 import { formatUSD as formatUSDShared } from "@/lib/format";
 
 // Re-export ChartDataPoint for convenience
@@ -237,8 +236,6 @@ function convertTickToPriceImpl(
 }
 
 export function usePoolDetailPageData(poolSlug: string, networkModeOverride?: NetworkMode): UsePoolDetailPageDataReturn {
-  const { address: accountAddress, isConnected, chainId } = useAccount();
-
   // Get pool configuration (synchronous) — uses chain param for disambiguation
   const poolConfig = useMemo(() => getPoolConfiguration(poolSlug, networkModeOverride), [poolSlug, networkModeOverride]);
   const poolId = poolConfig?.poolId || '';

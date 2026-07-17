@@ -17,20 +17,18 @@ export {
   type TransactionStepBase,
   type TokenApprovalStep,
   type Permit2SignatureStep,
-  type LiquidityPositionStep,
   type TransactionStep,
 
   // Props interfaces
   type CurrentStepState,
 
   // Factory functions
-  createTokenApprovalStep,
   createPermit2SignatureStep,
 } from './types'
 
 // Transaction providers (wallet-balances refresh watcher)
 export { TransactionProvider } from './TransactionProvider'
-export { TransactionWatcherProvider, TokenBalancesProvider } from './TokenBalancesProvider'
+export { TransactionWatcherProvider } from './TokenBalancesProvider'
 
 // Re-export TradeType from @uniswap/sdk-core for swap transaction info
 export { TradeType } from '@uniswap/sdk-core'

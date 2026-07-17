@@ -121,19 +121,6 @@ export interface IncreaseLPPositionRequestArgs {
   };
 }
 
-/**
- * Response type for Alphix API transaction preparation
- */
-export interface LPPositionTransactionResponse {
-  create?: {
-    to: string;
-    from?: string;
-    data: string;
-    value: string;
-    chainId: number;
-  };
-}
-
 // =============================================================================
 // BASE TRANSACTION FIELDS - Matches Uniswap's OnChainTransactionFields
 // =============================================================================
@@ -150,7 +137,7 @@ export interface OnChainTransactionFields {
   txRequest: ValidatedTransactionRequest;
 }
 
-export interface OnChainTransactionFieldsBatched {
+interface OnChainTransactionFieldsBatched {
   batchedTxRequests: ValidatedTransactionRequest[];
 }
 
@@ -354,7 +341,7 @@ export type DecreaseLiquiditySteps =
 export type CollectFeesSteps = CollectFeesTransactionStep;
 
 // Unified Yield step unions
-export type UnifiedYieldDepositSteps =
+type UnifiedYieldDepositSteps =
   | UnifiedYieldApprovalStep
   | UnifiedYieldDepositStep;
 
@@ -562,12 +549,6 @@ export interface TokenApprovalStatus {
   };
 }
 
-export interface ApprovalCheckResult {
-  token0: TokenApprovalStatus | null;
-  token1: TokenApprovalStatus | null;
-  permitBatchData: Permit2SignatureStep | null;
-  isLoading: boolean;
-  error?: string;
-}
+
 
 

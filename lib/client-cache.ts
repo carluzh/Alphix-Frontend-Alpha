@@ -41,46 +41,8 @@ function getUserPositionIdsCacheKey(address: string, networkMode: NetworkMode): 
   return `${networkMode}:userPositionIds_${address.toLowerCase()}`;
 }
 
-/** Invalidate user position IDs cache for a specific chain */
-export function invalidateUserPositionIdsCache(ownerAddress: string, networkMode: NetworkMode): void {
-  try { SafeStorage.remove(getUserPositionIdsCacheKey(ownerAddress, networkMode)); } catch {}
-}
-
 /** Time window (ms) to preserve optimistic entries that aren't in subgraph yet */
 const OPTIMISTIC_ENTRY_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-/**
- * Add a position ID directly to the cache (from transaction receipt).
- * This bypasses subgraph and ensures the position is immediately visible.
- */
-export function addPositionIdToCache(ownerAddress: string, tokenId: string, networkMode: NetworkMode, createdAt?: number): void {
-  if (!ownerAddress || !tokenId) return;
-
-  const key = getUserPositionIdsCacheKey(ownerAddress, networkMode);
-  const now = Date.now();
-  const timestamp = createdAt || Math.floor(now / 1000);
-
-  try {
-    const raw = SafeStorage.get(key);
-    let items: Array<{ id: string; createdAt?: number; lastTimestamp?: number; optimisticAddedAt?: number }> = [];
-    let cacheTimestamp = now;
-
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      items = parsed.items || [];
-      cacheTimestamp = parsed.timestamp || now;
-    }
-
-    const existingIdx = items.findIndex(it => it.id === tokenId);
-    if (existingIdx === -1) {
-      items.unshift({ id: tokenId, createdAt: timestamp, lastTimestamp: timestamp, optimisticAddedAt: now });
-      SafeStorage.set(key, JSON.stringify({ items, timestamp: cacheTimestamp }));
-    } else if (!items[existingIdx].optimisticAddedAt) {
-      items[existingIdx].optimisticAddedAt = now;
-      SafeStorage.set(key, JSON.stringify({ items, timestamp: cacheTimestamp }));
-    }
-  } catch {}
-}
 
 /** Remove a position ID from the cache (after full burn) */
 export function removePositionIdFromCache(ownerAddress: string, tokenId: string, networkMode: NetworkMode): void {
@@ -297,4 +259,4 @@ function arraysEqual(a: string[], b: string[]): boolean {
   return sortedA.every((val, i) => val === sortedB[i]);
 }
 
-export { derivePositionsFromIds, decodePositionInfo } from './on-chain-data';
+export { derivePositionsFromIds } from './on-chain-data';

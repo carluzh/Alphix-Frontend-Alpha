@@ -2,7 +2,7 @@
  * Unified token price hook
  *
  * Single source of truth for all client-side token USD pricing.
- * Calls /api/prices/batch -> batchQuotePrices() -> V4 Quoter + CoinGecko fallback + Redis cache.
+ * Calls /api/prices/batch -> batchQuotePrices() -> backend pool metrics + CoinGecko fallback + Redis cache.
  *
  * Replaces: useAllPrices, useTokenUSDPrice, useCoinGeckoPrice
  */
@@ -61,7 +61,7 @@ export function useTokenPrices(
 ): UseTokenPricesResult {
   const { pollInterval = 30_000, enabled = true, chainId: chainIdOverride } = options;
   // USD prices are chain-agnostic (ETH is same price on Base & Arbitrum)
-  // Default to user's current chain for the quoter backend; callers can override for specificity
+  // Default to user's current chain for the pricing backend; callers can override for specificity
   const chainId = chainIdOverride ?? getStoredChainId();
   const isWindowVisible = useIsWindowVisible();
 

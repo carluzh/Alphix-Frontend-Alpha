@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useMemo } from 'react';
-import Image from 'next/image';
 import { ArrowDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { encodeFunctionData, erc20Abi, maxUint256 } from 'viem';

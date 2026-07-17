@@ -19,11 +19,7 @@ import {
   SidebarMenuItem,
   SidebarGroup,
 } from "@/components/ui/sidebar"
-import { useIsMobile } from "@/hooks/use-mobile"
-import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
-import { useRouter } from "next/navigation";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 // Base navigation items (always shown)
 const baseNavItems: NavMainItem[] = [
@@ -50,8 +46,6 @@ const baseNavItems: NavMainItem[] = [
 ];
 
 export function AppSidebar({ variant = "floating", ...props }: React.ComponentProps<typeof Sidebar>) {
-  const isMobile = useIsMobile()
-  const router = useRouter();
   const navMain = useMemo(() => [...baseNavItems], []);
 
   return (

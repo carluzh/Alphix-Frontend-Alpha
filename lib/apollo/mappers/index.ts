@@ -6,7 +6,6 @@
  */
 
 export {
-  mapPositionToGraphQL,
   mapPositionsToGraphQL,
   type GraphQLPosition,
 } from './positionMapper';

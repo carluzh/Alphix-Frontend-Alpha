@@ -37,11 +37,6 @@ export function apolloChainForMode(mode: NetworkMode): string {
   return CHAIN_REGISTRY[mode].apolloChain;
 }
 
-/** Backend network param (e.g. 'base', 'arbitrum') */
-export function backendNetworkForMode(mode: NetworkMode): string {
-  return CHAIN_REGISTRY[mode].backendNetwork;
-}
-
 /** Parse an untrusted string into a NetworkMode, defaulting to 'base' */
 export function parseNetworkMode(value: string | null | undefined): NetworkMode {
   if (value && ALL_MODES.includes(value as NetworkMode)) return value as NetworkMode;
@@ -97,8 +92,8 @@ export function resolveNetworkMode(req: {
   return 'base';
 }
 
-export const NETWORK_STORAGE_KEY = 'alphix-network-mode';
-export const NETWORK_COOKIE_NAME = 'alphix-network-mode';
+const NETWORK_STORAGE_KEY = 'alphix-network-mode';
+const NETWORK_COOKIE_NAME = 'alphix-network-mode';
 
 /**
  * Parse network mode from a cookie string (for server-side usage)

@@ -37,36 +37,3 @@ export function Container({ children, className, animate = false, delay = 0 }: C
 
   return <div className={baseClasses}>{children}</div>;
 }
-
-// Animated container for step transitions
-interface AnimatedContainerProps {
-  children: React.ReactNode;
-  show: boolean;
-  direction?: 'up' | 'down';
-  className?: string;
-}
-
-export function AnimatedContainer({
-  children,
-  show,
-  direction = 'down',
-  className
-}: AnimatedContainerProps) {
-  const yOffset = direction === 'down' ? -10 : 10;
-
-  return (
-    <AnimatePresence mode="wait">
-      {show && (
-        <motion.div
-          initial={{ y: yOffset, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: yOffset, opacity: 0 }}
-          transition={{ duration: 0.2 }}
-          className={className}
-        >
-          <Container>{children}</Container>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}

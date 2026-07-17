@@ -5,14 +5,8 @@
   },
   "contracts": {
     "poolManager": "0x498581ff718922c3f8e6a244956af099b2652b2b",
-    "universalRouter": "0x6ff5693b99212da76ad316178a184ab56d299b43",
-    "quoter": "0x0d5e0f971ed27fbff6c2837bf31316121532048d",
     "positionManager": "0x7c5f5a4bbd8fd63184577525326123b519429bdc",
     "stateView": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71"
-  },
-  "hooks": {
-    "alphixHookId": "0x831CfDf7c0E194f5369f204b3DD2481B843d60c0",
-    "alphixProHookId": "0x2f9Cf87A6CbFA53C3F1B184900de17298e3F9080"
   },
   "tokens": {
     "ETH": {
@@ -65,7 +59,6 @@
       "tickSpacing": 60,
       "hooks": "0x7cBbfF9C4fcd74B221C535F4fB4B1Db04F1B9044",
       "enabled": true,
-      "featured": true,
       "type": "Volatile"
     },
     {
@@ -84,7 +77,6 @@
       "tickSpacing": 60,
       "hooks": "0x7cBbfF9C4fcd74B221C535F4fB4B1Db04F1B9044",
       "enabled": true,
-      "featured": true,
       "type": "Volatile"
     },
     {
@@ -103,7 +95,6 @@
       "tickSpacing": 200,
       "hooks": "0x2f9Cf87A6CbFA53C3F1B184900de17298e3F9080",
       "enabled": true,
-      "featured": true,
       "type": "Pro",
       "proMeta": {
         "projectName": "ZyFAI",

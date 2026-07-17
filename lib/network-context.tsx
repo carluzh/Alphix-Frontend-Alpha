@@ -12,11 +12,7 @@ import {
   modeForChainId,
 } from './network-mode';
 
-export {
-  type NetworkMode,
-  BASE_CHAIN_ID,
-  ARBITRUM_CHAIN_ID,
-};
+export { type NetworkMode };
 
 interface NetworkContextValue {
   // Legacy: still available for components that haven't been migrated yet.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 
 /**
  * Chart types available in the pool detail page.
@@ -49,4 +49,3 @@ export const chartConfig = {
   sellFee: { label: "Sell Fee", color: "#e85102" },
 };
 
-export type ChartConfigKey = keyof typeof chartConfig;

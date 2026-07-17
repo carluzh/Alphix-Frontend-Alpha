@@ -72,7 +72,7 @@ export function buildUnifiedYieldWithdrawTx(
  * @param client - Viem public client
  * @returns Tuple of [amount0, amount1] or null on error
  */
-export async function previewRemoveReHypothecatedLiquidity(
+async function previewRemoveReHypothecatedLiquidity(
   hookAddress: Address,
   shares: bigint,
   client: PublicClient

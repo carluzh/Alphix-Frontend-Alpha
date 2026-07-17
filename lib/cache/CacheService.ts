@@ -41,7 +41,7 @@ function isValidCachePayload(data: unknown): boolean {
   return true
 }
 
-export class CacheService {
+class CacheService {
   // NOTE: In-memory request deduplication removed for serverless compatibility
   // Redis handles concurrent request coordination via atomic operations
 

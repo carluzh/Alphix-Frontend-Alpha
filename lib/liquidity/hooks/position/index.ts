@@ -14,6 +14,5 @@ export {
 export {
   useDerivedIncreaseInfo,
   type UseDerivedIncreaseInfoParams,
-  type DerivedIncreaseInfo,
   type UseDerivedIncreaseInfoResult,
 } from './useDerivedIncreaseInfo';

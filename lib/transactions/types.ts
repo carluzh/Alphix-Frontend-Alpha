@@ -73,7 +73,7 @@ export interface Permit2SignatureStep extends TransactionStepBase {
 /**
  * Liquidity position step - create, increase, decrease, or collect fees
  */
-export interface LiquidityPositionStep extends TransactionStepBase {
+interface LiquidityPositionStep extends TransactionStepBase {
   type:
     | TransactionStepType.CreatePositionTransaction
     | TransactionStepType.IncreasePositionTransaction
@@ -130,24 +130,6 @@ export interface CurrentStepState {
 // ============================================================================
 // Factory Functions for Creating Steps
 // ============================================================================
-
-/**
- * Create a token approval step
- */
-export function createTokenApprovalStep(
-  tokenSymbol: string,
-  tokenAddress: string,
-  tokenIcon?: string,
-  chainId?: number
-): TokenApprovalStep {
-  return {
-    type: TransactionStepType.TokenApprovalTransaction,
-    tokenSymbol,
-    tokenAddress,
-    tokenIcon,
-    chainId,
-  }
-}
 
 /**
  * Create a Permit2 signature step

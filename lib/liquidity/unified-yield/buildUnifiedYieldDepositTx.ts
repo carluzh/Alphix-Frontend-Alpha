@@ -96,7 +96,7 @@ export function buildUnifiedYieldDepositTx(
  * @param client - Viem public client
  * @returns Preview result with amount1 and shares, or null on error
  */
-export async function previewAddFromAmount0(
+async function previewAddFromAmount0(
   hookAddress: Address,
   amount0: bigint,
   client: PublicClient
@@ -131,7 +131,7 @@ export async function previewAddFromAmount0(
  * @param client - Viem public client
  * @returns Preview result with amount0 and shares, or null on error
  */
-export async function previewAddFromAmount1(
+async function previewAddFromAmount1(
   hookAddress: Address,
   amount1: bigint,
   client: PublicClient

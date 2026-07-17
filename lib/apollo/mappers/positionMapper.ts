@@ -61,7 +61,7 @@ export interface GraphQLPosition {
  * @param chain - Chain identifier (BASE or ARBITRUM)
  * @returns GraphQL-compatible Position object
  */
-export function mapPositionToGraphQL(
+function mapPositionToGraphQL(
   pos: V4ProcessedPosition,
   chain: string
 ): GraphQLPosition {

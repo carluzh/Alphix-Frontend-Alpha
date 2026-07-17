@@ -11,7 +11,7 @@ import { reportError } from '@/lib/observability';
  * Body: { symbols: string[], chainId?: number }
  * Returns: { prices: Record<string, number>, timestamp: number }
  *
- * Batch-fetches USD prices for multiple tokens via V4 Quoter + CoinGecko fallback.
+ * Batch-fetches USD prices for multiple tokens via backend pool metrics + CoinGecko fallback + Redis cache.
  * Server-side Redis caching (60s fresh / 5min stale) prevents excessive RPC calls.
  */
 export async function POST(request: Request) {

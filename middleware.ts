@@ -73,10 +73,8 @@ const BASE_CSP: Record<string, string[]> = {
     "https://vercel.com",
     "https://vercel.live",
     "https://va.vercel-scripts.com",
-    // Dev + E2E: local fork RPC endpoints (Base :8545, Arbitrum :8546) + dev WS.
-    // Gated on NEXT_PUBLIC_E2E so a production E2E build (next start) can still
-    // reach the local Anvil forks; inert in normal production builds.
-    ...((!IS_PRODUCTION || process.env.NEXT_PUBLIC_E2E === 'true') ? [
+    // Dev only: local fork RPC endpoints (Base :8545, Arbitrum :8546) + dev WS.
+    ...(!IS_PRODUCTION ? [
       "http://127.0.0.1:8545",
       "http://localhost:8545",
       "http://127.0.0.1:8546",
@@ -111,10 +109,6 @@ function addSecurityHeaders(response: NextResponse): void {
 }
 
 export function middleware(request: NextRequest) {
-  if (!IS_PRODUCTION && request.nextUrl.searchParams.get('e2e') === 'true') {
-    return NextResponse.next();
-  }
-
   if (request.method === 'OPTIONS') {
     const res = new NextResponse(null, { status: 204 });
     const origin = request.headers.get('origin');
@@ -138,14 +132,6 @@ export function middleware(request: NextRequest) {
     return response;
   };
 
-  const hostname = request.headers.get('host') || '';
-  const url = request.nextUrl.clone();
-
-  if (hostname.startsWith('brands.')) {
-    url.pathname = '/brand';
-    return createSecureResponse('rewrite', url);
-  }
-
   const { pathname } = request.nextUrl;
   const maintenanceEnabled = process.env.MAINTENANCE === 'true';
 
@@ -158,7 +144,7 @@ export function middleware(request: NextRequest) {
     return createSecureResponse('redirect', migrateUrl);
   }
 
-  if (pathname === '/' || pathname === '/brand') {
+  if (pathname === '/') {
     return createSecureResponse('next');
   }
 

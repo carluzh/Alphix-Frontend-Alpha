@@ -1,7 +1,0 @@
-export { default as LandingPage } from './LandingPage'
-export { default as LandingLayout } from './LandingLayout'
-export { default as Features } from './Features'
-export { Hero } from './Hero/Hero'
-export { Section } from './Section'
-export { SplitPromo } from './SplitPromo'
-export { FeatureCards } from './FeatureCards'

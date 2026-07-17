@@ -1,6 +1,6 @@
 "use client"
 
-import { forwardRef, PropsWithChildren, HTMLAttributes, CSSProperties } from 'react'
+import { forwardRef, PropsWithChildren, HTMLAttributes } from 'react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { zIndexes } from './utils'
@@ -326,30 +326,6 @@ export const HeaderSortText = ({ active, className, children }: HeaderSortTextPr
 )
 
 // ============================================================================
-// Filter Header Row
-// ============================================================================
-interface FilterHeaderRowProps extends HTMLAttributes<HTMLDivElement> {
-  clickable?: boolean
-}
-
-export const FilterHeaderRow = forwardRef<HTMLDivElement, FilterHeaderRowProps>(
-  ({ clickable, className, children, ...props }, ref) => (
-    <div
-      ref={ref}
-      className={cn(
-        "flex flex-row items-center select-none gap-1 transition-all duration-100",
-        clickable && "cursor-pointer hover:opacity-60",
-        className
-      )}
-      {...props}
-    >
-      {children}
-    </div>
-  )
-)
-FilterHeaderRow.displayName = 'FilterHeaderRow'
-
-// ============================================================================
 // Table Text Components
 // ============================================================================
 interface TableTextProps extends PropsWithChildren {
@@ -360,10 +336,4 @@ export const TableText = ({ className, children }: TableTextProps) => (
   <span className={cn("text-sm text-foreground", className)}>
     {children}
   </span>
-)
-
-export const EllipsisText = ({ className, children }: TableTextProps) => (
-  <TableText className={cn("whitespace-nowrap overflow-hidden text-ellipsis", className)}>
-    {children}
-  </TableText>
 )

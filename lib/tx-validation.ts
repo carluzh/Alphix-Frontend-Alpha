@@ -1,7 +1,6 @@
-import { isAddress } from 'viem';
 import { chainIdForMode, type NetworkMode } from './network-mode';
 
-export function getExpectedChainId(networkMode: NetworkMode): number {
+function getExpectedChainId(networkMode: NetworkMode): number {
   return chainIdForMode(networkMode);
 }
 
@@ -12,16 +11,6 @@ export function validateChainId(chainId: number, networkMode: NetworkMode): stri
   }
   return null;
 }
-
-export function validateAddress(address: string, fieldName: string): string | null {
-  if (!address || !isAddress(address)) {
-    return `Invalid ${fieldName}: ${address}`;
-  }
-  return null;
-}
-
-export const MAX_DEADLINE_SECONDS = 3600;
-export const MIN_AMOUNT_WEI = 1n;
 
 // Simple in-memory rate limiter for transaction APIs (per-IP)
 const txRateLimits = new Map<string, { count: number; resetAt: number }>();

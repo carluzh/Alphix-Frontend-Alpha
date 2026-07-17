@@ -34,25 +34,6 @@ export interface FeeData {
   tickSpacing: number;
 }
 
-/**
- * Default fee configuration (0.3% with 60 tick spacing)
- */
-export const DEFAULT_FEE_DATA: FeeData = {
-  feeAmount: 3000,
-  tickSpacing: 60,
-  isDynamic: false,
-};
-
-// =============================================================================
-// POSITION FLOW STEP - Matches Uniswap's PositionFlowStep
-// =============================================================================
-
-export enum PositionFlowStep {
-  SELECT_TOKENS_AND_FEE_TIER = 0,
-  PRICE_RANGE = 1,
-  DEPOSIT = 2,
-}
-
 // =============================================================================
 // RANGE INPUT MODE - Matches Uniswap's RangeAmountInputPriceMode
 // =============================================================================
@@ -66,7 +47,7 @@ export enum RangeAmountInputPriceMode {
 // INITIAL POSITION - For migration/edit purposes
 // =============================================================================
 
-export interface InitialPosition {
+interface InitialPosition {
   tickLower: number;
   tickUpper: number;
   isOutOfRange: boolean;
@@ -89,15 +70,6 @@ export interface PositionState {
   initialPosition?: InitialPosition;
 }
 
-/**
- * Default position state
- */
-export const DEFAULT_POSITION_STATE: PositionState = {
-  fee: undefined,
-  hook: undefined,
-  userApprovedHook: undefined,
-};
-
 // =============================================================================
 // PRICE RANGE STATE - Matches Uniswap's PriceRangeState
 // =============================================================================
@@ -114,16 +86,6 @@ export interface PriceRangeState {
   maxPrice?: string;
   inputMode?: RangeAmountInputPriceMode;
 }
-
-/**
- * Default price range state
- */
-export const DEFAULT_PRICE_RANGE_STATE: PriceRangeState = {
-  priceInverted: false,
-  fullRange: false,
-  initialPrice: '',
-  isInitialPriceDirty: false,
-};
 
 // =============================================================================
 // CREATE POSITION INFO - Derived position information
@@ -187,17 +149,6 @@ export interface DepositState {
     [PositionField.TOKEN1]?: string;
   };
 }
-
-/**
- * Default deposit state
- */
-export const DEFAULT_DEPOSIT_STATE: DepositState = {
-  exactField: PositionField.TOKEN0,
-  exactAmounts: {
-    [PositionField.TOKEN0]: undefined,
-    [PositionField.TOKEN1]: undefined,
-  },
-};
 
 // =============================================================================
 // DEPOSIT INFO - Derived deposit information
@@ -273,13 +224,4 @@ export interface PriceDifference {
   value: number;
   absoluteValue: number;
   warning?: WarningSeverity;
-}
-
-// =============================================================================
-// DYNAMIC FEE TIER SPEEDBUMP - Matches Uniswap's DynamicFeeTierSpeedbumpData
-// =============================================================================
-
-export interface DynamicFeeTierSpeedbumpData {
-  open: boolean;
-  wishFeeData?: FeeData;
 }

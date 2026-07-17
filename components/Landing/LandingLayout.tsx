@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import Image from 'next/image'
 import { PropsWithChildren, useEffect, useState } from 'react'
-import { TVLDisplay, SeasonBadge } from './TVLTicker'
+import { TVLDisplay } from './TVLTicker'
 
 const GithubIcon = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">

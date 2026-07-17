@@ -51,18 +51,6 @@ export enum NumberType {
   PercentageThreeDecimals = 'percentage-three-decimals',
   PercentageFourDecimals = 'percentage-four-decimals',
 }
-export type FiatNumberType = Extract<
-  NumberType,
-  | NumberType.FiatTokenPrice
-  | NumberType.FiatTokenDetails
-  | NumberType.FiatTokenStats
-  | NumberType.FiatTokenQuantity
-  | NumberType.FiatGasPrice
-  | NumberType.FiatRewards
-  | NumberType.PortfolioBalance
-  | NumberType.FiatStandard
->
-
 export type PercentNumberDecimals = 1 | 2 | 3 | 4
 export type PercentNumberType = Extract<
   NumberType,

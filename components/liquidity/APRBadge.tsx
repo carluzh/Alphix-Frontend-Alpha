@@ -5,7 +5,7 @@ import { calculateTotalApy, formatTotalApy } from "@/lib/apr";
 import { PointsTooltip, TooltipSize } from "./PointsCampaign/PointsTooltip";
 import { APYBreakdownTooltip } from "./APYBreakdownTooltip";
 
-export interface APYBreakdown {
+interface APYBreakdown {
   poolApy?: number;
   pointsApy?: number;
   lendingApy?: number;

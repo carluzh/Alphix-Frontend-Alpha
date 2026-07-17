@@ -5,13 +5,8 @@
   },
   "contracts": {
     "poolManager": "0x360e68faccca8ca495c1b759fd9eee466db9fb32",
-    "universalRouter": "0xa51afafe0263b40edaef0df8781ea9aa03e381a3",
-    "quoter": "0x3972c00f7ed4885e145823eb7c655375d275a1c5",
     "positionManager": "0xd88f38f930b7952f2db2432cb002e7abbf3dd869",
     "stateView": "0x76fd297e2d437cd7f76d50f01afe6160f86e9990"
-  },
-  "hooks": {
-    "alphixHookId": "0x5e645C3D580976Ca9e3fe77525D954E73a0Ce0C0"
   },
   "tokens": {
     "ETH": {
@@ -56,7 +51,6 @@
       "tickSpacing": 1,
       "hooks": "0x5e645C3D580976Ca9e3fe77525D954E73a0Ce0C0",
       "enabled": true,
-      "featured": true,
       "type": "Stable",
       "yieldSources": ["aave"],
       "rehypoRange": {

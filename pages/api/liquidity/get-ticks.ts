@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-import { getPoolId, getPoolBySlugMultiChain } from '../../../lib/pools-config'
+import { getPoolId } from '../../../lib/pools-config'
 import { resolveNetworkMode, type NetworkMode } from '../../../lib/network-mode'
-import { getSubgraphUrlForPool, getAlphixSubgraphUrl } from '../../../lib/subgraph-url-helper'
+import { getAlphixSubgraphUrl } from '../../../lib/subgraph-url-helper'
 import { cacheService } from '@/lib/cache/CacheService'
 import { poolKeys } from '@/lib/cache/redis-keys'
 import { CHAIN_REGISTRY } from '@/lib/chain-registry'
@@ -74,11 +74,7 @@ async function fetchUniswapGatewayTicks(poolId: string, networkMode: NetworkMode
  * Fetch tick data from subgraph.
  */
 async function fetchSubgraphTicks(poolId: string, limit: number, networkMode: NetworkMode): Promise<TickRow[] | null> {
-  // Route to the correct subgraph for this pool
-  const poolConfig = getPoolBySlugMultiChain(poolId)
-  const subgraphUrl = poolConfig
-    ? getSubgraphUrlForPool(poolConfig, networkMode)
-    : getAlphixSubgraphUrl(networkMode)
+  const subgraphUrl = getAlphixSubgraphUrl(networkMode)
 
   const query = `
     query GetTicks($pool: Bytes!, $first: Int!) {

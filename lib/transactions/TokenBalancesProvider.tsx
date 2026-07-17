@@ -47,6 +47,3 @@ function WalletBalancesRefreshListener({ children }: PropsWithChildren) {
 export function TransactionWatcherProvider({ children }: PropsWithChildren) {
   return <WalletBalancesRefreshListener>{children}</WalletBalancesRefreshListener>
 }
-
-// Keep the old name for backward compatibility
-export const TokenBalancesProvider = TransactionWatcherProvider

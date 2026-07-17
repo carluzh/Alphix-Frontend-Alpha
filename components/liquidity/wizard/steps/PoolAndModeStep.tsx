@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { useAddLiquidityContext } from '../AddLiquidityContext';
 import { Container } from '../shared/Container';
 import { LPMode } from '../types';
-import { getMultiChainEnabledPools, getPoolBySlug, getPoolBySlugMultiChain, getPoolId, type PoolConfig } from '@/lib/pools-config';
+import { getMultiChainEnabledPools, getPoolBySlugMultiChain, getPoolId, type PoolConfig } from '@/lib/pools-config';
 import { canUseConcurrentMode } from '@/lib/liquidity/utils/pool-type-guards';
 
 import { fetchPoolsMetrics } from '@/lib/backend-client';
@@ -223,7 +223,7 @@ function LPModeSection({ mode, onSelectMode, extraAaveApr, yieldSources, pool }:
 }
 
 export function PoolAndModeStep() {
-  const { state, setPoolId, setTokens, setMode, goNext, canGoForward, poolLoading } = useAddLiquidityContext();
+  const { state, setPoolId, setTokens, setMode, goNext, canGoForward } = useAddLiquidityContext();
   const { isConnected } = useAccount();
   const [poolAprs, setPoolAprs] = useState<Record<string, number>>({});
   const [aprsLoading, setAprsLoading] = useState(true);

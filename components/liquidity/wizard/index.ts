@@ -22,7 +22,6 @@ export {
   type WizardState,
   type LPMode,
   type RangePreset,
-  type WizardNavigationConfig,
   WIZARD_STEPS,
   DEFAULT_WIZARD_STATE,
 } from './types';

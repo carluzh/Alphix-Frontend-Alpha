@@ -15,7 +15,7 @@ import {
 // TYPES
 // =============================================================================
 
-export interface ReferralData {
+interface ReferralData {
   // My referral code
   myCode: string | null;
   myCodeUsageCount: number;

@@ -106,10 +106,3 @@ export function AddLiquidityWizard({ entryConfig }: AddLiquidityWizardProps) {
     </Suspense>
   );
 }
-
-// Export new step components
-export {
-  PoolAndModeStep,
-  RangeAndAmountsStep,
-  ReviewExecuteModal,
-};

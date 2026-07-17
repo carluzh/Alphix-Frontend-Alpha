@@ -524,7 +524,6 @@ export function SwapRoutePreview({
   const handleNodeLeave = useCallback(() => setNodeTooltip(null), [])
 
   const hasRoutes = routes.length > 0
-  const isSplitRoute = routes.length > 1
 
   // ---------------------------------------------------------------------------
   // Build bands

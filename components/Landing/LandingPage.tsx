@@ -199,7 +199,7 @@ const ModularityCard = ({ connectTop = false }: { connectTop?: boolean } = {}) =
   )
 }
 
-export const PageContent = () => {
+const PageContent = () => {
   const customHeadingRef = useRef<HTMLDivElement>(null)
   const managedHeadingRef = useRef<HTMLDivElement>(null)
   const [isStuck, setIsStuck] = useState(false)

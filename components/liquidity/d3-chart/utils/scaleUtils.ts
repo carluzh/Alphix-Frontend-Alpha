@@ -165,19 +165,6 @@ export function yToPrice({
   return Math.max(0.0000001, interpolatedPrice);
 }
 
-// Create bound scale functions
-export function createScaleFunctions(
-  liquidityData: ChartEntry[],
-  tickScale: TickScale
-) {
-  return {
-    priceToY: ({ price, tickAlignment }: { price: number; tickAlignment?: TickAlignment }) =>
-      priceToY({ price, liquidityData, tickScale, tickAlignment }),
-    yToPrice: (y: number) =>
-      yToPrice({ y, liquidityData, tickScale }),
-  };
-}
-
 export function findClosestTick(
   liquidityData: ChartEntry[],
   price: number
@@ -187,19 +174,4 @@ export function findClosestTick(
   return liquidityData.reduce((prev, curr) =>
     Math.abs(curr.price0 - price) < Math.abs(prev.price0 - price) ? curr : prev
   );
-}
-
-export function getPriceBounds(liquidityData: ChartEntry[]): {
-  minPrice: number;
-  maxPrice: number;
-} {
-  if (liquidityData.length === 0) {
-    return { minPrice: 0, maxPrice: 1 };
-  }
-
-  const prices = liquidityData.map(d => d.price0);
-  return {
-    minPrice: Math.min(...prices),
-    maxPrice: Math.max(...prices),
-  };
 }

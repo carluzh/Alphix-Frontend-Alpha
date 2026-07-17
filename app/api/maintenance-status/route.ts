@@ -5,7 +5,7 @@ export async function GET(request: Request) {
   const rateLimited = await checkRateLimit(request);
   if (rateLimited) return rateLimited;
 
-  const maintenance = process.env.NEXT_PUBLIC_MAINTENANCE === 'true' || process.env.MAINTENANCE === 'true'
+  const maintenance = process.env.MAINTENANCE === 'true'
   return NextResponse.json({ maintenance })
 }
 

@@ -13,7 +13,6 @@ import { cn, formatTokenDisplayAmount } from "@/lib/utils";
 import { TokenImage } from "@/components/ui/token-image";
 import { formatUSD } from "@/lib/format";
 import { getTokenIcon } from "../liquidity-form-utils";
-import { resolveTokenIcon } from "@/lib/pools-config";
 import { useUSDCPriceRaw } from "@/lib/uniswap/hooks/useUSDCPrice";
 import { Token } from "@uniswap/sdk-core";
 import type { ProcessedPosition } from "@/pages/api/liquidity/get-positions";
@@ -49,8 +48,6 @@ export function CollectFeesModal({ position, isOpen, onClose, onSuccess }: Colle
   // Token configs
   const token0Config = getToken(position.token0.symbol as TokenSymbol, networkMode);
   const token1Config = getToken(position.token1.symbol as TokenSymbol, networkMode);
-  const token0Icon = resolveTokenIcon(position.token0.symbol);
-  const token1Icon = resolveTokenIcon(position.token1.symbol);
 
   // USD prices
   const token0 = useMemo(() => {

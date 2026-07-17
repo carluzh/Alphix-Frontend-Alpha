@@ -11,7 +11,6 @@
  * - Signature/data forwarding between steps via shared context
  * - Cancellation via ref + lock validation
  *
- * @see EXECUTION_REFACTOR_BRIEF.md — Layer 2
  */
 
 import { useCallback, useRef } from 'react';

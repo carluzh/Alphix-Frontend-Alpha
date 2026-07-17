@@ -25,7 +25,6 @@ export {
 // Position transaction handlers
 export {
   handlePositionTransactionStep,
-  getLiquidityTxRequest,
   type HandlePositionStepParams,
   type PositionStep,
 } from './positionHandler';
@@ -44,7 +43,6 @@ export {
 export {
   STEP_HANDLER_REGISTRY,
   isRegisteredStepType,
-  getStepHandler,
   executeRegisteredStep,
   type TransactionFunctions,
   type StepExecutionContext,

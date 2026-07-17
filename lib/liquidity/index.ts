@@ -9,8 +9,8 @@
  */
 
 // TYPES - Selective exports (matching Uniswap pattern, no export *)
-export { PositionField, type FeeData, DEFAULT_FEE_DATA, PositionFlowStep, RangeAmountInputPriceMode, type InitialPosition, type PositionState, DEFAULT_POSITION_STATE, type PriceRangeState, DEFAULT_PRICE_RANGE_STATE, type CreatePositionInfo, type PriceRangeInfo, type DepositState, DEFAULT_DEPOSIT_STATE, type DepositInfo, type V4PositionInfo, type WarningSeverity, type PriceDifference, type DynamicFeeTierSpeedbumpData } from './types/position';
-export { TransactionStepType, LiquidityTransactionType, type ValidatedTransactionRequest, type OnChainTransactionFields, type OnChainTransactionFieldsBatched, type SignTypedDataStepFields, type TokenInfo, type TokenApprovalTransactionStep, type TokenRevocationTransactionStep, type Permit2SignatureStep, type Permit2TransactionStep, type IncreasePositionTransactionStep, type IncreasePositionTransactionStepAsync, type IncreasePositionTransactionStepBatched, type DecreasePositionTransactionStep, type CollectFeesTransactionStep, type IncreaseLiquiditySteps, type DecreaseLiquiditySteps, type CollectFeesSteps, type TransactionStep, type LiquidityAction, type IncreasePositionTxAndGasInfo, type CreatePositionTxAndGasInfo, type DecreasePositionTxAndGasInfo, type CollectFeesTxAndGasInfo, type LiquidityTxAndGasInfo, type ValidatedLiquidityTxContext, isValidLiquidityTxContext, type FlowStatus, type StepState, type TokenApprovalStatus, type ApprovalCheckResult } from './types/transaction';
+export { PositionField, type FeeData, RangeAmountInputPriceMode, type PositionState, type PriceRangeState, type CreatePositionInfo, type PriceRangeInfo, type DepositState, type DepositInfo, type V4PositionInfo, type WarningSeverity, type PriceDifference } from './types/position';
+export { TransactionStepType, LiquidityTransactionType, type ValidatedTransactionRequest, type OnChainTransactionFields, type SignTypedDataStepFields, type TokenInfo, type TokenApprovalTransactionStep, type TokenRevocationTransactionStep, type Permit2SignatureStep, type Permit2TransactionStep, type IncreasePositionTransactionStep, type IncreasePositionTransactionStepAsync, type IncreasePositionTransactionStepBatched, type DecreasePositionTransactionStep, type CollectFeesTransactionStep, type IncreaseLiquiditySteps, type DecreaseLiquiditySteps, type CollectFeesSteps, type TransactionStep, type LiquidityAction, type IncreasePositionTxAndGasInfo, type CreatePositionTxAndGasInfo, type DecreasePositionTxAndGasInfo, type CollectFeesTxAndGasInfo, type LiquidityTxAndGasInfo, type ValidatedLiquidityTxContext, isValidLiquidityTxContext, type FlowStatus, type StepState, type TokenApprovalStatus } from './types/transaction';
 
 // =============================================================================
 // HOOKS - Custom React hooks for liquidity operations
@@ -66,7 +66,6 @@ export {
   tryParseCurrencyAmount,
   getFieldsDisabled,
   createMockV4Pool,
-  getV4PriceRangeInfo,
   getBaseAndQuoteCurrencies,
   type PriceRangeInput,
   getPriceDifference,

@@ -14,8 +14,7 @@ const ONE_SECOND_MS = 1000
 
 // Polling intervals (conservative, slightly longer than actual block times)
 // These are for API/RPC polling cadence, NOT for deadline calculations
-// For actual block times, use lib/swap/swap-constants.ts: AVERAGE_L1_BLOCK_TIME_MS (12s), AVERAGE_L2_BLOCK_TIME_MS (2s)
-export const POLLING_INTERVAL_L1_MS = 12 * ONE_SECOND_MS
+const POLLING_INTERVAL_L1_MS = 12 * ONE_SECOND_MS
 export const POLLING_INTERVAL_L2_MS = 3 * ONE_SECOND_MS
 
 /**

@@ -34,13 +34,13 @@ export type SSEEventType =
 // ============================================================================
 
 /** Connected event payload */
-export interface ConnectedPayload {
+interface ConnectedPayload {
   timestamp: number;
   address: string;
 }
 
 /** Heartbeat event payload */
-export interface HeartbeatPayload {
+interface HeartbeatPayload {
   timestamp: number;
 }
 

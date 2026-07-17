@@ -5,7 +5,6 @@
  * Each domain hook (swap, liquidity) uses this factory with its own
  * set of step types.
  *
- * @see ../EXECUTION_REFACTOR_BRIEF.md — Layer 2/3
  */
 
 import { useCallback, useMemo, type RefObject } from 'react';
@@ -34,7 +33,7 @@ import {
  * Swap domain — steps that perform token swaps.
  * Used by: main swap flow (via useSwapFlow).
  */
-export const SWAP_DOMAIN_STEPS: TransactionStepType[] = [
+const SWAP_DOMAIN_STEPS: TransactionStepType[] = [
   // Shared primitives (also in liquidity domain)
   TransactionStepType.TokenApprovalTransaction,
   TransactionStepType.Permit2Signature,
@@ -45,7 +44,7 @@ export const SWAP_DOMAIN_STEPS: TransactionStepType[] = [
  * collect, UY deposit/withdraw).
  * Used by: all liquidity flows.
  */
-export const LIQUIDITY_DOMAIN_STEPS: TransactionStepType[] = [
+const LIQUIDITY_DOMAIN_STEPS: TransactionStepType[] = [
   // Shared primitives (also in swap domain)
   TransactionStepType.TokenApprovalTransaction,
   TransactionStepType.TokenRevocationTransaction,

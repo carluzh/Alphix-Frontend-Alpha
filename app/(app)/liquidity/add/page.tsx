@@ -14,7 +14,7 @@ import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 
-import { AddLiquidityWizard, type WizardEntryConfig, WizardStep } from '@/components/liquidity/wizard';
+import { AddLiquidityWizard, type WizardEntryConfig } from '@/components/liquidity/wizard';
 import { getPoolBySlugMultiChain } from '@/lib/pools-config';
 
 // Loading fallback
@@ -36,7 +36,6 @@ function AddLiquidityPageContent() {
   // Parse URL parameters for entry configuration
   const poolId = searchParams?.get('pool') || undefined;
   const mode = searchParams?.get('mode') as 'rehypo' | 'concentrated' | undefined;
-  const stepParam = searchParams?.get('step');
 
   // Build entry config based on URL params
   const entryConfig: WizardEntryConfig | undefined = (() => {

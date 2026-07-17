@@ -68,8 +68,6 @@ export const PoolDetailPositions = memo(function PoolDetailPositions({
   calculatePositionUsd,
   getFeesForPosition,
 }: PoolDetailPositionsProps) {
-  const token0Symbol = poolConfig?.tokens?.[0]?.symbol || "";
-  const token1Symbol = poolConfig?.tokens?.[1]?.symbol || "";
   const prefersReducedMotion = useReducedMotion();
 
   const hasPositions = userPositions.length > 0 || isDerivingNewPosition;
