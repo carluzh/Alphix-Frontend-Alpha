@@ -190,14 +190,6 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
         "p-5"
       )}
     >
-      {/* Subtle orange gradient glow - top right corner */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: "radial-gradient(ellipse 50% 50% at 90% 10%, rgba(244, 85, 2, 0.06) 0%, transparent 70%)",
-        }}
-      />
-
       {/* Pattern overlay */}
       <div
         className="absolute inset-0 bg-center bg-repeat opacity-40 pointer-events-none"
@@ -229,7 +221,7 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="text-xs text-muted-foreground flex items-center gap-1 cursor-default">
-                  <span className="text-sidebar-primary font-bold">{formatPoints(pointsPerWeek)}</span> pts/week
+                  <span className="text-muted-foreground">Season Over</span>
                   <IconCircleInfo className="w-3 h-3 text-muted-foreground/60" />
                 </div>
               </TooltipTrigger>
@@ -251,19 +243,11 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
             <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground">Season Progress</span>
               <span className="text-foreground font-medium flex items-center gap-1" style={{ fontFamily: "Consolas, monospace" }}>
-                {isBeforeSeason ? (
-                  <span className="text-sidebar-primary">starting in {formatWeekRemaining(msUntilStart)}</span>
-                ) : isSeasonConcluded ? (
-                  <span className="text-muted-foreground">100%</span>
-                ) : (
-                  formatSeasonRemaining(seasonRemainingMs)
-                )}
+                {/* Hardcoded for S0 post-season */}
+                <span className="text-muted-foreground">0%</span>
               </span>
             </div>
-            <SeasonProgressBar
-              progress={isSeasonConcluded ? 100 : seasonProgress}
-              solidColor={isSeasonConcluded ? "#404040" : undefined}
-            />
+            <SeasonProgressBar progress={0} />
           </div>
 
           {/* Week Progress Bar */}
@@ -272,18 +256,15 @@ export const SeasonTimelineBanner = memo(function SeasonTimelineBanner({
               <span className="text-muted-foreground">
                 Current Week{" "}
                 <span className="text-foreground font-medium">
-                  S0W{isSeasonConcluded ? totalWeeks : currentWeek}
+                  {/* Hardcoded for S0 post-season */}
+                  S0W01
                 </span>
               </span>
               <span className="text-foreground font-medium" style={{ fontFamily: "Consolas, monospace" }}>
-                {isBeforeSeason || isSeasonConcluded ? (
-                  <span className="text-muted-foreground">-</span>
-                ) : (
-                  formatWeekRemaining(weekRemainingMs)
-                )}
+                <span className="text-muted-foreground">-</span>
               </span>
             </div>
-            <WeekProgressBar progress={isSeasonConcluded ? 0 : weekProgress} />
+            <WeekProgressBar progress={0} />
           </div>
         </div>
       </div>

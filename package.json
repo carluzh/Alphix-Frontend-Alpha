@@ -1,6 +1,6 @@
 {
   "name": "@alphix/frontend",
-  "version": "1.6.6",
+  "version": "1.7.0",
   "private": true,
   "description": "Alphix Frontend - Decentralized AMM built on Uniswap V4 with dynamic fee hooks",
   "author": "Alphix Team",
